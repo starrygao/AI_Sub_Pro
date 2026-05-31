@@ -106,7 +106,7 @@ def test_provider_key_test_buttons_have_disabled_and_loading_states():
     assert "keyStatus[provider]==='testing' || !settings.api_keys[provider]?.trim()" in html
     assert "keyStatus[provider]==='testing' ? '测试中...' : '测试'" in html
     assert ':disabled="settingsSaving"' in html
-    assert "settingsSaving ? '保存中...' : '保存设置'" in html
+    assert "settingsSaving ? t('settings.saving') : t('settings.save')" in html
     assert "settingsApiKeyProviders()" in html
     assert "settingsApiKeyProviders()" in js
     assert "modelErrors.primary" in html

@@ -70,6 +70,7 @@ Open **Settings** in the app and configure one translation provider:
 
 You can also configure:
 
+- Display language: follow system, Simplified Chinese, or English.
 - Whisper model and source language.
 - Target subtitle language.
 - Translation batch size and context window.

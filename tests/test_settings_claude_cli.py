@@ -254,6 +254,35 @@ def test_update_settings_accepts_codex_cli_provider_config():
     assert payload["providers"]["codex_cli"]["model"] == "gpt-5.5"
 
 
+def test_update_settings_accepts_supported_display_language():
+    from app.main import app
+    client = TestClient(app)
+
+    with patch("app.api.settings.Config.update", return_value=None) as update:
+        r = client.post("/api/settings", json={
+            "general": {
+                "display_language": " en-US ",
+            },
+        })
+
+    assert r.status_code == 200
+    assert update.call_args.args[0]["general"]["display_language"] == "en-US"
+
+
+def test_update_settings_rejects_unknown_display_language():
+    from app.main import app
+    client = TestClient(app)
+
+    r = client.post("/api/settings", json={
+        "general": {
+            "display_language": "fr-FR",
+        },
+    })
+
+    assert r.status_code == 400
+    assert "display_language" in r.json()["detail"]
+
+
 def test_update_settings_rejects_unknown_translation_provider():
     from app.main import app
     client = TestClient(app)

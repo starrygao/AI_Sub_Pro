@@ -54,6 +54,8 @@ _OBJECT_CONFIG_SECTIONS = {
     "general",
 }
 
+_DISPLAY_LANGUAGE_VALUES = {"auto", "zh-CN", "en-US"}
+
 def _dict_section(cfg: dict, key: str) -> dict:
     value = cfg.get(key) if isinstance(cfg, dict) else None
     return value if isinstance(value, dict) else {}
@@ -383,6 +385,16 @@ def _validate_settings_update(data: dict) -> None:
     general = data.get("general") if isinstance(data, dict) else None
     if isinstance(general, dict):
         _require_int("general", general, "max_workers", min_value=1, max_value=16)
+        if "display_language" in general:
+            _require_non_blank_str("general", general, "display_language")
+            display_language = general["display_language"].strip()
+            if display_language not in _DISPLAY_LANGUAGE_VALUES:
+                allowed = ", ".join(sorted(_DISPLAY_LANGUAGE_VALUES))
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Settings value general.display_language must be one of: {allowed}",
+                )
+            general["display_language"] = display_language
 
     providers = data.get("providers") if isinstance(data, dict) else None
     if not isinstance(providers, dict):

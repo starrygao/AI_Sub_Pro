@@ -85,8 +85,11 @@ DEFAULT_CONFIG = {
     "general": {
         "max_workers": 4,
         "theme": "dark",
+        "display_language": "auto",
     },
 }
+
+_DISPLAY_LANGUAGE_VALUES = {"auto", "zh-CN", "en-US"}
 
 
 def _reject_json_constant(value: str):
@@ -105,6 +108,22 @@ def _deep_merge(base: dict, override: dict) -> dict:
         else:
             result[k] = copy.deepcopy(v)
     return result
+
+
+def _normalize_loaded_config(data: dict) -> dict:
+    """Repair persisted settings that predate or bypass API validation."""
+    if not isinstance(data, dict):
+        return copy.deepcopy(DEFAULT_CONFIG)
+    general = data.get("general")
+    if not isinstance(general, dict):
+        data["general"] = copy.deepcopy(DEFAULT_CONFIG["general"])
+        return data
+    display_language = general.get("display_language")
+    if not isinstance(display_language, str) or display_language.strip() not in _DISPLAY_LANGUAGE_VALUES:
+        general["display_language"] = DEFAULT_CONFIG["general"]["display_language"]
+    else:
+        general["display_language"] = display_language.strip()
+    return data
 
 
 def _backup_invalid_config() -> None:
@@ -130,12 +149,13 @@ class Config:
             try:
                 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                     saved = json.load(f, parse_constant=_reject_json_constant)
-                cls._data = _deep_merge(DEFAULT_CONFIG, saved)
+                cls._data = _normalize_loaded_config(_deep_merge(DEFAULT_CONFIG, saved))
             except Exception:
                 _backup_invalid_config()
                 cls._data = copy.deepcopy(DEFAULT_CONFIG)
         else:
             cls._data = copy.deepcopy(DEFAULT_CONFIG)
+        cls._data = _normalize_loaded_config(cls._data)
         cls.save()
         return cls._data
 

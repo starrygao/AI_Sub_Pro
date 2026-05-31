@@ -48,6 +48,8 @@ Current packaging support:
   or Codex CLI.
 - Maintain a local knowledge base for names, terms, style rules, and glossary
   context.
+- Switch the app display language between system default, Simplified Chinese,
+  and English.
 - Search TMDB, download trailers with `yt-dlp`, and generate trailer
   translation projects.
 - Export raw, filtered, translated, and bilingual `.srt` files.
