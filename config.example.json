@@ -1,0 +1,18 @@
+{
+  "api_keys": {
+    "openai": "",
+    "deepseek": "",
+    "gemini": ""
+  },
+  "tmdb": {
+    "api_key": "",
+    "language": "zh-CN"
+  },
+  "translation": {
+    "primary_provider": "openai",
+    "primary_model": "gpt-4o",
+    "polish_provider": "",
+    "polish_model": "",
+    "target_language": "简体中文"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "ai-sub-pro",
+  "version": "1.0.0",
+  "description": "AI-powered subtitle translation tool",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "prebuild-mac": "cd .. && npm run build:css",
+    "build-mac": "electron-builder --mac",
+    "prebuild-win": "cd .. && npm run build:css",
+    "build-win": "electron-builder --win"
+  },
+  "build": {
+    "appId": "com.aisubpro.app",
+    "productName": "AI Sub Pro",
+    "directories": { "output": "../dist" },
+    "files": ["**/*"],
+    "extraResources": [
+      { "from": "../app", "to": "app", "filter": ["**/*"] }
+    ],
+    "mac": { "target": "dmg" },
+    "win": { "target": "nsis" }
+  },
+  "dependencies": {
+    "electron": "^33.0.0"
+  },
+  "devDependencies": {
+    "electron-builder": "^25.0.0"
+  }
+}

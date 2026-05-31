@@ -1,0 +1,1340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Sub Pro</title>
+<link rel="stylesheet" href="/static/css/tailwind.css?v=20260530-ui2">
+<link rel="stylesheet" href="/static/css/app.css?v=20260530-ui9">
+<script defer src="/static/vendor/alpinejs/alpine.min.js?v=3.14.9"></script>
+</head>
+<body x-data="app()" x-init="init()" x-cloak>
+
+<!-- Toast Notifications -->
+<div class="fixed top-5 right-5 z-[100] space-y-2">
+  <template x-for="t in toasts" :key="t.id">
+    <div class="toast-enter glass rounded-2xl px-4 py-3 flex items-center gap-3 shadow-lg max-w-sm"
+         :role="t.type === 'error' ? 'alert' : 'status'"
+         :aria-live="t.type === 'error' ? 'assertive' : 'polite'"
+         aria-atomic="true"
+         :class="t.type === 'error' ? 'border-l-2 border-l-danger' : 'border-l-2 border-l-success'">
+      <span class="text-sm flex-shrink-0" x-text="t.type === 'error' ? '!' : ''"></span>
+      <span class="text-[13px] leading-tight" x-text="t.msg"></span>
+    </div>
+  </template>
+</div>
+
+<!-- Layout -->
+<div class="app-shell flex h-screen overflow-hidden">
+
+  <!-- Sidebar -->
+  <aside class="app-sidebar w-[220px] flex-shrink-0 flex flex-col bg-white/30 backdrop-blur-xl border-r border-black/[0.06]" style="padding-top: env(titlebar-area-height, 38px);">
+    <div class="titlebar-drag px-5 pt-2 pb-4">
+      <h1 class="text-[15px] font-semibold flex items-center gap-2 mt-1">
+        AI Sub Pro
+      </h1>
+      <p class="text-[11px] text-surface-400 mt-0.5">智能字幕翻译工具</p>
+    </div>
+    <nav class="flex-1 px-3 space-y-0.5">
+      <button @click="setView('home')" class="no-drag w-full text-left px-3 py-[7px] rounded-lg flex items-center gap-2.5 text-[13px] font-medium transition-colors"
+              :class="view==='home' ? 'bg-accent/10 text-accent' : 'text-surface-600 hover:bg-black/[0.04]'">
+        <svg class="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" /></svg>
+        首页
+      </button>
+      <button @click="setView('projects')" class="no-drag w-full text-left px-3 py-[7px] rounded-lg flex items-center gap-2.5 text-[13px] font-medium transition-colors"
+              :class="view==='projects' ? 'bg-accent/10 text-accent' : 'text-surface-600 hover:bg-black/[0.04]'">
+        <svg class="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>
+        项目
+      </button>
+      <button @click="setView('settings')" class="no-drag w-full text-left px-3 py-[7px] rounded-lg flex items-center gap-2.5 text-[13px] font-medium transition-colors"
+              :class="view==='settings' ? 'bg-accent/10 text-accent' : 'text-surface-600 hover:bg-black/[0.04]'">
+        <svg class="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+        设置
+      </button>
+      <button @click="setView('knowledge')" class="no-drag w-full text-left px-3 py-[7px] rounded-lg flex items-center gap-2.5 text-[13px] font-medium transition-colors"
+              :class="view==='knowledge' ? 'bg-accent/10 text-accent' : 'text-surface-600 hover:bg-black/[0.04]'">
+        <svg class="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" /></svg>
+        知识库
+      </button>
+    </nav>
+    <div class="px-4 py-3 border-t border-black/[0.04] text-[11px] text-surface-400">
+      <div class="flex justify-between"><span>项目总数</span><span class="text-surface-600 font-medium" x-text="projects.length"></span></div>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="app-main flex-1 overflow-y-auto" style="padding-top: env(titlebar-area-height, 38px);">
+
+    <!-- ========== HOME / DROP ZONE ========== -->
+    <div x-show="view==='home'" class="home-view min-h-full p-6 lg:p-8 fade-up">
+      <div class="home-workbench">
+        <section class="home-primary">
+          <div class="home-panel text-center">
+            <div class="w-16 h-16 mx-auto mb-5 rounded-3xl bg-gradient-to-br from-accent/20 to-accent/5 flex items-center justify-center">
+              <svg class="w-9 h-9 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-1.5A1.125 1.125 0 0118 18.375M20.625 4.5H3.375m17.25 0c.621 0 1.125.504 1.125 1.125M20.625 4.5h-1.5C18.504 4.5 18 5.004 18 5.625m3.75 0v1.5c0 .621-.504 1.125-1.125 1.125M3.375 4.5c-.621 0-1.125.504-1.125 1.125M3.375 4.5h1.5C5.496 4.5 6 5.004 6 5.625m-3.75 0v1.5c0 .621.504 1.125 1.125 1.125m0 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m1.5-3.75C5.496 8.25 6 7.746 6 7.125v-1.5M4.875 8.25C5.496 8.25 6 8.754 6 9.375v1.5m0-5.25v5.25m0-5.25C6 5.004 6.504 4.5 7.125 4.5h9.75c.621 0 1.125.504 1.125 1.125m1.125 2.625h1.5m-1.5 0A1.125 1.125 0 0118 7.125v-1.5m1.125 2.625c-.621 0-1.125.504-1.125 1.125v1.5m2.625-2.625c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125M18 5.625v5.25M7.125 12h9.75m-9.75 0A1.125 1.125 0 016 10.875M7.125 12C6.504 12 6 12.504 6 13.125m0-2.25C6 11.496 5.496 12 4.875 12M18 10.875c0 .621-.504 1.125-1.125 1.125M18 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m-12 5.25v-5.25m0 5.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125m-12 0v-1.5c0-.621-.504-1.125-1.125-1.125M18 18.375v-5.25m0 5.25v-1.5c0-.621.504-1.125 1.125-1.125M18 13.125v1.5c0 .621.504 1.125 1.125 1.125M18 13.125c0-.621.504-1.125 1.125-1.125M6 13.125v1.5c0 .621-.504 1.125-1.125 1.125M6 13.125C6 12.504 5.496 12 4.875 12m-1.5 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M19.125 12h1.5m0 0c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h1.5m14.25 0h1.5" />
+              </svg>
+            </div>
+            <h2 class="text-[26px] font-semibold mb-2">拖入视频文件</h2>
+            <p class="text-[14px] text-surface-400 mb-7 leading-relaxed">拖入视频，自动识别语音、翻译字幕并烧录到视频中。一步到位，输出成品。</p>
+
+            <!-- Drop Zone -->
+            <div class="drop-zone rounded-3xl p-10 cursor-pointer group"
+                 role="button"
+                 tabindex="0"
+                 aria-label="选择或拖入视频文件"
+                 :aria-disabled="fileImporting || projectCreating"
+                 :class="(fileImporting || projectCreating) ? 'opacity-60 cursor-wait' : ''"
+                 @dragover.prevent="$el.classList.add('drag-active')"
+                 @dragleave.prevent="$el.classList.remove('drag-active')"
+                 @drop.prevent="handleDrop($event); $el.classList.remove('drag-active')"
+                 @keydown.enter.prevent="openFilePicker()"
+                 @keydown.space.prevent="openFilePicker()"
+                 @click="openFilePicker()">
+              <div class="flex flex-col items-center gap-4">
+                <div class="w-14 h-14 rounded-2xl bg-surface-100 flex items-center justify-center group-hover:bg-accent/10 transition-colors">
+                  <svg class="w-7 h-7 text-surface-400 group-hover:text-accent transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                  </svg>
+                </div>
+                <div>
+                  <p class="text-[14px] font-medium text-surface-600" x-text="fileImporting ? '正在读取视频文件...' : (projectCreating ? '正在创建项目...' : '点击选择或拖入视频文件')"></p>
+                  <p class="text-[12px] text-surface-400 mt-1" x-text="(fileImporting || projectCreating) ? '请稍候，不要重复提交' : '支持 MP4、MKV、AVI、MOV 等格式'"></p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Or enter path manually -->
+            <div class="home-manual-path mt-5 flex items-center gap-3 max-w-md mx-auto">
+              <input x-model="newVideoPath" type="text" placeholder="或粘贴视频文件路径..."
+                     aria-label="视频文件路径"
+                     class="flex-1 px-4 py-2.5 rounded-xl text-[13px]"
+                     @keydown.enter="quickStart()">
+              <button @click="quickStart()" :disabled="!canStartProject()" class="btn-primary px-5 py-2.5 rounded-xl text-[13px] font-medium disabled:opacity-30 disabled:cursor-not-allowed">
+                <span x-text="fileImporting ? '读取中...' : (projectCreating ? '创建中...' : '开始')"></span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <aside class="home-aside space-y-4">
+          <div class="home-summary-grid grid grid-cols-2 gap-3">
+            <div class="glass rounded-2xl p-4">
+              <p class="text-[11px] text-surface-400">活跃项目</p>
+              <p class="text-[24px] font-semibold tabular-nums" x-text="homeProjectSummary().total"></p>
+            </div>
+            <div class="glass rounded-2xl p-4">
+              <p class="text-[11px] text-surface-400">处理中</p>
+              <p class="text-[24px] font-semibold tabular-nums text-accent" x-text="homeProjectSummary().running"></p>
+            </div>
+            <div class="glass rounded-2xl p-4">
+              <p class="text-[11px] text-surface-400">已完成</p>
+              <p class="text-[24px] font-semibold tabular-nums text-success" x-text="homeProjectSummary().completed"></p>
+            </div>
+            <div class="glass rounded-2xl p-4">
+              <p class="text-[11px] text-surface-400">总时长</p>
+              <p class="text-[24px] font-semibold tabular-nums" x-text="formatDuration(homeProjectSummary().totalDuration)"></p>
+            </div>
+          </div>
+
+          <div class="glass rounded-2xl p-4">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-[13px] font-semibold">最近项目</h3>
+              <button @click="setView('projects')" class="home-link-button text-[12px] text-accent">查看全部</button>
+            </div>
+            <div x-show="recentHomeProjects().length===0" class="text-[12px] text-surface-400 py-4 text-center">
+              暂无项目，先拖入一个视频
+            </div>
+            <div class="space-y-2">
+              <template x-for="p in recentHomeProjects()" :key="p.id">
+                <button @click="openProject(p.id)"
+                        class="home-recent-project w-full text-left rounded-xl px-3 py-2.5 transition-colors hover:bg-black/[0.03]"
+                        :aria-label="'打开最近项目 ' + (p.name || p.id)">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <p class="text-[13px] font-medium truncate" x-text="p.name || p.id"></p>
+                      <p class="text-[11px] text-surface-400 mt-0.5">
+                        <span x-text="p.duration ? formatDuration(p.duration) : '--:--'"></span>
+                        <span x-show="p.created_at"> · </span>
+                        <span x-text="formatDate(p.created_at)"></span>
+                      </p>
+                    </div>
+                    <span class="pill flex-shrink-0"
+                          :style="`background: ${statusColor(p).bg}; color: ${statusColor(p).text};`"
+                          x-text="statusLabel(p)"></span>
+                  </div>
+                </button>
+              </template>
+            </div>
+          </div>
+
+          <!-- Trailer entry (full-video entry is the drop-zone above) -->
+          <button class="glass rounded-2xl p-4 text-left w-full transition-all hover:shadow-md hover:-translate-y-0.5"
+                  @click="openTrailerWizard()">
+            <div class="flex items-center gap-4">
+              <div class="w-11 h-11 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
+                <svg class="w-5 h-5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg>
+              </div>
+              <div>
+                <h3 class="text-[15px] font-semibold mb-1" style="font-family: 'Iowan Old Style', 'PingFang SC', serif;">预告翻译</h3>
+                <p class="text-[12px] text-surface-500 leading-relaxed">输入剧名或 TMDB ID，自动下载并翻译预告片</p>
+              </div>
+            </div>
+          </button>
+
+          <!-- System status -->
+          <div x-show="sysCheckError || (sysCheck && !sysCheck.ready)" class="glass rounded-2xl p-4 text-left">
+            <h3 class="text-[13px] font-semibold mb-3 text-warn flex items-center gap-2">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+              首次使用配置
+            </h3>
+            <div x-show="sysCheckError" class="mb-3 rounded-xl px-3 py-2 text-[12px] text-danger" style="background: rgba(220,38,38,0.08);">
+              <span class="font-semibold">系统检查失败：</span>
+              <span x-text="sysCheckError"></span>
+              <button @click="refreshSystemCheck()"
+                      :disabled="sysCheckLoading"
+                      class="ml-2 underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      x-text="sysCheckLoading ? '检查中...' : '重试'"></button>
+            </div>
+            <div x-show="sysCheck" class="space-y-2 text-[12px]">
+              <div class="flex items-center gap-2" :class="sysCheck?.ffmpeg ? 'text-success' : 'text-danger'">
+                <span x-text="sysCheck?.ffmpeg ? '✓' : '✗'"></span>
+                <span>FFmpeg</span>
+                <span x-show="!sysCheck?.ffmpeg" class="text-surface-400">（.app 已内置）</span>
+              </div>
+              <div class="flex items-center gap-2" :class="systemTranslationReady() ? 'text-success' : 'text-danger'">
+                <span x-text="systemTranslationReady() ? '✓' : '✗'"></span>
+                <span x-text="'翻译引擎 · ' + translationProviderLabel(sysCheck?.translation_provider)"></span>
+                <span x-show="!systemTranslationReady()" class="text-surface-400" x-text="'→ ' + systemTranslationHint()"></span>
+              </div>
+              <div class="flex items-center gap-2" :class="sysCheck?.whisper_model ? 'text-success' : 'text-surface-400'">
+                <span x-text="sysCheck?.whisper_model ? '✓' : '○'"></span>
+                <span>Whisper 语音模型</span>
+                <span x-show="sysCheck?.whisper_model" class="text-surface-400" x-text="'(' + (sysCheck?.model_size || '') + ')'"></span>
+                <span x-show="!sysCheck?.whisper_model" class="text-surface-400">（首次识别时自动下载 ~3GB）</span>
+              </div>
+            </div>
+            <button x-show="sysCheck && !systemTranslationReady()" @click="setView('settings')" class="system-action-button mt-3 btn-primary px-4 py-1.5 rounded-xl text-[12px] font-medium w-full" x-text="systemTranslationActionText()"></button>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <!-- ========== TRAILER WIZARD ========== -->
+    <div x-show="view==='trailer'" class="max-w-3xl mx-auto py-10 px-6" x-cloak>
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-2xl font-semibold" style="font-family: 'Iowan Old Style', 'PingFang SC', serif;">预告翻译</h2>
+        <button @click="setView('home')" class="btn-secondary px-3 py-1.5 rounded-lg text-[13px]">返回首页</button>
+      </div>
+      <div class="glass-dark rounded-2xl p-4 mb-6">
+        <div class="flex items-center justify-between text-[12px] text-surface-500 mb-2">
+          <span>第 <span x-text="trailerStep"></span> 步，共 5 步</span>
+          <button type="button" x-show="trailerStep > 1 && trailerStep < 5" @click="previousTrailerStep()" class="hover:text-accent">← 上一步</button>
+        </div>
+        <div class="h-1 bg-surface-200 rounded-full overflow-hidden">
+          <div class="h-full bg-accent transition-all" :style="`width:${(trailerStep/5)*100}%`"></div>
+        </div>
+      </div>
+      <!-- Error panel (shared across steps 1-4) -->
+      <div x-show="trailerError" x-cloak class="mb-4 rounded-xl border border-accent/40 bg-accent/10 p-4">
+        <div class="flex items-start gap-3">
+          <div class="text-accent text-lg leading-none mt-0.5">⚠</div>
+          <div class="flex-1 min-w-0">
+            <p class="text-[13px] text-surface-700 break-words" x-text="trailerError"></p>
+            <button x-show="trailerErrorNeedsSettings()"
+                    @click="setView('settings')"
+                    class="mt-2 text-[12px] text-accent hover:underline">去设置 →</button>
+          </div>
+          <button @click="trailerError=null" aria-label="关闭错误提示" title="关闭错误提示" class="text-surface-400 hover:text-surface-600 text-[18px] leading-none">×</button>
+        </div>
+      </div>
+
+      <!-- Step 1: Search -->
+      <div x-show="trailerStep===1" x-cloak class="glass rounded-2xl p-6">
+        <h3 class="text-[16px] font-semibold mb-4" style="font-family: 'Iowan Old Style', 'PingFang SC', serif;">搜索剧集或电影</h3>
+        <div class="flex items-center gap-4 mb-4 text-[13px]">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="radio" value="title" x-model="trailerSearchMode" aria-label="按名称搜索预告片" class="accent-accent">
+            <span>按名称</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="radio" value="tmdb_id" x-model="trailerSearchMode" aria-label="按 TMDB ID 搜索预告片" class="accent-accent">
+            <span>按 TMDB ID</span>
+          </label>
+        </div>
+        <div class="flex gap-2">
+          <input type="text"
+                 x-model="trailerSearchQuery"
+                 @input="trailerError=null"
+                 @keydown.enter="searchTrailers()"
+                 :placeholder="trailerSearchMode==='tmdb_id' ? '例：1399' : '例：权力的游戏'"
+                 :aria-label="trailerSearchMode==='tmdb_id' ? 'TMDB ID' : '剧名或电影名'"
+                 class="flex-1 px-3 py-2 rounded-lg border border-surface-200 bg-white text-[14px] focus:outline-none focus:border-accent">
+          <button @click="searchTrailers()"
+                  :disabled="!trailerSearchQuery.trim() || trailerLoading"
+                  class="btn-primary px-5 py-2 rounded-lg text-[13px] font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+            <span x-show="!trailerLoading">搜索</span>
+            <span x-show="trailerLoading">搜索中...</span>
+          </button>
+        </div>
+        <p class="mt-3 text-[12px] text-surface-400">输入剧名或 TMDB ID，系统会从 TMDB 检索匹配作品。</p>
+      </div>
+
+      <!-- Step 2: Show candidates -->
+      <div x-show="trailerStep===2" x-cloak class="space-y-3">
+        <div class="flex items-center justify-between">
+          <button @click="trailerStep=1; trailerError=null" class="text-[13px] text-surface-500 hover:text-accent">← 返回搜索</button>
+          <span class="text-[12px] text-surface-400" x-text="`共 ${trailerSearchResults.length} 个结果`"></span>
+        </div>
+        <div x-show="trailerSearchResults.length===0" class="glass rounded-2xl p-10 text-center">
+          <div class="text-3xl mb-2">🔍</div>
+          <p class="text-[14px] text-surface-600">未找到，换一个关键词试试</p>
+        </div>
+        <template x-for="item in trailerSearchResults" :key="`${item.media_type}-${item.id}`">
+          <button @click="selectShow(item)"
+                  class="w-full glass rounded-2xl p-4 flex gap-4 text-left transition-all hover:shadow-md hover:-translate-y-0.5">
+            <template x-if="item.poster_path">
+              <img :src="`https://image.tmdb.org/t/p/w154${item.poster_path}`"
+                   class="w-20 h-30 rounded-lg object-cover flex-shrink-0 bg-surface-100"
+                   style="width:80px; height:120px;"
+                   loading="lazy">
+            </template>
+            <template x-if="!item.poster_path">
+              <div class="rounded-lg bg-surface-100 flex-shrink-0 flex items-center justify-center text-surface-300 text-2xl"
+                   style="width:80px; height:120px;">🎞️</div>
+            </template>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 mb-1">
+                <h4 class="text-[15px] font-semibold truncate" x-text="item.name || item.title"></h4>
+                <span class="pill bg-surface-100 text-surface-500 text-[11px] px-2 py-0.5 rounded"
+                      x-text="item.media_type==='tv' ? '剧集' : '电影'"></span>
+              </div>
+              <p x-show="(item.original_name && item.original_name !== item.name) || (item.original_title && item.original_title !== item.title)"
+                 class="text-[12px] text-surface-400 truncate"
+                 x-text="item.original_name || item.original_title"></p>
+              <p class="text-[12px] text-surface-500 mt-0.5"
+                 x-text="(item.first_air_date || item.release_date || '').slice(0,4)"></p>
+              <p class="text-[13px] text-surface-600 mt-1 line-clamp-2"
+                 x-text="item.overview || '暂无简介'"></p>
+            </div>
+          </button>
+        </template>
+      </div>
+
+      <!-- Step 3: Season picker (TV only) -->
+      <div x-show="trailerStep===3" x-cloak class="glass rounded-2xl p-6">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 class="text-[16px] font-semibold" style="font-family: 'Iowan Old Style', 'PingFang SC', serif;">选择季</h3>
+            <p class="text-[12px] text-surface-400 mt-0.5"
+               x-text="trailerSelectedShow ? (trailerSelectedShow.name || trailerSelectedShow.title) : ''"></p>
+          </div>
+          <button @click="trailerStep=2" class="text-[13px] text-surface-500 hover:text-accent">← 返回</button>
+        </div>
+        <p class="text-[12px] text-surface-500 mb-3">可多选季，或选择「整部剧」获取剧集整体预告。</p>
+        <div class="flex flex-wrap gap-2">
+          <template x-for="s in trailerSeasons" :key="s">
+            <button @click="(trailerSelectedSeasons.includes(s) ? trailerSelectedSeasons.splice(trailerSelectedSeasons.indexOf(s),1) : trailerSelectedSeasons.push(s))"
+                    :class="trailerSelectedSeasons.includes(s) ? 'bg-accent text-white border-accent' : 'bg-white text-surface-600 border-surface-200 hover:border-accent'"
+                    class="pill px-3 py-1.5 rounded-full border text-[13px] transition-colors"
+                    x-text="`第 ${s} 季`"></button>
+          </template>
+          <button @click="trailerSelectedSeasons = []"
+                  :class="trailerSelectedSeasons.length===0 ? 'bg-accent text-white border-accent' : 'bg-white text-surface-600 border-surface-200 hover:border-accent'"
+                  class="pill px-3 py-1.5 rounded-full border text-[13px] transition-colors">整部剧</button>
+        </div>
+        <div class="mt-6 flex justify-end">
+          <button @click="advanceTrailerVideoStep()"
+                  :disabled="!canFetchTrailerVideos()"
+                  class="btn-primary px-5 py-2 rounded-lg text-[13px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  x-text="trailerLoading ? '加载中...' : '下一步 →'"></button>
+        </div>
+      </div>
+
+      <!-- Step 4: Trailer videos -->
+      <div x-show="trailerStep===4" x-cloak class="space-y-3">
+        <div class="flex items-center justify-between">
+          <button @click="trailerSelectedShow && trailerSelectedShow.media_type==='tv' ? trailerStep=3 : trailerStep=2; trailerError=null"
+                  class="text-[13px] text-surface-500 hover:text-accent">← 返回</button>
+          <span class="text-[12px] text-surface-400"
+                x-text="trailerLoading ? '加载中...' : `共 ${trailerVideos.length} 个视频`"></span>
+        </div>
+        <div x-show="trailerLoading" class="glass rounded-2xl p-10 text-center">
+          <div class="text-surface-400 text-[14px]">加载中...</div>
+        </div>
+        <div x-show="!trailerLoading && trailerVideos.length===0" class="glass rounded-2xl p-10 text-center">
+          <div class="text-3xl mb-2">📭</div>
+          <p class="text-[14px] text-surface-600">未找到预告视频</p>
+          <p class="text-[12px] text-surface-400 mt-1">尝试其他季或返回更换作品</p>
+        </div>
+        <template x-for="v in trailerVideos" :key="v.key">
+          <label class="glass rounded-2xl p-4 flex gap-4 cursor-pointer transition-all hover:shadow-md"
+                 :class="trailerSelectedVideos.includes(v.key) ? 'ring-2 ring-accent' : ''">
+            <img :src="`https://img.youtube.com/vi/${v.key}/default.jpg`"
+                 class="rounded-lg object-cover flex-shrink-0 bg-surface-100"
+                 style="width:160px; height:90px;"
+                 loading="lazy">
+            <div class="flex-1 min-w-0">
+              <h4 class="text-[14px] font-semibold truncate" x-text="v.name"></h4>
+              <div class="flex items-center gap-2 mt-1 flex-wrap">
+                <span class="pill bg-surface-100 text-surface-500 text-[11px] px-2 py-0.5 rounded" x-text="v.type"></span>
+                <span x-show="v.official" class="pill bg-accent/10 text-accent text-[11px] px-2 py-0.5 rounded">官方 ✓</span>
+                <span class="text-[11px] text-surface-400" x-text="(v.published_at || '').slice(0,10)"></span>
+                <span x-show="v.iso_639_1" class="text-[11px] text-surface-400 uppercase" x-text="v.iso_639_1"></span>
+              </div>
+            </div>
+            <div class="flex items-center">
+              <input type="checkbox"
+                     :checked="trailerSelectedVideos.includes(v.key)"
+                     @change="toggleVideo(v.key)"
+                     :aria-label="'选择预告片 ' + (v.name || v.key)"
+                     class="w-5 h-5 accent-accent cursor-pointer">
+            </div>
+          </label>
+        </template>
+        <div x-show="trailerVideos.length > 0" class="sticky bottom-4 pt-2">
+          <button @click="startTrailerJobs()"
+                  :disabled="trailerSelectedVideos.length===0 || trailerSubmitting"
+                  class="btn-primary w-full px-5 py-3 rounded-xl text-[14px] font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+            <span x-show="!trailerSubmitting"
+                  x-text="`开始翻译 (${trailerSelectedVideos.length} 个预告)`"></span>
+            <span x-show="trailerSubmitting">提交中...</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 5: Confirmation -->
+      <div x-show="trailerStep===5" x-cloak class="glass rounded-2xl p-10 text-center">
+        <div class="w-14 h-14 mx-auto mb-4 rounded-full bg-accent/15 flex items-center justify-center text-accent text-2xl">✓</div>
+        <h3 class="text-[18px] font-semibold mb-2" style="font-family: 'Iowan Old Style', 'PingFang SC', serif;">
+          已创建 <span x-text="trailerCreatedCount"></span> 个预告项目
+        </h3>
+        <p class="text-[13px] text-surface-500 mb-6">正在后台下载并翻译，您可以在项目列表查看进度。</p>
+        <button @click="showTrailerProjects()"
+                class="btn-primary px-5 py-2 rounded-lg text-[13px] font-medium">查看项目列表</button>
+        <p class="mt-3 text-[11px] text-surface-400">2 秒后自动跳转...</p>
+      </div>
+    </div>
+
+    <!-- ========== PROJECTS LIST ========== -->
+    <div x-show="view==='projects'" class="p-6 fade-up">
+      <div class="projects-list-header flex justify-between items-center mb-6">
+        <div>
+          <h2 class="text-[22px] font-semibold">项目列表</h2>
+          <p class="text-[13px] text-surface-400 mt-0.5">所有字幕翻译项目</p>
+        </div>
+        <div class="projects-list-actions flex items-center gap-3">
+          <label class="flex items-center gap-2 text-[12px] text-surface-500 cursor-pointer">
+            <input type="checkbox" x-model="showArchived" @change="loadProjects()" aria-label="显示归档项目" class="accent-accent">
+            显示归档
+          </label>
+          <button @click="setView('home')" class="projects-new-button btn-primary px-4 py-2 rounded-xl text-[13px] font-medium">
+            <span class="flex items-center gap-1.5">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+              新建项目
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Empty -->
+      <div x-show="projects.length===0" class="text-center py-20">
+        <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-surface-100 flex items-center justify-center">
+          <svg class="w-8 h-8 text-surface-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>
+        </div>
+        <p class="text-[15px] text-surface-400">暂无项目</p>
+        <p class="text-[13px] text-surface-300 mt-1">在首页拖入视频开始使用</p>
+      </div>
+
+      <!-- Project Cards -->
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <template x-for="p in projects" :key="p.id">
+          <div class="glass rounded-2xl p-5 cursor-pointer hover:shadow-lg transition-all duration-200"
+               role="button"
+               tabindex="0"
+               :aria-label="'打开项目 ' + (p.name || p.id)"
+               @click="openProject(p.id)"
+               @keydown.enter.self.prevent="openProject(p.id)"
+               @keydown.space.self.prevent="openProject(p.id)">
+            <div class="flex justify-between items-start mb-3">
+              <h3 class="text-[14px] font-semibold truncate flex-1 mr-3" x-text="p.name"></h3>
+              <span class="pill flex-shrink-0"
+                    :style="`background: ${statusColor(p).bg}; color: ${statusColor(p).text};`"
+                    x-text="statusLabel(p)"></span>
+            </div>
+
+            <!-- Progress bar for processing / trailer stages -->
+            <div x-show="p.status==='processing' || !!p.pipeline_stage" class="mb-3">
+              <div class="h-1 rounded-full overflow-hidden" style="background: #e5edf2;">
+                <div class="h-full transition-all duration-700 shimmer-bar" :style="`width:${p.progress || 0}%; background: ${statusColor(p).hex};`"></div>
+              </div>
+              <p class="text-[11px] text-surface-400 mt-1.5 truncate" x-text="p.progress_msg"></p>
+            </div>
+
+            <div class="flex justify-between items-center text-[12px] text-surface-400">
+              <span x-text="p.duration ? formatDuration(p.duration) : '--:--'"></span>
+              <div class="flex items-center gap-2">
+                <span x-show="p.archived" class="pill bg-surface-100 text-surface-500">已归档</span>
+                <span x-text="formatDate(p.created_at)"></span>
+              </div>
+            </div>
+            <div class="flex justify-between items-center mt-3 pt-3 border-t border-black/[0.04]">
+              <span x-show="p.output_video" class="text-[11px] text-success font-medium flex items-center gap-1">
+                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+                视频已就绪
+              </span>
+              <span x-show="!p.output_video"></span>
+              <div class="flex gap-1.5 flex-wrap justify-end">
+                <button x-show="p.output_video"
+                        @click.stop="revealInFinder(p.id)"
+                        :disabled="isProjectMutationPending('reveal', p.id)"
+                        :aria-label="'打开项目位置 ' + (p.name || p.id)"
+                        class="btn-secondary text-[12px] px-2.5 py-1 rounded-lg flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="打开项目位置">
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12A2.25 2.25 0 004.5 20.25h15A2.25 2.25 0 0021.75 18V9A2.25 2.25 0 0019.5 6.75h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>
+                  <span x-text="isProjectMutationPending('reveal', p.id) ? '打开中...' : '显示'"></span>
+                </button>
+                <button @click.stop="renameProject(p)"
+                        :disabled="isProjectMutationPending('rename', p.id)"
+                        class="btn-secondary text-[12px] px-2.5 py-1 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed">重命名</button>
+                <button x-show="!p.archived"
+                        @click.stop="archiveProject(p, true)"
+                        :disabled="isProjectMutationPending('archive', p.id)"
+                        class="btn-secondary text-[12px] px-2.5 py-1 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                        x-text="isProjectMutationPending('archive', p.id) ? '归档中...' : '归档'"></button>
+                <button x-show="p.archived"
+                        @click.stop="archiveProject(p, false)"
+                        :disabled="isProjectMutationPending('archive', p.id)"
+                        class="btn-secondary text-[12px] px-2.5 py-1 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                        x-text="isProjectMutationPending('archive', p.id) ? '恢复中...' : '恢复'"></button>
+                <button @click.stop="deleteProject(p.id)"
+                        :disabled="p.status==='processing' || !!p.pipeline_stage || isProjectMutationPending('delete', p.id)"
+                        class="btn-danger text-[12px] px-2.5 py-1 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="删除"
+                        x-text="isProjectMutationPending('delete', p.id) ? '删除中...' : '删除'"></button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- ========== PROJECT DETAIL ========== -->
+    <div x-show="view==='detail'" class="flex flex-col h-full fade-up">
+      <!-- Header -->
+      <div class="project-detail-header flex-shrink-0 px-6 py-3 glass-dark border-b border-black/[0.04] flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <button @click="setView('projects')" aria-label="返回项目列表" title="返回项目列表" class="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-black/[0.04] transition-colors">
+            <svg class="w-5 h-5 text-surface-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
+          </button>
+          <div>
+            <h2 class="text-[14px] font-semibold" x-text="currentProject?.name" :title="currentProject?.name || ''"></h2>
+            <div class="flex items-center gap-2 mt-0.5">
+              <span class="pill"
+                    :style="`background: ${statusColor(currentProject || {}).bg}; color: ${statusColor(currentProject || {}).text};`"
+                    x-text="statusLabel(currentProject || {})"></span>
+              <span x-show="currentProject?.duration" class="text-[11px] text-surface-400" x-text="formatDuration(currentProject?.duration || 0)"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Action buttons -->
+        <div class="project-detail-actions flex items-center gap-2">
+          <select x-model="asrLanguage" aria-label="项目 ASR 语言" class="text-[12px] px-2.5 py-1.5 rounded-lg">
+            <option value="auto">语言：自动</option><option value="ja">日语</option><option value="en">英语</option><option value="zh">中文</option>
+          </select>
+          <select x-model="targetLang" aria-label="项目目标语言" class="text-[12px] px-2.5 py-1.5 rounded-lg">
+            <option value="简体中文">简体中文</option><option value="繁体中文">繁体中文</option><option value="English">英语</option><option value="Japanese">日语</option>
+          </select>
+          <button @click="startFull()" :disabled="projectActionsDisabled(currentProject)" class="btn-primary px-4 py-1.5 rounded-xl text-[12px] font-medium flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" /></svg>
+            <span x-text="projectActionPending === 'start-full' ? '启动中...' : (currentProject?.status === 'error' ? '重试' : '一键处理')"></span>
+          </button>
+          <button x-show="isProjectBusy(currentProject) || projectActionPending === 'cancel'"
+                  @click="cancelTask()"
+                  :disabled="projectActionPending === 'cancel'"
+                  class="btn-secondary px-3 py-1.5 rounded-xl text-[12px] font-medium text-danger disabled:opacity-40 disabled:cursor-not-allowed"
+                  x-text="projectActionPending === 'cancel' ? '取消中...' : '取消'"></button>
+
+          <!-- More actions dropdown -->
+          <div class="relative" x-data="{open:false}">
+            <button @click="open=!open"
+                    :disabled="projectActionsDisabled(currentProject)"
+                    aria-label="更多操作"
+                    title="更多操作"
+                    class="btn-secondary w-8 h-8 rounded-lg flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" /></svg>
+            </button>
+            <div x-show="open" @click.away="open=false" class="absolute right-0 mt-2 glass rounded-xl shadow-xl py-1.5 z-30 w-44 slide-down">
+              <button @click="startASR(); open=false" :disabled="projectActionsDisabled(currentProject)" class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
+                <svg class="w-4 h-4 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" /></svg>
+                仅识别
+              </button>
+              <button @click="startTranslate(); open=false" :disabled="projectActionsDisabled(currentProject)" class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
+                <svg class="w-4 h-4 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802" /></svg>
+                仅翻译
+              </button>
+              <button @click="startBurn(); open=false" :disabled="projectActionsDisabled(currentProject)" class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
+                <svg class="w-4 h-4 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" /><path stroke-linecap="round" stroke-linejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z" /></svg>
+                烧录字幕
+              </button>
+              <div class="border-t border-black/[0.06] my-1"></div>
+              <button @click="exportSrt('translated'); open=false"
+                      :disabled="!canExportSrt('translated')"
+                      :title="canExportSrt('translated') ? '导出翻译字幕' : exportUnavailableMessage('translated')"
+                      class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] disabled:opacity-40 disabled:cursor-not-allowed"
+                      x-text="exportSrtLabel('translated')"></button>
+              <button @click="exportSrt('bilingual'); open=false"
+                      :disabled="!canExportSrt('bilingual')"
+                      :title="canExportSrt('bilingual') ? '导出双语字幕' : exportUnavailableMessage('bilingual')"
+                      class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] disabled:opacity-40 disabled:cursor-not-allowed"
+                      x-text="exportSrtLabel('bilingual')"></button>
+              <button @click="exportSrt('original'); open=false"
+                      :disabled="!canExportSrt('original')"
+                      :title="canExportSrt('original') ? '导出原文字幕' : exportUnavailableMessage('original')"
+                      class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] disabled:opacity-40 disabled:cursor-not-allowed"
+                      x-text="exportSrtLabel('original')"></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TMDB association banner -->
+      <div x-show="currentProject?.tmdb_id"
+           class="flex-shrink-0 mx-6 mt-3 glass rounded-2xl p-3 flex items-center justify-between border-l-2 border-l-success">
+        <div class="flex items-center gap-3">
+          <template x-if="currentProject?.poster_path">
+            <img :src="`https://image.tmdb.org/t/p/w92${currentProject?.poster_path}`" class="w-10 h-14 rounded-lg object-cover" />
+          </template>
+          <div>
+            <p class="text-[12.5px] font-semibold flex items-center gap-2">
+              <span x-text="currentProject?.show_title || currentProject?.name"></span>
+              <span class="text-[11px] text-surface-400" x-show="currentProject?.season_number" x-text="currentProject?.season_number ? `S${String(currentProject.season_number).padStart(2,'0')}` : ''"></span>
+            </p>
+            <p class="text-[11px] text-surface-400">
+              TMDB <span x-text="currentProject?.tmdb_type === 'tv' ? '剧集' : '电影'"></span>
+              · ID <span x-text="currentProject?.tmdb_id"></span>
+              <span x-show="currentProject?.original_language" x-text="currentProject?.original_language ? `· ${currentProject.original_language.toUpperCase()}` : ''"></span>
+            </p>
+          </div>
+        </div>
+        <button @click="unlinkTmdb()"
+                :disabled="isProjectMutationPending('tmdb', currentProject?.id)"
+                class="text-[11px] text-surface-400 hover:text-danger transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                x-text="isProjectMutationPending('tmdb', currentProject?.id) ? '处理中...' : '解除关联'"></button>
+      </div>
+
+      <!-- TMDB candidate picker (shown when ambiguous) -->
+      <div x-show="!currentProject?.tmdb_id && currentProject?.tmdb_candidates?.length > 0"
+           class="flex-shrink-0 mx-6 mt-3 glass rounded-2xl p-3 border-l-2 border-l-warn">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-[12.5px] font-semibold">未确定 TMDB 关联,从候选中选择</p>
+          <button @click="dismissTmdbCandidates()"
+                  :disabled="isProjectMutationPending('tmdb', currentProject?.id)"
+                  class="text-[11px] text-surface-400 hover:text-danger disabled:opacity-40 disabled:cursor-not-allowed"
+                  x-text="isProjectMutationPending('tmdb', currentProject?.id) ? '处理中...' : '跳过'"></button>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <template x-for="c in (currentProject?.tmdb_candidates || [])" :key="c.tmdb_id">
+            <button @click="pickTmdbCandidate(c)"
+                    :disabled="isProjectMutationPending('tmdb', currentProject?.id)"
+                    class="flex items-start gap-2 p-2 rounded-lg hover:bg-black/[0.04] text-left disabled:opacity-50 disabled:cursor-not-allowed">
+              <template x-if="c.poster_path">
+                <img :src="`https://image.tmdb.org/t/p/w92${c.poster_path}`" class="w-10 h-14 rounded object-cover flex-shrink-0" />
+              </template>
+              <template x-if="!c.poster_path">
+                <div class="w-10 h-14 rounded bg-surface-200 flex-shrink-0"></div>
+              </template>
+              <div class="flex-1 min-w-0">
+                <p class="text-[12px] font-semibold truncate" x-text="c.title"></p>
+                <p class="text-[11px] text-surface-400">
+                  <span x-text="c.year || '?'"></span>
+                  <span x-show="c.original_language" x-text="c.original_language ? `· ${c.original_language.toUpperCase()}` : ''"></span>
+                </p>
+                <p class="text-[10.5px] text-surface-400 line-clamp-2" x-text="c.overview"></p>
+              </div>
+            </button>
+          </template>
+        </div>
+      </div>
+
+      <!-- Embedded subtitle bypass banner -->
+      <div x-show="currentProject && currentProject.selected_subtitle_track !== null && currentProject.selected_subtitle_track !== undefined"
+           class="flex-shrink-0 mx-6 mt-3 glass rounded-2xl p-3 flex items-center justify-between border-l-2 border-l-accent">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-xl bg-accent/10 flex items-center justify-center">
+            <svg class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0V12a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 12V5.25" /></svg>
+          </div>
+          <div>
+            <p class="text-[12.5px] font-semibold">检测到内嵌字幕 (第 <span x-text="(currentProject?.selected_subtitle_track ?? 0) + 1"></span> 条)</p>
+            <p class="text-[11px] text-surface-400" x-text="describeSubtitleTrack(currentProject)"></p>
+          </div>
+        </div>
+        <label class="flex items-center gap-2 cursor-pointer select-none">
+          <span class="text-[12px] text-surface-500" x-text="currentProject?.prefer_embedded_subtitle ? '跳过 ASR 直接使用' : '强制重新听写'"></span>
+          <button type="button"
+                  @click="toggleEmbeddedSubtitle()"
+                  aria-label="切换内嵌字幕处理方式"
+                  :aria-pressed="!!currentProject?.prefer_embedded_subtitle"
+                  :disabled="isProjectMutationPending('embedded-subtitle', currentProject?.id)"
+                  :class="currentProject?.prefer_embedded_subtitle ? 'bg-accent' : 'bg-surface-300'"
+                  class="relative w-10 h-6 rounded-full transition-colors disabled:opacity-50 disabled:cursor-wait">
+            <span :class="currentProject?.prefer_embedded_subtitle ? 'translate-x-4' : 'translate-x-0'"
+                  class="absolute left-0.5 top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform"></span>
+          </button>
+        </label>
+      </div>
+
+      <!-- Video output banner -->
+      <div x-show="currentProject?.output_video" class="flex-shrink-0 mx-6 mt-3 glass rounded-2xl p-4 flex items-center justify-between border-l-2 border-l-success">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-success/10 flex items-center justify-center">
+            <svg class="w-5 h-5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+          </div>
+          <div>
+            <p class="text-[13px] font-semibold text-success">带字幕的视频已就绪！</p>
+            <p class="text-[12px] text-surface-400">字幕已烧录到视频中</p>
+          </div>
+        </div>
+        <a :href="`/api/projects/${currentProject?.id}/download-video`" class="btn-success px-4 py-2 rounded-xl text-[13px] font-medium flex items-center gap-2 no-underline">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+          下载视频
+        </a>
+      </div>
+
+      <div x-show="currentProject?.status==='error'" class="flex-shrink-0 mx-6 mt-3 glass rounded-2xl p-4 flex items-center justify-between border-l-2 border-l-danger">
+        <div>
+          <p class="text-[13px] font-semibold text-danger">处理失败</p>
+          <p class="text-[12px] text-surface-500 mt-0.5" x-text="currentProject?.error || '可以修正设置后重试'"></p>
+        </div>
+        <button @click="startFull()"
+                :disabled="projectActionsDisabled(currentProject)"
+                class="btn-primary px-4 py-2 rounded-xl text-[13px] font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                x-text="projectActionPending === 'start-full' ? '启动中...' : '重试'"></button>
+      </div>
+
+      <!-- Progress bar (when processing) -->
+      <div x-show="isProjectBusy(currentProject)" class="flex-shrink-0 px-6 mt-3">
+        <div class="glass rounded-2xl p-4">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-[12px] font-medium text-surface-600 flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-accent status-pulse"></span>
+              处理中...
+            </span>
+            <span class="text-[12px] font-semibold text-accent" x-text="`${progressPct}%`"></span>
+          </div>
+          <div class="h-1.5 bg-surface-200 rounded-full overflow-hidden">
+            <div class="h-full bg-accent rounded-full transition-all duration-700 shimmer-bar" :style="`width:${progressPct}%`"></div>
+          </div>
+          <p x-show="progressRefreshError" class="text-[12px] text-danger mt-2" x-text="progressRefreshError"></p>
+          <p x-show="!progressRefreshError" class="text-[12px] text-surface-400 mt-2" x-text="progressMsg || '等待进度更新...'"></p>
+        </div>
+      </div>
+
+      <!-- Subtitle Table -->
+      <div class="flex-1 overflow-y-auto px-6 mt-3 mb-3">
+        <div x-show="subtitles.length===0" class="text-center py-16">
+          <div class="w-14 h-14 mx-auto mb-3 rounded-2xl bg-surface-100 flex items-center justify-center">
+            <svg class="w-7 h-7 text-surface-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
+          </div>
+          <p class="text-[14px] text-surface-400">暂无字幕</p>
+          <p class="text-[12px] text-surface-300 mt-1">点击「一键处理」开始</p>
+        </div>
+
+        <div x-show="subtitles.length>0" class="subtitle-table-panel glass rounded-2xl overflow-hidden">
+          <table class="w-full text-[13px]">
+            <thead class="sticky top-0 bg-white/80 backdrop-blur-xl border-b border-black/[0.06] z-10">
+              <tr>
+                <th class="text-left px-4 py-2.5 text-[11px] text-surface-400 font-medium w-12">#</th>
+                <th class="text-left px-4 py-2.5 text-[11px] text-surface-400 font-medium w-28">时间</th>
+                <th class="text-left px-4 py-2.5 text-[11px] text-surface-400 font-medium">原文</th>
+                <th class="text-left px-4 py-2.5 text-[11px] text-surface-400 font-medium">译文</th>
+                <th class="text-right px-4 py-2.5 text-[11px] text-surface-400 font-medium w-28">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="(s, idx) in subtitles" :key="idx">
+                <tr class="sub-row border-b border-black/[0.03] last:border-0" :class="s.filtered ? 'opacity-25' : ''">
+                  <td class="px-4 py-2.5 text-[12px] text-surface-300 tabular-nums" x-text="s.index"></td>
+                  <td class="px-4 py-2.5 text-[12px] text-surface-400 font-mono tabular-nums" x-text="s.start?.substring(0,8)"></td>
+                  <td class="px-4 py-2.5 text-surface-700" x-text="s.text"></td>
+                  <td class="px-4 py-2.5">
+                    <div x-show="editingIdx !== idx" @dblclick="startEdit(idx, s.translation)"
+                         @keydown.enter.prevent="startEdit(idx, s.translation)"
+                         role="button"
+                         tabindex="0"
+                         :aria-label="'编辑第 ' + s.index + ' 条字幕译文'"
+                         class="cursor-text min-h-[20px]"
+                         :class="s.translation ? 'text-accent font-medium' : 'text-surface-300 italic'"
+                         x-text="s.translation || (s.filtered ? s.filter_reason : '双击编辑')"></div>
+                    <textarea x-show="editingIdx === idx" x-ref="editArea" x-model="editText"
+                              @blur="saveEdit(idx)" @keydown.enter.prevent="saveEdit(idx)" @keydown.escape="editingIdx=-1"
+                              :aria-label="'编辑第 ' + s.index + ' 条字幕译文'"
+                              class="w-full px-3 py-2 rounded-lg text-[13px] resize-none" rows="2"></textarea>
+                  </td>
+                  <td class="px-4 py-2.5">
+                    <div class="flex justify-end gap-1">
+                      <button @click="addSubtitleAfter(idx)"
+                              :disabled="subtitleActionsDisabled()"
+                              class="btn-secondary w-7 h-7 rounded-lg text-[12px] disabled:opacity-40 disabled:cursor-not-allowed"
+                              aria-label="新增下一行字幕" title="新增下一行">+</button>
+                      <button @click="splitSubtitle(idx)"
+                              :disabled="subtitleActionsDisabled()"
+                              class="btn-secondary w-7 h-7 rounded-lg text-[12px] disabled:opacity-40 disabled:cursor-not-allowed"
+                              aria-label="分割这一行字幕" title="分割这一行">÷</button>
+                      <button @click="deleteSubtitle(idx)"
+                              :disabled="subtitleActionsDisabled()"
+                              class="btn-secondary w-7 h-7 rounded-lg text-[12px] text-danger disabled:opacity-40 disabled:cursor-not-allowed"
+                              aria-label="删除这一行字幕" title="删除这一行">×</button>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Bottom Status Bar -->
+      <div class="flex-shrink-0 px-6 py-2.5 border-t border-black/[0.04] bg-white/30 backdrop-blur-xl flex items-center gap-5 text-[12px] text-surface-400">
+        <span x-text="progressMsg || ''"></span>
+        <div class="flex-1"></div>
+        <span>共 <strong class="text-surface-700" x-text="subtitles.length"></strong></span>
+        <span>已译 <strong class="text-accent" x-text="subtitles.filter(s=>s.translation && !s.filtered).length"></strong></span>
+        <span>已过滤 <strong class="text-surface-300" x-text="subtitles.filter(s=>s.filtered).length"></strong></span>
+      </div>
+    </div>
+
+    <!-- ========== SETTINGS ========== -->
+    <div x-show="view==='settings'" class="settings-view p-6 max-w-3xl mx-auto fade-up">
+      <h2 class="text-[22px] font-semibold mb-1">系统设置</h2>
+      <p class="text-[13px] text-surface-400 mb-6">配置 API 密钥、语音识别和翻译选项</p>
+
+      <div class="space-y-5">
+        <!-- API 密钥 (shown when any selected translation service needs a key) -->
+        <div class="glass rounded-2xl p-5" x-show="settingsNeedsApiKeyPanel()" x-cloak>
+          <h3 class="text-[13px] font-semibold mb-4 flex items-center gap-2">
+            <svg class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" /></svg>
+            API 密钥
+          </h3>
+          <div class="space-y-3">
+            <template x-for="provider in settingsApiKeyProviders()" :key="provider">
+              <div class="space-y-2">
+                <div class="settings-api-key-row flex items-center gap-2">
+                  <label class="w-20 text-[13px] text-surface-500 font-medium" x-text="translationProviderLabel(provider)"></label>
+                  <input :type="showKeys[provider] ? 'text' : 'password'" x-model="settings.api_keys[provider]" :aria-label="translationProviderLabel(provider) + ' API 密钥'" class="settings-secret-input flex-1 px-3 py-2 rounded-xl text-[13px]" placeholder="输入 API 密钥...">
+                  <button @click="showKeys[provider]=!showKeys[provider]" class="btn-secondary w-8 h-8 rounded-lg flex items-center justify-center text-[13px]" :aria-label="(showKeys[provider] ? '隐藏 ' : '显示 ') + translationProviderLabel(provider) + ' API 密钥'" title="显示/隐藏">
+                    <svg x-show="!showKeys[provider]" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                    <svg x-show="showKeys[provider]" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
+                  </button>
+                  <button @click="pasteKey(provider)" class="btn-secondary px-2.5 py-2 rounded-lg text-[12px] font-medium" :aria-label="'从剪贴板粘贴 ' + translationProviderLabel(provider) + ' API 密钥'" title="从剪贴板粘贴">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" /></svg>
+                  </button>
+                  <button @click="testKey(provider)"
+                          :disabled="keyStatus[provider]==='testing' || !settings.api_keys[provider]?.trim()"
+                          class="btn-secondary px-3 py-2 rounded-lg text-[12px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                          :aria-label="'测试 ' + translationProviderLabel(provider) + ' API 密钥'"
+                          x-text="keyStatus[provider]==='testing' ? '测试中...' : '测试'"></button>
+                  <span x-show="keyStatus[provider]==='ok'" class="text-success text-[14px]">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+                  </span>
+                  <span x-show="keyStatus[provider]==='fail'" class="text-danger text-[14px]">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </span>
+                </div>
+                <div class="settings-api-key-help ml-20 pl-2">
+                  <button @click="openProviderPage(provider)" class="settings-login-button text-[12px] text-accent hover:text-accent-dark font-medium inline-flex items-center gap-1">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
+                    <span x-text="'登录 ' + translationProviderLabel(provider) + ' 获取密钥'"></span>
+                    <span class="text-surface-400 font-normal">（浏览器打开，复制密钥后点粘贴）</span>
+                  </button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Local CLI provider panel (visible when primary or polish uses a local CLI provider) -->
+        <div x-show="settingsUsesLocalCli()" x-cloak class="glass rounded-2xl p-5">
+          <h3 class="text-[13px] font-semibold mb-4 flex items-center gap-2">
+            <svg class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 3-3 3m4.5 0h6M5.25 5.25h13.5A2.25 2.25 0 0121 7.5v9a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 16.5v-9a2.25 2.25 0 012.25-2.25z" /></svg>
+            Claude / Codex CLI（本机）
+          </h3>
+          <div class="grid gap-5 lg:grid-cols-2">
+            <section class="space-y-4">
+              <h4 class="text-[13px] font-semibold">Claude Code</h4>
+              <div>
+                <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">Claude 模型</label>
+                <select x-model="settings.providers.claude_cli.model" aria-label="Claude CLI 模型" class="w-full px-3 py-2 rounded-xl text-[13px]">
+                  <option value="claude-opus-4-7">claude-opus-4-7</option>
+                  <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+                  <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+                </select>
+              </div>
+              <div class="rounded-2xl p-4" style="background: #fef3c7; border: 1px solid #fcd34d;">
+                <div class="flex gap-3">
+                  <span class="text-xl flex-shrink-0">⚠️</span>
+                  <div class="text-[13px]" style="color: #78350f;">
+                    <p class="font-semibold mb-1.5">需要本机已安装并登录 Claude Code</p>
+                    <p class="text-[12px] leading-relaxed mb-3">运行 <code class="px-1.5 py-0.5 rounded text-[11px] font-mono" style="background: rgba(0,0,0,0.05);">claude</code> 命令完成登录即可。未登录时翻译会失败。</p>
+                    <button @click="checkClaudeCliStatus()" :disabled="claudeCliChecking"
+                            class="btn-secondary px-3 py-1.5 rounded-lg text-[12px] font-medium"
+                            x-text="claudeCliChecking ? '检查中...' : '检查登录状态'"></button>
+                  </div>
+                </div>
+              </div>
+              <div class="text-[13px] px-3 py-2 rounded-lg">
+                <template x-if="!claudeCliStatus && !claudeCliChecking">
+                  <p class="text-surface-400">Claude 未检查</p>
+                </template>
+                <template x-if="claudeCliStatus && claudeCliStatus.installed && claudeCliStatus.logged_in">
+                  <p style="color: #166534;">✓ Claude 已安装且已登录</p>
+                </template>
+                <template x-if="claudeCliStatus && claudeCliStatus.installed && !claudeCliStatus.logged_in">
+                  <p style="color: #991b1b;">✗ Claude 已安装但未登录 — 请运行 <code class="px-1 rounded" style="background: rgba(0,0,0,0.05);">claude</code> 登录</p>
+                </template>
+                <template x-if="claudeCliStatus && claudeCliStatus.error">
+                  <p style="color: #991b1b;" x-text="'✗ Claude 检查失败：' + claudeCliStatus.error"></p>
+                </template>
+                <template x-if="claudeCliStatus && !claudeCliStatus.installed && !claudeCliStatus.error">
+                  <p style="color: #991b1b;">✗ 未检测到 claude 命令 — 请先安装 Claude Code</p>
+                </template>
+              </div>
+            </section>
+
+            <section class="space-y-4">
+              <h4 class="text-[13px] font-semibold">Codex</h4>
+              <div>
+                <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">Codex 模型</label>
+                <select x-model="settings.providers.codex_cli.model" aria-label="Codex CLI 模型" class="w-full px-3 py-2 rounded-xl text-[13px]">
+                  <option value="gpt-5.5">gpt-5.5</option>
+                  <option value="gpt-5.4">gpt-5.4</option>
+                  <option value="gpt-5.4-mini">gpt-5.4-mini</option>
+                  <option value="gpt-5.3-codex">gpt-5.3-codex</option>
+                  <option value="gpt-5.3-codex-spark">gpt-5.3-codex-spark</option>
+                </select>
+              </div>
+              <div class="rounded-2xl p-4" style="background: #fef3c7; border: 1px solid #fcd34d;">
+                <div class="flex gap-3">
+                  <span class="text-xl flex-shrink-0">⚠️</span>
+                  <div class="text-[13px]" style="color: #78350f;">
+                    <p class="font-semibold mb-1.5">需要本机已安装并登录 Codex CLI</p>
+                    <p class="text-[12px] leading-relaxed mb-3">运行 <code class="px-1.5 py-0.5 rounded text-[11px] font-mono" style="background: rgba(0,0,0,0.05);">codex login</code> 完成登录即可。未登录时翻译会失败。</p>
+                    <button @click="checkCodexCliStatus()" :disabled="codexCliChecking"
+                            class="btn-secondary px-3 py-1.5 rounded-lg text-[12px] font-medium"
+                            x-text="codexCliChecking ? '检查中...' : '检查登录状态'"></button>
+                  </div>
+                </div>
+              </div>
+              <div class="text-[13px] px-3 py-2 rounded-lg">
+                <template x-if="!codexCliStatus && !codexCliChecking">
+                  <p class="text-surface-400">Codex 未检查</p>
+                </template>
+                <template x-if="codexCliStatus && codexCliStatus.installed && codexCliStatus.logged_in">
+                  <p style="color: #166534;">✓ Codex 已安装且已登录</p>
+                </template>
+                <template x-if="codexCliStatus && codexCliStatus.installed && !codexCliStatus.logged_in">
+                  <p style="color: #991b1b;">✗ Codex 已安装但未登录 — 请运行 <code class="px-1 rounded" style="background: rgba(0,0,0,0.05);">codex login</code> 登录</p>
+                </template>
+                <template x-if="codexCliStatus && codexCliStatus.error">
+                  <p style="color: #991b1b;" x-text="'✗ Codex 检查失败：' + codexCliStatus.error"></p>
+                </template>
+                <template x-if="codexCliStatus && !codexCliStatus.installed && !codexCliStatus.error">
+                  <p style="color: #991b1b;">✗ 未检测到 codex 命令 — 请先安装 Codex CLI</p>
+                </template>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <!-- ASR -->
+        <div class="glass rounded-2xl p-5">
+          <h3 class="text-[13px] font-semibold mb-4 flex items-center gap-2">
+            <svg class="w-4 h-4 text-[#AF52DE]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" /></svg>
+            语音识别 (ASR)
+          </h3>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">Whisper 模型</label>
+              <select x-model="settings.asr.model_size" aria-label="Whisper 模型" class="w-full px-3 py-2 rounded-xl text-[13px]">
+                <option value="tiny">tiny (最快)</option><option value="base">base</option><option value="small">small</option>
+                <option value="medium">medium</option><option value="large-v3-turbo">large-v3-turbo (推荐)</option><option value="large-v3">large-v3 (最准)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">默认语言</label>
+              <select x-model="settings.asr.language" aria-label="ASR 默认语言" class="w-full px-3 py-2 rounded-xl text-[13px]">
+                <option value="auto">自动检测</option><option value="ja">日语</option><option value="en">英语</option><option value="zh">中文</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">时间偏移 (毫秒)</label>
+              <input type="number" x-model.number="settings.asr.offset_ms" aria-label="ASR 时间偏移毫秒" class="w-full px-3 py-2 rounded-xl text-[13px]">
+            </div>
+            <div class="flex items-end gap-5">
+              <label class="flex items-center gap-2 text-[13px]"><input type="checkbox" x-model="settings.asr.vad_filter" aria-label="启用 VAD 过滤"> VAD 过滤</label>
+              <label class="flex items-center gap-2 text-[13px]"><input type="checkbox" x-model="settings.asr.use_demucs" aria-label="启用 Demucs 人声分离"> Demucs</label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Translation -->
+        <div class="glass rounded-2xl p-5">
+          <h3 class="text-[13px] font-semibold mb-4 flex items-center gap-2">
+            <svg class="w-4 h-4 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802" /></svg>
+            翻译设置
+          </h3>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">主翻译引擎</label>
+              <select x-model="settings.translation.primary_provider" @change="fetchModels(settings.translation.primary_provider, 'primary')" aria-label="主翻译引擎" class="w-full px-3 py-2 rounded-xl text-[13px]">
+                <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="gemini">Gemini</option><option value="claude_cli">Claude CLI (本机)</option><option value="codex_cli">Codex CLI (本机)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">主翻译模型</label>
+              <div class="relative">
+                <select x-model="settings.translation.primary_model" aria-label="主翻译模型" class="w-full px-3 py-2 rounded-xl text-[13px]">
+                  <template x-for="m in primaryModels" :key="m"><option :value="m" x-text="m"></option></template>
+                </select>
+                <span x-show="modelLoading.primary" class="absolute right-8 top-2.5 text-[11px] text-surface-400 animate-pulse">加载中...</span>
+              </div>
+              <p x-show="modelErrors.primary" class="mt-1.5 text-[11px] text-danger" x-text="modelErrors.primary"></p>
+            </div>
+            <div>
+              <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">润色引擎</label>
+              <select x-model="settings.translation.polish_provider" @change="fetchModels(settings.translation.polish_provider, 'polish')" aria-label="润色引擎" class="w-full px-3 py-2 rounded-xl text-[13px]">
+                <option value="">不使用</option><option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="gemini">Gemini</option><option value="claude_cli">Claude CLI (本机)</option><option value="codex_cli">Codex CLI (本机)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">润色模型</label>
+              <div class="relative">
+                <select x-model="settings.translation.polish_model" aria-label="润色模型" class="w-full px-3 py-2 rounded-xl text-[13px]">
+                  <option value="">-</option>
+                  <template x-for="m in polishModels" :key="m"><option :value="m" x-text="m"></option></template>
+                </select>
+                <span x-show="modelLoading.polish" class="absolute right-8 top-2.5 text-[11px] text-surface-400 animate-pulse">加载中...</span>
+              </div>
+              <p x-show="modelErrors.polish" class="mt-1.5 text-[11px] text-danger" x-text="modelErrors.polish"></p>
+            </div>
+            <div>
+              <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">批量大小</label>
+              <input type="number" x-model.number="settings.translation.batch_size" min="1" max="20" aria-label="翻译批量大小" class="w-full px-3 py-2 rounded-xl text-[13px]">
+            </div>
+            <div>
+              <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">上下文窗口</label>
+              <input type="number" x-model.number="settings.translation.context_window" min="0" max="10" aria-label="翻译上下文窗口" class="w-full px-3 py-2 rounded-xl text-[13px]">
+            </div>
+            <div>
+              <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">默认目标语言</label>
+              <select x-model="settings.translation.target_language" aria-label="默认目标语言" class="w-full px-3 py-2 rounded-xl text-[13px]">
+                <option value="简体中文">简体中文</option><option value="繁体中文">繁体中文</option><option value="English">英语</option><option value="Japanese">日语</option>
+              </select>
+            </div>
+            <div class="flex items-end gap-5">
+              <label class="flex items-center gap-2 text-[13px]"><input type="checkbox" x-model="settings.translation.filter_repetitive" aria-label="过滤重复字幕"> 过滤重复</label>
+              <label class="flex items-center gap-2 text-[13px]"><input type="checkbox" x-model="settings.translation.filter_interjections" aria-label="过滤感叹词"> 过滤感叹词</label>
+            </div>
+          </div>
+          <!-- Full-document mode is provider-agnostic; the translator falls back to batching when needed. -->
+          <div class="mt-4 pt-4 border-t border-black/[0.05]">
+            <label class="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" x-model="settings.translation.full_doc_mode" aria-label="启用一次性全量翻译" class="mt-1 w-4 h-4">
+              <div>
+                <p class="text-[13px] font-medium">一次性全量翻译（尽量整份字幕一次请求，提升术语一致性）</p>
+                <p class="text-[12px] text-surface-400 mt-0.5">超出模型上下文时会自动回退到批量翻译。</p>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- 预告片 (TMDB) — always visible, separate from translation provider -->
+        <div class="glass rounded-2xl p-5">
+          <h3 class="text-[13px] font-semibold mb-4 flex items-center gap-2">
+            <svg class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg>
+            预告片 (TMDB)
+          </h3>
+          <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">TMDB API 密钥</label>
+          <div class="settings-tmdb-key-row flex gap-2">
+            <input :type="showKeys.tmdb ? 'text' : 'password'" x-model="settings.tmdb.api_key"
+                   placeholder="填写 TMDB 密钥..."
+                   aria-label="TMDB API 密钥"
+                   class="settings-secret-input flex-1 px-3 py-2 rounded-xl text-[13px]">
+            <button @click="showKeys.tmdb = !showKeys.tmdb"
+                    class="btn-secondary w-10 h-10 rounded-lg flex items-center justify-center text-[13px]" :aria-label="showKeys.tmdb ? '隐藏 TMDB API 密钥' : '显示 TMDB API 密钥'" title="显示/隐藏">
+              <svg x-show="!showKeys.tmdb" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+              <svg x-show="showKeys.tmdb" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
+            </button>
+            <button @click="pasteKey('tmdb')"
+                    class="btn-secondary w-10 h-10 rounded-lg flex items-center justify-center text-[13px]"
+                    aria-label="从剪贴板粘贴 TMDB API 密钥" title="从剪贴板粘贴">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" /></svg>
+            </button>
+            <button @click="testTmdbKey()"
+                    :disabled="keyStatus.tmdb==='testing' || !settings.tmdb.api_key?.trim()"
+                    class="btn-secondary px-3 py-2 rounded-lg text-[12px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    aria-label="测试 TMDB API 密钥"
+                    x-text="keyStatus.tmdb==='testing' ? '测试中...' : '测试'"></button>
+            <span x-show="keyStatus.tmdb==='ok'" class="text-success text-[14px] flex items-center" aria-label="TMDB 密钥测试成功" title="测试成功">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+            </span>
+            <span x-show="keyStatus.tmdb==='fail'" class="text-danger text-[14px] flex items-center" aria-label="TMDB 密钥测试失败" title="测试失败">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </span>
+          </div>
+          <p class="text-[11px] text-surface-400 mt-2">
+            在 <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" class="text-accent underline">themoviedb.org/settings/api</a> 免费获取；也可通过 AI_SUB_PRO_TMDB_API_KEY 环境变量提供
+          </p>
+
+          <hr class="my-4 border-surface-200">
+
+          <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">预告片下载清晰度</label>
+          <select x-model.number="settings.trailer.max_video_height" aria-label="预告片下载清晰度" class="w-full px-3 py-2 rounded-xl text-[13px]">
+            <option :value="1080">1080p（推荐）</option>
+            <option :value="720">720p</option>
+            <option :value="480">480p（节省流量）</option>
+            <option :value="0">最高画质（不限制）</option>
+          </select>
+          <p class="text-[11px] text-surface-400 mt-2">
+            上限分辨率；YouTube 实际可用画质可能更低
+          </p>
+        </div>
+
+        <button @click="saveSettings()"
+                :disabled="settingsSaving"
+                class="btn-primary w-full py-3 rounded-2xl text-[14px] font-semibold disabled:opacity-50 disabled:cursor-not-allowed">
+          <span x-text="settingsSaving ? '保存中...' : '保存设置'"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ========== KNOWLEDGE BASE ========== -->
+    <div x-show="view==='knowledge'" class="knowledge-view h-full flex" x-cloak>
+      <!-- Sidebar -->
+      <aside class="knowledge-sidebar w-60 border-r border-surface-200 flex flex-col" style="background: #f4f8fb;">
+        <div class="p-3 flex items-center justify-between">
+          <h2 class="text-[14px] font-semibold">知识库</h2>
+          <button @click="startNewKb()"
+                  :disabled="!!kbActionPending"
+                  class="kb-new-button btn-secondary px-2 py-1 rounded-lg text-[11px] disabled:opacity-40 disabled:cursor-not-allowed">+ 新建</button>
+        </div>
+        <div x-show="kbListLoading" x-cloak class="mx-2 mb-2 rounded-lg border border-surface-200 bg-white px-3 py-2 text-[12px] text-surface-500">
+          加载知识库列表...
+        </div>
+        <div x-show="kbListError" x-cloak class="mx-2 mb-2 rounded-lg border border-danger/30 px-3 py-2 text-[12px] text-danger" style="background: rgba(220,38,38,0.06);">
+          <p x-text="'加载失败：' + kbListError"></p>
+          <button @click="loadKbProjects()" class="mt-2 underline underline-offset-2">重试</button>
+        </div>
+        <div class="flex-1 overflow-y-auto px-2 pb-4 space-y-1">
+          <template x-for="kb in kbProjects" :key="kb.key">
+            <button @click="selectKb(kb.key)"
+                    :disabled="!!kbActionPending || kbSelectingKey === kb.key"
+                    :aria-busy="kbSelectingKey === kb.key"
+                    :class="kbSelectedKey === kb.key ? 'bg-accent/10 text-accent' : 'hover:bg-black/[0.02]'"
+                    class="w-full text-left px-3 py-2 rounded-lg text-[13px] disabled:opacity-50 disabled:cursor-wait">
+              <div class="flex items-center gap-2 min-w-0">
+                <div class="font-medium truncate flex-1 min-w-0" x-text="kb.show_title || kb.key"></div>
+                <span x-show="kbSelectingKey === kb.key" class="text-[11px] text-surface-400">加载中...</span>
+              </div>
+              <div class="text-[11px] text-surface-400" x-text="kb.tmdb_id ? `TMDB ${kb.tmdb_id}` : kb.key"></div>
+            </button>
+          </template>
+          <div x-show="kbProjects.length === 0 && !kbListLoading && !kbListError" class="text-[12px] text-surface-400 text-center py-6">
+            暂无 KB，点击 + 新建
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main editor -->
+      <div class="knowledge-editor flex-1 overflow-y-auto p-6">
+        <div x-show="!kbCurrent && kbSelectingKey" class="text-center py-20 text-surface-400 text-[13px]">
+          <p>加载知识库内容...</p>
+        </div>
+        <div x-show="!kbCurrent && kbSelectError" class="text-center py-20 text-[13px]">
+          <p class="text-danger" x-text="'加载失败：' + kbSelectError"></p>
+          <button x-show="kbSelectedKey"
+                  @click="selectKb(kbSelectedKey)"
+                  class="btn-secondary mt-3 px-3 py-1.5 rounded-lg text-[12px]">重试</button>
+        </div>
+        <div x-show="!kbCurrent && !kbSelectingKey && !kbSelectError" class="text-center py-20 text-surface-400 text-[13px]">
+          <p>选择或新建一个知识库开始编辑</p>
+        </div>
+
+        <template x-if="kbCurrent">
+          <div class="max-w-3xl mx-auto space-y-5">
+            <!-- Header row -->
+            <div class="glass rounded-2xl p-5">
+              <div class="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label class="block text-[11px] text-surface-400 mb-1">作品名称</label>
+                  <input x-model="kbCurrent.show_title" @input="kbDirty = true"
+                         aria-label="知识库作品名称"
+                         placeholder="例如：Elsbeth 第一季"
+                         class="w-full px-3 py-2 rounded-xl text-[13px] border border-surface-200">
+                </div>
+                <div>
+                  <label class="block text-[11px] text-surface-400 mb-1">TMDB ID（可选）</label>
+                  <input type="number" x-model.number="kbCurrent.tmdb_id" @input="kbDirty = true"
+                         aria-label="知识库 TMDB ID"
+                         placeholder="例如：1399"
+                         class="w-full px-3 py-2 rounded-xl text-[13px] border border-surface-200">
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <button @click="saveKb()"
+                        :disabled="!kbDirty || !!kbActionPending"
+                        class="btn-primary px-3 py-1.5 rounded-lg text-[12px] disabled:opacity-50 disabled:cursor-not-allowed"
+                        x-text="kbActionPending === 'save' ? '保存中...' : '保存'"></button>
+                <button @click="deleteKb()"
+                        :disabled="!!kbActionPending"
+                        class="btn-secondary px-3 py-1.5 rounded-lg text-[12px] text-danger disabled:opacity-50 disabled:cursor-not-allowed"
+                        x-text="kbActionPending === 'delete' ? '删除中...' : '删除'"></button>
+                <span x-show="kbDirty" class="text-[11px] text-surface-400">有未保存的修改</span>
+              </div>
+            </div>
+
+            <!-- Category sections -->
+            <template x-for="cat in ['characters','places','brands','slang']" :key="cat">
+              <div class="glass rounded-2xl p-5">
+                <button @click="toggleKbCategory(cat)"
+                        class="w-full flex items-center justify-between text-left mb-3">
+                  <span class="text-[13px] font-semibold uppercase"
+                        x-text="`${kbCategoryLabel(cat)} (${kbCurrent[cat]?.length || 0})`"></span>
+                  <span class="text-surface-400 text-[12px]" x-text="kbCollapsed[cat] ? '▶' : '▼'"></span>
+                </button>
+                <div x-show="!kbCollapsed[cat]" class="space-y-2">
+                  <template x-for="(entry, i) in kbCurrent[cat]" :key="i">
+                    <div class="knowledge-entry-grid grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center">
+                      <input x-model="entry.source" @input="kbDirty = true" placeholder="原文"
+                             :aria-label="kbCategoryLabel(cat) + '第 ' + (i + 1) + ' 条原文'"
+                             class="px-2 py-1.5 rounded-lg text-[12px] border border-surface-200">
+                      <input x-model="entry.target" @input="kbDirty = true" placeholder="译文"
+                             :aria-label="kbCategoryLabel(cat) + '第 ' + (i + 1) + ' 条译文'"
+                             class="px-2 py-1.5 rounded-lg text-[12px] border border-surface-200">
+                      <input x-model="entry.notes" @input="kbDirty = true" placeholder="备注（可选）"
+                             :aria-label="kbCategoryLabel(cat) + '第 ' + (i + 1) + ' 条备注'"
+                             class="px-2 py-1.5 rounded-lg text-[12px] border border-surface-200">
+                      <button @click="removeKbEntry(cat, i)"
+                              class="w-7 h-7 rounded-lg flex items-center justify-center text-surface-400 hover:bg-danger/10 hover:text-danger"
+                              aria-label="删除这一条术语" title="删除">✕</button>
+                    </div>
+                  </template>
+                  <button @click="addKbEntry(cat)"
+                          class="text-[12px] text-accent hover:underline">+ 添加术语</button>
+                </div>
+              </div>
+            </template>
+
+            <!-- Style notes -->
+            <div class="glass rounded-2xl p-5">
+              <h3 class="text-[13px] font-semibold uppercase mb-3">风格规则</h3>
+              <div class="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label class="block text-[11px] text-surface-400 mb-1">语气</label>
+                  <input x-model="kbCurrent.style_notes.tone" @input="kbDirty = true"
+                         aria-label="知识库语气规则"
+                         placeholder="例如：利落的律政幽默"
+                         class="w-full px-3 py-2 rounded-xl text-[13px] border border-surface-200">
+                </div>
+                <div>
+                  <label class="block text-[11px] text-surface-400 mb-1">表达视角</label>
+                  <input x-model="kbCurrent.style_notes.perspective" @input="kbDirty = true"
+                         aria-label="知识库表达视角"
+                         placeholder="例如：保留第一人称口吻"
+                         class="w-full px-3 py-2 rounded-xl text-[13px] border border-surface-200">
+                </div>
+              </div>
+              <label class="block text-[11px] text-surface-400 mb-1">规则（每行一条）</label>
+              <textarea x-model="kbRulesText" @input="kbDirty = true" rows="4"
+                        aria-label="知识库风格规则"
+                        placeholder="保留角色机锋&#10;使用自然现代中文表达"
+                        class="w-full px-3 py-2 rounded-xl text-[12px] border border-surface-200 font-mono"></textarea>
+            </div>
+          </div>
+        </template>
+
+        <!-- New KB prompt modal -->
+        <div x-show="kbNewKeyPrompt" class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" x-cloak
+             @click.self="cancelNewKb()"
+             @keydown.escape.window="cancelNewKb()">
+          <div class="glass rounded-2xl p-5" role="dialog" aria-modal="true" aria-labelledby="new-kb-title"
+               style="width: min(20rem, calc(100vw - 2rem));">
+            <h3 id="new-kb-title" class="text-[14px] font-semibold mb-3">新建知识库</h3>
+            <label class="block text-[11px] text-surface-400 mb-1">标识（例如 elsbeth_s1）</label>
+            <input x-ref="kbNewKeyInput"
+                   x-model="kbNewKeyInput"
+                   @keydown.enter="confirmNewKb()"
+                   aria-label="知识库标识"
+                   class="w-full px-3 py-2 rounded-xl text-[13px] border border-surface-200 mb-3">
+            <div class="flex gap-2 justify-end">
+              <button @click="cancelNewKb()"
+                      :disabled="kbActionPending === 'create'"
+                      class="btn-secondary px-3 py-1.5 rounded-lg text-[12px] disabled:opacity-40 disabled:cursor-not-allowed">取消</button>
+              <button @click="confirmNewKb()"
+                      :disabled="!kbNewKeyInput.trim() || !!kbActionPending"
+                      class="btn-primary px-3 py-1.5 rounded-lg text-[12px] disabled:opacity-50 disabled:cursor-not-allowed"
+                      x-text="kbActionPending === 'create' ? '创建中...' : '创建'"></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- App confirm modal -->
+<div x-show="confirmPrompt" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-4" x-cloak
+     @click.self="resolveConfirm(false)"
+     @keydown.escape.window="resolveConfirm(false)">
+  <div class="glass rounded-2xl p-5" role="dialog" aria-modal="true" aria-labelledby="app-confirm-title"
+       style="width: min(23rem, calc(100vw - 2rem));">
+    <h3 id="app-confirm-title" class="text-[14px] font-semibold mb-2" x-text="confirmTitle"></h3>
+    <p class="text-[13px] text-surface-500 leading-relaxed mb-5" x-text="confirmMessage"></p>
+    <div class="flex justify-end gap-2">
+      <button x-ref="confirmCancelButton"
+              @click="resolveConfirm(false)"
+              class="btn-secondary px-3 py-1.5 rounded-lg text-[12px]"
+              x-text="confirmCancelText"></button>
+      <button @click="resolveConfirm(true)"
+              class="px-3 py-1.5 rounded-lg text-[12px] font-medium"
+              :class="confirmIntent === 'danger' ? 'btn-danger' : 'btn-primary'"
+              x-text="confirmConfirmText"></button>
+    </div>
+  </div>
+</div>
+
+<!-- Project rename modal -->
+<div x-show="projectRenamePrompt" class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" x-cloak
+     @click.self="cancelRenameProject()"
+     @keydown.escape.window="cancelRenameProject()">
+  <div class="glass rounded-2xl p-5" role="dialog" aria-modal="true" aria-labelledby="project-rename-title"
+       style="width: min(22rem, calc(100vw - 2rem));">
+    <h3 id="project-rename-title" class="text-[14px] font-semibold mb-3">重命名项目</h3>
+    <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">项目名称</label>
+    <input x-ref="renameProjectInput"
+           x-model="projectRenameInput"
+           @keydown.enter="confirmRenameProject()"
+           aria-label="项目名称"
+           class="w-full px-3 py-2 rounded-xl text-[13px] mb-4">
+    <div class="flex justify-end gap-2">
+      <button @click="cancelRenameProject()"
+              :disabled="isProjectMutationPending('rename', projectRenameTarget?.id)"
+              class="btn-secondary px-3 py-1.5 rounded-lg text-[12px] disabled:opacity-40 disabled:cursor-not-allowed">取消</button>
+      <button @click="confirmRenameProject()"
+              :disabled="!projectRenameInput.trim() || isProjectMutationPending('rename', projectRenameTarget?.id)"
+              class="btn-primary px-3 py-1.5 rounded-lg text-[12px] disabled:opacity-50 disabled:cursor-not-allowed"
+              x-text="isProjectMutationPending('rename', projectRenameTarget?.id) ? '保存中...' : '保存'"></button>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden file input -->
+<input type="file" x-ref="fileInput" class="hidden" accept="video/*,.mkv,.avi,.mov,.mp4,.wmv,.flv,.webm"
+       aria-label="选择视频文件"
+       @change="handleFileSelect($event)">
+
+<script src="/static/js/app.js?v=20260530-ui40"></script>
+</body>
+</html>
