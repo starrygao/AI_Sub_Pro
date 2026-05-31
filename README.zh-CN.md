@@ -11,11 +11,25 @@ TMDB 与 YouTube 元数据创建预告片翻译项目。
 
 ![AI Sub Pro 首页截图](docs/assets/ai-sub-pro-home.png)
 
+## 安装包下载
+
+预编译安装包会随 GitHub Releases 发布。如果你的平台暂时没有安装包，请先使用
+下面的源码安装方式。
+
+当前打包支持：
+
+- macOS：从 `v1.0.0` release 资产下载 `AI_Sub_Pro_v1.0.0.dmg`。
+- Windows：当前 release 暂未附带预编译安装包；需要在 Windows 机器上运行
+  `build_win.bat` 从源码构建。
+
 ## 文档
 
-- [使用指南](docs/USAGE.md)：安装、配置、运行和导出字幕。
-- [演示与截图](docs/DEMO.md)：主要工作流的界面预览。
-- [发布说明](docs/RELEASE_NOTES.md)：当前公开版本摘要。
+- [使用指南](docs/USAGE.zh-CN.md) / [English](docs/USAGE.md)：安装、配置、运行和导出字幕。
+- [演示与截图](docs/DEMO.zh-CN.md) / [English](docs/DEMO.md)：主要工作流的界面预览。
+- [发布说明](docs/RELEASE_NOTES.zh-CN.md) / [English](docs/RELEASE_NOTES.md)：当前公开版本摘要。
+- [贡献指南](CONTRIBUTING.zh-CN.md) / [English](CONTRIBUTING.md)：本地开发和贡献规范。
+- [安全策略](SECURITY.zh-CN.md) / [English](SECURITY.md)：本地数据和 localhost 安全说明。
+- [第三方声明](THIRD_PARTY_NOTICES.zh-CN.md) / [English](THIRD_PARTY_NOTICES.md)：内置依赖和包依赖声明。
 
 ## 功能
 
@@ -46,7 +60,7 @@ TMDB 与 YouTube 元数据创建预告片翻译项目。
 ## 快速开始
 
 ```bash
-git clone https://github.com/starrygao/AI_Sub_Pro.git
+git clone https://github.com/<your-user>/AI_Sub_Pro.git
 cd AI_Sub_Pro
 
 python3 -m venv .venv

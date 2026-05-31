@@ -1,5 +1,7 @@
 # Release Notes
 
+Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
+
 ## v1.0.0 - Initial Open Source Release
 
 AI Sub Pro is now published as an MIT-licensed local-first subtitle workflow
@@ -24,3 +26,10 @@ Open-source preparation:
   excluded from the public repository.
 - `.env.example` and `config.example.json` document safe configuration.
 - Security, contribution, and third-party notice files are included.
+
+Packages:
+
+- `AI_Sub_Pro_v1.0.0.dmg` is attached for macOS users, with a matching
+  `.sha256` checksum file.
+- Windows packaging currently requires a Windows machine and `build_win.bat`;
+  no prebuilt Windows installer is attached to this release.

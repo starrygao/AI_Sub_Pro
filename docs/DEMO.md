@@ -1,5 +1,7 @@
 # Demo and Screenshots
 
+Language: [English](DEMO.md) | [简体中文](DEMO.zh-CN.md)
+
 The screenshots below use synthetic demo metadata and subtitle text. They do
 not include user videos, real customer data, API keys, or private project files.
 

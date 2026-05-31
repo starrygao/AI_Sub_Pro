@@ -12,11 +12,31 @@ frontend. Runtime data stays on the user's machine.
 
 ![AI Sub Pro home screen](docs/assets/ai-sub-pro-home.png)
 
+## Downloads
+
+Prebuilt packages are attached to GitHub Releases when available. If a package
+for your platform is not published yet, use the source install below.
+
+Current packaging support:
+
+- macOS: download `AI_Sub_Pro_v1.0.0.dmg` from the `v1.0.0` release assets.
+- Windows: no prebuilt installer is attached to the current release yet; build
+  from source with `build_win.bat` on a Windows machine.
+
 ## Documentation
 
-- [Usage guide](docs/USAGE.md): install, configure, run, and export subtitles.
-- [Demo and screenshots](docs/DEMO.md): visual tour of the main workflows.
-- [Release notes](docs/RELEASE_NOTES.md): current public release summary.
+- [Usage guide](docs/USAGE.md) / [中文](docs/USAGE.zh-CN.md): install,
+  configure, run, and export subtitles.
+- [Demo and screenshots](docs/DEMO.md) / [中文](docs/DEMO.zh-CN.md): visual
+  tour of the main workflows.
+- [Release notes](docs/RELEASE_NOTES.md) / [中文](docs/RELEASE_NOTES.zh-CN.md):
+  current public release summary.
+- [Contributing](CONTRIBUTING.md) / [中文](CONTRIBUTING.zh-CN.md): local setup
+  and contribution guidelines.
+- [Security policy](SECURITY.md) / [中文](SECURITY.zh-CN.md): private data and
+  localhost security notes.
+- [Third-party notices](THIRD_PARTY_NOTICES.md) / [中文](THIRD_PARTY_NOTICES.zh-CN.md):
+  bundled and package dependency notices.
 
 ## Features
 
@@ -50,7 +70,7 @@ Optional ASR backends:
 ## Quick Start
 
 ```bash
-git clone https://github.com/starrygao/AI_Sub_Pro.git
+git clone https://github.com/<your-user>/AI_Sub_Pro.git
 cd AI_Sub_Pro
 
 python3 -m venv .venv

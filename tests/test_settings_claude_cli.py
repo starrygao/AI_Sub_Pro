@@ -124,7 +124,7 @@ def test_test_key_hides_internal_exception_details():
     client = TestClient(app)
 
     raw_error = (
-        "Traceback from /Users/gaopengxiang/Desktop/AI_Sub_Pro/app/secret.py "
+        "Traceback from /Users/example/Desktop/AI_Sub_Pro/app/secret.py "
         "using key sk-live-secret"
     )
     with patch("app.engines.translator.TranslationProvider", side_effect=RuntimeError(raw_error)):
@@ -137,7 +137,7 @@ def test_test_key_hides_internal_exception_details():
     assert r.status_code == 200
     data = r.json()
     assert data["success"] is False
-    assert "/Users/gaopengxiang" not in data["message"]
+    assert "/Users/example" not in data["message"]
     assert "sk-live-secret" not in data["message"]
     assert "连接失败" in data["message"]
 

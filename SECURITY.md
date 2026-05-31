@@ -1,5 +1,7 @@
 # Security Policy
 
+Language: [English](SECURITY.md) | [简体中文](SECURITY.zh-CN.md)
+
 AI Sub Pro stores runtime data locally, including API keys configured through
 the UI. Do not commit `data/`, logs, project media, generated subtitles, or
 model caches.

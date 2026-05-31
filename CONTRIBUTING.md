@@ -1,5 +1,7 @@
 # Contributing
 
+Language: [English](CONTRIBUTING.md) | [简体中文](CONTRIBUTING.zh-CN.md)
+
 Contributions are welcome. Please keep changes focused and include tests for
 behavioral changes.
 

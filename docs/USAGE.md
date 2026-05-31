@@ -1,7 +1,20 @@
 # Usage Guide
 
+Language: [English](USAGE.md) | [简体中文](USAGE.zh-CN.md)
+
 AI Sub Pro runs locally and keeps project files, API keys, subtitle exports,
 and knowledge-base data on the user's machine.
+
+## Prebuilt Packages
+
+Prebuilt packages are attached to GitHub Releases when available.
+
+- macOS users can download `AI_Sub_Pro_v1.0.0.dmg` from the `v1.0.0` release
+  assets, drag **AI Sub Pro** into **Applications**, then right-click and choose
+  **Open** on first launch if Gatekeeper blocks an unsigned build.
+- Windows users can run a published Windows package when available. The current
+  release does not include a prebuilt Windows installer yet; build from source
+  on a Windows machine with `build_win.bat`.
 
 ## Install
 
@@ -13,7 +26,7 @@ Requirements:
 - Optional ASR backend: `mlx-whisper`, `faster-whisper`, or `openai-whisper`.
 
 ```bash
-git clone https://github.com/starrygao/AI_Sub_Pro.git
+git clone https://github.com/<your-user>/AI_Sub_Pro.git
 cd AI_Sub_Pro
 
 python3 -m venv .venv
