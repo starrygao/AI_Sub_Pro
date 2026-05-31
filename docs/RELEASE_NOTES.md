@@ -2,6 +2,35 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.1.0 - Display Language Preference
+
+This release adds the first public multilingual UI controls and refreshes the
+packaged macOS build.
+
+Highlights:
+
+- Added a **Display language** setting with **Follow system**, **Simplified
+  Chinese**, and **English** options.
+- The interface now applies the selected language to navigation, settings,
+  status labels, common workflow text, and translated system messages.
+- Existing settings that contain an unsupported display language are repaired
+  back to `auto`, and the settings API rejects unsupported values.
+- README and usage documentation now mention the display-language option in
+  English and Simplified Chinese.
+
+Quality:
+
+- Full test suite passed: `764 passed`.
+- Release files were scanned to avoid publishing local runtime data, build
+  caches, or personal account identifiers.
+
+Packages:
+
+- `AI_Sub_Pro_v1.1.0.dmg` is attached for macOS users, with a matching
+  `.sha256` checksum file.
+- Windows packaging currently requires a Windows machine and `build_win.bat`;
+  no prebuilt Windows installer is attached to this release.
+
 ## v1.0.0 - Initial Open Source Release
 
 AI Sub Pro is now published as an MIT-licensed local-first subtitle workflow
