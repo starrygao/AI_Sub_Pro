@@ -1,5 +1,7 @@
 # AI Sub Pro
 
+Language: [English](README.md) | [简体中文](README.zh-CN.md)
+
 AI Sub Pro is a local-first desktop and web tool for AI-assisted subtitle
 workflows. It helps transcribe video audio, translate subtitles, edit subtitle
 tracks, build bilingual output, and create trailer projects from TMDB and
