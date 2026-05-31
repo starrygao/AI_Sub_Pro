@@ -8,6 +8,14 @@ YouTube metadata.
 The app runs a local FastAPI backend with a browser or Electron/pywebview
 frontend. Runtime data stays on the user's machine.
 
+![AI Sub Pro home screen](docs/assets/ai-sub-pro-home.png)
+
+## Documentation
+
+- [Usage guide](docs/USAGE.md): install, configure, run, and export subtitles.
+- [Demo and screenshots](docs/DEMO.md): visual tour of the main workflows.
+- [Release notes](docs/RELEASE_NOTES.md): current public release summary.
+
 ## Features
 
 - Upload local video files and manage project state locally.
@@ -40,7 +48,7 @@ Optional ASR backends:
 ## Quick Start
 
 ```bash
-git clone https://github.com/<your-user>/AI_Sub_Pro.git
+git clone https://github.com/starrygao/AI_Sub_Pro.git
 cd AI_Sub_Pro
 
 python3 -m venv .venv
@@ -55,6 +63,9 @@ npm run build:css
 ```
 
 Open `http://127.0.0.1:18090` if the browser does not open automatically.
+
+See the [usage guide](docs/USAGE.md) for provider setup, trailer projects,
+knowledge-base workflows, exports, and troubleshooting.
 
 For backend-only development:
 
