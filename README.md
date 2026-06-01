@@ -10,7 +10,7 @@ YouTube metadata.
 The app runs a local FastAPI backend with a browser or Electron/pywebview
 frontend. Runtime data stays on the user's machine.
 
-![AI Sub Pro home screen](docs/assets/ai-sub-pro-home.png)
+![AI Sub Pro home screen](docs/assets/ai-sub-pro-home-en.png)
 
 ## Downloads
 

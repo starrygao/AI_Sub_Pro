@@ -10,14 +10,14 @@ not include user videos, real customer data, API keys, or private project files.
 The home view accepts local video files and shows active, processing, completed,
 and recent project state.
 
-![Home screen](assets/ai-sub-pro-home.png)
+![Home screen](assets/ai-sub-pro-home-en.png)
 
 ## Project List
 
 The project list tracks ready, running, and archived projects with quick actions
 for reveal, rename, archive, and delete.
 
-![Project list](assets/ai-sub-pro-projects.png)
+![Project list](assets/ai-sub-pro-projects-en.png)
 
 ## Subtitle Editor
 
@@ -25,14 +25,14 @@ The editor shows source and translated subtitle rows side by side. Maintainers
 can edit translations, split rows, add rows, delete rows, export SRT files, and
 burn final subtitles into video.
 
-![Subtitle editor](assets/ai-sub-pro-editor.png)
+![Subtitle editor](assets/ai-sub-pro-editor-en.png)
 
 ## Settings
 
 Settings cover API keys, local CLI providers, ASR model options, translation
 models, context windows, filters, and trailer configuration.
 
-![Settings screen](assets/ai-sub-pro-settings.png)
+![Settings screen](assets/ai-sub-pro-settings-en.png)
 
 ## Workflow Summary
 
