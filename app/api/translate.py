@@ -26,6 +26,7 @@ from app.utils.media import (
 from app.api.settings import require_translation_ready
 from app.api.projects import _apply_safe_defaults
 from app.utils.project_store import atomic_write_json, mutate_project, PID_PATTERN
+from app.engines.kb_trace import write_kb_usage_trace
 from app.engines.scheduler import (
     get_progress as _scheduler_get_progress,
     update_progress as _scheduler_update_progress,
@@ -500,6 +501,10 @@ def _run_translate_pipeline(pid: str, target_language: str, owns_registration: b
 
             from app.utils.srt import write_bilingual_srt
             write_bilingual_srt(blocks, os.path.join(pdir, "bilingual.srt"))
+            try:
+                write_kb_usage_trace(Path(pdir), translator.get_kb_usage_trace())
+            except Exception as e:
+                log.warning("failed to persist KB usage trace for %s: %s", pid, e)
 
             active_count = sum(1 for b in blocks if not b.filtered and (b.text or "").strip())
             translated_count = sum(1 for b in blocks if b.translation and not b.filtered)

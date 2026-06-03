@@ -131,3 +131,127 @@ def test_build_polish_prompt_includes_kb_snippet(monkeypatch):
 
     assert "Bob" in prompt
     assert "鲍勃" in prompt
+
+
+def test_translator_records_kb_usage_trace(monkeypatch):
+    from app.engines import translator as tmod
+    from app.engines.knowledge import KnowledgeBase
+    from app.engines.kb_models import ProjectKb, TermEntry
+
+    kb = KnowledgeBase()
+    kb.set_project("trace", ProjectKb(
+        show_title="Trace Show",
+        tmdb_id=808,
+        characters=[TermEntry(source="Maya Chen", target="玛雅·陈")],
+    ))
+    monkeypatch.setattr(tmod, "_shared_kb", kb, raising=False)
+
+    cfg = {
+        "translation": {
+            "primary_provider": "openai",
+            "primary_model": "gpt-4o",
+            "polish_provider": "",
+            "batch_size": 10,
+            "context_window": 3,
+        },
+        "api_keys": {"openai": "sk-test"},
+    }
+    t = tmod.SubtitleTranslator(cfg)
+    prompt = t._build_prompt(
+        target_lang="简体中文",
+        meta_info={"name": "Trace Show", "tmdb_id": 808},
+        kb_data=None,
+        context_before=[],
+        context_after=[],
+    )
+
+    assert "Maya Chen" in prompt
+    trace = t.get_kb_usage_trace()
+    assert trace["project"]["tmdb_id"] == 808
+    assert trace["matches"][0]["source"] == "Maya Chen"
+    assert trace["matches"][0]["target"] == "玛雅·陈"
+
+
+def test_trace_for_project_kb_includes_places_and_style_rules():
+    from app.engines.kb_trace import trace_for_project_kb
+    from app.engines.kb_models import ProjectKb, StyleNotes, TermEntry
+
+    trace = trace_for_project_kb(ProjectKb(
+        show_title="Trace Show",
+        tmdb_id=808,
+        places=[TermEntry(source="Harbor Nine", target="九号码头", notes="district")],
+        style_notes=StyleNotes(rules=["Preserve courtroom formality"]),
+    ))
+
+    assert trace["project"] == {"show_title": "Trace Show", "tmdb_id": 808}
+    assert {
+        "category": "places",
+        "source": "Harbor Nine",
+        "target": "九号码头",
+        "notes": "district",
+        "scope": "project",
+    } in trace["matches"]
+    assert {
+        "category": "style_notes",
+        "source": "Preserve courtroom formality",
+        "target": "",
+        "notes": "style rule",
+        "scope": "style",
+    } in trace["matches"]
+
+
+def test_translator_kb_usage_trace_returns_copy(monkeypatch):
+    from app.engines import translator as tmod
+    from app.engines.knowledge import KnowledgeBase
+    from app.engines.kb_models import ProjectKb, TermEntry
+
+    kb = KnowledgeBase()
+    kb.set_project("trace", ProjectKb(
+        show_title="Trace Show",
+        tmdb_id=808,
+        characters=[TermEntry(source="Maya Chen", target="玛雅·陈")],
+    ))
+    monkeypatch.setattr(tmod, "_shared_kb", kb, raising=False)
+
+    cfg = {
+        "translation": {
+            "primary_provider": "openai",
+            "primary_model": "gpt-4o",
+            "polish_provider": "",
+            "batch_size": 10,
+            "context_window": 3,
+        },
+        "api_keys": {"openai": "sk-test"},
+    }
+    t = tmod.SubtitleTranslator(cfg)
+    t._build_prompt(
+        target_lang="简体中文",
+        meta_info={"name": "Trace Show", "tmdb_id": 808},
+        kb_data=None,
+        context_before=[],
+        context_after=[],
+    )
+
+    trace = t.get_kb_usage_trace()
+    trace["project"]["tmdb_id"] = 999
+    trace["matches"][0]["source"] = "Changed"
+
+    fresh = t.get_kb_usage_trace()
+    assert fresh["project"]["tmdb_id"] == 808
+    assert fresh["matches"][0]["source"] == "Maya Chen"
+
+
+def test_write_kb_usage_trace_writes_json(tmp_path):
+    import json
+
+    from app.engines.kb_trace import write_kb_usage_trace
+
+    trace = {
+        "project": {"show_title": "Trace Show", "tmdb_id": 808},
+        "matches": [{"category": "characters", "source": "Maya", "target": "玛雅"}],
+    }
+
+    write_kb_usage_trace(tmp_path, trace)
+
+    data = json.loads((tmp_path / "kb_usage_trace.json").read_text(encoding="utf-8"))
+    assert data == trace
