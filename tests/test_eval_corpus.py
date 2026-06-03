@@ -49,6 +49,26 @@ def test_load_golden_corpus_rejects_missing_source_block_text(tmp_path):
         load_corpus_file(path)
 
 
+def test_load_golden_corpus_rejects_non_string_source_block_id(tmp_path):
+    from app.evaluation.corpus import CorpusValidationError, load_corpus_file
+
+    path = tmp_path / "non-string-source-id.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "cases": [
+                    _valid_case(source_blocks=[{"id": 1, "text": "Hello."}])
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CorpusValidationError, match="source_blocks|id"):
+        load_corpus_file(path)
+
+
 def test_load_golden_corpus_rejects_non_string_source_block_text(tmp_path):
     from app.evaluation.corpus import CorpusValidationError, load_corpus_file
 
@@ -104,6 +124,28 @@ def test_load_golden_corpus_rejects_missing_candidate_block_translation(tmp_path
     )
 
     with pytest.raises(CorpusValidationError, match="candidate_blocks|translation"):
+        load_corpus_file(path)
+
+
+def test_load_golden_corpus_rejects_non_string_candidate_block_id(tmp_path):
+    from app.evaluation.corpus import CorpusValidationError, load_corpus_file
+
+    path = tmp_path / "non-string-candidate-id.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "cases": [
+                    _valid_case(
+                        candidate_blocks=[{"id": 1, "translation": "你好。"}]
+                    )
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CorpusValidationError, match="candidate_blocks|id"):
         load_corpus_file(path)
 
 
@@ -190,6 +232,28 @@ def test_load_golden_corpus_rejects_supplied_invalid_reference_blocks(tmp_path, 
         load_corpus_file(path)
 
 
+def test_load_golden_corpus_rejects_empty_reference_translation(tmp_path):
+    from app.evaluation.corpus import CorpusValidationError, load_corpus_file
+
+    path = tmp_path / "empty-reference-translation.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "cases": [
+                    _valid_case(
+                        reference_blocks=[{"id": "1", "translation": "  "}]
+                    )
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CorpusValidationError, match="reference_blocks|translation"):
+        load_corpus_file(path)
+
+
 def test_load_golden_corpus_accepts_explicit_empty_reference_blocks(tmp_path):
     from app.evaluation.corpus import load_corpus_file
 
@@ -234,6 +298,27 @@ def test_load_golden_corpus_rejects_invalid_version(tmp_path, version):
     )
 
     with pytest.raises(CorpusValidationError, match="version"):
+        load_corpus_file(path)
+
+
+def test_load_golden_corpus_rejects_duplicate_case_ids(tmp_path):
+    from app.evaluation.corpus import CorpusValidationError, load_corpus_file
+
+    path = tmp_path / "duplicate-case-id.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "cases": [
+                    _valid_case(id="duplicate-case"),
+                    _valid_case(id="duplicate-case"),
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CorpusValidationError, match="duplicate|id"):
         load_corpus_file(path)
 
 

@@ -48,10 +48,9 @@ def _string_list(value: Any, field: str, case_id: str) -> list[str]:
 
 
 def _block_id(value: Any, field: str, case_id: str) -> str:
-    normalized = "" if value is None else str(value).strip()
-    if not normalized:
+    if not isinstance(value, str) or not value.strip():
         raise CorpusValidationError(f"{case_id}: {field} must be a non-empty string")
-    return normalized
+    return value.strip()
 
 
 def _block_text(
@@ -149,7 +148,6 @@ def _case(raw: Any) -> CorpusCase:
             case_id,
             "translation",
             allow_empty=True,
-            allow_empty_text=True,
         )
         if "reference_blocks" in raw
         else []
@@ -178,4 +176,9 @@ def load_corpus_file(path: str | Path) -> GoldenCorpus:
     if not isinstance(cases_raw, list) or not cases_raw:
         raise CorpusValidationError("cases must be a non-empty list")
     cases = [_case(item) for item in cases_raw]
+    seen_case_ids: set[str] = set()
+    for case in cases:
+        if case.id in seen_case_ids:
+            raise CorpusValidationError(f"cases contain duplicate id {case.id!r}")
+        seen_case_ids.add(case.id)
     return GoldenCorpus(version=version, cases=cases)
