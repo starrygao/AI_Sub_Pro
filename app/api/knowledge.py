@@ -197,6 +197,18 @@ def _merge_rejected_sources(existing_sources: list[str], new_sources: list[str])
     return merged
 
 
+def _normalize_usage_trace(data: dict) -> dict:
+    normalized = dict(data)
+    project = normalized.get("project")
+    matches = normalized.get("matches")
+    normalized["project"] = project if isinstance(project, dict) else {}
+    normalized["matches"] = [
+        item for item in matches
+        if isinstance(item, dict)
+    ] if isinstance(matches, list) else []
+    return normalized
+
+
 @router.get("/projects")
 def list_kb_projects():
     return {"projects": [
@@ -221,6 +233,23 @@ def get_kb_project_suggestions(pid: str):
         "project_id": pid,
         "suggestions": [item.to_dict() for item in suggestions],
     }
+
+
+@router.get("/projects/{pid}/usage-trace")
+def get_kb_project_usage_trace(pid: str):
+    pdir, _project = _load_project_or_http(pid)
+    trace_path = pdir / "kb_usage_trace.json"
+    if not trace_path.is_file():
+        return {"project": {}, "matches": []}
+
+    try:
+        data = json.loads(trace_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise HTTPException(status_code=400, detail="KB usage trace file is invalid")
+
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="KB usage trace file is invalid")
+    return _normalize_usage_trace(data)
 
 
 @router.post("/projects/{pid}/suggestions/accept")

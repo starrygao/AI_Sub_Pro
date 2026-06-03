@@ -243,6 +243,189 @@ def test_open_project_respects_unsaved_knowledge_guard_before_fetching_detail():
     assert result.returncode == 0, result.stderr
 
 
+def test_knowledge_frontend_loads_usage_trace_for_current_project():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          state.toast = () => {};
+          state.currentProject = {id: 'project one'};
+          state.api = async (url) => {
+            if (url !== '/api/knowledge/projects/project%20one/usage-trace') {
+              throw new Error(`unexpected URL ${url}`);
+            }
+            return {
+              project: ['bad'],
+              matches: [
+                {source: 'Alice', target: '爱丽丝', category: 'characters'},
+                'bad row',
+              ],
+              extra: 'kept',
+            };
+          };
+
+          await state.loadKbUsageTrace();
+
+          if (state.kbTraceLoading || state.kbTraceError) {
+            throw new Error(`expected loaded trace state, got ${JSON.stringify({
+              loading: state.kbTraceLoading,
+              error: state.kbTraceError,
+            })}`);
+          }
+          if (!state.kbUsageTrace || state.kbUsageTrace.extra !== 'kept') {
+            throw new Error(`expected trace payload, got ${JSON.stringify(state.kbUsageTrace)}`);
+          }
+          if (Object.keys(state.kbUsageTrace.project).length !== 0) {
+            throw new Error(`expected malformed project to normalize to object, got ${JSON.stringify(state.kbUsageTrace.project)}`);
+          }
+          if (state.kbUsageTrace.matches.length !== 1 || state.kbUsageTrace.matches[0].source !== 'Alice') {
+            throw new Error(`expected normalized matches, got ${JSON.stringify(state.kbUsageTrace.matches)}`);
+          }
+
+          state.currentProject = null;
+          await state.loadKbUsageTrace();
+          if (state.kbUsageTrace !== null || state.kbTraceLoading || state.kbTraceError) {
+            throw new Error(`expected trace to clear without current project, got ${JSON.stringify({
+              trace: state.kbUsageTrace,
+              loading: state.kbTraceLoading,
+              error: state.kbTraceError,
+            })}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_knowledge_frontend_ignores_stale_usage_trace_response():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          let releaseProjectA;
+          state.toast = () => {};
+          state.currentProject = {id: 'project-a'};
+          state.api = async (url) => {
+            if (url === '/api/knowledge/projects/project-a/usage-trace') {
+              await new Promise((resolve) => { releaseProjectA = resolve; });
+              return {project: {show_title: 'A'}, matches: [{source: 'Alice'}]};
+            }
+            if (url === '/api/knowledge/projects/project-b/usage-trace') {
+              return {project: {show_title: 'B'}, matches: [{source: 'Bob'}]};
+            }
+            throw new Error(`unexpected URL ${url}`);
+          };
+
+          const projectALoad = state.loadKbUsageTrace();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          if (!state.kbTraceLoading) throw new Error('expected trace loading while project A request is pending');
+
+          state.currentProject = {id: 'project-b'};
+          await state.loadKbUsageTrace();
+          if (state.kbUsageTrace.matches.length !== 1 || state.kbUsageTrace.matches[0].source !== 'Bob') {
+            throw new Error(`expected project B trace, got ${JSON.stringify(state.kbUsageTrace)}`);
+          }
+
+          releaseProjectA();
+          await projectALoad;
+          if (state.kbUsageTrace.matches.length !== 1 || state.kbUsageTrace.matches[0].source !== 'Bob') {
+            throw new Error(`expected stale project A trace to be ignored, got ${JSON.stringify(state.kbUsageTrace)}`);
+          }
+          if (state.kbTraceLoading || state.kbTraceError) {
+            throw new Error(`expected final project B trace state, got ${JSON.stringify({
+              loading: state.kbTraceLoading,
+              error: state.kbTraceError,
+            })}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_open_project_loads_usage_trace_after_setting_current_project():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          location: {protocol: 'http:', host: 'localhost'},
+          WebSocket: function() { this.close = () => {}; },
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const calls = [];
+          let traceSawCurrentProject = false;
+          state.toast = () => {};
+          state.api = async (url) => {
+            calls.push(url);
+            if (url === '/api/projects/project-open') {
+              return {id: 'project-open', name: 'Opened'};
+            }
+            if (url === '/api/projects/project-open/subtitles') {
+              return {blocks: [{index: 1, text: 'hello'}]};
+            }
+            if (url === '/api/knowledge/projects/project-open/usage-trace') {
+              traceSawCurrentProject = state.currentProject?.id === 'project-open';
+              return {project: {show_title: 'Opened'}, matches: [{source: 'Alice'}]};
+            }
+            throw new Error(`unexpected URL ${url}`);
+          };
+
+          await state.openProject('project-open');
+          await new Promise((resolve) => setTimeout(resolve, 0));
+
+          if (!traceSawCurrentProject) {
+            throw new Error('expected usage trace request after current project was assigned');
+          }
+          if (!calls.includes('/api/knowledge/projects/project-open/usage-trace')) {
+            throw new Error(`expected trace endpoint call, got ${JSON.stringify(calls)}`);
+          }
+          if (!state.kbUsageTrace || state.kbUsageTrace.matches[0]?.source !== 'Alice') {
+            throw new Error(`expected trace state to load, got ${JSON.stringify(state.kbUsageTrace)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_knowledge_frontend_loads_and_accepts_suggestions():
     result = run_js(
         """

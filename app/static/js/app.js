@@ -42,6 +42,7 @@ function app() {
     kbUsageTrace: null,
     kbTraceLoading: false,
     kbTraceError: '',
+    kbTraceRequestSeq: 0,
     projectRenamePrompt: false,
     projectRenameInput: '',
     projectRenameTarget: null,
@@ -723,6 +724,13 @@ function app() {
       this.kbSuggestionsError = '';
     },
 
+    clearKbUsageTrace() {
+      this.kbTraceRequestSeq += 1;
+      this.kbUsageTrace = null;
+      this.kbTraceLoading = false;
+      this.kbTraceError = '';
+    },
+
     async loadKbSuggestions() {
       if (!this.currentProject?.id) {
         this.clearKbSuggestions();
@@ -755,6 +763,44 @@ function app() {
       } finally {
         if (this.kbSuggestionsRequestSeq === requestId && String(this.currentProject?.id || '') === projectId) {
           this.kbSuggestionsLoading = false;
+        }
+      }
+    },
+
+    normalizeKbUsageTrace(data) {
+      const src = this.isPlainObject(data) ? data : {};
+      const project = this.isPlainObject(src.project) ? src.project : {};
+      const matches = Array.isArray(src.matches)
+        ? src.matches.filter(item => this.isPlainObject(item))
+        : [];
+      return {
+        ...src,
+        project,
+        matches,
+      };
+    },
+
+    async loadKbUsageTrace() {
+      if (!this.currentProject?.id) {
+        this.clearKbUsageTrace();
+        return;
+      }
+      const projectId = String(this.currentProject.id);
+      const requestId = ++this.kbTraceRequestSeq;
+      this.kbTraceLoading = true;
+      this.kbTraceError = '';
+      try {
+        const data = await this.api(`/api/knowledge/projects/${encodeURIComponent(projectId)}/usage-trace`);
+        if (this.kbTraceRequestSeq !== requestId || String(this.currentProject?.id || '') !== projectId) return;
+        this.kbUsageTrace = this.normalizeKbUsageTrace(data);
+      } catch (e) {
+        if (this.kbTraceRequestSeq === requestId && String(this.currentProject?.id || '') === projectId) {
+          this.kbTraceError = e.message || '加载命中追踪失败';
+          this.toast('加载 KB 命中追踪失败: ' + e.message, 'error');
+        }
+      } finally {
+        if (this.kbTraceRequestSeq === requestId && String(this.currentProject?.id || '') === projectId) {
+          this.kbTraceLoading = false;
         }
       }
     },
@@ -1065,6 +1111,7 @@ function app() {
         if (this.newVideoPath === originalPath) this.newVideoPath = '';
         this.toast('项目已创建，开始处理...');
         this.clearKbSuggestions();
+        this.clearKbUsageTrace();
         this.currentProject = p;
         this.applyWorkflowDefaultsFromProject(p);
         await this.setView('detail');
@@ -1109,6 +1156,7 @@ function app() {
           }
           this.currentProject = null;
           this.clearKbSuggestions();
+          this.clearKbUsageTrace();
           this.subtitles = [];
           this.progressPct = 0;
           this.progressMsg = '';
@@ -1207,8 +1255,12 @@ function app() {
         if (this.openProjectRequestSeq !== requestId) return;
         const data = await this.api(`/api/projects/${id}/subtitles`);
         if (this.openProjectRequestSeq !== requestId) return;
-        if (this.currentProject?.id !== project.id) this.clearKbSuggestions();
+        if (this.currentProject?.id !== project.id) {
+          this.clearKbSuggestions();
+          this.clearKbUsageTrace();
+        }
         this.currentProject = project;
+        this.loadKbUsageTrace();
         this.applyWorkflowDefaultsFromProject(project);
         this.subtitles = Array.isArray(data.blocks) ? data.blocks.filter(b => this.isPlainObject(b)) : [];
         await this.setView('detail');
