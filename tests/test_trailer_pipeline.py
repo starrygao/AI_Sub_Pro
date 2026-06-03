@@ -89,8 +89,6 @@ def test_run_trailer_pipeline_download_failure_sets_error(patched_projects_dir, 
 def test_run_trailer_pipeline_redacts_download_error(patched_projects_dir, monkeypatch):
     from app.engines import trailer_pipeline as tp
     from app.api.projects import create_trailer_project, _load_project
-    query_value = "query-value-123"
-    provider_secret = "sk-" + "live-secret-token"
 
     project = create_trailer_project(
         tmdb_id=1, tmdb_type="movie", video_key="k", youtube_url="https://youtu.be/k",
@@ -99,15 +97,15 @@ def test_run_trailer_pipeline_redacts_download_error(patched_projects_dir, monke
     pid = project["id"]
 
     def fake_fail(*a, **kw):
-        raise RuntimeError(f"download URL failed api_key={query_value} {provider_secret}")
+        raise RuntimeError("download URL failed api_key=secret123 sk-live-secret-token")
 
     monkeypatch.setattr(tp, "download_trailer", fake_fail)
 
     tp.run_trailer_pipeline(pid)
 
     error = _load_project(pid).get("error") or ""
-    assert query_value not in error
-    assert provider_secret not in error
+    assert "secret123" not in error
+    assert "sk-live-secret-token" not in error
     assert "api_key=<redacted>" in error
     assert "sk-<redacted>" in error
 

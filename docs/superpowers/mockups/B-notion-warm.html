@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Style B — Notion / Obsidian</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root{
+    --bg:#fafaf8; --paper:#ffffff; --ink:#37352f; --ink2:#6b6b63; --ink3:#9b9a91;
+    --line:#ece9e2; --line2:#e2ded3; --accent:#e8902c; --accent2:#f5b860;
+    --ok:#3d8159; --info:#4a6fa5;
+  }
+  html,body{background:var(--bg);color:var(--ink);font-family:'Inter','PingFang SC','Helvetica Neue',serif;}
+  .paper{background:var(--paper);border:1px solid var(--line);}
+  .soft{background:#f5f2ea;}
+  .pill{font-size:12px;padding:3px 10px;border-radius:999px;font-weight:500;}
+  .heading{font-family:'Iowan Old Style','PingFang SC',Georgia,serif;letter-spacing:-0.01em;}
+  .divider{border-top:1px solid var(--line);}
+  input[type=password],input[type=text],select{background:transparent;border:1px solid var(--line2);border-radius:10px;padding:10px 14px;font-size:14px;outline:none;width:100%;color:var(--ink);}
+  input:focus,select:focus{border-color:var(--accent);}
+  .chk{appearance:none;width:20px;height:20px;border:1.5px solid #c9c5b8;border-radius:6px;background:white;position:relative;cursor:pointer;flex-shrink:0;}
+  .chk:checked{background:var(--accent);border-color:var(--accent);}
+  .chk:checked::after{content:'';position:absolute;left:6px;top:2px;width:5px;height:10px;border:solid white;border-width:0 2px 2px 0;transform:rotate(45deg);}
+</style>
+</head>
+<body class="text-sm">
+
+<header class="max-w-3xl mx-auto px-8 pt-10 pb-6">
+  <div class="flex items-center gap-2 text-[color:var(--ink3)] text-xs uppercase tracking-widest mb-2">
+    <span>AI Sub Pro</span><span>·</span><span>Mockup</span>
+  </div>
+  <h1 class="heading text-3xl font-semibold">Style B — Notion / Obsidian</h1>
+  <p class="text-[color:var(--ink2)] mt-1">温暖、留白、阅读友好的桌面字幕翻译工具。</p>
+</header>
+
+<!-- 1. HOMEPAGE -->
+<main class="max-w-3xl mx-auto px-8 pb-16 space-y-16">
+
+<section>
+  <div class="text-xs uppercase tracking-widest text-[color:var(--ink3)] mb-3">01 · 首页</div>
+  <h2 class="heading text-xl font-semibold mb-4">从一段视频开始</h2>
+  <div class="paper rounded-2xl p-14 text-center" style="border-style:dashed;border-color:#d8d2c3;">
+    <div class="text-5xl mb-4">📥</div>
+    <div class="text-lg font-medium">拖入视频或点击选择</div>
+    <div class="text-[color:var(--ink2)] mt-2">支持 mp4 · mkv · mov，自动识别语言</div>
+  </div>
+  <div class="grid grid-cols-2 gap-5 mt-8">
+    <div class="paper rounded-2xl p-6">
+      <div class="text-3xl mb-3">📹</div>
+      <div class="heading text-lg font-semibold mb-1">完整翻译</div>
+      <div class="text-[color:var(--ink2)] leading-relaxed">上传本地视频，自动识别+翻译+烧录字幕</div>
+    </div>
+    <div class="paper rounded-2xl p-6">
+      <div class="text-3xl mb-3">🎬</div>
+      <div class="heading text-lg font-semibold mb-1">预告翻译</div>
+      <div class="text-[color:var(--ink2)] leading-relaxed">输入剧名或 TMDB ID，自动下载并翻译预告片</div>
+    </div>
+  </div>
+</section>
+
+<!-- 2. PROJECT LIST -->
+<section>
+  <div class="text-xs uppercase tracking-widest text-[color:var(--ink3)] mb-3">02 · 项目列表</div>
+  <h2 class="heading text-xl font-semibold mb-4">最近的工作</h2>
+  <div class="space-y-3">
+    <div class="paper rounded-2xl p-5 flex items-center gap-5">
+      <div class="w-20 h-14 rounded-xl soft flex items-center justify-center text-[color:var(--ink3)] text-xs">16:9</div>
+      <div class="flex-1 min-w-0">
+        <div class="font-medium truncate">Oppenheimer.2023.2160p.mkv</div>
+        <div class="text-[color:var(--ink2)] text-xs mt-1">2026-04-18 14:02 · 3.2 GB</div>
+        <div class="h-1.5 rounded-full bg-[#efeadd] mt-3 overflow-hidden"><div class="h-full rounded-full" style="width:75%;background:var(--accent);"></div></div>
+      </div>
+      <span class="pill" style="background:#e7efff;color:var(--info);">下载中 75%</span>
+    </div>
+    <div class="paper rounded-2xl p-5 flex items-center gap-5">
+      <div class="w-20 h-14 rounded-xl soft flex items-center justify-center text-[color:var(--ink3)] text-xs">16:9</div>
+      <div class="flex-1 min-w-0">
+        <div class="font-medium truncate">Dune.Part.Two.Trailer.mp4</div>
+        <div class="text-[color:var(--ink2)] text-xs mt-1">2026-04-18 13:40 · 86 MB</div>
+        <div class="h-1.5 rounded-full bg-[#efeadd] mt-3 overflow-hidden"><div class="h-full rounded-full" style="width:20%;background:var(--accent);"></div></div>
+      </div>
+      <span class="pill" style="background:#fdf1dc;color:#a6701a;">识别中 20%</span>
+    </div>
+    <div class="paper rounded-2xl p-5 flex items-center gap-5">
+      <div class="w-20 h-14 rounded-xl soft flex items-center justify-center text-[color:var(--ink3)] text-xs">16:9</div>
+      <div class="flex-1 min-w-0">
+        <div class="font-medium truncate">Better.Call.Saul.S06E13.mkv</div>
+        <div class="text-[color:var(--ink2)] text-xs mt-1">2026-04-18 12:10 · 1.8 GB</div>
+        <div class="h-1.5 rounded-full bg-[#efeadd] mt-3 overflow-hidden"><div class="h-full rounded-full" style="width:60%;background:var(--accent);"></div></div>
+      </div>
+      <span class="pill" style="background:#efe8dd;color:#6b5a3a;">翻译中 60%</span>
+    </div>
+    <div class="paper rounded-2xl p-5 flex items-center gap-5">
+      <div class="w-20 h-14 rounded-xl soft flex items-center justify-center text-[color:var(--ink3)] text-xs">16:9</div>
+      <div class="flex-1 min-w-0">
+        <div class="font-medium truncate">Severance.S02E04.1080p.mkv</div>
+        <div class="text-[color:var(--ink2)] text-xs mt-1">2026-04-18 10:55 · 2.1 GB</div>
+        <div class="h-1.5 rounded-full bg-[#efeadd] mt-3 overflow-hidden"><div class="h-full rounded-full" style="width:90%;background:var(--accent);"></div></div>
+      </div>
+      <span class="pill" style="background:#fbe4d6;color:#a85b2a;">烧录中 90%</span>
+    </div>
+    <div class="paper rounded-2xl p-5 flex items-center gap-5">
+      <div class="w-20 h-14 rounded-xl soft flex items-center justify-center text-[color:var(--ink3)] text-xs">16:9</div>
+      <div class="flex-1 min-w-0">
+        <div class="font-medium truncate">The.Bear.S03E01.mkv</div>
+        <div class="text-[color:var(--ink2)] text-xs mt-1">2026-04-17 22:30 · 1.4 GB</div>
+        <div class="h-1.5 rounded-full bg-[#efeadd] mt-3 overflow-hidden"><div class="h-full rounded-full" style="width:100%;background:var(--ok);"></div></div>
+      </div>
+      <span class="pill" style="background:#e2efe5;color:var(--ok);">已完成</span>
+    </div>
+  </div>
+</section>
+
+<!-- 3. SETTINGS -->
+<section>
+  <div class="text-xs uppercase tracking-widest text-[color:var(--ink3)] mb-3">03 · 设置</div>
+  <h2 class="heading text-xl font-semibold mb-4">翻译服务</h2>
+  <div class="space-y-6">
+    <div>
+      <label class="block text-[color:var(--ink2)] text-xs mb-2">主翻译服务</label>
+      <select>
+        <option>OpenAI</option><option>DeepSeek</option><option>Gemini</option>
+        <option selected>Claude CLI (本机)</option>
+      </select>
+    </div>
+    <div>
+      <label class="block text-[color:var(--ink2)] text-xs mb-2">API Key</label>
+      <div class="flex gap-2">
+        <input type="password" value="sk-xxxxxxxxxxxxxxxxxx">
+        <button class="px-4 rounded-xl border border-[color:var(--line2)] bg-white">👁️</button>
+      </div>
+    </div>
+    <div class="rounded-2xl p-5 border" style="background:#fdf5e6;border-color:#f0dfb5;">
+      <div class="text-[color:#8a6320] leading-relaxed">⚠️ 需要本机已安装并登录 Claude Code：运行 <code class="px-2 py-0.5 rounded bg-[#fae9c6] text-[#6a4810]">claude</code> 命令完成登录即可。未登录时翻译会失败。</div>
+    </div>
+    <div>
+      <label class="block text-[color:var(--ink2)] text-xs mb-2">模型</label>
+      <select>
+        <option>claude-opus-4-7</option><option>claude-sonnet-4-6</option><option>claude-haiku-4-5</option>
+      </select>
+    </div>
+    <div class="divider pt-6">
+      <h2 class="heading text-xl font-semibold mb-4">元数据服务</h2>
+      <label class="block text-[color:var(--ink2)] text-xs mb-2">TMDB API Key</label>
+      <div class="flex gap-2">
+        <input type="text" placeholder="Bearer eyJhbGci...">
+        <button class="px-5 rounded-xl text-white font-medium" style="background:var(--accent);">测试</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 4. TRAILER WIZARD STEP 4 -->
+<section>
+  <div class="text-xs uppercase tracking-widest text-[color:var(--ink3)] mb-3">04 · 预告向导</div>
+  <h2 class="heading text-xl font-semibold mb-2">选择要翻译的预告片</h2>
+  <div class="flex items-center gap-3 text-[color:var(--ink2)] text-xs mb-5">
+    <span>第 4 步，共 5 步</span>
+    <div class="flex-1 h-1.5 rounded-full bg-[#efeadd] overflow-hidden"><div class="h-full rounded-full" style="width:80%;background:var(--accent);"></div></div>
+  </div>
+  <div class="space-y-3">
+    <label class="paper rounded-2xl p-4 flex items-center gap-4 cursor-pointer hover:border-[color:var(--accent)] transition">
+      <input type="checkbox" class="chk" checked>
+      <img src="https://img.youtube.com/vi/dQw4w9WgXcQ/default.jpg" class="w-24 h-16 rounded-xl object-cover">
+      <div class="flex-1 min-w-0">
+        <div class="font-medium truncate">Official Trailer #1 — Directed by Denis Villeneuve</div>
+        <div class="flex items-center gap-2 mt-2 text-xs">
+          <span class="pill" style="background:#efe6fb;color:#6e4aa8;">Trailer</span>
+          <span class="text-[color:var(--ink2)]">2026-03-20</span>
+          <span class="pill" style="background:#e2efe5;color:var(--ok);">官方 ✓</span>
+        </div>
+      </div>
+    </label>
+    <label class="paper rounded-2xl p-4 flex items-center gap-4 cursor-pointer hover:border-[color:var(--accent)] transition">
+      <input type="checkbox" class="chk" checked>
+      <img src="https://img.youtube.com/vi/dQw4w9WgXcQ/default.jpg" class="w-24 h-16 rounded-xl object-cover">
+      <div class="flex-1 min-w-0">
+        <div class="font-medium truncate">Teaser — First Look at the World</div>
+        <div class="flex items-center gap-2 mt-2 text-xs">
+          <span class="pill" style="background:#fdf1dc;color:#a6701a;">Teaser</span>
+          <span class="text-[color:var(--ink2)]">2026-02-01</span>
+          <span class="pill" style="background:#e2efe5;color:var(--ok);">官方 ✓</span>
+        </div>
+      </div>
+    </label>
+    <label class="paper rounded-2xl p-4 flex items-center gap-4 cursor-pointer hover:border-[color:var(--accent)] transition">
+      <input type="checkbox" class="chk">
+      <img src="https://img.youtube.com/vi/dQw4w9WgXcQ/default.jpg" class="w-24 h-16 rounded-xl object-cover">
+      <div class="flex-1 min-w-0">
+        <div class="font-medium truncate">Behind the Scenes — Production Featurette</div>
+        <div class="flex items-center gap-2 mt-2 text-xs">
+          <span class="pill" style="background:#efe6fb;color:#6e4aa8;">Trailer</span>
+          <span class="text-[color:var(--ink2)]">2026-03-11</span>
+          <span class="pill" style="background:#e2efe5;color:var(--ok);">官方 ✓</span>
+        </div>
+      </div>
+    </label>
+    <label class="paper rounded-2xl p-4 flex items-center gap-4 cursor-pointer hover:border-[color:var(--accent)] transition">
+      <input type="checkbox" class="chk">
+      <img src="https://img.youtube.com/vi/dQw4w9WgXcQ/default.jpg" class="w-24 h-16 rounded-xl object-cover">
+      <div class="flex-1 min-w-0">
+        <div class="font-medium truncate">Final Trailer — In Theaters April</div>
+        <div class="flex items-center gap-2 mt-2 text-xs">
+          <span class="pill" style="background:#fdf1dc;color:#a6701a;">Teaser</span>
+          <span class="text-[color:var(--ink2)]">2026-04-02</span>
+          <span class="pill" style="background:#e2efe5;color:var(--ok);">官方 ✓</span>
+        </div>
+      </div>
+    </label>
+  </div>
+  <div class="mt-8 flex justify-end">
+    <button class="px-6 py-3 rounded-xl text-white font-medium" style="background:var(--accent);">开始翻译 (2 个预告)</button>
+  </div>
+</section>
+
+</main>
+</body>
+</html>

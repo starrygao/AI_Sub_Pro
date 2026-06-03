@@ -33,6 +33,8 @@ def test_translate_pipeline_ignores_malformed_filter_entries_per_block(tmp_path,
     (pdir / "project.json").write_text(json.dumps({
         "id": pid,
         "name": "movie",
+        "tmdb_id": 123,
+        "tmdb_type": "movie",
         "video_path": "/fake/movie.mp4",
         "status": "asr_done",
     }), encoding="utf-8")
@@ -50,11 +52,14 @@ def test_translate_pipeline_ignores_malformed_filter_entries_per_block(tmp_path,
     monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
     monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {"translation": {}})
 
+    seen = {}
+
     class FakeTranslator:
         def __init__(self, cfg):
             pass
 
-        def translate(self, blocks, target_lang, kb_data=None, callback=None):
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            seen["meta_info"] = meta_info
             for block in blocks:
                 if not block.filtered:
                     block.translation = f"zh-{block.index}"
@@ -66,6 +71,8 @@ def test_translate_pipeline_ignores_malformed_filter_entries_per_block(tmp_path,
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     assert project["status"] == "translated"
+    assert seen["meta_info"]["name"] == "movie"
+    assert seen["meta_info"]["tmdb_id"] == 123
     translated = (pdir / "translated.srt").read_text(encoding="utf-8")
     assert "zh-1" in translated
     assert "zh-2" not in translated
@@ -101,7 +108,7 @@ def test_translate_pipeline_does_not_apply_stale_filter_state_to_filtered_srt(tm
         def __init__(self, cfg):
             pass
 
-        def translate(self, blocks, target_lang, kb_data=None, callback=None):
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             for block in blocks:
                 if not block.filtered:
                     block.translation = f"zh-{block.index}"
@@ -142,7 +149,7 @@ def test_translate_pipeline_tolerates_malformed_progress_callback_values(tmp_pat
         def __init__(self, cfg):
             pass
 
-        def translate(self, blocks, target_lang, kb_data=None, callback=None):
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             if callback:
                 callback(float("inf"), {"bad": "shape"})
             blocks[0].translation = "你好"
@@ -183,9 +190,7 @@ def test_translate_pipeline_redacts_exception_details_in_project_error(tmp_path,
             pass
 
         def translate(self, *args, **kwargs):
-            query_value = "query-value-123"
-            provider_secret = "sk-" + "live-secret-token"
-            raise RuntimeError(f"provider failed api_key={query_value} {provider_secret}")
+            raise RuntimeError("provider failed api_key=secret123 sk-live-secret-token")
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
@@ -193,8 +198,8 @@ def test_translate_pipeline_redacts_exception_details_in_project_error(tmp_path,
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     assert project["status"] == "error"
-    assert "query-value-123" not in project["error"]
-    assert ("sk-" + "live-secret-token") not in project["error"]
+    assert "secret123" not in project["error"]
+    assert "sk-live-secret-token" not in project["error"]
     assert "api_key=<redacted>" in project["error"]
     assert "sk-<redacted>" in project["error"]
 

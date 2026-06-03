@@ -141,21 +141,15 @@ def test_translate_batch_redacts_provider_error_secrets():
 
     p = OpenAICompatProvider({"provider": "openai", "api_key": "sk-test", "model": "gpt-4o"})
     items = [{"id": 1, "original": "hello"}]
-    query_value = "query-value-123"
-    provider_secret = "sk-" + "live-secret-token"
-    google_secret = "AIza" + "SyA1234567890abcdefghijklmnop"
-    raw_error = (
-        f"GET https://api.test?api_key={query_value} failed with "
-        f"{provider_secret} and {google_secret}"
-    )
+    raw_error = "GET https://api.test?api_key=secret123 failed with sk-live-secret-token and AIzaSyA1234567890abcdefghijklmnop"
 
     with patch.object(p.client.chat.completions, "create", side_effect=RuntimeError(raw_error)):
         result = p.translate_batch(items, "sys", retries=1)
 
     error = result[0]["error"]
-    assert query_value not in error
-    assert provider_secret not in error
-    assert google_secret not in error
+    assert "secret123" not in error
+    assert "sk-live-secret-token" not in error
+    assert "AIzaSyA1234567890abcdefghijklmnop" not in error
     assert "api_key=<redacted>" in error
     assert "sk-<redacted>" in error
     assert "AIza<redacted>" in error

@@ -125,7 +125,7 @@ def test_translator_factory_builds_codex_cli_config(monkeypatch):
             "target_language": "简体中文",
             "full_doc_mode": True,
         },
-        "api_keys": {"openai": "sk-" + "should-not-be-used"},
+        "api_keys": {"openai": "sk-should-not-be-used"},
         "providers": {"codex_cli": {"enabled": True, "model": "gpt-5.4", "timeout_sec": 300}},
     }
     tmod.SubtitleTranslator(cfg)

@@ -124,7 +124,7 @@ def test_test_key_hides_internal_exception_details():
     client = TestClient(app)
 
     raw_error = (
-        "Traceback from /Users/example/Desktop/AI_Sub_Pro/app/secret.py "
+        "Traceback from /Users/gaopengxiang/Desktop/AI_Sub_Pro/app/secret.py "
         "using key sk-live-secret"
     )
     with patch("app.engines.translator.TranslationProvider", side_effect=RuntimeError(raw_error)):
@@ -137,7 +137,7 @@ def test_test_key_hides_internal_exception_details():
     assert r.status_code == 200
     data = r.json()
     assert data["success"] is False
-    assert "/Users/example" not in data["message"]
+    assert "/Users/gaopengxiang" not in data["message"]
     assert "sk-live-secret" not in data["message"]
     assert "连接失败" in data["message"]
 
@@ -252,35 +252,6 @@ def test_update_settings_accepts_codex_cli_provider_config():
     assert payload["translation"]["primary_provider"] == "codex_cli"
     assert payload["translation"]["polish_provider"] == "claude_cli"
     assert payload["providers"]["codex_cli"]["model"] == "gpt-5.5"
-
-
-def test_update_settings_accepts_supported_display_language():
-    from app.main import app
-    client = TestClient(app)
-
-    with patch("app.api.settings.Config.update", return_value=None) as update:
-        r = client.post("/api/settings", json={
-            "general": {
-                "display_language": " en-US ",
-            },
-        })
-
-    assert r.status_code == 200
-    assert update.call_args.args[0]["general"]["display_language"] == "en-US"
-
-
-def test_update_settings_rejects_unknown_display_language():
-    from app.main import app
-    client = TestClient(app)
-
-    r = client.post("/api/settings", json={
-        "general": {
-            "display_language": "fr-FR",
-        },
-    })
-
-    assert r.status_code == 400
-    assert "display_language" in r.json()["detail"]
 
 
 def test_update_settings_rejects_unknown_translation_provider():
@@ -658,8 +629,6 @@ def test_models_endpoint_redacts_remote_error_in_logs(caplog):
     import logging
     from app.main import app
     client = TestClient(app)
-    query_value = "query-value-123"
-    provider_secret = "sk-" + "live-secret-token"
 
     class FakeOpenAI:
         def __init__(self, **kwargs):
@@ -668,9 +637,7 @@ def test_models_endpoint_redacts_remote_error_in_logs(caplog):
         class models:
             @staticmethod
             def list():
-                raise RuntimeError(
-                    f"GET https://api.test?api_key={query_value} failed with {provider_secret}"
-                )
+                raise RuntimeError("GET https://api.test?api_key=secret123 failed with sk-live-secret-token")
 
     caplog.set_level(logging.WARNING, logger="app.api.settings")
     with patch("app.api.settings.Config.to_dict", return_value={"api_keys": {"openai": "sk-test"}}), \
@@ -680,8 +647,8 @@ def test_models_endpoint_redacts_remote_error_in_logs(caplog):
     assert r.status_code == 200
     assert r.json()["fallback"] is True
     logs = "\n".join(record.getMessage() for record in caplog.records)
-    assert query_value not in logs
-    assert provider_secret not in logs
+    assert "secret123" not in logs
+    assert "sk-live-secret-token" not in logs
     assert "api_key=<redacted>" in logs
     assert "sk-<redacted>" in logs
 

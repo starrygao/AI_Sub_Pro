@@ -4,14 +4,12 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .coverage
-htmlcov/
 .venv/
 venv/
 
 # Build artifacts (PyInstaller / Electron)
 build/
 dist/
-*.dmg
 *.spec.bak
 
 # macOS
@@ -21,9 +19,6 @@ dist/
 .idea/
 .vscode/
 *.swp
-.env
-.env.*
-!.env.example
 
 # Local data (user runtime data lives under ~/AI_Sub_Pro_Data in bundled builds;
 # in dev mode it sits in ./data — keep config.json & knowledge.json out of git)
@@ -34,7 +29,6 @@ data/knowledge.json
 data/knowledge.v1.backup.json
 
 # Local packaged ASR model cache (used by build_mac.sh when present)
-models/
 models/asr/
 
 # Logs

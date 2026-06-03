@@ -1,168 +1,8 @@
 /* AI_Sub_Pro Alpine.js app data + methods.
  * Extracted from app/static/index.html inline <script>.
  */
-const UI_MESSAGES = {
-  'zh-CN': {
-    'nav.home': '首页',
-    'nav.projects': '项目',
-    'nav.settings': '设置',
-    'nav.knowledge': '知识库',
-    'settings.title': '系统设置',
-    'settings.subtitle': '配置 API 密钥、语音识别和翻译选项',
-    'settings.display.title': '显示',
-    'settings.display.language': '显示语言',
-    'settings.display.language.auto': '跟随系统',
-    'settings.display.language.zh-CN': '简体中文',
-    'settings.display.language.en-US': 'English',
-    'settings.display.language.help': '默认跟随浏览器或系统语言，也可以手动固定界面语言。',
-    'settings.save': '保存设置',
-    'settings.saving': '保存中...',
-    'status.created': '新建',
-    'status.processing': '处理中',
-    'status.asr_done': '识别完成',
-    'status.translated': '已翻译',
-    'status.completed': '已完成',
-    'status.error': '错误',
-    'system.translationService': '翻译服务',
-    'system.translationRequired': '请先完成翻译引擎配置：{hint}',
-    'system.translationHintFallback': '请配置翻译服务',
-    'system.checkClaude': '检查 Claude CLI 设置',
-    'system.checkCodex': '检查 Codex CLI 设置',
-    'system.configureApiKey': '去配置 API 密钥',
-    'toast.settingsLoadFailed': '加载设置失败: {message}',
-    'toast.settingsSaved': '设置已保存',
-  },
-  'en-US': {
-    'nav.home': 'Home',
-    'nav.projects': 'Projects',
-    'nav.settings': 'Settings',
-    'nav.knowledge': 'Knowledge',
-    'settings.title': 'Settings',
-    'settings.subtitle': 'Configure API keys, speech recognition, and translation options',
-    'settings.display.title': 'Display',
-    'settings.display.language': 'Display language',
-    'settings.display.language.auto': 'Follow system',
-    'settings.display.language.zh-CN': 'Simplified Chinese',
-    'settings.display.language.en-US': 'English',
-    'settings.display.language.help': 'By default, the interface follows your browser or system language. You can also pin it manually.',
-    'settings.save': 'Save settings',
-    'settings.saving': 'Saving...',
-    'status.created': 'New',
-    'status.processing': 'Processing',
-    'status.asr_done': 'Recognized',
-    'status.translated': 'Translated',
-    'status.completed': 'Completed',
-    'status.error': 'Error',
-    'system.translationService': 'Translation service',
-    'system.translationRequired': 'Configure translation first: {hint}',
-    'system.translationHintFallback': 'Configure translation service',
-    'system.checkClaude': 'Check Claude CLI settings',
-    'system.checkCodex': 'Check Codex CLI settings',
-    'system.configureApiKey': 'Configure API key',
-    'toast.settingsLoadFailed': 'Failed to load settings: {message}',
-    'toast.settingsSaved': 'Settings saved',
-  },
-};
-
-const STATIC_TEXT_TRANSLATIONS = {
-  '智能字幕翻译工具': 'AI subtitle workflow tool',
-  '项目总数': 'Total projects',
-  '拖入视频，自动识别语音、翻译字幕并烧录到视频中。一步到位，输出成品。': 'Drop in a video, transcribe speech, translate subtitles, and burn them into the final output.',
-  '点击选择或拖入视频文件': 'Click to choose or drop a video file',
-  '正在读取视频文件...': 'Reading video file...',
-  '正在创建项目...': 'Creating project...',
-  '读取中...': 'Reading...',
-  '创建中...': 'Creating...',
-  '开始': 'Start',
-  '活跃项目': 'Active projects',
-  '处理中': 'Processing',
-  '已完成': 'Completed',
-  '最近项目': 'Recent projects',
-  '暂无项目，先拖入一个视频': 'No projects yet. Drop in a video to start.',
-  '预告翻译': 'Trailer translation',
-  '输入剧名或 TMDB ID，自动下载并翻译预告片': 'Enter a title or TMDB ID to download and translate trailers.',
-  '系统检查失败：': 'System check failed:',
-  '返回首页': 'Back home',
-  '去设置 →': 'Open settings ->',
-  '下一步 →': 'Next ->',
-  '加载中...': 'Loading...',
-  '未找到预告视频': 'No trailer videos found',
-  '查看项目列表': 'View projects',
-  '项目列表': 'Projects',
-  '所有字幕翻译项目': 'All subtitle translation projects',
-  '显示归档项目': 'Show archived projects',
-  '新建项目': 'New project',
-  '暂无项目': 'No projects',
-  '在首页拖入视频开始使用': 'Drop a video on the home screen to start.',
-  '返回项目列表': 'Back to projects',
-  '语言：自动': 'Language: Auto',
-  '日语': 'Japanese',
-  '英语': 'English',
-  '中文': 'Chinese',
-  '仅翻译': 'Translate only',
-  '烧录字幕': 'Burn subtitles',
-  '检测到内嵌字幕': 'Embedded subtitles detected',
-  '带字幕的视频已就绪！': 'Subtitled video is ready.',
-  '字幕已烧录到视频中': 'Subtitles have been burned into the video.',
-  '处理失败': 'Processing failed',
-  '可以修正设置后重试': 'Fix settings and retry.',
-  '暂无字幕': 'No subtitles',
-  '点击「一键处理」开始': 'Click "Full run" to start.',
-  'API 密钥': 'API keys',
-  '输入 API 密钥...': 'Enter API key...',
-  '测试': 'Test',
-  '测试中...': 'Testing...',
-  '登录': 'Sign in to',
-  '获取密钥': 'get key',
-  '（浏览器打开，复制密钥后点粘贴）': '(opens in browser; copy the key, then paste)',
-  'Claude / Codex CLI（本机）': 'Claude / Codex CLI (local)',
-  '需要本机已安装并登录 Claude Code': 'Claude Code must be installed and signed in locally',
-  '需要本机已安装并登录 Codex CLI': 'Codex CLI must be installed and signed in locally',
-  '检查登录状态': 'Check sign-in status',
-  'Claude 未检查': 'Claude not checked',
-  'Codex 未检查': 'Codex not checked',
-  '语音识别 (ASR)': 'Speech recognition (ASR)',
-  'Whisper 模型': 'Whisper model',
-  '默认语言': 'Default language',
-  '自动检测': 'Auto detect',
-  '时间偏移 (毫秒)': 'Time offset (ms)',
-  'VAD 过滤': 'VAD filter',
-  '翻译设置': 'Translation',
-  '主翻译引擎': 'Primary provider',
-  '主翻译模型': 'Primary model',
-  '润色引擎': 'Polish provider',
-  '润色模型': 'Polish model',
-  '不使用': 'None',
-  '批量大小': 'Batch size',
-  '上下文窗口': 'Context window',
-  '默认目标语言': 'Default target language',
-  '繁体中文': 'Traditional Chinese',
-  '过滤重复': 'Filter repeated text',
-  '过滤感叹词': 'Filter interjections',
-  '一次性全量翻译（尽量整份字幕一次请求，提升术语一致性）': 'Full-document translation (send the subtitle set together when possible for better term consistency)',
-  '超出模型上下文时会自动回退到批量翻译。': 'Falls back to batch translation when the model context is exceeded.',
-  '预告片 (TMDB)': 'Trailers (TMDB)',
-  'TMDB API 密钥': 'TMDB API key',
-  '填写 TMDB 密钥...': 'Enter TMDB key...',
-  '预告片下载清晰度': 'Trailer download quality',
-  '1080p（推荐）': '1080p (recommended)',
-  '480p（节省流量）': '480p (save bandwidth)',
-  '最高画质（不限制）': 'Best quality (unlimited)',
-  '上限分辨率；YouTube 实际可用画质可能更低': 'Maximum resolution; actual YouTube quality may be lower.',
-  '知识库': 'Knowledge base',
-  '加载知识库列表...': 'Loading knowledge bases...',
-  '选择或新建一个知识库开始编辑': 'Select or create a knowledge base to start editing.',
-  '新建知识库': 'New knowledge base',
-  '重命名项目': 'Rename project',
-  '项目名称': 'Project name',
-  '取消': 'Cancel',
-  '保存': 'Save',
-  '保存中...': 'Saving...',
-};
-
 function app() {
   return {
-    uiLanguage: 'zh-CN',
     view: 'home',
     projects: [],
     showArchived: false,
@@ -178,7 +18,6 @@ function app() {
         claude_cli: { enabled: true, model: 'claude-opus-4-7', timeout_sec: 180 },
         codex_cli: { enabled: true, model: 'gpt-5.5', timeout_sec: 180 },
       },
-      general: { max_workers: 4, theme: 'dark', display_language: 'auto' },
     },
     // Knowledge-base editor state
     kbProjects: [],            // list from GET /api/knowledge/projects
@@ -358,7 +197,6 @@ function app() {
       this.view = nextView;
       if (nextView === 'projects') await this.loadProjects();
       if (nextView === 'knowledge') this.loadKbProjects();
-      this.queueStaticTranslations();
       return true;
     },
 
@@ -392,111 +230,8 @@ function app() {
       return t.id;
     },
 
-    t(key, values = {}) {
-      const messages = UI_MESSAGES[this.uiLanguage] || UI_MESSAGES['zh-CN'];
-      const fallback = UI_MESSAGES['zh-CN'][key] || key;
-      let text = messages[key] || fallback;
-      Object.entries(values || {}).forEach(([name, value]) => {
-        text = text.replaceAll(`{${name}}`, String(value ?? ''));
-      });
-      return text;
-    },
-
-    detectSystemLanguage() {
-      const candidates = [];
-      if (typeof navigator !== 'undefined') {
-        if (Array.isArray(navigator.languages)) candidates.push(...navigator.languages);
-        if (navigator.language) candidates.push(navigator.language);
-      }
-      const first = candidates.find(Boolean) || 'zh-CN';
-      return String(first).toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US';
-    },
-
-    normalizeDisplayLanguagePreference(value) {
-      if (typeof value !== 'string') return 'auto';
-      const trimmed = value.trim();
-      return ['auto', 'zh-CN', 'en-US'].includes(trimmed) ? trimmed : 'auto';
-    },
-
-    applyDisplayLanguageFromSettings() {
-      if (!this.isPlainObject(this.settings.general)) this.settings.general = {};
-      const preference = this.normalizeDisplayLanguagePreference(this.settings.general.display_language);
-      this.settings.general.display_language = preference;
-      this.uiLanguage = preference === 'auto' ? this.detectSystemLanguage() : preference;
-      if (typeof document !== 'undefined' && document.documentElement) {
-        document.documentElement.lang = this.uiLanguage;
-      }
-      this.applyStaticTranslations();
-      this.queueStaticTranslations();
-    },
-
-    queueStaticTranslations() {
-      if (typeof setTimeout === 'function') {
-        setTimeout(() => this.applyStaticTranslations(), 0);
-      } else {
-        this.applyStaticTranslations();
-      }
-    },
-
-    translateStaticText(source) {
-      if (this.uiLanguage === 'zh-CN') return source;
-      return STATIC_TEXT_TRANSLATIONS[source] || source;
-    },
-
-    replaceNodeText(node) {
-      const raw = node.textContent || '';
-      const source = node.__aiSubProI18nSource || raw.trim();
-      if (!source) return;
-      node.__aiSubProI18nSource = source;
-      const prefix = raw.match(/^\s*/)?.[0] || '';
-      const suffix = raw.match(/\s*$/)?.[0] || '';
-      node.textContent = `${prefix}${this.translateStaticText(source)}${suffix}`;
-    },
-
-    replaceTranslatedAttribute(element, attr) {
-      const raw = element.getAttribute(attr);
-      if (!raw) return;
-      const storeKey = `aiSubProI18n${attr.replace(/[^a-z0-9]/gi, '')}`;
-      const source = element[storeKey] || raw.trim();
-      if (!source) return;
-      element[storeKey] = source;
-      element.setAttribute(attr, this.translateStaticText(source));
-    },
-
-    applyStaticTranslations() {
-      if (typeof document === 'undefined' || !document.body || !document.createTreeWalker) return;
-      const showText = typeof NodeFilter !== 'undefined' ? NodeFilter.SHOW_TEXT : 4;
-      const walker = document.createTreeWalker(document.body, showText, {
-        acceptNode: (node) => {
-          const parent = node.parentElement;
-          if (!parent || ['SCRIPT', 'STYLE', 'TEMPLATE', 'TEXTAREA', 'CODE'].includes(parent.tagName)) {
-            return typeof NodeFilter !== 'undefined' ? NodeFilter.FILTER_REJECT : 2;
-          }
-          return (node.textContent || '').trim()
-            ? (typeof NodeFilter !== 'undefined' ? NodeFilter.FILTER_ACCEPT : 1)
-            : (typeof NodeFilter !== 'undefined' ? NodeFilter.FILTER_REJECT : 2);
-        },
-      });
-      const nodes = [];
-      while (walker.nextNode()) nodes.push(walker.currentNode);
-      nodes.forEach((node) => this.replaceNodeText(node));
-
-      document.querySelectorAll('[placeholder], [title], [aria-label]').forEach((element) => {
-        ['placeholder', 'title', 'aria-label'].forEach((attr) => {
-          if (element.hasAttribute(attr)) this.replaceTranslatedAttribute(element, attr);
-        });
-      });
-    },
-
     statusText(s) {
-      return {
-        created: this.t('status.created'),
-        processing: this.t('status.processing'),
-        asr_done: this.t('status.asr_done'),
-        translated: this.t('status.translated'),
-        completed: this.t('status.completed'),
-        error: this.t('status.error'),
-      }[s] || s;
+      return { created:'新建', processing:'处理中', asr_done:'识别完成', translated:'已翻译', completed:'已完成', error:'错误' }[s] || s;
     },
 
     statusColor(p) {
@@ -730,7 +465,6 @@ function app() {
         trailer: mergeSection('trailer'),
         asr: mergeSection('asr'),
         translation: mergeSection('translation'),
-        general: mergeSection('general'),
         providers: {
           ...mergeSection('providers'),
           claude_cli: {
@@ -836,7 +570,6 @@ function app() {
         const data = await this.api(`/api/projects${suffix}`);
         if (this.projectListRequestSeq !== requestId || !!this.showArchived !== includeArchived) return;
         this.projects = Array.isArray(data) ? data.filter(p => this.isPlainObject(p)) : [];
-        this.queueStaticTranslations();
       } catch(e) {
         if (this.projectListRequestSeq === requestId && !!this.showArchived === includeArchived) {
           this.toast('加载项目失败: ' + e.message, 'error');
@@ -847,13 +580,12 @@ function app() {
       try {
         const data = await this.api('/api/settings');
         this.settings = this.normalizeSettings(data);
-        this.applyDisplayLanguageFromSettings();
         this.applyWorkflowDefaultsFromSettings();
         // Load models for configured providers
         this.fetchModels(this.settings.translation?.primary_provider || 'openai', 'primary');
         if (this.settings.translation?.polish_provider) this.fetchModels(this.settings.translation.polish_provider, 'polish');
       } catch(e) {
-        this.toast(this.t('toast.settingsLoadFailed', {message: e.message}), 'error');
+        this.toast('加载设置失败: ' + e.message, 'error');
       }
     },
 
@@ -883,7 +615,7 @@ function app() {
         gemini: 'Gemini',
         claude_cli: 'Claude CLI',
         codex_cli: 'Codex CLI',
-      }[provider] || provider || this.t('system.translationService');
+      }[provider] || provider || '翻译服务';
     },
 
     providerNeedsApiKey(provider) {
@@ -929,13 +661,13 @@ function app() {
     },
 
     systemTranslationHint() {
-      return this.sysCheck?.translation_hint || this.t('system.translationHintFallback');
+      return this.sysCheck?.translation_hint || '请配置翻译服务';
     },
 
     systemTranslationActionText() {
-      if (this.sysCheck?.translation_provider === 'claude_cli') return this.t('system.checkClaude');
-      if (this.sysCheck?.translation_provider === 'codex_cli') return this.t('system.checkCodex');
-      return this.t('system.configureApiKey');
+      if (this.sysCheck?.translation_provider === 'claude_cli') return '检查 Claude CLI 设置';
+      if (this.sysCheck?.translation_provider === 'codex_cli') return '检查 Codex CLI 设置';
+      return '去配置 API 密钥';
     },
 
     async ensureTranslationReadyForWorkflow() {
@@ -943,7 +675,7 @@ function app() {
         await this.refreshSystemCheck({ force: true });
       }
       if (this.systemTranslationReady()) return true;
-      this.toast(this.t('system.translationRequired', {hint: this.systemTranslationHint()}), 'error');
+      this.toast(`请先完成翻译引擎配置：${this.systemTranslationHint()}`, 'error');
       await this.setView('settings');
       return false;
     },
@@ -1859,9 +1591,8 @@ function app() {
       this.settingsSaving = true;
       try {
         await this.api('/api/settings', 'POST', this.settings);
-        this.applyDisplayLanguageFromSettings();
         this.applyWorkflowDefaultsFromSettings();
-        this.toast(this.t('toast.settingsSaved'));
+        this.toast('设置已保存');
         await this.refreshSystemCheck({ force: true });
         if (this.settingsUsesClaudeCli()) {
           await this.checkClaudeCliStatus();

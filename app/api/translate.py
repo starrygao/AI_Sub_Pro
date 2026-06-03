@@ -482,6 +482,7 @@ def _run_translate_pipeline(pid: str, target_language: str, owns_registration: b
             blocks = translator.translate(
                 blocks,
                 target_lang=target_language,
+                meta_info=project,
                 kb_data=kb_data,
                 callback=_translate_cb,
             )

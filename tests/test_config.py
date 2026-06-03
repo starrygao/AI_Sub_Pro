@@ -34,10 +34,6 @@ def test_default_config_translation_has_full_doc_mode():
     assert DEFAULT_CONFIG["translation"]["full_doc_mode"] is False
 
 
-def test_default_config_follows_system_display_language():
-    assert DEFAULT_CONFIG["general"]["display_language"] == "auto"
-
-
 def test_default_config_uses_packaging_friendly_asr_model():
     assert DEFAULT_CONFIG["asr"]["model_size"] == "large-v3-turbo"
 
@@ -67,7 +63,6 @@ def test_config_loads_and_merges_partial_saved_config(tmp_path, monkeypatch):
     assert loaded["providers"]["claude_cli"]["enabled"] is True
     assert loaded["providers"]["codex_cli"]["enabled"] is True
     assert loaded["translation"]["full_doc_mode"] is False
-    assert loaded["general"]["display_language"] == "auto"
 
 
 def test_config_load_ignores_non_object_saved_sections(tmp_path, monkeypatch):
@@ -90,24 +85,6 @@ def test_config_load_ignores_non_object_saved_sections(tmp_path, monkeypatch):
     assert loaded["translation"] == cfg.DEFAULT_CONFIG["translation"]
     assert loaded["providers"]["claude_cli"] == cfg.DEFAULT_CONFIG["providers"]["claude_cli"]
     assert loaded["providers"]["codex_cli"] == cfg.DEFAULT_CONFIG["providers"]["codex_cli"]
-
-
-def test_config_load_normalizes_invalid_display_language(tmp_path, monkeypatch):
-    import app.config as cfg
-    cfg_file = tmp_path / "config.json"
-    monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
-
-    cfg_file.write_text(json.dumps({
-        "general": {
-            "display_language": "fr-FR",
-        },
-    }))
-
-    cfg.Config._data = {}
-    cfg.Config.load()
-
-    assert cfg.Config.to_dict()["general"]["display_language"] == "auto"
-    assert json.loads(cfg_file.read_text(encoding="utf-8"))["general"]["display_language"] == "auto"
 
 
 def test_config_load_rejects_nonstandard_json_constants(tmp_path, monkeypatch):

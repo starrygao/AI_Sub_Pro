@@ -64,85 +64,6 @@ def test_load_settings_applies_workflow_language_defaults_to_project_actions():
     assert result.returncode == 0, result.stderr
 
 
-def test_frontend_display_language_defaults_to_system_language():
-    result = run_js(
-        """
-        const fs = require('fs');
-        const vm = require('vm');
-
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
-        const context = {
-          console,
-          setTimeout,
-          clearTimeout,
-          navigator: { language: 'en-US', languages: ['en-US', 'zh-CN'] },
-          document: { documentElement: { lang: '' } },
-        };
-        vm.createContext(context);
-        vm.runInContext(code, context);
-
-        const state = context.app();
-        state.settings.general = { display_language: 'auto' };
-        state.applyDisplayLanguageFromSettings();
-
-        if (state.uiLanguage !== 'en-US') {
-          throw new Error(`expected system English, got ${state.uiLanguage}`);
-        }
-        if (context.document.documentElement.lang !== 'en-US') {
-          throw new Error(`expected document lang to update, got ${context.document.documentElement.lang}`);
-        }
-        if (state.t('nav.settings') !== 'Settings') {
-          throw new Error(`expected English settings label, got ${state.t('nav.settings')}`);
-        }
-        """
-    )
-
-    assert result.returncode == 0, result.stderr
-
-
-def test_frontend_display_language_can_be_set_to_chinese():
-    result = run_js(
-        """
-        const fs = require('fs');
-        const vm = require('vm');
-
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
-        const context = {
-          console,
-          setTimeout,
-          clearTimeout,
-          navigator: { language: 'en-US', languages: ['en-US'] },
-          document: { documentElement: { lang: '' } },
-        };
-        vm.createContext(context);
-        vm.runInContext(code, context);
-
-        const state = context.app();
-        state.settings.general = { display_language: 'zh-CN' };
-        state.applyDisplayLanguageFromSettings();
-
-        if (state.uiLanguage !== 'zh-CN') {
-          throw new Error(`expected manual Chinese, got ${state.uiLanguage}`);
-        }
-        if (state.t('nav.settings') !== '设置') {
-          throw new Error(`expected Chinese settings label, got ${state.t('nav.settings')}`);
-        }
-        """
-    )
-
-    assert result.returncode == 0, result.stderr
-
-
-def test_frontend_settings_exposes_display_language_control():
-    html = (ROOT / "app/static/index.html").read_text()
-
-    assert 'x-model="settings.general.display_language"' in html
-    assert '@change="applyDisplayLanguageFromSettings()"' in html
-    assert 'value="auto"' in html
-    assert 'value="zh-CN"' in html
-    assert 'value="en-US"' in html
-
-
 def test_frontend_api_key_panel_only_lists_selected_key_providers():
     result = run_js(
         """
@@ -266,7 +187,7 @@ def test_frontend_tmdb_key_test_calls_endpoint_and_sets_status():
           const state = context.app();
           const toasts = [];
           state.toast = (msg, type) => toasts.push({msg, type});
-          state.settings.tmdb['api_' + 'key'] = ' tmdb-key ';
+          state.settings.tmdb.api_key = ' tmdb-key ';
           state.settings.tmdb.language = 'en-US';
           state.api = async (url, method, body) => {
             if (url !== '/api/settings/test-tmdb-key' || method !== 'POST') {
@@ -369,7 +290,7 @@ def test_frontend_tmdb_key_test_blocks_duplicate_submits_while_pending():
           let calls = 0;
           let releaseApi;
           state.toast = () => {};
-          state.settings.tmdb['api_' + 'key'] = 'tmdb-key';
+          state.settings.tmdb.api_key = 'tmdb-key';
           state.api = async (url, method) => {
             calls += 1;
             if (url !== '/api/settings/test-tmdb-key' || method !== 'POST') {
