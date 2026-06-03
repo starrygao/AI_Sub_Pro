@@ -113,6 +113,53 @@ def test_suggest_kb_entries_keeps_short_high_confidence_terms():
     assert by_source["HP"].evidence == ["title"]
 
 
+def test_suggest_kb_entries_preserves_connected_overview_phrase():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "we watched The Last of Us tonight."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["The Last of Us"]
+    assert "The Last of Us" in by_source
+    assert "The Last" not in by_source
+    assert by_source["The Last of Us"].evidence == ["overview"]
+
+
+def test_suggest_kb_entries_preserves_connected_subtitle_phrase():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {},
+        [{"index": 4, "text": "He quotes Lord of the Rings."}],
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Lord of the Rings"]
+    assert "Lord of the Rings" in by_source
+    assert "Lord" not in by_source
+    assert "Rings" not in by_source
+    assert by_source["Lord of the Rings"].evidence == ["subtitle:4"]
+
+
+def test_suggest_kb_entries_keeps_apostrophe_names_from_prose():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "O'Neill visits the Moonlit Club."},
+        None,
+        None,
+    )
+
+    sources = {item.source for item in suggestions}
+    assert "O'Neill" in sources
+    assert "Moonlit Club" in sources
+
+
 def test_suggest_kb_entries_reports_ambiguous_existing_collisions():
     from app.engines.kb_models import ProjectKb, TermEntry
     from app.engines.kb_suggestions import suggest_kb_entries

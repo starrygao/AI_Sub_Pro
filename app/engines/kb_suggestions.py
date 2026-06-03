@@ -9,11 +9,10 @@ from app.engines.kb_models import ProjectKb
 
 KB_CATEGORIES = ("characters", "places", "brands", "slang")
 
-_TITLE_CASE_PHRASE_RE = re.compile(
-    r"\b[A-Z][A-Za-z]+(?:['-][A-Z]?[A-Za-z]+)?"
-    r"(?:\s+[A-Z][A-Za-z]+(?:['-][A-Z]?[A-Za-z]+)?)*\b"
-)
+_WORD_RE = re.compile(r"\b[A-Za-z]+(?:['-][A-Za-z]+)*\b")
 _WHITESPACE_RE = re.compile(r"\s+")
+
+_TITLE_CONNECTORS = {"and", "for", "of", "the", "to"}
 
 _NOISE_TERMS = {
     "a",
@@ -199,7 +198,57 @@ def _title_case_phrases(value) -> list[str]:
     text = _clean_text(value)
     if not text:
         return []
-    return [_normalize_source(match.group(0)) for match in _TITLE_CASE_PHRASE_RE.finditer(text)]
+
+    tokens = [(match.group(0), match.start(), match.end()) for match in _WORD_RE.finditer(text)]
+    phrases: list[str] = []
+    i = 0
+    while i < len(tokens):
+        word = tokens[i][0]
+        if not _is_title_word(word):
+            i += 1
+            continue
+
+        phrase_words = [word]
+        pending_connectors: list[str] = []
+        j = i + 1
+        while j < len(tokens):
+            if text[tokens[j - 1][2]:tokens[j][1]].strip():
+                break
+
+            next_word = tokens[j][0]
+            if _is_title_word(next_word):
+                phrase_words.extend(pending_connectors)
+                pending_connectors = []
+                phrase_words.append(next_word)
+                j += 1
+                continue
+            if _is_title_connector(next_word):
+                pending_connectors.append(next_word)
+                j += 1
+                continue
+            break
+
+        phrase = _normalize_source(" ".join(phrase_words))
+        if phrase:
+            phrases.append(phrase)
+        i = j
+
+    return phrases
+
+
+def _is_title_word(word: str) -> bool:
+    if _is_title_connector(word):
+        return False
+    letters = [char for char in word if char.isalpha()]
+    if len(letters) < 2:
+        return False
+    if "".join(letters).isupper():
+        return True
+    return word[0].isupper() and any(char.islower() for char in word)
+
+
+def _is_title_connector(word: str) -> bool:
+    return word == word.casefold() and word.casefold() in _TITLE_CONNECTORS
 
 
 def _category_for_phrase(source: str) -> str:
