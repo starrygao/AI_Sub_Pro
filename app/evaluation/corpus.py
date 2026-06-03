@@ -58,17 +58,30 @@ def _text(value: Any) -> str:
     return "" if value is None else str(value)
 
 
-def _blocks(value: Any, field: str, case_id: str, text_key: str) -> list[dict[str, str]]:
-    if not isinstance(value, list) or not value:
+def _blocks(
+    value: Any,
+    field: str,
+    case_id: str,
+    text_key: str,
+    *,
+    allow_empty: bool = False,
+) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        raise CorpusValidationError(f"{case_id}: {field} must be a list")
+    if not value:
+        if allow_empty:
+            return []
         raise CorpusValidationError(f"{case_id}: {field} must be a non-empty list")
     blocks = []
     for item in value:
         if not isinstance(item, dict):
             raise CorpusValidationError(f"{case_id}: {field} entries must be objects")
+        if text_key not in item:
+            raise CorpusValidationError(f"{case_id}: {field}.{text_key} is required")
         blocks.append(
             {
                 "id": _block_id(item.get("id"), f"{field}.id", case_id),
-                text_key: _text(item.get(text_key, "")),
+                text_key: _text(item[text_key]),
             }
         )
     return blocks
@@ -102,7 +115,13 @@ def _case(raw: Any) -> CorpusCase:
     if not isinstance(project, dict):
         raise CorpusValidationError(f"{case_id}: project must be an object")
     reference_blocks = (
-        _blocks(raw["reference_blocks"], "reference_blocks", case_id, "translation")
+        _blocks(
+            raw["reference_blocks"],
+            "reference_blocks",
+            case_id,
+            "translation",
+            allow_empty=True,
+        )
         if "reference_blocks" in raw
         else []
     )
@@ -123,11 +142,11 @@ def load_corpus_file(path: str | Path) -> GoldenCorpus:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise CorpusValidationError("corpus root must be an object")
+    version = raw.get("version")
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise CorpusValidationError("version must be a positive integer")
     cases_raw = raw.get("cases")
     if not isinstance(cases_raw, list) or not cases_raw:
         raise CorpusValidationError("cases must be a non-empty list")
     cases = [_case(item) for item in cases_raw]
-    version = raw.get("version")
-    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
-        raise CorpusValidationError("version must be a positive integer")
     return GoldenCorpus(version=version, cases=cases)
