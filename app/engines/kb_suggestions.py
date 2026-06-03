@@ -12,7 +12,7 @@ KB_CATEGORIES = ("characters", "places", "brands", "slang")
 _WORD_RE = re.compile(r"\b[A-Za-z]+(?:['-][A-Za-z]+)*\b")
 _WHITESPACE_RE = re.compile(r"\s+")
 
-_TITLE_CONNECTORS = {"and", "for", "of", "the", "to"}
+_TITLE_CONNECTORS = {"for", "of", "the", "to"}
 
 _NOISE_TERMS = {
     "a",

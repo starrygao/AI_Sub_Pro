@@ -160,6 +160,34 @@ def test_suggest_kb_entries_keeps_apostrophe_names_from_prose():
     assert "Moonlit Club" in sources
 
 
+def test_suggest_kb_entries_splits_parallel_character_phrases():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "Maya Chen and Detective Chen arrive."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen", "Detective Chen"]
+    assert "Maya Chen and Detective Chen" not in by_source
+
+
+def test_suggest_kb_entries_splits_parallel_connected_titles():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "The Last of Us and Lord of the Rings."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["The Last of Us", "Lord of the Rings"]
+    assert "The Last of Us and Lord of the Rings" not in by_source
+
+
 def test_suggest_kb_entries_reports_ambiguous_existing_collisions():
     from app.engines.kb_models import ProjectKb, TermEntry
     from app.engines.kb_suggestions import suggest_kb_entries
