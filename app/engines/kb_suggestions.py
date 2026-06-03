@@ -14,7 +14,12 @@ _WHITESPACE_RE = re.compile(r"\s+")
 
 _TITLE_CONNECTORS = {"a", "an", "at", "for", "in", "of", "on", "the", "to"}
 _RELATION_CONNECTORS = {"at", "in", "on", "to"}
-_CONNECTED_TITLE_STARTERS = {"lord", "once", "only", "the"}
+_PROTECTED_CONNECTED_TITLES = {
+    ("lord", "of", "the", "rings"),
+    ("once", "upon", "a", "time"),
+    ("only", "murders", "in", "the", "building"),
+    ("the", "last", "of", "us"),
+}
 _DENIED_PROSE_STARTERS = {
     "he",
     "i",
@@ -288,7 +293,7 @@ def _drop_denied_starter(phrase_words: list[str], text: str, start: int) -> list
         return phrase_words
 
     remaining = phrase_words[1:]
-    if _has_multiword_title_phrase(remaining):
+    if _has_multiword_title_phrase(remaining) or any(_is_acronym_word(word) for word in remaining):
         return remaining
     return []
 
@@ -296,7 +301,7 @@ def _drop_denied_starter(phrase_words: list[str], text: str, start: int) -> list
 def _split_relational_phrases(phrase_words: list[str]) -> list[list[str]]:
     if not phrase_words:
         return []
-    if phrase_words[0].casefold() in _CONNECTED_TITLE_STARTERS:
+    if _is_protected_connected_title(phrase_words):
         return [phrase_words]
 
     for index, word in enumerate(phrase_words):
@@ -308,6 +313,10 @@ def _split_relational_phrases(phrase_words: list[str]) -> list[list[str]]:
             return [left, right]
 
     return [phrase_words]
+
+
+def _is_protected_connected_title(words: list[str]) -> bool:
+    return tuple(word.casefold() for word in words) in _PROTECTED_CONNECTED_TITLES
 
 
 def _is_relation_connector(word: str) -> bool:

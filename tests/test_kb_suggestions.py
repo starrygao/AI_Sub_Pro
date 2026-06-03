@@ -275,6 +275,35 @@ def test_suggest_kb_entries_splits_in_relational_phrase():
     assert "Maya Chen in New York" not in by_source
 
 
+def test_suggest_kb_entries_splits_the_relational_phrase():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "The Matrix at the Moonlit Club."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["The Matrix", "Moonlit Club"]
+    assert "The Matrix at the Moonlit Club" not in by_source
+
+
+def test_suggest_kb_entries_keeps_acronym_after_denied_starter():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "Tonight NASA launches."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["NASA"]
+    assert "Tonight NASA" not in by_source
+    assert "Tonight" not in by_source
+
+
 def test_suggest_kb_entries_splits_newline_separated_subtitle_phrases():
     from app.engines.kb_suggestions import suggest_kb_entries
 
