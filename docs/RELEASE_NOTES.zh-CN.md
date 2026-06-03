@@ -21,8 +21,11 @@
 
 安装包：
 
-- 已为 macOS 用户附加 `AI_Sub_Pro_v1.1.1.dmg`，并提供对应的 `.sha256`
-  校验文件。
+- macOS DMG 以分片 release 资产提供：
+  `AI_Sub_Pro_v1.1.1.dmg.part-aa` 到 `AI_Sub_Pro_v1.1.1.dmg.part-ad`。
+- 使用 `cat AI_Sub_Pro_v1.1.1.dmg.part-* > AI_Sub_Pro_v1.1.1.dmg` 合并
+  DMG，然后用 `AI_Sub_Pro_v1.1.1.dmg.sha256` 校验完整文件。分片校验值见
+  `AI_Sub_Pro_v1.1.1.dmg.parts.sha256`。
 - Windows 安装包需要在 Windows 机器上运行 `build_win.bat` 生成；当前 release
   暂未附带预编译 Windows 安装包，请先使用源码安装。
 

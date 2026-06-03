@@ -25,8 +25,12 @@ Quality:
 
 Packages:
 
-- `AI_Sub_Pro_v1.1.1.dmg` is attached for macOS users, with a matching
-  `.sha256` checksum file.
+- The macOS DMG is attached as split release assets:
+  `AI_Sub_Pro_v1.1.1.dmg.part-aa` through `AI_Sub_Pro_v1.1.1.dmg.part-ad`.
+- Rebuild the DMG with
+  `cat AI_Sub_Pro_v1.1.1.dmg.part-* > AI_Sub_Pro_v1.1.1.dmg`, then verify it
+  with `AI_Sub_Pro_v1.1.1.dmg.sha256`. Part-level checksums are provided in
+  `AI_Sub_Pro_v1.1.1.dmg.parts.sha256`.
 - Windows packaging currently requires a Windows machine and `build_win.bat`;
   no prebuilt Windows installer is attached to this release.
 

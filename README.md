@@ -19,7 +19,9 @@ for your platform is not published yet, use the source install below.
 
 Current packaging support:
 
-- macOS: download `AI_Sub_Pro_v1.1.1.dmg` from the `v1.1.1` release assets.
+- macOS: download all `AI_Sub_Pro_v1.1.1.dmg.part-*` assets from the `v1.1.1`
+  release, join them with `cat AI_Sub_Pro_v1.1.1.dmg.part-* > AI_Sub_Pro_v1.1.1.dmg`,
+  then open the DMG.
 - Windows: no prebuilt installer is attached to the current release yet; build
   from source with `build_win.bat` on a Windows machine.
 
