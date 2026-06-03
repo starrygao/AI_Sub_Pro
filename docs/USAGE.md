@@ -112,6 +112,14 @@ The knowledge-base view stores local rules for consistent translations:
 - Project-level style rules.
 
 The translator uses these entries as context while processing subtitle batches.
+Project pages can also scan TMDB metadata and the current subtitles for
+suggested knowledge-base entries. Review each suggestion, edit the preferred
+translation or note, then accept selected entries into the project KB or reject
+entries that should not be suggested again.
+
+After translation, the project Knowledge Base panel can show the latest usage
+trace when trace data is available. The trace explains which KB entries matched
+the source subtitles and were included during translation.
 
 ## Data Locations
 
@@ -134,6 +142,21 @@ pytest
 
 The test suite covers API routes, scheduling, subtitle parsing, provider
 contracts, project-store safety, and frontend JavaScript behavior.
+
+## Translation Quality Evaluation
+
+Run the deterministic golden-corpus evaluation after changing translator,
+provider, or knowledge-base behavior:
+
+```bash
+mkdir -p build/evaluation
+python3 -m app.evaluation.cli --corpus tests/fixtures/golden_corpus/milestone1.json --json-out build/evaluation/milestone1.json --markdown-out build/evaluation/milestone1.md
+```
+
+The default milestone corpus uses checked-in candidate outputs and does not
+call network services or paid translation providers. Reports include
+terminology coverage, row alignment, missing translations, format preservation,
+and manual scoring placeholders for reviewer notes.
 
 ## Troubleshooting
 

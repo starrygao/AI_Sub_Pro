@@ -2,6 +2,27 @@
 
 语言：[English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## Unreleased - 翻译质量评测与知识库审校
+
+这个尚未发布的 milestone 记录确定性评测流程和新的知识库审校工具。本
+unreleased milestone 未附带新的应用安装包或 DMG。
+
+主要内容：
+
+- 新增 `python3 -m app.evaluation.cli`，用于基于 golden corpus 生成确定性的
+  翻译质量报告，不调用网络服务或付费 provider。
+- 新增项目知识库建议审校流程，可根据 TMDB 元数据和当前字幕生成建议词条，并
+  支持编辑、接受和拒绝。
+- 新增翻译过程中的 KB 使用 trace 记录，并通过项目 API 和前端面板展示可用的
+  最近一次 KB 命中情况。
+
+质量验证：
+
+- 确定性评测 CLI 已通过，并为 7 个用例写出
+  `build/evaluation/milestone1.json` 和 `build/evaluation/milestone1.md`。
+- milestone 聚焦测试已通过：`109 passed in 1.66s`。
+- 完整测试套件已通过：`838 passed in 45.70s`。
+
 ## v1.1.1 - 知识库注入修复
 
 这个补丁版本修复真实翻译流程中的项目知识库 v2 注入路径。

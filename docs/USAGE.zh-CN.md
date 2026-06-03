@@ -110,6 +110,12 @@ npm run start
 - 项目级风格规则。
 
 翻译器会在处理字幕批次时把这些条目作为上下文。
+项目页还可以根据 TMDB 元数据和当前字幕扫描建议词条。用户可以逐条审校建议，
+编辑推荐译名或备注，然后把选中的词条加入项目知识库；不需要的建议可以拒绝，
+之后不会反复提示。
+
+翻译完成后，如果存在可用的 trace 数据，项目知识库面板会显示最近一次使用记录。
+该记录说明哪些 KB 词条命中了源字幕，并被加入翻译上下文。
 
 ## 数据位置
 
@@ -131,6 +137,19 @@ pytest
 
 测试覆盖 API 路由、任务调度、字幕解析、provider 契约、项目存储安全和前端
 JavaScript 行为。
+
+## 翻译质量评测
+
+修改 translator、provider 或知识库逻辑后，可以运行确定性的 golden corpus 评测：
+
+```bash
+mkdir -p build/evaluation
+python3 -m app.evaluation.cli --corpus tests/fixtures/golden_corpus/milestone1.json --json-out build/evaluation/milestone1.json --markdown-out build/evaluation/milestone1.md
+```
+
+默认 milestone 语料使用仓库内已提交的候选输出，不会调用网络服务或付费翻译
+provider。报告包含术语覆盖、行数对齐、漏翻、格式保留，以及供人工审校填写的
+评分占位。
 
 ## 常见问题
 
