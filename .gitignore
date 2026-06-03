@@ -19,6 +19,7 @@ dist/
 .idea/
 .vscode/
 *.swp
+.worktrees/
 
 # Local data (user runtime data lives under ~/AI_Sub_Pro_Data in bundled builds;
 # in dev mode it sits in ./data — keep config.json & knowledge.json out of git)
