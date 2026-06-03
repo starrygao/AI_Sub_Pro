@@ -23,7 +23,24 @@ def trace_for_project_kb(kb: ProjectKb | None) -> dict[str, Any]:
                 "scope": "project",
             })
 
-    for rule in kb.style_notes.rules:
+    style = kb.style_notes
+    if style.tone:
+        matches.append({
+            "category": "style_notes",
+            "source": style.tone,
+            "target": "",
+            "notes": "tone",
+            "scope": "style",
+        })
+    if style.perspective:
+        matches.append({
+            "category": "style_notes",
+            "source": style.perspective,
+            "target": "",
+            "notes": "perspective",
+            "scope": "style",
+        })
+    for rule in style.rules:
         matches.append({
             "category": "style_notes",
             "source": rule,

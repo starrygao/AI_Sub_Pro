@@ -658,16 +658,13 @@ class SubtitleTranslator:
         kb_snippet = ""
         try:
             project_kb = _shared_kb.select_for_project(meta_info)
+            self._kb_usage_trace = trace_for_project_kb(project_kb)
             if project_kb is not None:
-                if not (
-                    self._kb_usage_trace.get("project")
-                    or self._kb_usage_trace.get("matches")
-                ):
-                    self._kb_usage_trace = trace_for_project_kb(project_kb)
                 kb_snippet = _kb_build_snippet(project_kb)
         except Exception as _e:  # pragma: no cover — defensive
             log.warning("KB v2 injection failed (polish): %s", _e)
             kb_snippet = ""
+            self._kb_usage_trace = trace_for_project_kb(None)
 
         if kb_snippet:
             parts.append(kb_snippet)

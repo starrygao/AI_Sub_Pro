@@ -172,7 +172,7 @@ def test_translator_records_kb_usage_trace(monkeypatch):
     assert trace["matches"][0]["target"] == "玛雅·陈"
 
 
-def test_trace_for_project_kb_includes_places_and_style_rules():
+def test_trace_for_project_kb_includes_places_and_style_constraints():
     from app.engines.kb_trace import trace_for_project_kb
     from app.engines.kb_models import ProjectKb, StyleNotes, TermEntry
 
@@ -180,7 +180,11 @@ def test_trace_for_project_kb_includes_places_and_style_rules():
         show_title="Trace Show",
         tmdb_id=808,
         places=[TermEntry(source="Harbor Nine", target="九号码头", notes="district")],
-        style_notes=StyleNotes(rules=["Preserve courtroom formality"]),
+        style_notes=StyleNotes(
+            tone="courtroom formal",
+            perspective="first person",
+            rules=["Preserve courtroom formality"],
+        ),
     ))
 
     assert trace["project"] == {"show_title": "Trace Show", "tmdb_id": 808}
@@ -190,6 +194,20 @@ def test_trace_for_project_kb_includes_places_and_style_rules():
         "target": "九号码头",
         "notes": "district",
         "scope": "project",
+    } in trace["matches"]
+    assert {
+        "category": "style_notes",
+        "source": "courtroom formal",
+        "target": "",
+        "notes": "tone",
+        "scope": "style",
+    } in trace["matches"]
+    assert {
+        "category": "style_notes",
+        "source": "first person",
+        "target": "",
+        "notes": "perspective",
+        "scope": "style",
     } in trace["matches"]
     assert {
         "category": "style_notes",
@@ -255,3 +273,84 @@ def test_write_kb_usage_trace_writes_json(tmp_path):
 
     data = json.loads((tmp_path / "kb_usage_trace.json").read_text(encoding="utf-8"))
     assert data == trace
+
+
+def test_build_polish_prompt_resets_stale_kb_usage_trace_on_no_match(monkeypatch):
+    from app.engines import translator as tmod
+    from app.engines.knowledge import KnowledgeBase
+    from app.engines.kb_models import ProjectKb, TermEntry
+
+    kb = KnowledgeBase()
+    kb.set_project("trace", ProjectKb(
+        show_title="Trace Show",
+        tmdb_id=808,
+        characters=[TermEntry(source="Maya Chen", target="玛雅·陈")],
+    ))
+    monkeypatch.setattr(tmod, "_shared_kb", kb, raising=False)
+
+    cfg = {
+        "translation": {
+            "primary_provider": "openai",
+            "primary_model": "gpt-4o",
+            "polish_provider": "",
+            "batch_size": 10,
+            "context_window": 3,
+        },
+        "api_keys": {"openai": "sk-test"},
+    }
+    t = tmod.SubtitleTranslator(cfg)
+    t._build_prompt(
+        target_lang="简体中文",
+        meta_info={"name": "Trace Show", "tmdb_id": 808},
+        kb_data=None,
+        context_before=[],
+        context_after=[],
+    )
+    assert t.get_kb_usage_trace()["matches"]
+
+    prompt = t._build_polish_prompt(
+        target_lang="简体中文",
+        meta_info={"name": "Completely Different", "tmdb_id": 999},
+        kb_data=None,
+    )
+
+    assert "Maya Chen" not in prompt
+    assert t.get_kb_usage_trace() == {"project": {}, "matches": []}
+
+
+def test_build_polish_prompt_records_kb_usage_trace_on_match(monkeypatch):
+    from app.engines import translator as tmod
+    from app.engines.knowledge import KnowledgeBase
+    from app.engines.kb_models import ProjectKb, TermEntry
+
+    kb = KnowledgeBase()
+    kb.set_project("trace", ProjectKb(
+        show_title="Trace Show",
+        tmdb_id=808,
+        characters=[TermEntry(source="Maya Chen", target="玛雅·陈")],
+    ))
+    monkeypatch.setattr(tmod, "_shared_kb", kb, raising=False)
+
+    cfg = {
+        "translation": {
+            "primary_provider": "openai",
+            "primary_model": "gpt-4o",
+            "polish_provider": "",
+            "batch_size": 10,
+            "context_window": 3,
+        },
+        "api_keys": {"openai": "sk-test"},
+    }
+    t = tmod.SubtitleTranslator(cfg)
+
+    prompt = t._build_polish_prompt(
+        target_lang="简体中文",
+        meta_info={"name": "Trace Show", "tmdb_id": 808},
+        kb_data=None,
+    )
+
+    assert "Maya Chen" in prompt
+    trace = t.get_kb_usage_trace()
+    assert trace["project"]["tmdb_id"] == 808
+    assert trace["matches"][0]["source"] == "Maya Chen"
+    assert trace["matches"][0]["target"] == "玛雅·陈"
