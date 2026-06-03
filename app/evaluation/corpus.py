@@ -101,6 +101,11 @@ def _case(raw: Any) -> CorpusCase:
     project = raw.get("project")
     if not isinstance(project, dict):
         raise CorpusValidationError(f"{case_id}: project must be an object")
+    reference_blocks = (
+        _blocks(raw["reference_blocks"], "reference_blocks", case_id, "translation")
+        if "reference_blocks" in raw
+        else []
+    )
     return CorpusCase(
         id=case_id,
         tags=_string_list(raw.get("tags"), "tags", case_id),
@@ -110,14 +115,7 @@ def _case(raw: Any) -> CorpusCase:
         source_blocks=source_blocks,
         candidate_blocks=candidate_blocks,
         expected_terms=_terms(raw.get("expected_terms"), case_id),
-        reference_blocks=_blocks(
-            raw.get("reference_blocks", []),
-            "reference_blocks",
-            case_id,
-            "translation",
-        )
-        if raw.get("reference_blocks")
-        else [],
+        reference_blocks=reference_blocks,
     )
 
 
