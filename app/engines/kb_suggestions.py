@@ -122,9 +122,9 @@ def suggest_kb_entries(
     existing_entries = _existing_entries_by_source(existing_kb)
     suggestions: dict[str, KbSuggestion] = {}
 
-    for source, category, evidence, confidence in _iter_candidates(project, subtitles):
+    for source, category, evidence, confidence, origin in _iter_candidates(project, subtitles):
         term = _normalize_source(source)
-        if not _is_useful_term(term):
+        if not _is_useful_term(term, origin):
             continue
 
         key = term.casefold()
@@ -157,15 +157,16 @@ def _iter_candidates(project: dict, subtitles: list[dict] | None):
     project = project if isinstance(project, dict) else {}
 
     for source, evidence in _cast_names(project.get("cast")):
-        yield source, "characters", evidence, 0.95 if evidence == "cast" else 0.9
+        confidence = 0.95 if evidence == "cast" else 0.9
+        yield source, "characters", evidence, confidence, evidence
 
-    for field in ("title", "name", "original_title"):
+    for field in ("title", "name", "show_title", "original_title"):
         title = _normalize_source(project.get(field))
         if title:
-            yield title, _category_for_phrase(title), "title", 0.75
+            yield title, _category_for_phrase(title), "title", 0.75, field
 
     for phrase in _title_case_phrases(project.get("overview")):
-        yield phrase, _category_for_phrase(phrase), "overview", 0.6
+        yield phrase, _category_for_phrase(phrase), "overview", 0.6, "overview"
 
     for subtitle in subtitles or []:
         if not isinstance(subtitle, dict):
@@ -173,7 +174,7 @@ def _iter_candidates(project: dict, subtitles: list[dict] | None):
         index = subtitle.get("index")
         evidence = f"subtitle:{index}" if index is not None else "subtitle"
         for phrase in _title_case_phrases(subtitle.get("text")):
-            yield phrase, _category_for_phrase(phrase), evidence, 0.55
+            yield phrase, _category_for_phrase(phrase), evidence, 0.55, "subtitle"
 
 
 def _cast_names(cast):
@@ -255,13 +256,14 @@ def _clean_text(value) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def _is_useful_term(source: str) -> bool:
+def _is_useful_term(source: str, origin: str) -> bool:
     if not source:
         return False
     folded = source.casefold()
-    if folded in _NOISE_TERMS:
+    is_high_confidence_origin = origin in {"cast", "character", "title", "name", "show_title", "original_title"}
+    if folded in _NOISE_TERMS and (not is_high_confidence_origin or len(folded) == 1):
         return False
     letters = [char for char in source if char.isalpha()]
-    if len(letters) <= 2:
+    if len(letters) <= 2 and not is_high_confidence_origin:
         return False
     return True

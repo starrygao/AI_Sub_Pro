@@ -77,6 +77,42 @@ def test_suggest_kb_entries_preserves_full_metadata_titles():
     assert by_source["The Last of Us"].evidence == ["title"]
 
 
+def test_suggest_kb_entries_uses_show_title_as_metadata_title():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"show_title": "The Matrix"},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["The Matrix"]
+    assert by_source["The Matrix"].evidence == ["title"]
+
+
+def test_suggest_kb_entries_keeps_short_high_confidence_terms():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {
+            "title": "Up",
+            "name": "It",
+            "show_title": "HP",
+            "cast": ["Li"],
+        },
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Li", "Up", "It", "HP"]
+    assert by_source["Li"].category == "characters"
+    assert by_source["Up"].evidence == ["title"]
+    assert by_source["It"].evidence == ["title"]
+    assert by_source["HP"].evidence == ["title"]
+
+
 def test_suggest_kb_entries_reports_ambiguous_existing_collisions():
     from app.engines.kb_models import ProjectKb, TermEntry
     from app.engines.kb_suggestions import suggest_kb_entries
