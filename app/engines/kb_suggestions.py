@@ -13,6 +13,8 @@ _WORD_RE = re.compile(r"\b[A-Za-z]+(?:['-][A-Za-z]+)*\b")
 _WHITESPACE_RE = re.compile(r"\s+")
 
 _TITLE_CONNECTORS = {"a", "an", "at", "for", "in", "of", "on", "the", "to"}
+_RELATION_CONNECTORS = {"at", "in", "on", "to"}
+_CONNECTED_TITLE_STARTERS = {"lord", "once", "only", "the"}
 _DENIED_PROSE_STARTERS = {
     "he",
     "i",
@@ -230,7 +232,7 @@ def _title_case_phrases(value) -> list[str]:
         pending_connectors: list[str] = []
         j = i + 1
         while j < len(tokens):
-            if text[tokens[j - 1][2]:tokens[j][1]].strip():
+            if not _is_soft_phrase_gap(text[tokens[j - 1][2]:tokens[j][1]]):
                 break
 
             next_word = tokens[j][0]
@@ -249,9 +251,10 @@ def _title_case_phrases(value) -> list[str]:
             break
 
         phrase_words = _drop_denied_starter(phrase_words, text, tokens[i][1])
-        phrase = _normalize_source(" ".join(phrase_words))
-        if phrase:
-            phrases.append(phrase)
+        for split_words in _split_relational_phrases(phrase_words):
+            phrase = _normalize_source(" ".join(split_words))
+            if phrase:
+                phrases.append(phrase)
         i = j
 
     return phrases
@@ -272,6 +275,10 @@ def _is_title_connector(word: str) -> bool:
     return word == word.casefold() and word.casefold() in _TITLE_CONNECTORS
 
 
+def _is_soft_phrase_gap(gap: str) -> bool:
+    return bool(gap) and all(char in " \t" for char in gap)
+
+
 def _drop_denied_starter(phrase_words: list[str], text: str, start: int) -> list[str]:
     if not phrase_words:
         return []
@@ -286,6 +293,37 @@ def _drop_denied_starter(phrase_words: list[str], text: str, start: int) -> list
     return []
 
 
+def _split_relational_phrases(phrase_words: list[str]) -> list[list[str]]:
+    if not phrase_words:
+        return []
+    if phrase_words[0].casefold() in _CONNECTED_TITLE_STARTERS:
+        return [phrase_words]
+
+    for index, word in enumerate(phrase_words):
+        if not _is_relation_connector(word):
+            continue
+        left = _trim_edge_connectors(phrase_words[:index])
+        right = _trim_edge_connectors(phrase_words[index + 1:])
+        if _has_title_word(left) and _has_title_word(right):
+            return [left, right]
+
+    return [phrase_words]
+
+
+def _is_relation_connector(word: str) -> bool:
+    return word == word.casefold() and word.casefold() in _RELATION_CONNECTORS
+
+
+def _trim_edge_connectors(words: list[str]) -> list[str]:
+    start = 0
+    end = len(words)
+    while start < end and _is_title_connector(words[start]):
+        start += 1
+    while end > start and _is_title_connector(words[end - 1]):
+        end -= 1
+    return words[start:end]
+
+
 def _starts_sentence(text: str, start: int) -> bool:
     prefix = text[:start].rstrip()
     return not prefix or prefix[-1] in ".!?"
@@ -293,6 +331,10 @@ def _starts_sentence(text: str, start: int) -> bool:
 
 def _has_multiword_title_phrase(words: list[str]) -> bool:
     return sum(1 for word in words if _is_title_word(word)) >= 2
+
+
+def _has_title_word(words: list[str]) -> bool:
+    return any(_is_title_word(word) for word in words)
 
 
 def _is_acronym_span(words: list[str]) -> bool:

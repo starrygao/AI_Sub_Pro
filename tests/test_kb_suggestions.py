@@ -247,6 +247,48 @@ def test_suggest_kb_entries_preserves_a_connected_title():
     assert "Time" not in by_source
 
 
+def test_suggest_kb_entries_splits_at_relational_phrase():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "Maya Chen at the Moonlit Club."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen", "Moonlit Club"]
+    assert "Maya Chen at the Moonlit Club" not in by_source
+
+
+def test_suggest_kb_entries_splits_in_relational_phrase():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "Maya Chen in New York."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen", "New York"]
+    assert "Maya Chen in New York" not in by_source
+
+
+def test_suggest_kb_entries_splits_newline_separated_subtitle_phrases():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {},
+        [{"index": 8, "text": "Maya Chen\nDetective Chen"}],
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen", "Detective Chen"]
+    assert "Maya Chen Detective Chen" not in by_source
+
+
 def test_suggest_kb_entries_reports_ambiguous_existing_collisions():
     from app.engines.kb_models import ProjectKb, TermEntry
     from app.engines.kb_suggestions import suggest_kb_entries
