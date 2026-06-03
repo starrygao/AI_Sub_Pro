@@ -19,7 +19,10 @@ _PROTECTED_CONNECTED_TITLES = {
     ("once", "upon", "a", "time"),
     ("only", "murders", "in", "the", "building"),
     ("the", "last", "of", "us"),
+    ("this", "is", "us"),
 }
+_SENTENCE_START_PREFIX_CHARS = set("\"'([{<-")
+_SENTENCE_BOUNDARY_TRAILING_CHARS = set("\"')]} ")
 _DENIED_PROSE_STARTERS = {
     "he",
     "i",
@@ -287,6 +290,8 @@ def _is_soft_phrase_gap(gap: str) -> bool:
 def _drop_denied_starter(phrase_words: list[str], text: str, start: int) -> list[str]:
     if not phrase_words:
         return []
+    if _is_protected_connected_title(phrase_words):
+        return phrase_words
     if phrase_words[0].casefold() not in _DENIED_PROSE_STARTERS:
         return phrase_words
     if not _starts_sentence(text, start):
@@ -301,6 +306,25 @@ def _drop_denied_starter(phrase_words: list[str], text: str, start: int) -> list
 def _split_relational_phrases(phrase_words: list[str]) -> list[list[str]]:
     if not phrase_words:
         return []
+    if _is_protected_connected_title(phrase_words):
+        return [phrase_words]
+
+    chunks = [phrase_words]
+    changed = True
+    while changed:
+        changed = False
+        next_chunks: list[list[str]] = []
+        for chunk in chunks:
+            split_chunks = _split_first_relational_phrase(chunk)
+            next_chunks.extend(split_chunks)
+            if len(split_chunks) > 1:
+                changed = True
+        chunks = next_chunks
+
+    return [chunk for chunk in chunks if chunk]
+
+
+def _split_first_relational_phrase(phrase_words: list[str]) -> list[list[str]]:
     if _is_protected_connected_title(phrase_words):
         return [phrase_words]
 
@@ -335,7 +359,15 @@ def _trim_edge_connectors(words: list[str]) -> list[str]:
 
 def _starts_sentence(text: str, start: int) -> bool:
     prefix = text[:start].rstrip()
-    return not prefix or prefix[-1] in ".!?"
+    if not prefix:
+        return True
+    if all(char.isspace() or char in _SENTENCE_START_PREFIX_CHARS for char in prefix):
+        return True
+
+    index = len(prefix) - 1
+    while index >= 0 and prefix[index] in _SENTENCE_BOUNDARY_TRAILING_CHARS:
+        index -= 1
+    return index >= 0 and prefix[index] in ".!?"
 
 
 def _has_multiword_title_phrase(words: list[str]) -> bool:

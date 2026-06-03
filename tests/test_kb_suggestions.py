@@ -304,6 +304,65 @@ def test_suggest_kb_entries_keeps_acronym_after_denied_starter():
     assert "Tonight" not in by_source
 
 
+def test_suggest_kb_entries_splits_multiple_relational_phrases():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "Maya Chen at the Moonlit Club in New York."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen", "Moonlit Club", "New York"]
+    assert "Maya Chen at the Moonlit Club in New York" not in by_source
+    assert "Moonlit Club in New York" not in by_source
+
+
+def test_suggest_kb_entries_drops_quoted_sentence_start_adverb():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "\"Tonight Maya Chen arrives.\""},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen"]
+    assert "Tonight Maya Chen" not in by_source
+    assert "Tonight" not in by_source
+
+
+def test_suggest_kb_entries_drops_dash_sentence_start_adverb():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "- Tonight Maya Chen arrives."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen"]
+    assert "Tonight Maya Chen" not in by_source
+    assert "Tonight" not in by_source
+
+
+def test_suggest_kb_entries_preserves_denied_starter_connected_title():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "This Is Us returns."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["This Is Us"]
+    assert "Is Us" not in by_source
+
+
 def test_suggest_kb_entries_splits_newline_separated_subtitle_phrases():
     from app.engines.kb_suggestions import suggest_kb_entries
 
