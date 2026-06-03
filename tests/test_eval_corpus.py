@@ -49,6 +49,46 @@ def test_load_golden_corpus_rejects_missing_source_block_text(tmp_path):
         load_corpus_file(path)
 
 
+def test_load_golden_corpus_rejects_non_string_source_block_text(tmp_path):
+    from app.evaluation.corpus import CorpusValidationError, load_corpus_file
+
+    path = tmp_path / "non-string-source-text.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "cases": [
+                    _valid_case(
+                        source_blocks=[{"id": "1", "text": ["not", "text"]}]
+                    )
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CorpusValidationError, match="source_blocks|text"):
+        load_corpus_file(path)
+
+
+def test_load_golden_corpus_rejects_empty_source_block_text(tmp_path):
+    from app.evaluation.corpus import CorpusValidationError, load_corpus_file
+
+    path = tmp_path / "empty-source-text.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "cases": [_valid_case(source_blocks=[{"id": "1", "text": "   "}])],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CorpusValidationError, match="source_blocks|text"):
+        load_corpus_file(path)
+
+
 def test_load_golden_corpus_rejects_missing_candidate_block_translation(tmp_path):
     from app.evaluation.corpus import CorpusValidationError, load_corpus_file
 
@@ -64,6 +104,65 @@ def test_load_golden_corpus_rejects_missing_candidate_block_translation(tmp_path
     )
 
     with pytest.raises(CorpusValidationError, match="candidate_blocks|translation"):
+        load_corpus_file(path)
+
+
+def test_load_golden_corpus_rejects_non_string_candidate_translation(tmp_path):
+    from app.evaluation.corpus import CorpusValidationError, load_corpus_file
+
+    path = tmp_path / "non-string-candidate-translation.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "cases": [
+                    _valid_case(candidate_blocks=[{"id": "1", "translation": 123}])
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CorpusValidationError, match="candidate_blocks|translation"):
+        load_corpus_file(path)
+
+
+@pytest.mark.parametrize(
+    ("field", "blocks", "message"),
+    [
+        (
+            "source_blocks",
+            [{"id": "1", "text": "Hello."}, {"id": "1", "text": "Again."}],
+            "source_blocks|1",
+        ),
+        (
+            "candidate_blocks",
+            [
+                {"id": "1", "translation": "你好。"},
+                {"id": "1", "translation": "又一次。"},
+            ],
+            "candidate_blocks|1",
+        ),
+        (
+            "reference_blocks",
+            [
+                {"id": "1", "translation": "你好。"},
+                {"id": "1", "translation": "又一次。"},
+            ],
+            "reference_blocks|1",
+        ),
+    ],
+)
+def test_load_golden_corpus_rejects_duplicate_block_ids(tmp_path, field, blocks, message):
+    from app.evaluation.corpus import CorpusValidationError, load_corpus_file
+
+    path = tmp_path / f"duplicate-{field}.json"
+    path.write_text(
+        json.dumps({"version": 1, "cases": [_valid_case(**{field: blocks})]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CorpusValidationError, match=message):
         load_corpus_file(path)
 
 
@@ -97,6 +196,20 @@ def test_load_golden_corpus_accepts_explicit_empty_reference_blocks(tmp_path):
     path = tmp_path / "empty-reference-blocks.json"
     path.write_text(
         json.dumps({"version": 1, "cases": [_valid_case(reference_blocks=[])]}),
+        encoding="utf-8",
+    )
+
+    corpus = load_corpus_file(path)
+
+    assert corpus.cases[0].reference_blocks == []
+
+
+def test_load_golden_corpus_accepts_omitted_reference_blocks(tmp_path):
+    from app.evaluation.corpus import load_corpus_file
+
+    path = tmp_path / "omitted-reference-blocks.json"
+    path.write_text(
+        json.dumps({"version": 1, "cases": [_valid_case()]}),
         encoding="utf-8",
     )
 

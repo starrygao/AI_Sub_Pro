@@ -54,8 +54,21 @@ def _block_id(value: Any, field: str, case_id: str) -> str:
     return normalized
 
 
-def _text(value: Any) -> str:
-    return "" if value is None else str(value)
+def _block_text(
+    value: Any,
+    field: str,
+    text_key: str,
+    case_id: str,
+    *,
+    allow_empty_text: bool = False,
+) -> str:
+    if not isinstance(value, str):
+        raise CorpusValidationError(f"{case_id}: {field}.{text_key} must be a string")
+    if not allow_empty_text and not value.strip():
+        raise CorpusValidationError(
+            f"{case_id}: {field}.{text_key} must be a non-empty string"
+        )
+    return value
 
 
 def _blocks(
@@ -65,6 +78,7 @@ def _blocks(
     text_key: str,
     *,
     allow_empty: bool = False,
+    allow_empty_text: bool = False,
 ) -> list[dict[str, str]]:
     if not isinstance(value, list):
         raise CorpusValidationError(f"{case_id}: {field} must be a list")
@@ -73,15 +87,28 @@ def _blocks(
             return []
         raise CorpusValidationError(f"{case_id}: {field} must be a non-empty list")
     blocks = []
+    seen_ids: set[str] = set()
     for item in value:
         if not isinstance(item, dict):
             raise CorpusValidationError(f"{case_id}: {field} entries must be objects")
         if text_key not in item:
             raise CorpusValidationError(f"{case_id}: {field}.{text_key} is required")
+        block_id = _block_id(item.get("id"), f"{field}.id", case_id)
+        if block_id in seen_ids:
+            raise CorpusValidationError(
+                f"{case_id}: {field} contains duplicate id {block_id!r}"
+            )
+        seen_ids.add(block_id)
         blocks.append(
             {
-                "id": _block_id(item.get("id"), f"{field}.id", case_id),
-                text_key: _text(item[text_key]),
+                "id": block_id,
+                text_key: _block_text(
+                    item[text_key],
+                    field,
+                    text_key,
+                    case_id,
+                    allow_empty_text=allow_empty_text,
+                ),
             }
         )
     return blocks
@@ -110,6 +137,7 @@ def _case(raw: Any) -> CorpusCase:
         "candidate_blocks",
         case_id,
         "translation",
+        allow_empty_text=True,
     )
     project = raw.get("project")
     if not isinstance(project, dict):
@@ -121,6 +149,7 @@ def _case(raw: Any) -> CorpusCase:
             case_id,
             "translation",
             allow_empty=True,
+            allow_empty_text=True,
         )
         if "reference_blocks" in raw
         else []
