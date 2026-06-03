@@ -241,3 +241,88 @@ def test_open_project_respects_unsaved_knowledge_guard_before_fetching_detail():
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_knowledge_frontend_loads_and_accepts_suggestions():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const calls = [];
+          let acceptPayload = null;
+          state.toast = () => {};
+          state.currentProject = {id: 'p1', name: 'Project One'};
+          state.kbSelectedKey = 'show-one';
+          state.kbCurrent = {key: 'show-one', show_title: 'Show One', tmdb_id: 123};
+          state.api = async (url, method = 'GET', body = null) => {
+            calls.push({url, method, body});
+            if (url === '/api/knowledge/projects/p1/suggestions' && method === 'GET') {
+              return {suggestions: [
+                {source: 'Alice', target: '', category: 'characters', collision: 'new'},
+                {source: 'Acme', target: '艾克米', category: 'brands', collision: 'existing'},
+              ]};
+            }
+            if (url === '/api/knowledge/projects/p1/suggestions/accept' && method === 'POST') {
+              acceptPayload = body;
+              return {accepted: 1};
+            }
+            if (url === '/api/knowledge/projects/show-one' && method === 'GET') {
+              return {key: 'show-one', show_title: 'Show One', tmdb_id: 123, characters: [], places: [], brands: [], slang: [], style_notes: {}};
+            }
+            throw new Error(`unexpected API call ${method} ${url}`);
+          };
+
+          await state.loadKbSuggestions();
+          if (state.kbSuggestions.length !== 2) {
+            throw new Error(`expected suggestions, got ${JSON.stringify(state.kbSuggestions)}`);
+          }
+          if (!state.kbSuggestions[0].selected || state.kbSuggestions[1].selected) {
+            throw new Error(`expected selected defaults from collision, got ${JSON.stringify(state.kbSuggestions)}`);
+          }
+          state.kbSuggestions[0].target = '爱丽丝';
+          state.kbSuggestions[1].selected = false;
+
+          await state.acceptKbSuggestions();
+          if (!acceptPayload) throw new Error('expected accept payload');
+          if (acceptPayload.key !== 'show-one' || acceptPayload.show_title !== 'Show One' || acceptPayload.tmdb_id !== 123) {
+            throw new Error(`unexpected accept metadata ${JSON.stringify(acceptPayload)}`);
+          }
+          if (acceptPayload.entries.length !== 1) {
+            throw new Error(`expected one accepted entry, got ${JSON.stringify(acceptPayload.entries)}`);
+          }
+          const entry = acceptPayload.entries[0];
+          if (entry.source !== 'Alice' || entry.target !== '爱丽丝' || entry.category !== 'characters') {
+            throw new Error(`unexpected accepted entry ${JSON.stringify(entry)}`);
+          }
+          const urls = calls.map((call) => `${call.method} ${call.url}`);
+          if (!urls.includes('GET /api/knowledge/projects/show-one')) {
+            throw new Error(`expected KB reload after accept, got ${JSON.stringify(urls)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_knowledge_html_contains_suggestion_and_trace_panels():
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+
+    expected = [
+        "loadKbSuggestions",
+        "kbSuggestions",
+        "kbUsageTrace",
+    ]
+    for snippet in expected:
+        assert snippet in html

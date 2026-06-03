@@ -35,6 +35,12 @@ function app() {
     kbSelectError: '',
     kbListRequestSeq: 0,
     kbSelectRequestSeq: 0,
+    kbSuggestions: [],
+    kbSuggestionsLoading: false,
+    kbSuggestionsError: '',
+    kbUsageTrace: null,
+    kbTraceLoading: false,
+    kbTraceError: '',
     projectRenamePrompt: false,
     projectRenameInput: '',
     projectRenameTarget: null,
@@ -706,6 +712,84 @@ function app() {
         }
       } finally {
         if (this.kbListRequestSeq === requestId) this.kbListLoading = false;
+      }
+    },
+
+    async loadKbSuggestions() {
+      if (!this.currentProject?.id) {
+        this.kbSuggestions = [];
+        this.kbSuggestionsError = '';
+        this.kbSuggestionsLoading = false;
+        return;
+      }
+      this.kbSuggestionsLoading = true;
+      this.kbSuggestionsError = '';
+      try {
+        const data = await this.api(`/api/knowledge/projects/${encodeURIComponent(this.currentProject.id)}/suggestions`);
+        const raw = Array.isArray(data?.suggestions)
+          ? data.suggestions
+          : (Array.isArray(data?.items) ? data.items : (Array.isArray(data) ? data : []));
+        this.kbSuggestions = raw
+          .filter(item => this.isPlainObject(item))
+          .map(item => ({
+            ...item,
+            target: typeof item.target === 'string'
+              ? item.target
+              : (typeof item.suggested_target === 'string' ? item.suggested_target : ''),
+            selected: item.collision === 'existing' ? false : !!(item.selected ?? true),
+          }));
+      } catch (e) {
+        this.kbSuggestionsError = e.message || '加载建议失败';
+        this.toast('加载 KB 建议失败: ' + e.message, 'error');
+      } finally {
+        this.kbSuggestionsLoading = false;
+      }
+    },
+
+    async acceptKbSuggestions() {
+      if (this.kbActionPending) return;
+      if (!this.currentProject?.id || !this.kbSelectedKey || !this.kbCurrent) return;
+      if (this.kbDirty) {
+        this.toast('请先保存当前知识库修改', 'error');
+        return;
+      }
+      const entries = this.kbSuggestions
+        .filter(item => this.isPlainObject(item) && item.selected)
+        .map(item => {
+          const entry = {
+            source: typeof item.source === 'string' ? item.source.trim() : '',
+            target: typeof item.target === 'string' ? item.target.trim() : '',
+          };
+          if (typeof item.category === 'string' && item.category.trim()) {
+            entry.category = item.category.trim();
+          }
+          return entry;
+        })
+        .filter(entry => entry.source);
+      if (entries.length === 0) {
+        this.toast('请选择要接受的 KB 建议', 'error');
+        return;
+      }
+      const key = this.kbSelectedKey;
+      const payload = {
+        key,
+        show_title: this.kbCurrent.show_title || '',
+        tmdb_id: this.kbCurrent.tmdb_id ?? null,
+        entries,
+      };
+      this.kbActionPending = 'suggestions';
+      this.kbSuggestionsError = '';
+      try {
+        await this.api(`/api/knowledge/projects/${encodeURIComponent(this.currentProject.id)}/suggestions/accept`, 'POST', payload);
+        this.toast('已接受 KB 建议', 'success');
+        if (this.kbSelectedKey === key) this.kbCurrent = null;
+        await this.selectKb(this.kbSelectedKey, {allowDuringPending:true});
+        await this.loadKbSuggestions();
+      } catch (e) {
+        this.kbSuggestionsError = e.message || '接受建议失败';
+        this.toast('接受 KB 建议失败: ' + e.message, 'error');
+      } finally {
+        this.kbActionPending = '';
       }
     },
 
