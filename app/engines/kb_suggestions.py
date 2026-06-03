@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 from app.engines.kb_models import ProjectKb
 
@@ -14,7 +14,6 @@ _TITLE_CASE_PHRASE_RE = re.compile(
     r"(?:\s+[A-Z][A-Za-z]+(?:['-][A-Z]?[A-Za-z]+)?)*\b"
 )
 _WHITESPACE_RE = re.compile(r"\s+")
-_LEADING_ARTICLE_RE = re.compile(r"^(?:The|A|An)\s+", re.IGNORECASE)
 
 _NOISE_TERMS = {
     "a",
@@ -108,6 +107,7 @@ class KbSuggestion:
     evidence: list[str]
     confidence: float
     collision: str = "new"
+    existing_entries: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -119,7 +119,7 @@ def suggest_kb_entries(
     existing_kb: ProjectKb | None,
 ) -> list[KbSuggestion]:
     """Suggest candidate KB entries from project metadata and subtitle text."""
-    existing_sources = _existing_sources(existing_kb)
+    existing_entries = _existing_entries_by_source(existing_kb)
     suggestions: dict[str, KbSuggestion] = {}
 
     for source, category, evidence, confidence in _iter_candidates(project, subtitles):
@@ -128,14 +128,15 @@ def suggest_kb_entries(
             continue
 
         key = term.casefold()
-        collision = "existing" if key in existing_sources else "new"
+        matches = existing_entries.get(key, [])
+        collision = _collision_status(matches)
         if key in suggestions:
             suggestion = suggestions[key]
             if evidence not in suggestion.evidence:
                 suggestion.evidence.append(evidence)
             suggestion.confidence = max(suggestion.confidence, confidence)
-            if suggestion.collision != "existing" and collision == "existing":
-                suggestion.collision = "existing"
+            suggestion.collision = collision
+            suggestion.existing_entries = list(matches)
             continue
 
         suggestions[key] = KbSuggestion(
@@ -146,6 +147,7 @@ def suggest_kb_entries(
             evidence=[evidence],
             confidence=confidence,
             collision=collision,
+            existing_entries=list(matches),
         )
 
     return list(suggestions.values())
@@ -157,14 +159,13 @@ def _iter_candidates(project: dict, subtitles: list[dict] | None):
     for source, evidence in _cast_names(project.get("cast")):
         yield source, "characters", evidence, 0.95 if evidence == "cast" else 0.9
 
-    for field, evidence in (
-        ("title", "title"),
-        ("name", "title"),
-        ("original_title", "title"),
-        ("overview", "overview"),
-    ):
-        for phrase in _title_case_phrases(project.get(field)):
-            yield phrase, _category_for_phrase(phrase), evidence, 0.75 if evidence == "title" else 0.6
+    for field in ("title", "name", "original_title"):
+        title = _normalize_source(project.get(field))
+        if title:
+            yield title, _category_for_phrase(title), "title", 0.75
+
+    for phrase in _title_case_phrases(project.get("overview")):
+        yield phrase, _category_for_phrase(phrase), "overview", 0.6
 
     for subtitle in subtitles or []:
         if not isinstance(subtitle, dict):
@@ -212,17 +213,33 @@ def _category_for_phrase(source: str) -> str:
     return "slang"
 
 
-def _existing_sources(existing_kb: ProjectKb | None) -> set[str]:
+def _existing_entries_by_source(existing_kb: ProjectKb | None) -> dict[str, list[dict]]:
     if existing_kb is None:
-        return set()
+        return {}
 
-    sources: set[str] = set()
+    matches: dict[str, list[dict]] = {}
     for category in KB_CATEGORIES:
         for entry in getattr(existing_kb, category, []) or []:
             source = _normalize_source(getattr(entry, "source", ""))
             if source:
-                sources.add(source.casefold())
-    return sources
+                matches.setdefault(source.casefold(), []).append(
+                    {
+                        "category": category,
+                        "source": source,
+                        "target": _clean_text(getattr(entry, "target", "")),
+                        "notes": _clean_text(getattr(entry, "notes", "")),
+                    }
+                )
+    return matches
+
+
+def _collision_status(existing_entries: list[dict]) -> str:
+    if not existing_entries:
+        return "new"
+    distinct_matches = {(entry["category"], entry["target"]) for entry in existing_entries}
+    if len(distinct_matches) == 1:
+        return "existing"
+    return "ambiguous"
 
 
 def _normalize_source(value) -> str:
@@ -231,7 +248,6 @@ def _normalize_source(value) -> str:
         return ""
     text = _WHITESPACE_RE.sub(" ", text)
     text = text.strip(" \t\r\n.,:;!?()[]{}\"'")
-    text = _LEADING_ARTICLE_RE.sub("", text)
     return text.strip()
 
 
@@ -247,7 +263,5 @@ def _is_useful_term(source: str) -> bool:
         return False
     letters = [char for char in source if char.isalpha()]
     if len(letters) <= 2:
-        return False
-    if source.isupper():
         return False
     return True

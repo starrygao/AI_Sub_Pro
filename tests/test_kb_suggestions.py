@@ -54,3 +54,61 @@ def test_suggest_kb_entries_dedupes_and_collides_case_insensitively():
     by_source = {item.source: item for item in suggestions}
     assert list(by_source).count("Maya Chen") == 1
     assert by_source["Detective Chen"].collision == "existing"
+
+
+def test_suggest_kb_entries_preserves_full_metadata_titles():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {
+            "title": "The Last of Us",
+            "name": "Lord of the Rings",
+            "original_title": "The Last of Us",
+        },
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert "The Last of Us" in by_source
+    assert "Lord of the Rings" in by_source
+    assert "Last" not in by_source
+    assert "Lord" not in by_source
+    assert by_source["The Last of Us"].evidence == ["title"]
+
+
+def test_suggest_kb_entries_reports_ambiguous_existing_collisions():
+    from app.engines.kb_models import ProjectKb, TermEntry
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"title": "Acme"},
+        None,
+        ProjectKb(
+            characters=[TermEntry(source="Acme", target="艾克米")],
+            brands=[TermEntry(source="ACME", target="阿克米", notes="company")],
+        ),
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert by_source["Acme"].collision == "ambiguous"
+    assert by_source["Acme"].existing_entries == [
+        {"category": "characters", "source": "Acme", "target": "艾克米", "notes": ""},
+        {"category": "brands", "source": "ACME", "target": "阿克米", "notes": "company"},
+    ]
+    assert by_source["Acme"].to_dict()["existing_entries"] == by_source["Acme"].existing_entries
+
+
+def test_suggest_kb_entries_keeps_uppercase_acronyms_but_ignores_noise():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "NASA meets FBI at IKEA. OK. TV."},
+        None,
+        None,
+    )
+
+    sources = {item.source for item in suggestions}
+    assert {"NASA", "FBI", "IKEA"} <= sources
+    assert "OK" not in sources
+    assert "TV" not in sources
