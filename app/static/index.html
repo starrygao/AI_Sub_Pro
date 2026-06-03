@@ -1200,7 +1200,7 @@
                 <h3 class="text-[13px] font-semibold uppercase">建议审核</h3>
                 <div class="flex items-center gap-2">
                   <button @click="loadKbSuggestions()"
-                          :disabled="kbSuggestionsLoading || !currentProject"
+                          :disabled="kbSuggestionsLoading || !!kbActionPending || !currentProject"
                           class="btn-secondary px-3 py-1.5 rounded-lg text-[12px] disabled:opacity-50 disabled:cursor-not-allowed"
                           x-text="kbSuggestionsLoading ? '加载中...' : '刷新建议'"></button>
                   <button @click="acceptKbSuggestions()"
@@ -1220,21 +1220,31 @@
               </div>
               <div x-show="!kbSuggestionsLoading && kbSuggestions.length > 0" class="divide-y divide-surface-200">
                 <template x-for="(suggestion, i) in kbSuggestions" :key="i">
-                  <div class="py-3 grid grid-cols-[auto_1fr_1fr] gap-3 items-center">
+                  <div class="py-3 grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] gap-3 items-center">
                     <input type="checkbox"
                            x-model="suggestion.selected"
+                           :disabled="kbSuggestionsLoading || !!kbActionPending"
                            :aria-label="'选择建议 ' + (i + 1)"
-                           class="accent-accent">
+                           class="accent-accent disabled:opacity-50 disabled:cursor-not-allowed">
                     <div class="min-w-0">
                       <div class="text-[12px] font-medium truncate" x-text="suggestion.source || '-'"></div>
                       <div class="text-[11px] text-surface-400"
                            x-text="[suggestion.category ? kbCategoryLabel(suggestion.category) : '', suggestion.collision || ''].filter(Boolean).join(' · ')"></div>
                     </div>
                     <input x-model="suggestion.target"
-                           :disabled="!suggestion.selected"
+                           :disabled="!suggestion.selected || kbSuggestionsLoading || !!kbActionPending"
                            :aria-label="'建议 ' + (i + 1) + ' 译文'"
                            placeholder="译文"
                            class="w-full px-2 py-1.5 rounded-lg text-[12px] border border-surface-200 disabled:bg-surface-50 disabled:text-surface-400">
+                    <input x-model="suggestion.notes"
+                           :disabled="!suggestion.selected || kbSuggestionsLoading || !!kbActionPending"
+                           :aria-label="'建议 ' + (i + 1) + ' 备注'"
+                           placeholder="备注"
+                           class="w-full px-2 py-1.5 rounded-lg text-[12px] border border-surface-200 disabled:bg-surface-50 disabled:text-surface-400">
+                    <button @click="rejectKbSuggestion(suggestion)"
+                            :disabled="kbSuggestionsLoading || !!kbActionPending || !(typeof suggestion.source === 'string' && suggestion.source.trim())"
+                            class="btn-secondary px-3 py-1.5 rounded-lg text-[12px] text-danger disabled:opacity-50 disabled:cursor-not-allowed"
+                            x-text="kbActionPending === 'reject:' + (typeof suggestion.source === 'string' ? suggestion.source.trim() : '') ? '拒绝中...' : '拒绝'"></button>
                   </div>
                 </template>
               </div>

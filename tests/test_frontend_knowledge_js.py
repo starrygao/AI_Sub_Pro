@@ -449,7 +449,7 @@ def test_knowledge_frontend_loads_and_accepts_suggestions():
             calls.push({url, method, body});
             if (url === '/api/knowledge/projects/p1/suggestions' && method === 'GET') {
               return {suggestions: [
-                {source: 'Alice', target: '', category: 'characters', collision: 'new'},
+                {source: 'Alice', target: '', category: 'characters', collision: 'new', notes: '  lead character  '},
                 {source: 'Acme', target: '艾克米', category: 'brands', collision: 'existing'},
               ]};
             }
@@ -471,6 +471,7 @@ def test_knowledge_frontend_loads_and_accepts_suggestions():
             throw new Error(`expected selected defaults from collision, got ${JSON.stringify(state.kbSuggestions)}`);
           }
           state.kbSuggestions[0].target = '爱丽丝';
+          state.kbSuggestions[0].notes = '  主角称呼  ';
           state.kbSuggestions[1].selected = false;
 
           await state.acceptKbSuggestions();
@@ -482,12 +483,132 @@ def test_knowledge_frontend_loads_and_accepts_suggestions():
             throw new Error(`expected one accepted entry, got ${JSON.stringify(acceptPayload.entries)}`);
           }
           const entry = acceptPayload.entries[0];
-          if (entry.source !== 'Alice' || entry.target !== '爱丽丝' || entry.category !== 'characters') {
+          if (entry.source !== 'Alice' || entry.target !== '爱丽丝' || entry.category !== 'characters' || entry.notes !== '主角称呼') {
             throw new Error(`unexpected accepted entry ${JSON.stringify(entry)}`);
           }
           const urls = calls.map((call) => `${call.method} ${call.url}`);
           if (!urls.includes('GET /api/knowledge/projects/show-one')) {
             throw new Error(`expected KB reload after accept, got ${JSON.stringify(urls)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_knowledge_frontend_rejects_suggestion_and_refreshes():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const posts = [];
+          const toasts = [];
+          let refreshes = 0;
+          state.toast = (message, type) => { toasts.push({message, type}); };
+          state.currentProject = {id: 'p1'};
+          state.loadKbSuggestions = async () => { refreshes += 1; };
+          state.api = async (url, method = 'GET', body = null) => {
+            posts.push({url, method, body});
+            if (url === '/api/knowledge/projects/p1/suggestions/reject' && method === 'POST') {
+              return {rejected: 1};
+            }
+            throw new Error(`unexpected API call ${method} ${url}`);
+          };
+
+          await state.rejectKbSuggestion({source: ' Alice ', target: '爱丽丝'});
+
+          if (posts.length !== 1) {
+            throw new Error(`expected one reject POST, got ${JSON.stringify(posts)}`);
+          }
+          const post = posts[0];
+          if (post.url !== '/api/knowledge/projects/p1/suggestions/reject' || post.method !== 'POST') {
+            throw new Error(`unexpected reject call ${JSON.stringify(post)}`);
+          }
+          if (JSON.stringify(post.body) !== JSON.stringify({sources: ['Alice']})) {
+            throw new Error(`unexpected reject body ${JSON.stringify(post.body)}`);
+          }
+          if (refreshes !== 1) {
+            throw new Error(`expected suggestions refresh after reject, got ${refreshes}`);
+          }
+          if (!toasts.some((toast) => toast.type === 'success')) {
+            throw new Error(`expected success toast, got ${JSON.stringify(toasts)}`);
+          }
+          if (state.kbActionPending) {
+            throw new Error(`expected pending state cleared, got ${state.kbActionPending}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_knowledge_frontend_reject_ignores_stale_project_response():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const posts = [];
+          const toasts = [];
+          let refreshes = 0;
+          let releaseReject;
+          state.toast = (message, type) => { toasts.push({message, type}); };
+          state.currentProject = {id: 'project-a'};
+          state.loadKbSuggestions = async () => { refreshes += 1; };
+          state.api = async (url, method = 'GET', body = null) => {
+            posts.push({url, method, body});
+            if (url === '/api/knowledge/projects/project-a/suggestions/reject' && method === 'POST') {
+              await new Promise((resolve) => { releaseReject = resolve; });
+              return {rejected: 1};
+            }
+            throw new Error(`unexpected API call ${method} ${url}`);
+          };
+
+          const pending = state.rejectKbSuggestion({source: 'Alice'});
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          if (!state.kbActionPending) throw new Error('expected reject to be pending');
+
+          state.currentProject = {id: 'project-b'};
+          releaseReject();
+          await pending;
+
+          if (posts.length !== 1 || posts[0].url !== '/api/knowledge/projects/project-a/suggestions/reject') {
+            throw new Error(`expected original project reject call, got ${JSON.stringify(posts)}`);
+          }
+          if (refreshes !== 0) {
+            throw new Error(`expected no stale refresh, got ${refreshes}`);
+          }
+          if (toasts.some((toast) => toast.type === 'success')) {
+            throw new Error(`expected no stale success toast, got ${JSON.stringify(toasts)}`);
+          }
+          if (state.kbSuggestionsError) {
+            throw new Error(`expected no stale error mutation, got ${state.kbSuggestionsError}`);
+          }
+          if (state.kbActionPending) {
+            throw new Error(`expected pending state cleared, got ${state.kbActionPending}`);
           }
         })().catch((err) => {
           console.error(err.message);
@@ -582,7 +703,9 @@ def test_knowledge_html_contains_suggestion_and_trace_panels():
 
     expected = [
         "loadKbSuggestions",
+        "rejectKbSuggestion",
         "kbSuggestions",
+        "suggestion.notes",
         "kbUsageTrace",
     ]
     for snippet in expected:

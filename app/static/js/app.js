@@ -753,6 +753,7 @@ function app() {
             target: typeof item.target === 'string'
               ? item.target
               : (typeof item.suggested_target === 'string' ? item.suggested_target : ''),
+            notes: typeof item.notes === 'string' ? item.notes : '',
             selected: item.collision === 'existing' ? false : !!(item.selected ?? true),
           }));
       } catch (e) {
@@ -818,6 +819,7 @@ function app() {
           const entry = {
             source: typeof item.source === 'string' ? item.source.trim() : '',
             target: typeof item.target === 'string' ? item.target.trim() : '',
+            notes: typeof item.notes === 'string' ? item.notes.trim() : '',
           };
           if (typeof item.category === 'string' && item.category.trim()) {
             entry.category = item.category.trim();
@@ -849,6 +851,35 @@ function app() {
         this.toast('接受 KB 建议失败: ' + e.message, 'error');
       } finally {
         this.kbActionPending = '';
+      }
+    },
+
+    async rejectKbSuggestion(suggestion) {
+      if (this.kbActionPending || this.kbSuggestionsLoading) return;
+      const projectId = String(this.currentProject?.id || '');
+      const source = this.isPlainObject(suggestion) && typeof suggestion.source === 'string'
+        ? suggestion.source.trim()
+        : '';
+      if (!projectId || !source) return;
+      const pendingKey = `reject:${source}`;
+      this.kbActionPending = pendingKey;
+      this.kbSuggestionsError = '';
+      try {
+        await this.api(
+          `/api/knowledge/projects/${encodeURIComponent(projectId)}/suggestions/reject`,
+          'POST',
+          { sources: [source] },
+        );
+        if (String(this.currentProject?.id || '') !== projectId) return;
+        this.toast('已拒绝 KB 建议', 'success');
+        await this.loadKbSuggestions();
+      } catch (e) {
+        if (String(this.currentProject?.id || '') === projectId) {
+          this.kbSuggestionsError = e.message || '拒绝建议失败';
+          this.toast('拒绝 KB 建议失败: ' + e.message, 'error');
+        }
+      } finally {
+        if (this.kbActionPending === pendingKey) this.kbActionPending = '';
       }
     },
 
