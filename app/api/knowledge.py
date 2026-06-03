@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, StrictInt
 from app.engines.knowledge import KnowledgeBase, _get_singleton, invalidate_translator_kb
 from app.engines.kb_models import ProjectKb, TermEntry, StyleNotes
 from app.engines.kb_suggestions import suggest_kb_entries
-from app.utils.project_store import atomic_write_json, project_dir
+from app.utils.project_store import atomic_write_json, project_dir, validate_pid
 from app.utils.srt import parse_srt_file
 
 log = logging.getLogger(__name__)
@@ -105,6 +105,16 @@ def _append_term(target: list[TermEntry], entry: SuggestionAcceptEntryIn) -> Non
     ))
 
 
+def _validate_kb_key_or_http(key: str) -> str:
+    if not key:
+        raise HTTPException(status_code=400, detail="key must not be empty")
+    try:
+        validate_pid(key)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="key must be path-safe")
+    return key
+
+
 def _load_project_or_http(pid: str) -> tuple:
     try:
         pdir = project_dir(pid)
@@ -144,6 +154,49 @@ def _subtitle_dicts_for_project(pdir) -> list[dict]:
     return []
 
 
+def _clean_source_list(sources: list) -> list[str]:
+    cleaned_sources = []
+    seen = set()
+    for source in sources:
+        cleaned = _clean_text(source)
+        if not cleaned:
+            continue
+        folded = cleaned.casefold()
+        if folded in seen:
+            continue
+        seen.add(folded)
+        cleaned_sources.append(cleaned)
+    return cleaned_sources
+
+
+def _load_rejected_sources(pdir) -> list[str]:
+    path = pdir / "kb_suggestion_decisions.json"
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    raw_sources = data.get("rejected_sources", [])
+    if not isinstance(raw_sources, list):
+        return []
+    return _clean_source_list(raw_sources)
+
+
+def _merge_rejected_sources(existing_sources: list[str], new_sources: list[str]) -> list[str]:
+    merged = _clean_source_list(existing_sources)
+    seen = {source.casefold() for source in merged}
+    for source in _clean_source_list(new_sources):
+        folded = source.casefold()
+        if folded in seen:
+            continue
+        seen.add(folded)
+        merged.append(source)
+    return merged
+
+
 @router.get("/projects")
 def list_kb_projects():
     return {"projects": [
@@ -158,6 +211,12 @@ def get_kb_project_suggestions(pid: str):
     subtitles = _subtitle_dicts_for_project(pdir)
     existing_kb = _get_kb().select_for_project(project)
     suggestions = suggest_kb_entries(project, subtitles, existing_kb)
+    rejected = {source.casefold() for source in _load_rejected_sources(pdir)}
+    if rejected:
+        suggestions = [
+            item for item in suggestions
+            if _clean_text(getattr(item, "source", "")).casefold() not in rejected
+        ]
     return {
         "project_id": pid,
         "suggestions": [item.to_dict() for item in suggestions],
@@ -167,9 +226,7 @@ def get_kb_project_suggestions(pid: str):
 @router.post("/projects/{pid}/suggestions/accept")
 def accept_kb_project_suggestions(pid: str, body: SuggestionAcceptIn):
     _load_project_or_http(pid)
-    key = _clean_text(body.key)
-    if not key:
-        raise HTTPException(status_code=400, detail="key must not be empty")
+    key = _validate_kb_key_or_http(_clean_text(body.key))
     if body.tmdb_id is not None and body.tmdb_id < 1:
         raise HTTPException(status_code=400, detail="tmdb_id must be positive")
 
@@ -204,17 +261,10 @@ def accept_kb_project_suggestions(pid: str, body: SuggestionAcceptIn):
 @router.post("/projects/{pid}/suggestions/reject")
 def reject_kb_project_suggestions(pid: str, body: SuggestionRejectIn):
     pdir, _project = _load_project_or_http(pid)
-    rejected_sources = []
-    seen = set()
-    for source in body.sources:
-        cleaned = _clean_text(source)
-        if not cleaned:
-            continue
-        folded = cleaned.casefold()
-        if folded in seen:
-            continue
-        seen.add(folded)
-        rejected_sources.append(cleaned)
+    rejected_sources = _merge_rejected_sources(
+        _load_rejected_sources(pdir),
+        body.sources,
+    )
 
     atomic_write_json(pdir / "kb_suggestion_decisions.json", {
         "rejected_sources": rejected_sources,

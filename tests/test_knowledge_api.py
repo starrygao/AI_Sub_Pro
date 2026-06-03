@@ -342,3 +342,110 @@ def test_kb_suggestions_endpoint_returns_404_for_missing_project(patched_kb_file
     response = client.get("/api/knowledge/projects/missing_project/suggestions")
 
     assert response.status_code == 404
+
+
+def test_kb_accept_suggestions_rejects_invalid_key_without_persisting(tmp_project_dir, patched_kb_file):
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_bad_key"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case", "tmdb_id": 101})
+
+    response = client.post(f"/api/knowledge/projects/{pid}/suggestions/accept", json={
+        "key": "bad/key",
+        "show_title": "Moonlit Case",
+        "entries": [
+            {"source": "Maya Chen", "target": "玛雅·陈", "category": "characters", "notes": "lead"}
+        ],
+    })
+
+    assert response.status_code == 400
+    projects = client.get("/api/knowledge/projects").json()["projects"]
+    assert all(project["key"] != "bad/key" for project in projects)
+
+
+def test_kb_accept_suggestions_rejects_blank_key(tmp_project_dir, patched_kb_file):
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_blank_key"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case", "tmdb_id": 101})
+
+    response = client.post(f"/api/knowledge/projects/{pid}/suggestions/accept", json={
+        "key": "  ",
+        "entries": [],
+    })
+
+    assert response.status_code == 400
+
+
+def test_kb_accept_suggestions_rejects_non_positive_tmdb_id(tmp_project_dir, patched_kb_file):
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_bad_tmdb"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case", "tmdb_id": 101})
+
+    response = client.post(f"/api/knowledge/projects/{pid}/suggestions/accept", json={
+        "key": "moonlit",
+        "tmdb_id": 0,
+        "entries": [],
+    })
+
+    assert response.status_code == 400
+
+
+def test_kb_reject_suggestions_merges_and_dedupes_project_decisions(tmp_project_dir, patched_kb_file):
+    import json
+
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_reject_merge"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case", "tmdb_id": 101})
+
+    first = client.post(f"/api/knowledge/projects/{pid}/suggestions/reject", json={
+        "sources": ["Noisy Phrase", "Unused Name"]
+    })
+    second = client.post(f"/api/knowledge/projects/{pid}/suggestions/reject", json={
+        "sources": ["noisy phrase", "New Name", "Unused Name", "  "]
+    })
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    data = json.loads((pdir / "kb_suggestion_decisions.json").read_text(encoding="utf-8"))
+    assert data["rejected_sources"] == ["Noisy Phrase", "Unused Name", "New Name"]
+
+
+def test_kb_suggestions_endpoint_filters_rejected_sources(tmp_project_dir, patched_kb_file):
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_suggest_rejected"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {
+        "id": pid,
+        "name": "Moonlit Case",
+        "tmdb_id": 101,
+        "cast": ["Maya Chen"],
+        "overview": "Maya Chen visits the Moonlit Club.",
+    })
+
+    reject = client.post(f"/api/knowledge/projects/{pid}/suggestions/reject", json={
+        "sources": ["maya chen"]
+    })
+    response = client.get(f"/api/knowledge/projects/{pid}/suggestions")
+
+    assert reject.status_code == 200
+    assert response.status_code == 200
+    sources = {item["source"] for item in response.json()["suggestions"]}
+    assert "Maya Chen" not in sources
