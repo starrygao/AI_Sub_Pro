@@ -47,14 +47,32 @@ def terminology_score(case: CorpusCase, candidate_by_id: dict[str, str]) -> dict
     }
 
 
-def missing_translation_score(candidate_by_id: dict[str, str]) -> dict[str, Any]:
-    missing_ids = [block_id for block_id, text in candidate_by_id.items() if not text.strip()]
-    total = len(candidate_by_id)
+def missing_translation_score(
+    candidate_by_id: dict[str, str], source_ids: list[str] | None = None
+) -> dict[str, Any]:
+    missing_ids = [
+        block_id for block_id, text in candidate_by_id.items() if not text.strip()
+    ]
+    if source_ids is None:
+        source_missing_ids = []
+        missing_count = len(missing_ids)
+        total = len(candidate_by_id)
+    else:
+        source_missing_ids = [
+            block_id
+            for block_id in source_ids
+            if not candidate_by_id.get(block_id, "").strip()
+        ]
+        missing_count = len(source_missing_ids)
+        total = len(source_ids)
     return {
         "missing_ids": missing_ids,
-        "missing_count": len(missing_ids),
+        "source_missing_ids": source_missing_ids,
+        "missing_count": missing_count,
+        "source_missing_count": len(source_missing_ids),
+        "candidate_missing_count": len(missing_ids),
         "total": total,
-        "rate": _round(len(missing_ids) / total) if total else 0.0,
+        "rate": _round(missing_count / total) if total else 0.0,
     }
 
 
@@ -63,13 +81,14 @@ def row_alignment_score(case: CorpusCase, candidate_by_id: dict[str, str]) -> di
     candidate_ids = set(candidate_by_id)
     missing = sorted(source_ids - candidate_ids)
     extra = sorted(candidate_ids - source_ids)
-    aligned = len(source_ids) - len(missing)
+    aligned = len(source_ids & candidate_ids)
+    total_ids = len(source_ids | candidate_ids)
     return {
         "source_count": len(source_ids),
         "candidate_count": len(candidate_ids),
         "missing_ids": missing,
         "extra_ids": extra,
-        "rate": _round(aligned / len(source_ids)) if source_ids else 1.0,
+        "rate": _round(aligned / total_ids) if total_ids else 1.0,
     }
 
 
@@ -78,9 +97,14 @@ def format_score(case: CorpusCase, candidate_by_id: dict[str, str]) -> dict[str,
     broken = []
     for block_id, source_text in source_by_id.items():
         expected_tags = _tags(source_text)
-        if expected_tags and _tags(candidate_by_id.get(block_id, "")) != expected_tags:
+        candidate_tags = _tags(candidate_by_id.get(block_id, ""))
+        if candidate_tags != expected_tags:
             broken.append(block_id)
-    total_tagged = sum(1 for text in source_by_id.values() if _tags(text))
+    total_tagged = sum(
+        1
+        for block_id, source_text in source_by_id.items()
+        if _tags(source_text) or _tags(candidate_by_id.get(block_id, ""))
+    )
     return {
         "broken_ids": broken,
         "tagged_count": total_tagged,
@@ -90,11 +114,12 @@ def format_score(case: CorpusCase, candidate_by_id: dict[str, str]) -> dict[str,
 
 def evaluate_case(case: CorpusCase) -> dict[str, Any]:
     candidate_by_id = _by_id(case.candidate_blocks, "translation")
+    source_ids = list(_by_id(case.source_blocks, "text"))
     return {
         "case_id": case.id,
         "tags": list(case.tags),
         "terminology": terminology_score(case, candidate_by_id),
-        "missing_translation": missing_translation_score(candidate_by_id),
+        "missing_translation": missing_translation_score(candidate_by_id, source_ids),
         "row_alignment": row_alignment_score(case, candidate_by_id),
         "format": format_score(case, candidate_by_id),
     }
