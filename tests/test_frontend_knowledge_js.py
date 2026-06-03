@@ -316,6 +316,84 @@ def test_knowledge_frontend_loads_and_accepts_suggestions():
     assert result.returncode == 0, result.stderr
 
 
+def test_knowledge_frontend_ignores_stale_suggestions_and_accept_during_load():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const posts = [];
+          let releaseProjectA;
+          state.toast = () => {};
+          state.currentProject = {id: 'project-a'};
+          state.kbSelectedKey = 'show-one';
+          state.kbCurrent = {key: 'show-one', show_title: 'Show One', tmdb_id: null};
+          state.kbSuggestions = [{source: 'Old', target: '旧', selected: true, category: 'characters'}];
+          state.api = async (url, method = 'GET', body = null) => {
+            if (method === 'POST') {
+              posts.push({url, body});
+              return {accepted: 1};
+            }
+            if (url === '/api/knowledge/projects/project-a/suggestions') {
+              await new Promise((resolve) => { releaseProjectA = resolve; });
+              return {suggestions: [{source: 'Alice', target: '爱丽丝', category: 'characters'}]};
+            }
+            if (url === '/api/knowledge/projects/project-b/suggestions') {
+              return {suggestions: [{source: 'Bob', target: '鲍勃', category: 'characters'}]};
+            }
+            throw new Error(`unexpected API call ${method} ${url}`);
+          };
+
+          const projectALoad = state.loadKbSuggestions();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          if (!state.kbSuggestionsLoading) throw new Error('expected suggestions to be loading');
+
+          const acceptAttempt = state.acceptKbSuggestions();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          if (posts.length !== 0) {
+            throw new Error(`expected no accept while suggestions are loading, got ${JSON.stringify(posts)}`);
+          }
+          await acceptAttempt;
+
+          state.currentProject = {id: 'project-b'};
+          const projectBLoad = state.loadKbSuggestions();
+          await projectBLoad;
+          if (state.kbSuggestions.length !== 1 || state.kbSuggestions[0].source !== 'Bob') {
+            throw new Error(`expected project B suggestions, got ${JSON.stringify(state.kbSuggestions)}`);
+          }
+
+          releaseProjectA();
+          await projectALoad;
+          if (state.kbSuggestions.length !== 1 || state.kbSuggestions[0].source !== 'Bob') {
+            throw new Error(`expected stale project A response to be ignored, got ${JSON.stringify(state.kbSuggestions)}`);
+          }
+
+          state.currentProject = null;
+          await state.loadKbSuggestions();
+          if (state.kbSuggestions.length !== 0 || state.kbSuggestionsLoading || state.kbSuggestionsError) {
+            throw new Error(`expected suggestions to clear without current project, got ${JSON.stringify({
+              suggestions: state.kbSuggestions,
+              loading: state.kbSuggestionsLoading,
+              error: state.kbSuggestionsError,
+            })}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_knowledge_html_contains_suggestion_and_trace_panels():
     html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
 

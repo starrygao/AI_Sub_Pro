@@ -38,6 +38,7 @@ function app() {
     kbSuggestions: [],
     kbSuggestionsLoading: false,
     kbSuggestionsError: '',
+    kbSuggestionsRequestSeq: 0,
     kbUsageTrace: null,
     kbTraceLoading: false,
     kbTraceError: '',
@@ -715,17 +716,25 @@ function app() {
       }
     },
 
+    clearKbSuggestions() {
+      this.kbSuggestionsRequestSeq += 1;
+      this.kbSuggestions = [];
+      this.kbSuggestionsLoading = false;
+      this.kbSuggestionsError = '';
+    },
+
     async loadKbSuggestions() {
       if (!this.currentProject?.id) {
-        this.kbSuggestions = [];
-        this.kbSuggestionsError = '';
-        this.kbSuggestionsLoading = false;
+        this.clearKbSuggestions();
         return;
       }
+      const projectId = String(this.currentProject.id);
+      const requestId = ++this.kbSuggestionsRequestSeq;
       this.kbSuggestionsLoading = true;
       this.kbSuggestionsError = '';
       try {
-        const data = await this.api(`/api/knowledge/projects/${encodeURIComponent(this.currentProject.id)}/suggestions`);
+        const data = await this.api(`/api/knowledge/projects/${encodeURIComponent(projectId)}/suggestions`);
+        if (this.kbSuggestionsRequestSeq !== requestId || String(this.currentProject?.id || '') !== projectId) return;
         const raw = Array.isArray(data?.suggestions)
           ? data.suggestions
           : (Array.isArray(data?.items) ? data.items : (Array.isArray(data) ? data : []));
@@ -739,15 +748,19 @@ function app() {
             selected: item.collision === 'existing' ? false : !!(item.selected ?? true),
           }));
       } catch (e) {
-        this.kbSuggestionsError = e.message || '加载建议失败';
-        this.toast('加载 KB 建议失败: ' + e.message, 'error');
+        if (this.kbSuggestionsRequestSeq === requestId && String(this.currentProject?.id || '') === projectId) {
+          this.kbSuggestionsError = e.message || '加载建议失败';
+          this.toast('加载 KB 建议失败: ' + e.message, 'error');
+        }
       } finally {
-        this.kbSuggestionsLoading = false;
+        if (this.kbSuggestionsRequestSeq === requestId && String(this.currentProject?.id || '') === projectId) {
+          this.kbSuggestionsLoading = false;
+        }
       }
     },
 
     async acceptKbSuggestions() {
-      if (this.kbActionPending) return;
+      if (this.kbActionPending || this.kbSuggestionsLoading) return;
       if (!this.currentProject?.id || !this.kbSelectedKey || !this.kbCurrent) return;
       if (this.kbDirty) {
         this.toast('请先保存当前知识库修改', 'error');
@@ -1051,6 +1064,7 @@ function app() {
         });
         if (this.newVideoPath === originalPath) this.newVideoPath = '';
         this.toast('项目已创建，开始处理...');
+        this.clearKbSuggestions();
         this.currentProject = p;
         this.applyWorkflowDefaultsFromProject(p);
         await this.setView('detail');
@@ -1094,6 +1108,7 @@ function app() {
             this.ws = null;
           }
           this.currentProject = null;
+          this.clearKbSuggestions();
           this.subtitles = [];
           this.progressPct = 0;
           this.progressMsg = '';
@@ -1192,6 +1207,7 @@ function app() {
         if (this.openProjectRequestSeq !== requestId) return;
         const data = await this.api(`/api/projects/${id}/subtitles`);
         if (this.openProjectRequestSeq !== requestId) return;
+        if (this.currentProject?.id !== project.id) this.clearKbSuggestions();
         this.currentProject = project;
         this.applyWorkflowDefaultsFromProject(project);
         this.subtitles = Array.isArray(data.blocks) ? data.blocks.filter(b => this.isPlainObject(b)) : [];

@@ -1204,7 +1204,7 @@
                           class="btn-secondary px-3 py-1.5 rounded-lg text-[12px] disabled:opacity-50 disabled:cursor-not-allowed"
                           x-text="kbSuggestionsLoading ? '加载中...' : '刷新建议'"></button>
                   <button @click="acceptKbSuggestions()"
-                          :disabled="!!kbActionPending || kbDirty || !kbSuggestions.some(s => s.selected)"
+                          :disabled="kbSuggestionsLoading || !!kbActionPending || kbDirty || !kbSuggestions.some(s => s.selected)"
                           class="btn-primary px-3 py-1.5 rounded-lg text-[12px] disabled:opacity-50 disabled:cursor-not-allowed"
                           x-text="kbActionPending === 'suggestions' ? '接受中...' : '接受选中'"></button>
                 </div>
