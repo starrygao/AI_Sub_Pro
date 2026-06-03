@@ -26,7 +26,7 @@ Quality:
 Packages:
 
 - The macOS DMG is attached as split release assets:
-  `AI_Sub_Pro_v1.1.1.dmg.part-aa` through `AI_Sub_Pro_v1.1.1.dmg.part-ad`.
+  `AI_Sub_Pro_v1.1.1.dmg.part-aa` through `AI_Sub_Pro_v1.1.1.dmg.part-ar`.
 - Rebuild the DMG with
   `cat AI_Sub_Pro_v1.1.1.dmg.part-* > AI_Sub_Pro_v1.1.1.dmg`, then verify it
   with `AI_Sub_Pro_v1.1.1.dmg.sha256`. Part-level checksums are provided in

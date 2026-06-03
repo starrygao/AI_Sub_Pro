@@ -22,7 +22,7 @@
 安装包：
 
 - macOS DMG 以分片 release 资产提供：
-  `AI_Sub_Pro_v1.1.1.dmg.part-aa` 到 `AI_Sub_Pro_v1.1.1.dmg.part-ad`。
+  `AI_Sub_Pro_v1.1.1.dmg.part-aa` 到 `AI_Sub_Pro_v1.1.1.dmg.part-ar`。
 - 使用 `cat AI_Sub_Pro_v1.1.1.dmg.part-* > AI_Sub_Pro_v1.1.1.dmg` 合并
   DMG，然后用 `AI_Sub_Pro_v1.1.1.dmg.sha256` 校验完整文件。分片校验值见
   `AI_Sub_Pro_v1.1.1.dmg.parts.sha256`。

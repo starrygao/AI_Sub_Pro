@@ -9,8 +9,8 @@ and knowledge-base data on the user's machine.
 
 Prebuilt packages are attached to GitHub Releases when available.
 
-- macOS users can download all `AI_Sub_Pro_v1.1.1.dmg.part-*` assets from the
-  `v1.1.1` release, join them with
+- macOS users can download all `AI_Sub_Pro_v1.1.1.dmg.part-*` assets
+  (`part-aa` through `part-ar`) from the `v1.1.1` release, join them with
   `cat AI_Sub_Pro_v1.1.1.dmg.part-* > AI_Sub_Pro_v1.1.1.dmg`, open the DMG,
   drag **AI Sub Pro** into **Applications**, then right-click and choose **Open**
   on first launch if Gatekeeper blocks an unsigned build.
