@@ -12,7 +12,25 @@ KB_CATEGORIES = ("characters", "places", "brands", "slang")
 _WORD_RE = re.compile(r"\b[A-Za-z]+(?:['-][A-Za-z]+)*\b")
 _WHITESPACE_RE = re.compile(r"\s+")
 
-_TITLE_CONNECTORS = {"for", "of", "the", "to"}
+_TITLE_CONNECTORS = {"a", "an", "at", "for", "in", "of", "on", "the", "to"}
+_DENIED_PROSE_STARTERS = {
+    "he",
+    "i",
+    "it",
+    "later",
+    "meanwhile",
+    "she",
+    "that",
+    "these",
+    "they",
+    "this",
+    "those",
+    "today",
+    "tomorrow",
+    "tonight",
+    "we",
+    "yesterday",
+}
 
 _NOISE_TERMS = {
     "a",
@@ -217,6 +235,8 @@ def _title_case_phrases(value) -> list[str]:
 
             next_word = tokens[j][0]
             if _is_title_word(next_word):
+                if pending_connectors and _is_acronym_span(phrase_words) and _is_acronym_word(next_word):
+                    break
                 phrase_words.extend(pending_connectors)
                 pending_connectors = []
                 phrase_words.append(next_word)
@@ -228,6 +248,7 @@ def _title_case_phrases(value) -> list[str]:
                 continue
             break
 
+        phrase_words = _drop_denied_starter(phrase_words, text, tokens[i][1])
         phrase = _normalize_source(" ".join(phrase_words))
         if phrase:
             phrases.append(phrase)
@@ -249,6 +270,39 @@ def _is_title_word(word: str) -> bool:
 
 def _is_title_connector(word: str) -> bool:
     return word == word.casefold() and word.casefold() in _TITLE_CONNECTORS
+
+
+def _drop_denied_starter(phrase_words: list[str], text: str, start: int) -> list[str]:
+    if not phrase_words:
+        return []
+    if phrase_words[0].casefold() not in _DENIED_PROSE_STARTERS:
+        return phrase_words
+    if not _starts_sentence(text, start):
+        return phrase_words
+
+    remaining = phrase_words[1:]
+    if _has_multiword_title_phrase(remaining):
+        return remaining
+    return []
+
+
+def _starts_sentence(text: str, start: int) -> bool:
+    prefix = text[:start].rstrip()
+    return not prefix or prefix[-1] in ".!?"
+
+
+def _has_multiword_title_phrase(words: list[str]) -> bool:
+    return sum(1 for word in words if _is_title_word(word)) >= 2
+
+
+def _is_acronym_span(words: list[str]) -> bool:
+    title_words = [word for word in words if _is_title_word(word)]
+    return bool(title_words) and all(_is_acronym_word(word) for word in title_words)
+
+
+def _is_acronym_word(word: str) -> bool:
+    letters = "".join(char for char in word if char.isalpha())
+    return len(letters) >= 2 and letters.isupper()
 
 
 def _category_for_phrase(source: str) -> str:

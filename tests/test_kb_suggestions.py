@@ -188,6 +188,65 @@ def test_suggest_kb_entries_splits_parallel_connected_titles():
     assert "The Last of Us and Lord of the Rings" not in by_source
 
 
+def test_suggest_kb_entries_drops_sentence_start_adverb_from_entity():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "Tonight Maya Chen arrives."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen"]
+    assert "Tonight Maya Chen" not in by_source
+    assert "Tonight" not in by_source
+
+
+def test_suggest_kb_entries_drops_sentence_start_pronoun():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "She meets Maya Chen."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen"]
+    assert "She" not in by_source
+
+
+def test_suggest_kb_entries_preserves_in_the_connected_title():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "Only Murders in the Building returns."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Only Murders in the Building"]
+    assert "Only Murders" not in by_source
+    assert "Building" not in by_source
+
+
+def test_suggest_kb_entries_preserves_a_connected_title():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "Once Upon a Time ended."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Once Upon a Time"]
+    assert "Once Upon" not in by_source
+    assert "Time" not in by_source
+
+
 def test_suggest_kb_entries_reports_ambiguous_existing_collisions():
     from app.engines.kb_models import ProjectKb, TermEntry
     from app.engines.kb_suggestions import suggest_kb_entries
