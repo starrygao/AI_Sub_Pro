@@ -2,6 +2,34 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.1.1 - Knowledge Base Injection Fix
+
+This patch release fixes the project-specific Knowledge Base v2 injection path
+used by real translation runs.
+
+Highlights:
+
+- The translation pipeline now forwards loaded project metadata into
+  `SubtitleTranslator`, so Knowledge Base matching can use TMDB IDs, project
+  names, titles, cast, and plot context during actual workflows.
+- Project-specific terminology and style notes now apply to manual translation,
+  full workflow translation, and trailer translation instead of only working in
+  isolated prompt-builder tests.
+- Added integration coverage that verifies project metadata reaches the
+  translator and protects against regressions in this wiring.
+
+Quality:
+
+- Full test suite passed: `757 passed`.
+- Frontend CSS build, Python compile checks, and release merge checks passed.
+
+Packages:
+
+- `AI_Sub_Pro_v1.1.1.dmg` is attached for macOS users, with a matching
+  `.sha256` checksum file.
+- Windows packaging currently requires a Windows machine and `build_win.bat`;
+  no prebuilt Windows installer is attached to this release.
+
 ## v1.1.0 - Display Language Preference
 
 This release adds the first public multilingual UI controls and refreshes the

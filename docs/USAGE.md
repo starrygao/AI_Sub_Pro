@@ -9,7 +9,7 @@ and knowledge-base data on the user's machine.
 
 Prebuilt packages are attached to GitHub Releases when available.
 
-- macOS users can download `AI_Sub_Pro_v1.1.0.dmg` from the `v1.1.0` release
+- macOS users can download `AI_Sub_Pro_v1.1.1.dmg` from the `v1.1.1` release
   assets, drag **AI Sub Pro** into **Applications**, then right-click and choose
   **Open** on first launch if Gatekeeper blocks an unsigned build.
 - Windows users can run a published Windows package when available. The current
