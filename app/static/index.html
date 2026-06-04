@@ -713,6 +713,44 @@
                 x-text="projectActionPending === 'start-full' ? '启动中...' : '重试'"></button>
       </div>
 
+      <div x-show="workflowState || workflowStateLoading || workflowStateError"
+           class="flex-shrink-0 mx-6 mt-3 glass rounded-2xl p-3 border-l-2 border-l-warn">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <p class="text-[12.5px] font-semibold">工作流状态</p>
+            <p x-show="workflowStateLoading" class="text-[11px] text-surface-400 mt-0.5">正在加载恢复信息...</p>
+            <p x-show="workflowStateError" class="text-[11px] text-danger mt-0.5 truncate" x-text="workflowStateError" :title="workflowStateError"></p>
+            <p x-show="workflowState && !workflowStateLoading && !workflowStateError" class="text-[11px] text-surface-400 mt-0.5">
+              <span x-text="workflowFailedStages().length ? `${workflowFailedStages().length} 个失败阶段` : '暂无失败阶段'"></span>
+            </p>
+          </div>
+          <button @click="resumeWorkflow()"
+                  :disabled="projectActionsDisabled(currentProject)"
+                  class="btn-secondary px-3 py-1.5 rounded-lg text-[12px] font-medium shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                  x-text="workflowActionPending === 'resume' ? '恢复中...' : '恢复流程'"></button>
+        </div>
+        <div x-show="workflowFailedStages().length > 0" class="mt-2 divide-y divide-black/[0.06]">
+          <template x-for="item in workflowFailedStages()" :key="item.stage">
+            <div class="py-2 flex items-center justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-[12px] font-medium truncate" :title="item.stage" x-text="workflowStageLabel(item.stage)"></p>
+                <p class="text-[11px] text-surface-400 truncate"
+                   :title="item.error_summary || item.error || ''"
+                   x-text="item.error_summary || item.error || '失败阶段可重试，日志可下载排查'"></p>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <a :href="`/api/projects/${currentProject.id}/logs/${item.stage}`"
+                   class="btn-secondary px-3 py-1.5 rounded-lg text-[11px] font-medium no-underline whitespace-nowrap">下载日志</a>
+                <button @click="retryWorkflowStage(item.stage)"
+                        :disabled="projectActionsDisabled(currentProject)"
+                        class="btn-primary px-3 py-1.5 rounded-lg text-[11px] font-medium whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+                        x-text="workflowActionPending === ('retry:' + item.stage) ? '重试中...' : '重试'"></button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
       <!-- Progress bar (when processing) -->
       <div x-show="isProjectBusy(currentProject)" class="flex-shrink-0 px-6 mt-3">
         <div class="glass rounded-2xl p-4">

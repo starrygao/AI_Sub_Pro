@@ -7,6 +7,10 @@ function app() {
     projects: [],
     showArchived: false,
     currentProject: null,
+    workflowState: null,
+    workflowStateLoading: false,
+    workflowStateError: '',
+    workflowActionPending: '',
     subtitles: [],
     settings: {
       api_keys: {openai:'',deepseek:'',gemini:''},
@@ -93,6 +97,7 @@ function app() {
     wsReconnectAttempts: 0,
     progressRefreshError: '',
     progressPollRequestSeq: 0,
+    workflowStateRequestSeq: 0,
     initialized: false,
     refreshTimer: null,
     projectListRequestSeq: 0,
@@ -261,11 +266,27 @@ function app() {
     },
 
     projectActionsDisabled(project) {
-      return this.isProjectBusy(project) || !!this.projectActionPending;
+      return this.isProjectBusy(project) || !!this.projectActionPending || !!this.workflowActionPending;
     },
 
     shouldPollProjectList() {
       return Array.isArray(this.projects) && this.projects.some((project) => this.isProjectBusy(project));
+    },
+
+    workflowStageLabel(stage) {
+      return {
+        download: '下载',
+        asr: '识别',
+        translate: '翻译',
+        burn: '烧录',
+      }[stage] || stage;
+    },
+
+    workflowFailedStages() {
+      const stages = this.isPlainObject(this.workflowState?.stages) ? this.workflowState.stages : {};
+      return Object.entries(stages)
+        .filter(([, item]) => this.isPlainObject(item) && item.status === 'failed')
+        .map(([stage, item]) => ({ stage, ...item }));
     },
 
     subtitleActionKey(action, idx) {
@@ -589,6 +610,35 @@ function app() {
         }
       }
     },
+
+    async loadWorkflowState() {
+      if (!this.currentProject?.id) {
+        this.workflowStateRequestSeq += 1;
+        this.workflowState = null;
+        this.workflowStateError = '';
+        this.workflowStateLoading = false;
+        return;
+      }
+      const projectId = String(this.currentProject.id);
+      const requestId = ++this.workflowStateRequestSeq;
+      this.workflowStateLoading = true;
+      this.workflowStateError = '';
+      try {
+        const data = await this.api(`/api/projects/${projectId}/workflow-state`);
+        if (this.workflowStateRequestSeq !== requestId || String(this.currentProject?.id || '') !== projectId) return;
+        this.workflowState = this.isPlainObject(data) ? data : null;
+      } catch(e) {
+        if (this.workflowStateRequestSeq === requestId && String(this.currentProject?.id || '') === projectId) {
+          this.workflowState = null;
+          this.workflowStateError = e.message || '加载工作流状态失败';
+        }
+      } finally {
+        if (this.workflowStateRequestSeq === requestId && String(this.currentProject?.id || '') === projectId) {
+          this.workflowStateLoading = false;
+        }
+      }
+    },
+
     async loadSettings() {
       try {
         const data = await this.api('/api/settings');
@@ -1176,6 +1226,8 @@ function app() {
         this.clearKbSuggestions();
         this.clearKbUsageTrace();
         this.currentProject = p;
+        this.workflowState = null;
+        this.workflowStateError = '';
         this.applyWorkflowDefaultsFromProject(p);
         await this.setView('detail');
         this.connectWS(p.id);
@@ -1218,6 +1270,9 @@ function app() {
             this.ws = null;
           }
           this.currentProject = null;
+          this.workflowState = null;
+          this.workflowStateError = '';
+          this.workflowActionPending = '';
           this.clearKbSuggestions();
           this.clearKbUsageTrace();
           this.subtitles = [];
@@ -1323,6 +1378,7 @@ function app() {
           this.clearKbUsageTrace();
         }
         this.currentProject = project;
+        await this.loadWorkflowState();
         this.loadKbUsageTrace();
         this.applyWorkflowDefaultsFromProject(project);
         this.subtitles = Array.isArray(data.blocks) ? data.blocks.filter(b => this.isPlainObject(b)) : [];
@@ -1492,25 +1548,68 @@ function app() {
     async pollProgress() {
       if (!this.currentProject) return;
       const projectId = this.currentProject.id;
-      const oldStatus = this.currentProject.status;
+      const oldBusy = this.isProjectBusy(this.currentProject);
       const requestId = ++this.progressPollRequestSeq;
       try {
         const p = await this.api(`/api/projects/${projectId}`);
         if (this.progressPollRequestSeq !== requestId || this.currentProject?.id !== projectId) return;
         this.currentProject = p;
         this.progressRefreshError = '';
-        if (oldStatus === 'processing' && p.status !== 'processing') {
+        if (oldBusy && !this.isProjectBusy(p)) {
           const data = await this.api(`/api/projects/${p.id}/subtitles`);
           if (this.progressPollRequestSeq !== requestId || this.currentProject?.id !== projectId) return;
           this.subtitles = Array.isArray(data.blocks) ? data.blocks.filter(b => this.isPlainObject(b)) : [];
           if (p.status === 'error') this.toast(p.error || '处理失败', 'error');
           else if (p.status === 'completed') this.toast('带字幕的视频已就绪！');
           else this.toast('处理完成');
+          await this.loadWorkflowState();
         }
       } catch(e) {
         if (this.progressPollRequestSeq !== requestId || this.currentProject?.id !== projectId) return;
         this.progressRefreshError = e.message || '无法刷新处理进度';
         if (!this.progressMsg) this.progressMsg = '进度连接中断，正在重试...';
+      }
+    },
+
+    async retryWorkflowStage(stage) {
+      const normalizedStage = String(stage || '').trim();
+      if (!normalizedStage || !this.currentProject?.id || this.projectActionsDisabled(this.currentProject)) return;
+      const projectId = String(this.currentProject.id);
+      const action = `retry:${normalizedStage}`;
+      this.workflowActionPending = action;
+      try {
+        await this.api(`/api/projects/${projectId}/retry`, 'POST', { stage: normalizedStage });
+        if (String(this.currentProject?.id || '') === projectId) {
+          this.currentProject.status = 'processing';
+          this.currentProject.pipeline_stage = normalizedStage;
+          this.currentProject.error = '';
+        }
+        this.toast('已重新启动失败阶段');
+        await this.loadWorkflowState();
+      } catch(e) {
+        this.toast(e.message, 'error');
+      } finally {
+        if (this.workflowActionPending === action) this.workflowActionPending = '';
+      }
+    },
+
+    async resumeWorkflow() {
+      if (!this.currentProject?.id || this.projectActionsDisabled(this.currentProject)) return;
+      const projectId = String(this.currentProject.id);
+      this.workflowActionPending = 'resume';
+      try {
+        await this.api(`/api/projects/${projectId}/resume`, 'POST');
+        if (String(this.currentProject?.id || '') === projectId) {
+          this.currentProject.status = 'processing';
+          this.currentProject.pipeline_stage = this.currentProject.pipeline_stage || 'resume';
+          this.currentProject.error = '';
+        }
+        this.toast('已恢复工作流');
+        await this.loadWorkflowState();
+      } catch(e) {
+        this.toast(e.message, 'error');
+      } finally {
+        if (this.workflowActionPending === 'resume') this.workflowActionPending = '';
       }
     },
 

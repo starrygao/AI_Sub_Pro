@@ -511,6 +511,56 @@ def test_progress_poll_ignores_stale_response_after_project_changes():
     )
 
 
+def test_frontend_loads_workflow_state_and_retries_failed_stage():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          state.currentProject = {id: 'p1'};
+          const calls = [];
+          state.api = async (url, method = 'GET', body = null) => {
+            calls.push({url, method, body});
+            if (url === '/api/projects/p1/workflow-state') {
+              return {stages: {translate: {status: 'failed', error_summary: 'bad key'}}};
+            }
+            if (url === '/api/projects/p1/retry' && method === 'POST') {
+              return {status: 'started'};
+            }
+            throw new Error(`unexpected request ${method} ${url}`);
+          };
+
+          await state.loadWorkflowState();
+          if (state.workflowState.stages.translate.status !== 'failed') {
+            throw new Error(`expected failed translate state, got ${JSON.stringify(state.workflowState)}`);
+          }
+
+          await state.retryWorkflowStage('translate');
+          const retryCall = calls.find((call) => call.url === '/api/projects/p1/retry');
+          if (!retryCall) {
+            throw new Error(`expected retry API call, got ${JSON.stringify(calls)}`);
+          }
+          if (retryCall.method !== 'POST') {
+            throw new Error(`expected retry POST, got ${retryCall.method}`);
+          }
+          if (JSON.stringify(retryCall.body) !== JSON.stringify({stage: 'translate'})) {
+            throw new Error(`expected retry body with stage, got ${JSON.stringify(retryCall.body)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_home_dashboard_summary_counts_active_projects_and_sorts_recent_items():
     _run_node(
         """

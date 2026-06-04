@@ -254,6 +254,17 @@ def test_system_and_progress_refresh_errors_are_visible():
     assert "等待进度更新" in html
 
 
+def test_workflow_state_controls_are_present():
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
+
+    assert "workflowState" in js
+    assert "loadWorkflowState" in js
+    assert '@click="retryWorkflowStage' in html
+    assert '@click="resumeWorkflow()' in html
+    assert "下载日志" in html
+
+
 def test_project_cards_and_subtitle_edit_cells_are_keyboard_reachable():
     html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
     js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
