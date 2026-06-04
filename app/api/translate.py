@@ -196,6 +196,35 @@ def _first_safe_project_artifact(pid: str, filenames: list[str]) -> tuple[Option
     return None, None
 
 
+def _safe_generated_project_output_path(pid: str, filename: str) -> Optional[Path]:
+    rel = Path(filename)
+    if rel.is_absolute() or ".." in rel.parts:
+        return None
+    try:
+        pdir = project_dir(pid)
+        path = pdir / rel
+        if not path.parent.resolve(strict=True).is_relative_to(pdir):
+            return None
+        if path.is_symlink():
+            log.warning(
+                "refusing to overwrite symlinked generated output pid=%s file=%s",
+                pid,
+                filename,
+            )
+            return None
+        if path.exists() and not path.is_file():
+            log.warning(
+                "refusing to overwrite non-regular generated output pid=%s file=%s",
+                pid,
+                filename,
+            )
+            return None
+    except (OSError, ValueError) as e:
+        log.warning("failed to resolve generated output pid=%s file=%s: %s", pid, filename, e)
+        return None
+    return path
+
+
 def _write_generated_project_artifact(
     pid: str,
     filename: str,
@@ -856,6 +885,12 @@ def _mark_burn_unavailable(pid: str, reason: str = "无字幕文件可烧录") -
                    normalize=_apply_safe_defaults)
 
 
+def _mark_burn_failed(pid: str, reason: str) -> None:
+    mutate_project(pid, lambda p: p.update({"status": "translated",
+                                             "error": reason}),
+                   normalize=_apply_safe_defaults)
+
+
 def _run_burn_pipeline(pid: str):
     """Burn subtitles into video.
 
@@ -897,7 +932,14 @@ def _run_burn_pipeline(pid: str):
                 tracks = [_build_upload_legacy_track(str(srt_path))]
 
             base_name = os.path.splitext(os.path.basename(video_path))[0]
-            output_video = os.path.join(pdir, f"{base_name}_subtitled.mp4")
+            output_path = _safe_generated_project_output_path(pid, f"{base_name}_subtitled.mp4")
+            if output_path is None:
+                reason = "字幕烧录失败: 输出路径无效"
+                _mark_burn_failed(pid, reason)
+                _best_effort_fail_stage(pid, "burn", reason)
+                _emit_progress(pid, "burn", 100, "翻译完成，但字幕烧录失败")
+                return
+            output_video = str(output_path)
             success = burn_subtitles(
                 video_path, tracks, output_video,
                 callback=lambda msg: _emit_progress(pid, "burn", 50, msg),
@@ -1150,7 +1192,14 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                     tracks = [_build_upload_legacy_track(str(srt_path))]
 
                 base_name = os.path.splitext(os.path.basename(video_path))[0]
-                output_video = os.path.join(pdir, f"{base_name}_subtitled.mp4")
+                output_path = _safe_generated_project_output_path(pid, f"{base_name}_subtitled.mp4")
+                if output_path is None:
+                    reason = "字幕烧录失败: 输出路径无效"
+                    _mark_burn_failed(pid, reason)
+                    _best_effort_fail_stage(pid, "burn", reason)
+                    _emit_progress(pid, "burn", 0, "字幕烧录失败")
+                    return
+                output_video = str(output_path)
                 success = burn_subtitles(
                     video_path, tracks, output_video,
                     callback=lambda msg: _emit_progress(pid, "burn", 50, msg),
