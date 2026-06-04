@@ -141,11 +141,18 @@ def test_build_mac_optional_asr_packaging_is_opt_in_by_default():
     assert '--add-data "${ROOT_DIR}/models/asr:models/asr"' in script
     assert '"${ASR_MODEL_DATA_ARGS[@]}"' in script
     assert "ASR_BACKEND_ARGS" in script
+    assert "LOCAL_ASR_EXCLUDE_ARGS" in script
     assert 'python3 -c "import faster_whisper"' in script
     assert "--collect-all faster_whisper" in script
+    assert "--exclude-module torch" in script
+    assert "--exclude-module whisper" in script
+    assert "--exclude-module faster_whisper" in script
+    assert "--exclude-module mlx_whisper" in script
     assert '"${ASR_BACKEND_ARGS[@]}"' in script
+    assert '"${LOCAL_ASR_EXCLUDE_ARGS[@]}"' in script
     assert script.index('BUNDLE_LOCAL_ASR="${AISUBPRO_BUNDLE_LOCAL_ASR:-0}"') < script.index('[ -d "$ROOT_DIR/models/asr" ]')
     assert script.index('if [ "$BUNDLE_LOCAL_ASR" = "1" ]; then') < script.index('python3 -c "import faster_whisper"')
+    assert script.index('"${LOCAL_ASR_EXCLUDE_ARGS[@]}"') < script.index("app/main.py")
 
 
 def test_build_win_optional_asr_packaging_mirrors_mac_opt_in_variable():
@@ -157,10 +164,16 @@ def test_build_win_optional_asr_packaging_mirrors_mac_opt_in_variable():
     assert "ASR_MODEL_DATA_ARGS" in script
     assert 'if exist "models\\asr" set "ASR_MODEL_DATA_ARGS=--add-data models\\asr;models\\asr"' in script
     assert "ASR_BACKEND_ARGS" in script
+    assert "LOCAL_ASR_EXCLUDE_ARGS" in script
     assert 'python -c "import faster_whisper"' in script
     assert "--collect-all faster_whisper" in script
+    assert "--exclude-module torch" in script
+    assert "--exclude-module whisper" in script
+    assert "--exclude-module faster_whisper" in script
+    assert "--exclude-module mlx_whisper" in script
     assert "%ASR_MODEL_DATA_ARGS%" in script
     assert "%ASR_BACKEND_ARGS%" in script
+    assert "%LOCAL_ASR_EXCLUDE_ARGS%" in script
     assert script.index('if "%AISUBPRO_BUNDLE_LOCAL_ASR%"=="" set "AISUBPRO_BUNDLE_LOCAL_ASR=0"') < script.index('python -c "import faster_whisper"')
 
 
@@ -200,6 +213,22 @@ def test_pyinstaller_builds_exclude_test_only_modules():
 
     assert "--exclude-module pytest" in build_win
     assert "--exclude-module torch.utils.tensorboard" in build_win
+
+
+def test_pyinstaller_base_package_avoids_broad_runtime_collect_all():
+    build_mac = (ROOT / "build_mac.sh").read_text(encoding="utf-8")
+    build_win = (ROOT / "build_win.bat").read_text(encoding="utf-8")
+    broad_runtime_collections = (
+        "openai",
+        "starlette",
+        "httpx",
+        "yt_dlp",
+        "yt_dlp_ejs",
+    )
+
+    for package in broad_runtime_collections:
+        assert f"--collect-all {package}" not in build_mac
+        assert f"--collect-all {package}" not in build_win
 
 
 def test_mac_pyinstaller_excludes_non_macos_optional_platform_modules():

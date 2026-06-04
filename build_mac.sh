@@ -40,6 +40,7 @@ echo "  ffprobe: $FFPROBE_PATH"
 BUNDLE_LOCAL_ASR="${AISUBPRO_BUNDLE_LOCAL_ASR:-0}"
 ASR_MODEL_DATA_ARGS=()
 ASR_BACKEND_ARGS=()
+LOCAL_ASR_EXCLUDE_ARGS=()
 if [ "$BUNDLE_LOCAL_ASR" = "1" ]; then
     if [ -d "$ROOT_DIR/models/asr" ]; then
         ASR_MODEL_DATA_ARGS+=(--add-data "${ROOT_DIR}/models/asr:models/asr")
@@ -67,6 +68,16 @@ if [ "$BUNDLE_LOCAL_ASR" = "1" ]; then
         echo "  openai-whisper: not installed (optional backend skipped)"
     fi
 else
+    LOCAL_ASR_EXCLUDE_ARGS=(
+        --exclude-module torch
+        --exclude-module torchaudio
+        --exclude-module torchvision
+        --exclude-module whisper
+        --exclude-module faster_whisper
+        --exclude-module mlx
+        --exclude-module mlx_whisper
+        --exclude-module ctranslate2
+    )
     echo "  Local ASR packaging: disabled (set AISUBPRO_BUNDLE_LOCAL_ASR=1 to bundle models and optional ASR backends)"
 fi
 
@@ -163,6 +174,7 @@ python3 -m PyInstaller \
     --exclude-module guessit.test.test_yml \
     --exclude-module tensorboard \
     --exclude-module torch.utils.tensorboard \
+    "${LOCAL_ASR_EXCLUDE_ARGS[@]}" \
     --exclude-module webview.platforms.android \
     --exclude-module webview.platforms.win32 \
     --exclude-module webview.platforms.winforms \
@@ -172,11 +184,6 @@ python3 -m PyInstaller \
     --exclude-module webview.platforms.qt \
     --exclude-module webview.platforms.cef \
     --exclude-module urllib3.contrib.emscripten \
-    --collect-all openai \
-    --collect-all starlette \
-    --collect-all httpx \
-    --collect-all yt_dlp \
-    --collect-all yt_dlp_ejs \
     app/main.py
 
 # No launcher needed - main.py handles pywebview native window directly
