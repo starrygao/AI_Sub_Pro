@@ -78,7 +78,10 @@ jobs:
         run: python3 -m pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Install macOS media dependencies
-        run: brew install ffmpeg || true
+        run: |
+          brew install ffmpeg-full
+          echo "$(brew --prefix ffmpeg-full)/bin" >> "$GITHUB_PATH"
+          "$(brew --prefix ffmpeg-full)/bin/ffmpeg" -hide_banner -filters | grep " subtitles "
 
       - name: Build macOS DMG
         run: bash make_dmg.sh
