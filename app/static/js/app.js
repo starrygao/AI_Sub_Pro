@@ -1379,6 +1379,7 @@ function app() {
         }
         this.currentProject = project;
         await this.loadWorkflowState();
+        if (this.openProjectRequestSeq !== requestId || this.currentProject?.id !== project.id) return;
         this.loadKbUsageTrace();
         this.applyWorkflowDefaultsFromProject(project);
         this.subtitles = Array.isArray(data.blocks) ? data.blocks.filter(b => this.isPlainObject(b)) : [];
@@ -1598,10 +1599,13 @@ function app() {
       const projectId = String(this.currentProject.id);
       this.workflowActionPending = 'resume';
       try {
-        await this.api(`/api/projects/${projectId}/resume`, 'POST');
+        const result = await this.api(`/api/projects/${projectId}/resume`, 'POST');
         if (String(this.currentProject?.id || '') === projectId) {
+          const stage = typeof result?.stage === 'string' ? result.stage.trim() : '';
           this.currentProject.status = 'processing';
-          this.currentProject.pipeline_stage = this.currentProject.pipeline_stage || 'resume';
+          if (['asr', 'translate', 'burn'].includes(stage)) {
+            this.currentProject.pipeline_stage = stage;
+          }
           this.currentProject.error = '';
         }
         this.toast('已恢复工作流');

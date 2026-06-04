@@ -561,6 +561,121 @@ def test_frontend_loads_workflow_state_and_retries_failed_stage():
     )
 
 
+def test_resume_workflow_uses_backend_stage_and_keeps_pending_guard():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          state.toast = () => {};
+          state.currentProject = {id: 'p1', status: 'error'};
+          const calls = [];
+          state.api = async (url, method = 'GET') => {
+            calls.push({url, method});
+            if (url === '/api/projects/p1/resume' && method === 'POST') {
+              return {status: 'started', stage: 'translate'};
+            }
+            if (url === '/api/projects/p1/workflow-state') {
+              return {stages: {}};
+            }
+            throw new Error(`unexpected request ${method} ${url}`);
+          };
+
+          await state.resumeWorkflow();
+          if (state.currentProject.status !== 'processing') {
+            throw new Error(`expected processing status after resume, got ${JSON.stringify(state.currentProject)}`);
+          }
+          if (state.currentProject.pipeline_stage !== 'translate') {
+            throw new Error(`expected backend resume stage, got ${JSON.stringify(state.currentProject)}`);
+          }
+          if (state.workflowActionPending !== '') {
+            throw new Error(`expected workflow pending flag to clear, got ${state.workflowActionPending}`);
+          }
+
+          state.currentProject = {id: 'p1', status: 'error'};
+          state.workflowActionPending = 'retry:asr';
+          await state.resumeWorkflow();
+          const resumeCalls = calls.filter((call) => call.url === '/api/projects/p1/resume');
+          if (resumeCalls.length !== 1) {
+            throw new Error(`pending guard should block duplicate resume calls, got ${JSON.stringify(calls)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_open_project_ignores_stale_mutations_after_workflow_state_delay():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          state.toast = () => {};
+          state.setView = async (view) => { state.view = view; return true; };
+          state.connectWS = () => {};
+          state.loadKbUsageTrace = () => {};
+
+          let releaseP1Workflow;
+          let markP1WorkflowStarted;
+          const p1WorkflowStarted = new Promise((resolve) => { markP1WorkflowStarted = resolve; });
+          state.api = async (url) => {
+            if (url === '/api/projects/p1') return {id: 'p1', status: 'error'};
+            if (url === '/api/projects/p1/subtitles') return {blocks: [{index: 1, text: 'p1 subtitle'}]};
+            if (url === '/api/projects/p1/workflow-state') {
+              markP1WorkflowStarted();
+              await new Promise((resolve) => { releaseP1Workflow = resolve; });
+              return {stages: {translate: {status: 'failed'}}};
+            }
+            if (url === '/api/projects/p2') return {id: 'p2', status: 'completed'};
+            if (url === '/api/projects/p2/subtitles') return {blocks: [{index: 2, text: 'p2 subtitle'}]};
+            if (url === '/api/projects/p2/workflow-state') return {stages: {}};
+            throw new Error(`unexpected url ${url}`);
+          };
+
+          const p1Open = state.openProject('p1');
+          await p1WorkflowStarted;
+          await state.openProject('p2');
+
+          if (state.currentProject.id !== 'p2') {
+            throw new Error(`expected p2 after newer open, got ${JSON.stringify(state.currentProject)}`);
+          }
+          if (JSON.stringify(state.subtitles) !== JSON.stringify([{index: 2, text: 'p2 subtitle'}])) {
+            throw new Error(`expected p2 subtitles before stale release, got ${JSON.stringify(state.subtitles)}`);
+          }
+
+          releaseP1Workflow();
+          await p1Open;
+          if (state.currentProject.id !== 'p2') {
+            throw new Error(`stale p1 open overwrote current project: ${JSON.stringify(state.currentProject)}`);
+          }
+          if (JSON.stringify(state.subtitles) !== JSON.stringify([{index: 2, text: 'p2 subtitle'}])) {
+            throw new Error(`stale p1 open overwrote subtitles: ${JSON.stringify(state.subtitles)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_home_dashboard_summary_counts_active_projects_and_sorts_recent_items():
     _run_node(
         """
