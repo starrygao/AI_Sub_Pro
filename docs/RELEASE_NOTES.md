@@ -16,6 +16,11 @@ Highlights:
   metadata and current subtitles, with edit, accept, and reject actions.
 - Added KB usage trace recording for translation runs, with a project API and
   frontend panel showing which KB entries were used when trace data exists.
+- Added intent-level ASR modes for speed, accuracy, and offline use, with
+  backend/model recommendations based on detected local backends and model
+  cache status.
+- Added structured workflow state with bounded per-stage logs, failing-stage
+  display, log download, retry, and resume from the last verified artifact.
 
 Quality/Verification:
 

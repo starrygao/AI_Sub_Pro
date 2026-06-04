@@ -79,6 +79,21 @@ You can also configure:
 - Repetition and interjection filters.
 - TMDB API key for trailer search.
 
+## ASR Modes
+
+The ASR mode expresses intent rather than naming one fixed backend:
+
+- **Speed first** chooses the fastest available local backend. On Apple
+  Silicon this is usually `mlx-whisper` with `large-v3-turbo`.
+- **Accuracy first** prefers a larger model and a backend with VAD or beam
+  search support when available.
+- **Offline first** prefers bundled or cached models and reports when a model
+  download is required.
+
+`/api/system-check` reports detected ASR backends, model cache status, and the
+current backend/model recommendation. Tests simulate these checks without
+downloading models.
+
 ## Process a Local Video
 
 1. Drag a video into the home screen or paste a local video path.
@@ -90,6 +105,18 @@ You can also configure:
 
 If the video already has a text subtitle track, AI Sub Pro can skip ASR and
 use the embedded subtitle as the source timeline.
+
+## Workflow Recovery
+
+Long-running workflows write structured progress to `workflow_state.json` in
+the project runtime data. The state records each stage, bounded per-stage logs,
+the failing stage when a workflow stops, and the last verified artifact that can
+be used for recovery.
+
+The project page can show the failing stage, download the captured logs, retry a
+failed stage, or resume processing from the last verified artifact. Retry and
+resume use the same per-task locks as normal processing, so only one workflow
+operation can run for a project at a time.
 
 ## Trailer Workflow
 
