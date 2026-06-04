@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -64,10 +66,13 @@ def _normalize_stage(raw: Any) -> dict[str, Any]:
 
     status = raw.get("status")
     item = _empty_stage(status if status in VALID_STATUSES else "pending")
-    for key in ("input_artifact", "output_artifact", "error_summary", "log_path"):
+    for key in ("input_artifact", "output_artifact", "log_path"):
         value = raw.get(key)
         if isinstance(value, str):
             item[key] = value
+    error_summary = raw.get("error_summary")
+    if isinstance(error_summary, str):
+        item["error_summary"] = redact_error_message(error_summary)
     for key in ("started_at", "finished_at"):
         value = raw.get(key)
         if isinstance(value, str) or value is None:
@@ -75,7 +80,8 @@ def _normalize_stage(raw: Any) -> dict[str, Any]:
     retry_count = raw.get("retry_count")
     if isinstance(retry_count, int) and not isinstance(retry_count, bool) and retry_count >= 0:
         item["retry_count"] = retry_count
-    item["resume_eligible"] = bool(raw.get("resume_eligible"))
+    resume_eligible = raw.get("resume_eligible")
+    item["resume_eligible"] = resume_eligible if isinstance(resume_eligible, bool) else False
     return item
 
 
@@ -208,13 +214,57 @@ def _bound_log_bytes(data: bytes) -> bytes:
     return data.decode("utf-8", errors="ignore").encode("utf-8")
 
 
+def _workflow_log_dir(pid: str) -> Path:
+    pdir = project_dir(pid)
+    log_dir = pdir / "workflow_logs"
+    if log_dir.is_symlink():
+        raise ValueError(f"workflow log directory is a symlink: {pid!r}")
+    if log_dir.exists() and not log_dir.is_dir():
+        raise ValueError(f"workflow log directory is not a directory: {pid!r}")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    if log_dir.is_symlink():
+        raise ValueError(f"workflow log directory is a symlink: {pid!r}")
+    resolved = log_dir.resolve()
+    if not resolved.is_relative_to(pdir):
+        raise ValueError(f"workflow log directory escapes project dir: {pid!r}")
+    return log_dir
+
+
+def _validate_existing_log_file(path: Path) -> None:
+    if path.is_symlink():
+        raise ValueError(f"workflow log file is a symlink: {path.name}")
+    if path.exists() and not path.is_file():
+        raise ValueError(f"workflow log file is not a regular file: {path.name}")
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    tmp_handle = tempfile.NamedTemporaryFile(
+        "wb",
+        dir=path.parent,
+        prefix=f"{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    )
+    tmp = Path(tmp_handle.name)
+    try:
+        with tmp_handle as f:
+            f.write(data)
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
 def append_stage_log(pid: str, stage: str, message: str) -> Path:
     stage = _clean_stage(stage)
     with get_project_lock(pid):
-        path = stage_log_path(pid, stage)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path = _workflow_log_dir(pid) / f"{stage}.log"
+        _validate_existing_log_file(path)
         safe_message = redact_error_message(message if isinstance(message, str) else "")
         line = f"{_now()} {safe_message}\n".encode("utf-8")
         existing = path.read_bytes() if path.exists() else b""
-        path.write_bytes(_bound_log_bytes(existing + line))
+        _atomic_write_bytes(path, _bound_log_bytes(existing + line))
         return path
