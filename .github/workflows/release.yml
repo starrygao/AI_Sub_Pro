@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release dry-run and upload
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Prepare release metadata dry-run
+        run: python3 tools/release/prepare_release.py --dist-dir dist --output dist/release-size-report.json --checksum-dir dist --allow-empty
+
+      - name: Show checksum and size report
+        run: |
+          find dist -maxdepth 1 -name '*.sha256' -print -exec cat {} \;
+          cat dist/release-size-report.json
+
+      - name: Upload GitHub release artifacts
+        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG_NAME" --draft --verify-tag --title "$TAG_NAME" --notes "Automated draft release for $TAG_NAME"
+          gh release upload "$TAG_NAME" dist/* --clobber

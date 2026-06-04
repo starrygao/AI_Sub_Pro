@@ -1,7 +1,106 @@
+import hashlib
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_release_workflow_supports_pr_dry_run_tag_release_and_uploads():
+    workflow_path = ROOT / ".github" / "workflows" / "release.yml"
+
+    workflow = workflow_path.read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in workflow
+    assert "pull_request:" in workflow
+    assert "tags:" in workflow
+    assert "- 'v*'" in workflow or '- "v*"' in workflow
+    assert "dry-run" in workflow
+    assert "--allow-empty" in workflow
+    assert "tools/release/prepare_release.py" in workflow
+    assert "sha256" in workflow.lower()
+    assert "release-size-report.json" in workflow
+    assert "gh release upload" in workflow or "actions/upload-release-asset" in workflow
+
+
+def test_release_prepare_writes_sha256_files_and_size_report(tmp_path):
+    dist_dir = tmp_path / "dist"
+    checksum_dir = tmp_path / "checksums"
+    output_path = tmp_path / "release-size-report.json"
+    dist_dir.mkdir()
+    artifact = dist_dir / "AI Sub Pro.dmg"
+    artifact.write_bytes(b"release artifact")
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools" / "release" / "prepare_release.py"),
+            "--dist-dir",
+            str(dist_dir),
+            "--output",
+            str(output_path),
+            "--checksum-dir",
+            str(checksum_dir),
+        ],
+        cwd=ROOT,
+        check=True,
+    )
+
+    expected_digest = hashlib.sha256(b"release artifact").hexdigest()
+    checksum_file = checksum_dir / f"{artifact.name}.sha256"
+    report = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert checksum_file.read_text(encoding="utf-8") == f"{expected_digest}  {artifact.name}\n"
+    assert report["artifact_count"] == 1
+    assert report["total_bytes"] == len(b"release artifact")
+    assert report["artifacts"] == [
+        {
+            "name": artifact.name,
+            "path": str(artifact),
+            "size_bytes": len(b"release artifact"),
+            "sha256": expected_digest,
+            "checksum_path": str(checksum_file),
+        }
+    ]
+
+
+def test_release_prepare_allows_empty_dist_with_explicit_flag(tmp_path):
+    dist_dir = tmp_path / "dist"
+    output_path = tmp_path / "release-size-report.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools" / "release" / "prepare_release.py"),
+            "--dist-dir",
+            str(dist_dir),
+            "--output",
+            str(output_path),
+            "--checksum-dir",
+            str(dist_dir),
+            "--allow-empty",
+        ],
+        cwd=ROOT,
+        check=True,
+    )
+
+    report = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert dist_dir.exists()
+    assert report["artifact_count"] == 0
+    assert report["total_bytes"] == 0
+    assert report["artifacts"] == []
+
+
+def test_package_json_exposes_release_prepare_script():
+    root_package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+
+    assert root_package["scripts"]["release:prepare"] == (
+        "python3 tools/release/prepare_release.py "
+        "--dist-dir dist --output dist/release-size-report.json --checksum-dir dist"
+    )
 
 
 def test_build_mac_preserves_tracked_pyinstaller_spec():
