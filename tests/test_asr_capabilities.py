@@ -25,6 +25,8 @@ def test_detect_asr_capabilities_prefers_apple_silicon_mlx(monkeypatch, tmp_path
     assert caps["backends"]["mlx_whisper"]["installed"] is True
     assert caps["backends"]["mlx_whisper"]["accelerated"] is True
     assert caps["models"]["large-v3-turbo"]["available"] is True
+    assert caps["models"]["large-v3-turbo"]["availability_scope"] == "mlx_whisper"
+    assert caps["models"]["large-v3-turbo"]["mlx_whisper"]["available"] is True
 
 
 def test_recommend_asr_settings_maps_speed_accuracy_and_offline(monkeypatch):
@@ -71,6 +73,63 @@ def test_recommend_asr_settings_maps_speed_accuracy_and_offline(monkeypatch):
     assert accuracy["download_required"] is True
     assert offline["download_required"] is False
     assert offline["model_size"] in {"small", "large-v3-turbo"}
+
+
+def test_faster_whisper_recommendation_does_not_reuse_mlx_model_availability():
+    from app.engines.asr_capabilities import recommend_asr_settings
+
+    caps = {
+        "platform": {"system": "Darwin", "machine": "arm64"},
+        "backends": {
+            "mlx_whisper": {
+                "installed": False,
+                "accelerated": True,
+                "supports_vad": False,
+                "supports_beam": False,
+            },
+            "faster_whisper": {
+                "installed": True,
+                "accelerated": False,
+                "supports_vad": True,
+                "supports_beam": True,
+            },
+            "openai_whisper": {
+                "installed": False,
+                "accelerated": False,
+                "supports_vad": False,
+                "supports_beam": True,
+            },
+        },
+        "models": {
+            "large-v3": {
+                "model_size": "large-v3",
+                "download_hint": "~3GB",
+                "availability_scope": "mlx_whisper",
+                "available": True,
+                "source": "bundled",
+                "path": "/tmp/mlx/large-v3",
+                "mlx_whisper": {
+                    "available": True,
+                    "source": "bundled",
+                    "path": "/tmp/mlx/large-v3",
+                    "download_hint": "~3GB",
+                },
+                "faster_whisper": {
+                    "available": False,
+                    "source": "unknown",
+                    "path": "",
+                    "download_hint": "~3GB",
+                },
+            }
+        },
+    }
+
+    rec = recommend_asr_settings("accuracy", caps)
+
+    assert rec["backend"] == "faster_whisper"
+    assert rec["model_size"] == "large-v3"
+    assert rec["download_required"] is True
+    assert rec["model_source"] == "unknown"
 
 
 def test_recommendation_degrades_when_no_backend_is_installed():

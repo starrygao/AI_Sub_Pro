@@ -35,15 +35,38 @@ def _backend(
     }
 
 
+def _unknown_model_info(model: str) -> dict[str, Any]:
+    return {
+        "available": False,
+        "source": "unknown",
+        "path": "",
+        "path_or_repo": "",
+        "download_hint": MODEL_DOWNLOAD_HINTS.get(model, ""),
+    }
+
+
 def _model_info(model: str) -> dict[str, Any]:
     source = resolve_mlx_model_source(model)
-    return {
-        "model_size": model,
+    mlx_info = {
         "available": bool(source.get("available")),
         "source": source.get("source", "unknown"),
         "path": source.get("path", ""),
         "path_or_repo": source.get("path_or_repo", ""),
         "download_hint": MODEL_DOWNLOAD_HINTS.get(model, ""),
+    }
+    return {
+        "model_size": model,
+        "download_hint": MODEL_DOWNLOAD_HINTS.get(model, ""),
+        "mlx_whisper": mlx_info,
+        "faster_whisper": _unknown_model_info(model),
+        "openai_whisper": _unknown_model_info(model),
+        # Backward-compatible aliases are MLX-scoped. Recommendation code must
+        # use the backend-specific entries above instead of these fields.
+        "availability_scope": "mlx_whisper",
+        "available": mlx_info["available"],
+        "source": mlx_info["source"],
+        "path": mlx_info["path"],
+        "path_or_repo": mlx_info["path_or_repo"],
     }
 
 
@@ -114,9 +137,27 @@ def _model(caps: dict[str, Any], model: str) -> dict[str, Any]:
     }
 
 
-def _first_offline_model(caps: dict[str, Any]) -> str:
+def _backend_model_info(caps: dict[str, Any], model: str, backend: str) -> dict[str, Any]:
+    info = _model(caps, model)
+    backend_info = info.get(backend)
+    if isinstance(backend_info, dict):
+        merged = _unknown_model_info(model)
+        merged.update(backend_info)
+        return merged
+    if backend == "mlx_whisper":
+        return {
+            "available": bool(info.get("available")),
+            "source": info.get("source", "unknown"),
+            "path": info.get("path", ""),
+            "path_or_repo": info.get("path_or_repo", ""),
+            "download_hint": info.get("download_hint", MODEL_DOWNLOAD_HINTS.get(model, "")),
+        }
+    return _unknown_model_info(model)
+
+
+def _first_offline_model(caps: dict[str, Any], backend: str) -> str:
     for model in OFFLINE_MODEL_ORDER:
-        if _model(caps, model).get("available"):
+        if _backend_model_info(caps, model, backend).get("available"):
             return model
     return OFFLINE_MODEL_ORDER[0]
 
@@ -130,7 +171,7 @@ def _recommendation(
     reason: str,
     caps: dict[str, Any],
 ) -> dict[str, Any]:
-    info = _model(caps, model) if model else {}
+    info = _backend_model_info(caps, model, backend) if model and backend else {}
     backend_info = _backends(caps).get(backend, {}) if backend else {}
     if not isinstance(backend_info, dict):
         backend_info = {}
@@ -167,7 +208,7 @@ def recommend_asr_settings(mode: str, caps: dict[str, Any]) -> dict[str, Any]:
         reason = "准确优先：使用更大模型，并在可用时选择支持 VAD 和 beam search 的后端。"
     elif selected_mode == "offline":
         backend = "mlx_whisper" if _installed(caps, "mlx_whisper") else installed[0]
-        model = _first_offline_model(caps)
+        model = _first_offline_model(caps, backend)
         reason = "离线优先：优先选择已缓存或内置模型，减少下载依赖。"
     else:
         backend = "mlx_whisper" if _installed(caps, "mlx_whisper") else installed[0]
