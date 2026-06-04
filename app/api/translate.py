@@ -40,7 +40,9 @@ from app.engines.workflow_state import (
     cancel_workflow,
     fail_stage,
     finish_stage,
+    load_workflow_state,
     reset_workflow,
+    save_workflow_state,
     start_stage,
 )
 from app.utils.errors import redact_error_message
@@ -194,7 +196,54 @@ def _reset_workflow_for_action(pid: str, action: str) -> dict:
         stages = stages_by_action[action]
     except KeyError as exc:
         raise ValueError(f"unknown workflow action: {action!r}") from exc
-    return reset_workflow(pid, stages)
+    existing = load_workflow_state(pid)
+    existing_stages = existing.get("stages", {}) if isinstance(existing, dict) else {}
+    retry_counts = {}
+    if isinstance(existing_stages, dict):
+        for stage in stages:
+            item = existing_stages.get(stage)
+            retry_count = item.get("retry_count") if isinstance(item, dict) else None
+            if isinstance(retry_count, int) and not isinstance(retry_count, bool) and retry_count > 0:
+                retry_counts[stage] = retry_count
+
+    state = reset_workflow(pid, stages)
+    if not retry_counts:
+        return state
+
+    for stage, retry_count in retry_counts.items():
+        state["stages"][stage]["retry_count"] = retry_count
+    return save_workflow_state(pid, state)
+
+
+def _resolve_cancel_stage(pid: str, project: dict) -> str:
+    raw_stage = project.get("pipeline_stage")
+    if raw_stage in {"download", "asr", "translate", "burn"}:
+        return raw_stage
+
+    try:
+        state = load_workflow_state(pid)
+    except Exception as e:
+        log.warning("workflow load failed while resolving cancel stage pid=%s: %s", pid, e)
+        return "asr"
+
+    stages = state.get("stages", {}) if isinstance(state, dict) else {}
+    if not isinstance(stages, dict):
+        return "asr"
+
+    for stage in ("burn", "translate", "asr", "download"):
+        item = stages.get(stage)
+        if isinstance(item, dict) and item.get("status") == "running":
+            return stage
+
+    single_stage = [
+        (stage, item)
+        for stage, item in stages.items()
+        if stage in {"download", "asr", "translate", "burn"} and isinstance(item, dict)
+    ]
+    if len(single_stage) == 1 and single_stage[0][1].get("status") == "pending":
+        return single_stage[0][0]
+
+    return "asr"
 
 
 def _best_effort_start_stage(pid: str, stage: str, *, input_artifact: str = "") -> None:
@@ -904,8 +953,7 @@ def cancel_task(pid: str = PathParam(pattern=PID_PATTERN)):
         or bool(project.get("pipeline_stage"))
     )
     if is_task_registered(pid) or cancellable_pipeline:
-        raw_stage = project.get("pipeline_stage")
-        stage = raw_stage if raw_stage in {"download", "asr", "translate", "burn"} else "asr"
+        stage = _resolve_cancel_stage(pid, project)
         # Signal worker threads via scheduler cancel events — they'll observe at
         # the next _check_cancel checkpoint and raise.
         request_cancel(pid)

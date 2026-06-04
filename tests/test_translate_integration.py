@@ -46,6 +46,26 @@ def test_start_asr_initializes_workflow_state(tmp_project_dir, monkeypatch):
     assert state["stages"]["asr"]["status"] == "pending"
 
 
+def test_reset_workflow_for_action_preserves_retry_count(tmp_project_dir):
+    from app.api import translate as api_translate
+    from app.engines.workflow_state import fail_stage, load_workflow_state, reset_workflow
+
+    pid = "retrykeep"
+    reset_workflow(pid, ["translate"])
+    fail_stage(pid, "translate", RuntimeError("first failure"))
+    fail_stage(pid, "translate", RuntimeError("second failure"))
+
+    api_translate._reset_workflow_for_action(pid, "translate")
+
+    state = load_workflow_state(pid)
+    stage = state["stages"]["translate"]
+    assert stage["status"] == "pending"
+    assert stage["started_at"] is None
+    assert stage["finished_at"] is None
+    assert stage["error_summary"] == ""
+    assert stage["retry_count"] == 2
+
+
 def test_emit_progress_routes_through_scheduler():
     """_emit_progress must delegate to scheduler.update_progress (single source of truth).
 
