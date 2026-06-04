@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+RELEASE_VERSION = "1.2.0"
 
 
 def test_release_workflow_supports_pr_dry_run_tag_release_and_uploads():
@@ -117,6 +118,33 @@ def test_package_json_exposes_release_prepare_script():
         "python3 tools/release/prepare_release.py "
         "--dist-dir dist --output dist/release-size-report.json --checksum-dir dist"
     )
+
+
+def test_release_version_is_consistent_across_packaging_and_docs():
+    root_package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    package_lock = json.loads((ROOT / "package-lock.json").read_text(encoding="utf-8"))
+    electron_package = json.loads((ROOT / "electron" / "package.json").read_text(encoding="utf-8"))
+    make_dmg = (ROOT / "make_dmg.sh").read_text(encoding="utf-8")
+    app_main = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
+    usage_en = (ROOT / "docs" / "USAGE.md").read_text(encoding="utf-8")
+    usage_zh = (ROOT / "docs" / "USAGE.zh-CN.md").read_text(encoding="utf-8")
+    release_notes_en = (ROOT / "docs" / "RELEASE_NOTES.md").read_text(encoding="utf-8")
+    release_notes_zh = (ROOT / "docs" / "RELEASE_NOTES.zh-CN.md").read_text(encoding="utf-8")
+
+    assert root_package["version"] == RELEASE_VERSION
+    assert package_lock["version"] == RELEASE_VERSION
+    assert package_lock["packages"][""]["version"] == RELEASE_VERSION
+    assert electron_package["version"] == RELEASE_VERSION
+    assert f'VERSION="{RELEASE_VERSION}"' in make_dmg
+    assert f"AI_Sub_Pro_v{RELEASE_VERSION}.dmg" in make_dmg
+    assert f'version="{RELEASE_VERSION}"' in app_main
+
+    for doc in (usage_en, usage_zh, release_notes_en, release_notes_zh):
+        assert f"v{RELEASE_VERSION}" in doc
+        assert f"AI_Sub_Pro_v{RELEASE_VERSION}.dmg" in doc
+
+    assert "AI_Sub_Pro_v1.1.1.dmg.part-" not in usage_en
+    assert "AI_Sub_Pro_v1.1.1.dmg.part-" not in usage_zh
 
 
 def test_build_mac_preserves_tracked_pyinstaller_spec():

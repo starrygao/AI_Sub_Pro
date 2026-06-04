@@ -2,13 +2,18 @@
 
 语言：[English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
-## Unreleased - 翻译质量评测与知识库审校
+## v1.2.0 - 质量评测、工作流恢复、字幕编辑器与发布流水线
 
-这个尚未发布的 milestone 记录确定性评测流程和新的知识库审校工具。本
-unreleased milestone 未附带新的应用安装包或 DMG。
+这个版本把 v2 升级工作作为新的 macOS 安装包发布。它新增确定性质量评测、知识库
+审校工具、ASR 意图模式、可恢复的长任务工作流、专业字幕编辑能力，以及可重复的
+release pipeline。
 
 主要内容：
 
+- 新增字幕编辑器质量检查、合并、批量查找/替换、导出警告、键盘友好控制，以及
+  便于快速审校的 timeline strip。
+- 新增项目列表筛选、分组设置锚点，以及更明确的 provider、ASR、导出和网络错误
+  下一步处理提示。
 - 新增 release pipeline 文档，覆盖 `v*` tag trigger、dry-run release
   preparation、checksum 校验和 size report 检查。
 - 将基础应用安装包与 optional local ASR package / 可选本地 ASR 包拆分。macOS
@@ -31,8 +36,24 @@ unreleased milestone 未附带新的应用安装包或 DMG。
 
 - 确定性评测 CLI 已通过，并为 7 个用例写出
   `build/evaluation/milestone1.json` 和 `build/evaluation/milestone1.md`。
-- milestone 聚焦测试已通过：`109 passed in 1.66s`。
-- 完整测试套件已通过：`838 passed in 45.70s`。
+- v2 聚合合并验证已通过：`902 passed in 104.00s`。
+- release 分支验证已通过：`903 passed in 118.10s`。
+- 打包脚本检查已通过：`31 passed in 0.16s`。
+- 本地 v1.2.0 DMG 已使用 `AISUBPRO_BUNDLE_LOCAL_ASR=0` 构建通过，且
+  `hdiutil verify dist/AI_Sub_Pro_v1.2.0.dmg` 报告 checksum 有效。
+- v2 合并前 GitHub Actions release dry-run validation 已通过。
+
+安装包：
+
+- 已为 macOS 用户附加 `AI_Sub_Pro_v1.2.0.dmg`，并提供对应的
+  `AI_Sub_Pro_v1.2.0.dmg.sha256` 校验文件和 `release-size-report.json`。
+- tag 前本地 release artifact 校验记录 SHA256
+  `e076b9776cccdcaf04051d863457b9d401addf6ea14417a265b55b31b97ac253`，大小
+  `88,518,339` bytes。
+- 附带的 macOS 安装包是 base app build，不包含本地 Whisper 模型文件，也不包含
+  optional ASR backend packages / 可选 ASR 后端包。
+- Windows 安装包需要在 Windows 机器上运行 `build_win.bat` 生成；当前 release
+  暂未附带预编译 Windows 安装包，请先使用源码安装。
 
 ## v1.1.1 - 知识库注入修复
 

@@ -1,6 +1,6 @@
 {
   "name": "ai-sub-pro",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "scripts": {
     "build:css": "npx --yes tailwindcss@3.4.17 -c tailwind.config.js -i app/static/css/tailwind.input.css -o app/static/css/tailwind.css --minify",
     "dev": "cd electron && npx electron .",

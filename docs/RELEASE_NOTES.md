@@ -2,14 +2,19 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
-## Unreleased - Quality Evaluation And KB Review
+## v1.2.0 - Quality, Workflow, Editor, And Release Pipeline
 
-This unreleased milestone documents the deterministic evaluation loop and the
-new Knowledge Base review tools. No packaged app or DMG is attached for this
-unreleased milestone.
+This release publishes the v2 upgrade work as a packaged macOS build. It adds
+deterministic quality evaluation, Knowledge Base review tooling, ASR intent
+modes, recoverable long-running workflows, professional subtitle editing, and a
+repeatable release pipeline.
 
 Highlights:
 
+- Added subtitle editor quality checks, merge, bulk find/replace, export
+  warnings, keyboard-friendly controls, and a timeline strip for quicker review.
+- Added project list filters, grouped settings anchors, and more specific
+  provider/ASR/export/network error next-action text.
 - Added release pipeline documentation covering the `v*` tag trigger, dry-run
   release preparation, checksum verification, and size-report review.
 - Split base app packages from optional local ASR packages. macOS and Windows
@@ -34,8 +39,25 @@ Quality/Verification:
 
 - Deterministic evaluation CLI passed and wrote reports for 7 cases to
   `build/evaluation/milestone1.json` and `build/evaluation/milestone1.md`.
-- Focused milestone tests passed: `109 passed in 1.66s`.
-- Full test suite passed: `838 passed in 45.70s`.
+- Aggregate v2 merge verification passed: `902 passed in 104.00s`.
+- Release branch verification passed: `903 passed in 118.10s`.
+- Packaging script checks passed: `31 passed in 0.16s`.
+- Local v1.2.0 DMG build passed with `AISUBPRO_BUNDLE_LOCAL_ASR=0`, and
+  `hdiutil verify dist/AI_Sub_Pro_v1.2.0.dmg` reported a valid checksum.
+- Release dry-run validation passed on GitHub Actions before the v2 merge.
+
+Packages:
+
+- `AI_Sub_Pro_v1.2.0.dmg` is attached for macOS users, with a matching
+  `AI_Sub_Pro_v1.2.0.dmg.sha256` checksum file and
+  `release-size-report.json`.
+- Local release artifact verification recorded SHA256
+  `e076b9776cccdcaf04051d863457b9d401addf6ea14417a265b55b31b97ac253` and
+  size `88,518,339` bytes before tagging.
+- The attached macOS package is the base app build. It does not bundle local
+  Whisper model files or optional ASR backend packages.
+- Windows packaging currently requires a Windows machine and `build_win.bat`;
+  no prebuilt Windows installer is attached to this release.
 
 ## v1.1.1 - Knowledge Base Injection Fix
 
