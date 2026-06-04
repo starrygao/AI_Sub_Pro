@@ -9,6 +9,13 @@ unreleased milestone 未附带新的应用安装包或 DMG。
 
 主要内容：
 
+- 新增 release pipeline 文档，覆盖 `v*` tag trigger、dry-run release
+  preparation、checksum 校验和 size report 检查。
+- 将基础应用安装包与 optional local ASR package / 可选本地 ASR 包拆分。macOS
+  和 Windows 默认打包不再包含本地 ASR 模型或后端；只有设置
+  `AISUBPRO_BUNDLE_LOCAL_ASR=1` 时才会打包。
+- macOS DMG 构建在生成 DMG 后，如果 Python 可用，会运行 release preparation
+  helper，生成 checksum 文件和 `release-size-report.json`。
 - 新增 `python3 -m app.evaluation.cli`，用于基于 golden corpus 生成确定性的
   翻译质量报告，不调用网络服务或付费 provider。
 - 新增项目知识库建议审校流程，可根据 TMDB 元数据和当前字幕生成建议词条，并

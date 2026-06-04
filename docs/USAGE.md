@@ -18,6 +18,11 @@ Prebuilt packages are attached to GitHub Releases when available.
   release does not include a prebuilt Windows installer yet; build from source
   on a Windows machine with `build_win.bat`.
 
+Default packages are base-app builds. They do not include local Whisper model
+files or optional ASR backend packages. Offline-oriented packages must be built
+explicitly with `AISUBPRO_BUNDLE_LOCAL_ASR=1` and should be labeled as optional
+ASR packages in the release notes.
+
 ## Install
 
 Requirements:
@@ -93,6 +98,12 @@ The ASR mode expresses intent rather than naming one fixed backend:
 `/api/system-check` reports detected ASR backends, model cache status, and the
 current backend/model recommendation. Tests simulate these checks without
 downloading models.
+
+For source builds, optional ASR backends can be installed in the local Python
+environment. For packaged builds, those optional local ASR packages and
+`models/asr` are bundled only when the package maintainer sets
+`AISUBPRO_BUNDLE_LOCAL_ASR=1`; otherwise models may download on first use or be
+read from the normal local cache.
 
 ## Process a Local Video
 

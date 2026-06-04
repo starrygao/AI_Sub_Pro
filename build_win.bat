@@ -1,4 +1,5 @@
 @echo off
+setlocal EnableExtensions EnableDelayedExpansion
 REM Build AI Sub Pro Windows .exe
 REM Run this script on a Windows machine with Python, PyInstaller, and ffmpeg installed
 
@@ -28,6 +29,19 @@ for /f "tokens=*" %%i in ('where ffprobe') do set FFPROBE_PATH=%%i
 echo   ffmpeg: %FFMPEG_PATH%
 echo   ffprobe: %FFPROBE_PATH%
 
+if "%AISUBPRO_BUNDLE_LOCAL_ASR%"=="" set "AISUBPRO_BUNDLE_LOCAL_ASR=0"
+set "ASR_MODEL_DATA_ARGS="
+set "ASR_BACKEND_ARGS="
+if "%AISUBPRO_BUNDLE_LOCAL_ASR%"=="1" (
+    if exist "models\asr" set "ASR_MODEL_DATA_ARGS=--add-data models\asr;models\asr"
+    python -c "import faster_whisper" 2>nul && set "ASR_BACKEND_ARGS=!ASR_BACKEND_ARGS! --hidden-import faster_whisper --collect-all faster_whisper"
+    python -c "import mlx_whisper" 2>nul && set "ASR_BACKEND_ARGS=!ASR_BACKEND_ARGS! --hidden-import mlx_whisper --collect-all mlx --collect-all mlx_whisper"
+    python -c "import whisper" 2>nul && set "ASR_BACKEND_ARGS=!ASR_BACKEND_ARGS! --hidden-import whisper"
+    echo   Local ASR packaging: enabled
+) else (
+    echo   Local ASR packaging: disabled
+)
+
 echo.
 echo [2/5] Building frontend assets...
 call npm run build:css || exit /b 1
@@ -46,6 +60,7 @@ python -m PyInstaller ^
     --clean ^
     --add-data "app\static;app\static" ^
     --add-data "app;app" ^
+    %ASR_MODEL_DATA_ARGS% ^
     --add-binary "%FFMPEG_PATH%;bin" ^
     --add-binary "%FFPROBE_PATH%;bin" ^
     --hidden-import uvicorn ^
@@ -68,8 +83,7 @@ python -m PyInstaller ^
     --hidden-import anyio ^
     --hidden-import h11 ^
     --hidden-import websockets ^
-    --hidden-import faster_whisper ^
-    --collect-all faster_whisper ^
+    %ASR_BACKEND_ARGS% ^
     --collect-all openai ^
     --collect-all starlette ^
     --exclude-module pytest ^

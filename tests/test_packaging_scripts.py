@@ -114,9 +114,12 @@ def test_build_mac_preserves_tracked_pyinstaller_spec():
     assert '--add-data "${ROOT_DIR}/app:app"' in script
 
 
-def test_build_mac_can_bundle_local_asr_models_and_optional_faster_whisper():
+def test_build_mac_optional_asr_packaging_is_opt_in_by_default():
     script = (ROOT / "build_mac.sh").read_text(encoding="utf-8")
 
+    assert 'BUNDLE_LOCAL_ASR="${AISUBPRO_BUNDLE_LOCAL_ASR:-0}"' in script
+    assert 'if [ "$BUNDLE_LOCAL_ASR" = "1" ]; then' in script
+    assert "Local ASR packaging: disabled" in script
     assert "ASR_MODEL_DATA_ARGS" in script
     assert '[ -d "$ROOT_DIR/models/asr" ]' in script
     assert '--add-data "${ROOT_DIR}/models/asr:models/asr"' in script
@@ -125,6 +128,24 @@ def test_build_mac_can_bundle_local_asr_models_and_optional_faster_whisper():
     assert 'python3 -c "import faster_whisper"' in script
     assert "--collect-all faster_whisper" in script
     assert '"${ASR_BACKEND_ARGS[@]}"' in script
+    assert script.index('BUNDLE_LOCAL_ASR="${AISUBPRO_BUNDLE_LOCAL_ASR:-0}"') < script.index('[ -d "$ROOT_DIR/models/asr" ]')
+    assert script.index('if [ "$BUNDLE_LOCAL_ASR" = "1" ]; then') < script.index('python3 -c "import faster_whisper"')
+
+
+def test_build_win_optional_asr_packaging_mirrors_mac_opt_in_variable():
+    script = (ROOT / "build_win.bat").read_text(encoding="utf-8")
+
+    assert 'if "%AISUBPRO_BUNDLE_LOCAL_ASR%"=="" set "AISUBPRO_BUNDLE_LOCAL_ASR=0"' in script
+    assert 'if "%AISUBPRO_BUNDLE_LOCAL_ASR%"=="1" (' in script
+    assert "Local ASR packaging: disabled" in script
+    assert "ASR_MODEL_DATA_ARGS" in script
+    assert 'if exist "models\\asr" set "ASR_MODEL_DATA_ARGS=--add-data models\\asr;models\\asr"' in script
+    assert "ASR_BACKEND_ARGS" in script
+    assert 'python -c "import faster_whisper"' in script
+    assert "--collect-all faster_whisper" in script
+    assert "%ASR_MODEL_DATA_ARGS%" in script
+    assert "%ASR_BACKEND_ARGS%" in script
+    assert script.index('if "%AISUBPRO_BUNDLE_LOCAL_ASR%"=="" set "AISUBPRO_BUNDLE_LOCAL_ASR=0"') < script.index('python -c "import faster_whisper"')
 
 
 def test_build_mac_requires_subtitle_capable_ffmpeg():
@@ -232,6 +253,31 @@ def test_make_dmg_uses_stable_hdiutil_by_default_and_create_dmg_is_opt_in():
     assert script.index('USE_CREATE_DMG="${AISUBPRO_USE_CREATE_DMG:-0}"') < script.index('if [ "$USE_CREATE_DMG" = "1" ]')
     assert 'else\n    # 用系统自带的 hdiutil' in script
     assert script.index('else\n    # 用系统自带的 hdiutil') < script.index('create_hdiutil_dmg\nfi')
+
+
+def test_make_dmg_checksum_hook_runs_release_prepare_after_dmg_when_python_available():
+    script = (ROOT / "make_dmg.sh").read_text(encoding="utf-8")
+
+    assert "prepare_release_metadata()" in script
+    assert "command -v python3" in script
+    assert "tools/release/prepare_release.py" in script
+    assert "--dist-dir dist" in script
+    assert "--output dist/release-size-report.json" in script
+    assert "--checksum-dir dist" in script
+    assert script.index('hdiutil create -volname "${APP_NAME}"') < script.index("prepare_release_metadata")
+    assert script.index("prepare_release_metadata") < script.index("[5/5] 构建完成!")
+
+
+def test_release_checklist_docs_cover_trigger_dry_run_checksum_and_optional_asr_strategy():
+    english = (ROOT / "docs" / "RELEASE_CHECKLIST.md").read_text(encoding="utf-8").lower()
+    chinese = (ROOT / "docs" / "RELEASE_CHECKLIST.zh-CN.md").read_text(encoding="utf-8").lower()
+
+    for doc in (english, chinese):
+        assert "v*" in doc
+        assert "dry run" in doc or "dry-run" in doc or "dry run" in doc.replace(" ", "")
+        assert "checksum" in doc or "sha-256" in doc or "sha256" in doc or "校验" in doc
+        assert "aisubpro_bundle_local_asr" in doc
+        assert "optional asr" in doc or "optional local asr" in doc or "可选 asr" in doc
 
 
 def test_make_dmg_cleans_failed_create_dmg_temp_mounts_before_fallback():

@@ -10,6 +10,14 @@ unreleased milestone.
 
 Highlights:
 
+- Added release pipeline documentation covering the `v*` tag trigger, dry-run
+  release preparation, checksum verification, and size-report review.
+- Split base app packages from optional local ASR packages. macOS and Windows
+  builds now keep local ASR models/backends out of default packages unless
+  `AISUBPRO_BUNDLE_LOCAL_ASR=1` is set.
+- macOS DMG builds now run the release preparation helper after DMG creation
+  when Python is available, producing checksum files and
+  `release-size-report.json`.
 - Added `python3 -m app.evaluation.cli` for deterministic golden-corpus
   translation quality reports without network calls or paid providers.
 - Added a project Knowledge Base suggestion review workflow based on TMDB
