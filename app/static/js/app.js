@@ -6,6 +6,9 @@ function app() {
     view: 'home',
     projects: [],
     showArchived: false,
+    projectSearch: '',
+    projectStatusFilter: 'all',
+    projectSortMode: 'recent',
     currentProject: null,
     workflowState: null,
     workflowStateLoading: false,
@@ -437,6 +440,80 @@ function app() {
         .slice()
         .sort((a, b) => this.projectSortTimestamp(b) - this.projectSortTimestamp(a))
         .slice(0, limit);
+    },
+
+    filteredProjects() {
+      const query = String(this.projectSearch || '').trim().toLowerCase();
+      const statusFilter = this.projectStatusFilter || 'all';
+      const statusMatches = (project) => {
+        if (statusFilter === 'all') return true;
+        if (statusFilter === 'running') return this.isProjectBusy(project);
+        if (statusFilter === 'completed') return project.status === 'completed' || !!project.output_video;
+        if (statusFilter === 'error') return project.status === 'error';
+        if (statusFilter === 'translated') return project.status === 'translated';
+        return project.status === statusFilter;
+      };
+      const queryMatches = (project) => {
+        if (!query) return true;
+        return [project.name, project.id, project.status, project.error, project.progress_msg]
+          .some((value) => String(value || '').toLowerCase().includes(query));
+      };
+      const sorted = (Array.isArray(this.projects) ? this.projects : [])
+        .filter((project) => this.isPlainObject(project))
+        .filter((project) => this.showArchived || !project.archived)
+        .filter(statusMatches)
+        .filter(queryMatches)
+        .slice();
+      if (this.projectSortMode === 'name') {
+        sorted.sort((a, b) => String(a.name || a.id || '').localeCompare(String(b.name || b.id || ''), 'zh-CN'));
+      } else if (this.projectSortMode === 'status') {
+        sorted.sort((a, b) => this.statusLabel(a).localeCompare(this.statusLabel(b), 'zh-CN')
+          || this.projectSortTimestamp(b) - this.projectSortTimestamp(a));
+      } else {
+        sorted.sort((a, b) => this.projectSortTimestamp(b) - this.projectSortTimestamp(a));
+      }
+      return sorted;
+    },
+
+    recentTaskProjects(limit = 5) {
+      const priority = (project) => {
+        if (this.isProjectBusy(project)) return 0;
+        if (project.status === 'error') return 1;
+        return 2;
+      };
+      return (Array.isArray(this.projects) ? this.projects : [])
+        .filter((project) => this.isPlainObject(project) && !project.archived)
+        .filter((project) => this.isProjectBusy(project) || project.status === 'error' || project.status === 'translated' || project.status === 'completed' || project.output_video)
+        .slice()
+        .sort((a, b) => priority(a) - priority(b) || this.projectSortTimestamp(b) - this.projectSortTimestamp(a))
+        .slice(0, limit);
+    },
+
+    redactSecretText(value) {
+      return String(value || '')
+        .replace(/sk-[A-Za-z0-9_-]+/g, '[redacted]')
+        .replace(/(api[_ -]?key|token|secret)[=: ]+[A-Za-z0-9._-]+/gi, '$1 [redacted]');
+    },
+
+    projectErrorNextAction(projectOrMessage) {
+      const raw = this.isPlainObject(projectOrMessage)
+        ? (projectOrMessage.error || projectOrMessage.progress_msg || '')
+        : projectOrMessage;
+      const message = this.redactSecretText(raw);
+      const lower = message.toLowerCase();
+      if (/api|key|provider|openai|deepseek|gemini|claude|codex/.test(lower)) {
+        return '打开设置页检查翻译 provider、登录状态和 API 密钥。';
+      }
+      if (/ffmpeg|ffprobe|subtitles filter/.test(lower)) {
+        return '安装带 subtitles filter 的 ffmpeg 后重试导出或烧录。';
+      }
+      if (/asr|whisper|model|mlx|faster/.test(lower)) {
+        return '检查 ASR 设置、模型缓存和离线依赖后重试识别。';
+      }
+      if (/network|timeout|connection|dns|http/.test(lower)) {
+        return '检查网络连接或代理设置，然后重试当前任务。';
+      }
+      return message ? `查看工作流日志并重试。错误摘要：${message}` : '查看工作流日志并重试。';
     },
 
     async api(url, method='GET', body=null) {

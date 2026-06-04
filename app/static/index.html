@@ -424,6 +424,22 @@
           <p class="text-[13px] text-surface-400 mt-0.5">所有字幕翻译项目</p>
         </div>
         <div class="projects-list-actions flex items-center gap-3">
+          <input x-model="projectSearch"
+                 aria-label="搜索项目"
+                 placeholder="搜索项目..."
+                 class="projects-filter-input px-3 py-2 rounded-xl text-[12px]">
+          <select x-model="projectStatusFilter" aria-label="按状态筛选项目" class="px-3 py-2 rounded-xl text-[12px]">
+            <option value="all">全部状态</option>
+            <option value="running">运行中</option>
+            <option value="error">失败</option>
+            <option value="translated">已翻译</option>
+            <option value="completed">已完成</option>
+          </select>
+          <select x-model="projectSortMode" aria-label="项目排序" class="px-3 py-2 rounded-xl text-[12px]">
+            <option value="recent">最近创建</option>
+            <option value="name">名称</option>
+            <option value="status">状态</option>
+          </select>
           <label class="flex items-center gap-2 text-[12px] text-surface-500 cursor-pointer">
             <input type="checkbox" x-model="showArchived" @change="loadProjects()" aria-label="显示归档项目" class="accent-accent">
             显示归档
@@ -437,18 +453,34 @@
         </div>
       </div>
 
+      <div x-show="recentTaskProjects().length>0" class="projects-recent-tasks glass rounded-2xl p-3 mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-[12.5px] font-semibold">最近任务</p>
+          <span class="text-[11px] text-surface-400" x-text="`${recentTaskProjects().length} 个`"></span>
+        </div>
+        <div class="flex gap-2 overflow-x-auto">
+          <template x-for="p in recentTaskProjects()" :key="p.id">
+            <button @click="openProject(p.id)"
+                    class="projects-recent-task btn-secondary px-3 py-2 rounded-xl text-left min-w-48">
+              <span class="block text-[12px] font-medium truncate" x-text="p.name || p.id"></span>
+              <span class="block text-[11px] text-surface-500 truncate" x-text="p.status === 'error' ? projectErrorNextAction(p) : (p.progress_msg || statusLabel(p))"></span>
+            </button>
+          </template>
+        </div>
+      </div>
+
       <!-- Empty -->
-      <div x-show="projects.length===0" class="text-center py-20">
+      <div x-show="filteredProjects().length===0" class="text-center py-20">
         <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-surface-100 flex items-center justify-center">
           <svg class="w-8 h-8 text-surface-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>
         </div>
-        <p class="text-[15px] text-surface-400">暂无项目</p>
-        <p class="text-[13px] text-surface-300 mt-1">在首页拖入视频开始使用</p>
+        <p class="text-[15px] text-surface-400" x-text="projects.length ? '没有符合条件的项目' : '暂无项目'"></p>
+        <p class="text-[13px] text-surface-300 mt-1" x-text="projects.length ? '调整筛选条件或显示归档项目' : '在首页拖入视频开始使用'"></p>
       </div>
 
       <!-- Project Cards -->
       <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        <template x-for="p in projects" :key="p.id">
+        <template x-for="p in filteredProjects()" :key="p.id">
           <div class="glass rounded-2xl p-5 cursor-pointer hover:shadow-lg transition-all duration-200"
                role="button"
                tabindex="0"
@@ -911,9 +943,17 @@
       <h2 class="text-[22px] font-semibold mb-1">系统设置</h2>
       <p class="text-[13px] text-surface-400 mb-6">配置 API 密钥、语音识别和翻译选项</p>
 
+      <nav class="settings-section-nav flex flex-wrap gap-2 mb-5 text-[12px]" aria-label="设置分组">
+        <a href="#settings-providers" class="btn-secondary px-3 py-1.5 rounded-lg no-underline">Provider</a>
+        <a href="#settings-asr" class="btn-secondary px-3 py-1.5 rounded-lg no-underline">ASR</a>
+        <a href="#settings-translation-export" class="btn-secondary px-3 py-1.5 rounded-lg no-underline">翻译/导出</a>
+        <a href="#settings-tmdb" class="btn-secondary px-3 py-1.5 rounded-lg no-underline">TMDB</a>
+        <a href="#settings-storage-release" class="btn-secondary px-3 py-1.5 rounded-lg no-underline">存储/发布</a>
+      </nav>
+
       <div class="space-y-5">
         <!-- API 密钥 (shown when any selected translation service needs a key) -->
-        <div class="glass rounded-2xl p-5" x-show="settingsNeedsApiKeyPanel()" x-cloak>
+        <div id="settings-providers" class="glass rounded-2xl p-5" x-show="settingsNeedsApiKeyPanel()" x-cloak>
           <h3 class="text-[13px] font-semibold mb-4 flex items-center gap-2">
             <svg class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" /></svg>
             API 密钥
@@ -1049,7 +1089,7 @@
         </div>
 
         <!-- ASR -->
-        <div class="glass rounded-2xl p-5">
+        <div id="settings-asr" class="glass rounded-2xl p-5">
           <h3 class="text-[13px] font-semibold mb-4 flex items-center gap-2">
             <svg class="w-4 h-4 text-[#AF52DE]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" /></svg>
             语音识别 (ASR)
@@ -1092,7 +1132,7 @@
         </div>
 
         <!-- Translation -->
-        <div class="glass rounded-2xl p-5">
+        <div id="settings-translation-export" class="glass rounded-2xl p-5">
           <h3 class="text-[13px] font-semibold mb-4 flex items-center gap-2">
             <svg class="w-4 h-4 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802" /></svg>
             翻译设置
@@ -1163,7 +1203,7 @@
         </div>
 
         <!-- 预告片 (TMDB) — always visible, separate from translation provider -->
-        <div class="glass rounded-2xl p-5">
+        <div id="settings-tmdb" class="glass rounded-2xl p-5">
           <h3 class="text-[13px] font-semibold mb-4 flex items-center gap-2">
             <svg class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg>
             预告片 (TMDB)
@@ -1211,6 +1251,13 @@
           </select>
           <p class="text-[11px] text-surface-400 mt-2">
             上限分辨率；YouTube 实际可用画质可能更低
+          </p>
+        </div>
+
+        <div id="settings-storage-release" class="glass rounded-2xl p-5">
+          <h3 class="text-[13px] font-semibold mb-2">存储 / 发布</h3>
+          <p class="text-[12px] text-surface-500 leading-relaxed">
+            项目数据保存在本机用户数据目录。发布包默认是基础 app；离线 ASR 模型和重型依赖通过可选包或本机下载补齐。
           </p>
         </div>
 
