@@ -63,6 +63,9 @@ DEFAULT_CONFIG = {
         "repetitive_threshold": 3,
         "filter_interjections": True,
         "full_doc_mode": False,
+        "use_translation_memory": True,
+        "use_phrase_library": True,
+        "qa_auto_repair": False,
     },
     "providers": {
         "claude_cli": {

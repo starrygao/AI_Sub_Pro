@@ -916,12 +916,36 @@ def get_subtitles(pid: str = PathParam(pattern=PID_PATTERN)):
     return {"blocks": [b.to_dict() for b in blocks], "source": source_name}
 
 
+@router.get("/{pid}/quality-report")
+def get_quality_report(pid: str = PathParam(pattern=PID_PATTERN)):
+    """Return the latest translation QA report for a project."""
+    _load_project(pid)
+    path = _project_dir(pid) / "translation_qa_report.json"
+    if not path.exists():
+        return {"status": "missing", "issues": [], "summary": {"issue_count": 0}}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        raise HTTPException(400, "Quality report is invalid")
+    if not isinstance(data, dict):
+        raise HTTPException(400, "Quality report is invalid")
+    return data
+
+
 @router.put("/{pid}/subtitles")
 def save_subtitles(data: SubtitleEdit, pid: str = PathParam(pattern=PID_PATTERN)):
     """Save edited subtitles."""
-    _load_project(pid)
+    project = _load_project(pid)
     pdir = _project_dir(pid)
     pdir.mkdir(parents=True, exist_ok=True)
+    previous_translated_blocks = []
+    translated_path = pdir / "translated.srt"
+    if translated_path.exists():
+        try:
+            previous_translated_blocks = parse_srt_file(str(translated_path))
+        except Exception as e:
+            log.warning("Could not load previous translations for memory learning %s: %s",
+                        pid, e)
 
     # Rebuild blocks from data
     blocks = []
@@ -961,6 +985,17 @@ def save_subtitles(data: SubtitleEdit, pid: str = PathParam(pattern=PID_PATTERN)
     write_srt(blocks, str(pdir / "translated.srt"), use_translation=True)
     # Save bilingual version
     write_bilingual_srt(blocks, str(pdir / "bilingual.srt"))
+    try:
+        from app.engines.translation_memory import record_edited_subtitles
+        learned = record_edited_subtitles(
+            project=project,
+            before_blocks=previous_translated_blocks,
+            after_blocks=blocks,
+        )
+        if learned:
+            log.info("learned %d translation memory edit(s) for project %s", learned, pid)
+    except Exception as e:
+        log.warning("translation memory learning failed for %s: %s", pid, e)
 
     return {"status": "ok", "count": len(blocks)}
 

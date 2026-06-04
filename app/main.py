@@ -323,6 +323,23 @@ if __name__ == "__main__":
 
             # Expose native APIs to JS
             class API:
+                @staticmethod
+                def _dialog_path(result):
+                    if isinstance(result, str):
+                        return result
+                    if isinstance(result, (list, tuple)) and result:
+                        first = result[0]
+                        return first if isinstance(first, str) else None
+                    return None
+
+                @staticmethod
+                def _safe_save_filename(filename, fallback):
+                    raw = filename if isinstance(filename, str) else ""
+                    name = os.path.basename(raw.strip()) if raw.strip() else fallback
+                    name = "".join("_" if (ord(ch) < 32 or ch in "/\\:") else ch for ch in name)
+                    name = name.strip(" ._")
+                    return name[:180].strip(" ._") or fallback
+
                 def select_video(self):
                     """Open native file picker for video files."""
                     result = window.create_file_dialog(
@@ -332,9 +349,78 @@ if __name__ == "__main__":
                             "All Files (*.*)",
                         ),
                     )
-                    if result and len(result) > 0:
-                        return result[0]
-                    return None
+                    return self._dialog_path(result)
+
+                def save_text_file(self, filename, content):
+                    """Open a native save dialog and write text content to the chosen file."""
+                    if not isinstance(content, str):
+                        return {"ok": False, "error": "Invalid file content"}
+                    safe_name = self._safe_save_filename(filename, "subtitles.srt")
+                    try:
+                        result = window.create_file_dialog(
+                            webview.SAVE_DIALOG,
+                            save_filename=safe_name,
+                            file_types=(
+                                "SubRip Subtitle (*.srt)",
+                                "All Files (*.*)",
+                            ),
+                        )
+                        target = self._dialog_path(result)
+                        if not target:
+                            return {"ok": False, "cancelled": True}
+                        target_path = Path(target).expanduser()
+                        target_path.parent.mkdir(parents=True, exist_ok=True)
+                        target_path.write_text(content, encoding="utf-8")
+                        return {"ok": True, "path": str(target_path)}
+                    except Exception as exc:
+                        log.warning("Native text save failed: %s", exc)
+                        return {"ok": False, "error": str(exc)}
+
+                def save_project_video(self, pid, filename):
+                    """Save the generated project video to a user-selected file path."""
+                    import re
+                    import shutil
+                    import urllib.error
+                    import urllib.request
+                    from app.utils.project_store import PID_PATTERN
+
+                    if not isinstance(pid, str) or not re.fullmatch(PID_PATTERN, pid):
+                        return {"ok": False, "error": "Invalid project id"}
+                    safe_name = self._safe_save_filename(filename, "subtitled-video.mp4")
+                    try:
+                        result = window.create_file_dialog(
+                            webview.SAVE_DIALOG,
+                            save_filename=safe_name,
+                            file_types=(
+                                "MP4 Video (*.mp4)",
+                                "All Files (*.*)",
+                            ),
+                        )
+                        target = self._dialog_path(result)
+                        if not target:
+                            return {"ok": False, "cancelled": True}
+                        target_path = Path(target).expanduser()
+                        target_path.parent.mkdir(parents=True, exist_ok=True)
+                        tmp_path = target_path.with_name(f"{target_path.name}.part")
+                        url = f"http://127.0.0.1:18090/api/projects/{pid}/download-video"
+                        try:
+                            with urllib.request.urlopen(url, timeout=30) as response, open(tmp_path, "wb") as f:
+                                shutil.copyfileobj(response, f, length=1024 * 1024)
+                            os.replace(tmp_path, target_path)
+                        except Exception:
+                            if tmp_path.exists():
+                                try:
+                                    tmp_path.unlink()
+                                except OSError:
+                                    pass
+                            raise
+                        return {"ok": True, "path": str(target_path)}
+                    except urllib.error.HTTPError as exc:
+                        log.warning("Native video save failed: HTTP %s", exc.code)
+                        return {"ok": False, "error": f"HTTP {exc.code}"}
+                    except Exception as exc:
+                        log.warning("Native video save failed: %s", exc)
+                        return {"ok": False, "error": str(exc)}
 
                 def open_url(self, url):
                     """Open URL in system default browser."""

@@ -612,6 +612,133 @@ def test_export_srt_sets_pending_and_blocks_duplicate_submit():
     )
 
 
+def test_export_srt_uses_native_save_dialog_when_available():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const saved = [];
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          window: {
+            pywebview: {
+              api: {
+                save_text_file: async (filename, content) => {
+                  saved.push({filename, content});
+                  return {ok: true, path: '/Volumes/Media/movie.translated.srt'};
+                },
+              },
+            },
+          },
+          Blob: function() { throw new Error('native save must not create a Blob download'); },
+          URL: { createObjectURL: () => { throw new Error('native save must not create object URLs'); } },
+          document: { createElement: () => { throw new Error('native save must not create anchors'); } },
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const toasts = [];
+          state.currentProject = {id: 'p1', status: 'translated'};
+          state.subtitles = [{index: 1, text: 'Hello', translation: 'Translated', filtered: false}];
+          state.toast = (message, type) => { toasts.push({message, type}); };
+          state.api = async () => ({content: 'Translated subtitle', filename: '../movie.translated.srt'});
+
+          await state.exportSrt('translated');
+
+          if (saved.length !== 1) throw new Error(`expected one native save, got ${saved.length}`);
+          if (saved[0].filename !== 'movie.translated.srt') {
+            throw new Error(`expected sanitized filename, got ${saved[0].filename}`);
+          }
+          if (saved[0].content !== 'Translated subtitle') {
+            throw new Error(`unexpected saved content ${saved[0].content}`);
+          }
+          if (!toasts.some((t) => t.message === '字幕已保存')) {
+            throw new Error(`expected saved toast, got ${JSON.stringify(toasts)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_save_output_video_uses_native_save_dialog_and_blocks_duplicate_submit():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        let calls = 0;
+        let releaseSave;
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          window: {
+            pywebview: {
+              api: {
+                save_project_video: async (pid, filename) => {
+                  calls += 1;
+                  if (pid !== 'p1') throw new Error(`unexpected pid ${pid}`);
+                  if (filename !== 'movie_subtitled.mp4') throw new Error(`unexpected filename ${filename}`);
+                  await new Promise((resolve) => { releaseSave = resolve; });
+                  return {ok: true, path: '/Volumes/Media/movie_subtitled.mp4'};
+                },
+              },
+            },
+          },
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const toasts = [];
+          state.currentProject = {
+            id: 'p1',
+            status: 'completed',
+            name: 'movie.mkv',
+            output_video: '/tmp/movie_subtitled.mp4',
+          };
+          state.toast = (message, type) => { toasts.push({message, type}); };
+
+          const first = state.saveOutputVideo();
+          await Promise.resolve();
+          if (!state.isSavingVideo()) {
+            throw new Error(`expected video save pending, got ${state.projectActionPending}`);
+          }
+
+          const second = state.saveOutputVideo();
+          await Promise.resolve();
+          if (calls !== 1) throw new Error(`expected duplicate save to be ignored, got ${calls}`);
+          if (!toasts.some((t) => t.type === 'error' && t.message.includes('未完成'))) {
+            throw new Error(`expected duplicate pending toast, got ${JSON.stringify(toasts)}`);
+          }
+
+          releaseSave();
+          await first;
+          await second;
+
+          if (state.projectActionPending !== '') {
+            throw new Error(`expected pending to clear, got ${state.projectActionPending}`);
+          }
+          if (!toasts.some((t) => t.message === '视频已保存')) {
+            throw new Error(`expected video saved toast, got ${JSON.stringify(toasts)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_delete_current_project_clears_detail_state_and_socket():
     _run_node(
         """

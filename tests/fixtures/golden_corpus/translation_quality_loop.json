@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "proper-place",
+      "tags": ["series", "proper_noun"],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "source_blocks": [
+        {"id": "1", "text": "Hudson Oaks is quiet."}
+      ],
+      "candidate_blocks": [
+        {"id": "1", "translation": "哈德逊奥克斯很安静。"}
+      ],
+      "expected_terms": [
+        {"source": "Hudson Oaks", "target": "哈德逊奥克斯"}
+      ]
+    },
+    {
+      "id": "colloquial",
+      "tags": ["colloquial"],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "source_blocks": [
+        {"id": "1", "text": "Shoot your shot."}
+      ],
+      "candidate_blocks": [
+        {"id": "1", "translation": "主动出击。"}
+      ],
+      "expected_terms": [
+        {"source": "shoot your shot", "target": "主动出击"}
+      ]
+    },
+    {
+      "id": "missing-and-english",
+      "tags": ["missing_translation", "english_residue"],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "source_blocks": [
+        {"id": "1", "text": "Are you okay?"},
+        {"id": "2", "text": "Stay with me."}
+      ],
+      "candidate_blocks": [
+        {"id": "1", "translation": "Are you okay?"},
+        {"id": "2", "translation": ""}
+      ],
+      "expected_terms": []
+    },
+    {
+      "id": "long-line",
+      "tags": ["long_sentence"],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "source_blocks": [
+        {"id": "1", "text": "This is a long warning."}
+      ],
+      "candidate_blocks": [
+        {"id": "1", "translation": "这是一条非常非常非常非常非常非常非常长的警告。"}
+      ],
+      "expected_terms": [
+        {"source": "warning", "target": "警示"}
+      ]
+    }
+  ]
+}

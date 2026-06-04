@@ -581,17 +581,17 @@
               <div class="border-t border-black/[0.06] my-1"></div>
               <button @click="exportSrt('translated'); open=false"
                       :disabled="!canExportSrt('translated')"
-                      :title="canExportSrt('translated') ? '导出翻译字幕' : exportUnavailableMessage('translated')"
+                      :title="canExportSrt('translated') ? '另存翻译字幕' : exportUnavailableMessage('translated')"
                       class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] disabled:opacity-40 disabled:cursor-not-allowed"
                       x-text="exportSrtLabel('translated')"></button>
               <button @click="exportSrt('bilingual'); open=false"
                       :disabled="!canExportSrt('bilingual')"
-                      :title="canExportSrt('bilingual') ? '导出双语字幕' : exportUnavailableMessage('bilingual')"
+                      :title="canExportSrt('bilingual') ? '另存双语字幕' : exportUnavailableMessage('bilingual')"
                       class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] disabled:opacity-40 disabled:cursor-not-allowed"
                       x-text="exportSrtLabel('bilingual')"></button>
               <button @click="exportSrt('original'); open=false"
                       :disabled="!canExportSrt('original')"
-                      :title="canExportSrt('original') ? '导出原文字幕' : exportUnavailableMessage('original')"
+                      :title="canExportSrt('original') ? '另存原文字幕' : exportUnavailableMessage('original')"
                       class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] disabled:opacity-40 disabled:cursor-not-allowed"
                       x-text="exportSrtLabel('original')"></button>
             </div>
@@ -696,10 +696,13 @@
             <p class="text-[12px] text-surface-400">字幕已烧录到视频中</p>
           </div>
         </div>
-        <a :href="`/api/projects/${currentProject?.id}/download-video`" class="btn-success px-4 py-2 rounded-xl text-[13px] font-medium flex items-center gap-2 no-underline">
+        <button @click="saveOutputVideo()"
+                :disabled="!canSaveVideo()"
+                :title="canSaveVideo() ? '选择保存位置' : '当前操作未完成，请稍后再试'"
+                class="btn-success px-4 py-2 rounded-xl text-[13px] font-medium flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
-          下载视频
-        </a>
+          <span x-text="saveVideoLabel()"></span>
+        </button>
       </div>
 
       <div x-show="currentProject?.status==='error'" class="flex-shrink-0 mx-6 mt-3 glass rounded-2xl p-4 flex items-center justify-between border-l-2 border-l-danger">
@@ -728,6 +731,68 @@
           </div>
           <p x-show="progressRefreshError" class="text-[12px] text-danger mt-2" x-text="progressRefreshError"></p>
           <p x-show="!progressRefreshError" class="text-[12px] text-surface-400 mt-2" x-text="progressMsg || '等待进度更新...'"></p>
+        </div>
+      </div>
+
+      <!-- Translation quality loop -->
+      <div x-show="currentProject" class="flex-shrink-0 px-6 mt-3">
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+          <section class="glass rounded-2xl p-4">
+            <div class="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <h3 class="text-[13px] font-semibold">翻译质量报告</h3>
+                <p class="text-[12px] text-surface-400" x-text="qaReportLoading ? '加载中...' : (qaReport?.status === 'missing' ? '暂无报告' : `问题 ${qaReport?.summary?.issue_count || 0} 个`)"></p>
+              </div>
+              <button @click="loadQualityReport()"
+                      :disabled="qaReportLoading"
+                      class="btn-secondary px-3 py-1.5 rounded-lg text-[12px] disabled:opacity-40 disabled:cursor-not-allowed">刷新</button>
+            </div>
+            <div x-show="qaReportError" class="text-[12px] text-danger" x-text="qaReportError"></div>
+            <div x-show="qaReport && qaReport.status !== 'missing'" class="flex flex-wrap gap-2">
+              <template x-for="(count, type) in (qaReport?.summary?.by_type || {})" :key="type">
+                <span class="px-2 py-1 rounded-lg bg-white/70 border border-surface-200 text-[11px] text-surface-600" x-text="`${type}: ${count}`"></span>
+              </template>
+              <span x-show="qaReport?.summary?.issue_count === 0" class="text-[12px] text-accent">未发现确定性问题</span>
+            </div>
+          </section>
+
+          <section class="glass rounded-2xl p-4">
+            <div class="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <h3 class="text-[13px] font-semibold">自动知识库建议</h3>
+                <p class="text-[12px] text-surface-400" x-text="kbSuggestionLoading ? '加载中...' : `候选 ${kbSuggestions.length} 条`"></p>
+              </div>
+              <div class="flex gap-2">
+                <button @click="loadKbSuggestions()"
+                        :disabled="kbSuggestionLoading || !!kbSuggestionActionPending"
+                        class="btn-secondary px-3 py-1.5 rounded-lg text-[12px] disabled:opacity-40 disabled:cursor-not-allowed">刷新</button>
+                <button @click="generateKbSuggestions()"
+                        :disabled="kbSuggestionLoading || !!kbSuggestionActionPending"
+                        class="btn-primary px-3 py-1.5 rounded-lg text-[12px] disabled:opacity-40 disabled:cursor-not-allowed"
+                        x-text="kbSuggestionActionPending === 'generate' ? '生成中...' : '生成'"></button>
+              </div>
+            </div>
+            <div x-show="kbSuggestionError" class="text-[12px] text-danger" x-text="kbSuggestionError"></div>
+            <div class="space-y-2 max-h-36 overflow-y-auto">
+              <template x-for="item in kbSuggestions" :key="item.id">
+                <div class="grid grid-cols-[1fr_auto] gap-2 items-center text-[12px]">
+                  <div class="min-w-0">
+                    <div class="font-medium truncate" x-text="`${item.source} → ${item.target}`"></div>
+                    <div class="text-[11px] text-surface-400" x-text="`${item.type}${item.collision ? ' · 冲突: ' + item.collision : ''}`"></div>
+                  </div>
+                  <div class="flex gap-1">
+                    <button @click="setKbSuggestionStatus(item.id, 'accepted')"
+                            :disabled="item.status === 'accepted' || !!kbSuggestionActionPending"
+                            class="btn-secondary px-2 py-1 rounded-lg text-[11px] disabled:opacity-40">接受</button>
+                    <button @click="setKbSuggestionStatus(item.id, 'rejected')"
+                            :disabled="item.status === 'rejected' || !!kbSuggestionActionPending"
+                            class="btn-secondary px-2 py-1 rounded-lg text-[11px] disabled:opacity-40">拒绝</button>
+                  </div>
+                </div>
+              </template>
+              <div x-show="!kbSuggestionLoading && kbSuggestions.length === 0" class="text-[12px] text-surface-400">暂无建议</div>
+            </div>
+          </section>
         </div>
       </div>
 
@@ -1039,6 +1104,7 @@
           </div>
           <!-- Full-document mode is provider-agnostic; the translator falls back to batching when needed. -->
           <div class="mt-4 pt-4 border-t border-black/[0.05]">
+            <div class="space-y-3">
             <label class="flex items-start gap-3 cursor-pointer">
               <input type="checkbox" x-model="settings.translation.full_doc_mode" aria-label="启用一次性全量翻译" class="mt-1 w-4 h-4">
               <div>
@@ -1046,6 +1112,28 @@
                 <p class="text-[12px] text-surface-400 mt-0.5">超出模型上下文时会自动回退到批量翻译。</p>
               </div>
             </label>
+            <label class="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" x-model="settings.translation.use_translation_memory" aria-label="启用用户修订记忆" class="mt-1 w-4 h-4">
+              <div>
+                <p class="text-[13px] font-medium">使用用户修订记忆</p>
+                <p class="text-[12px] text-surface-400 mt-0.5">编辑器中确认过的译文会作为后续翻译的高优先级参考。</p>
+              </div>
+            </label>
+            <label class="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" x-model="settings.translation.use_phrase_library" aria-label="启用本地口语库检索" class="mt-1 w-4 h-4">
+              <div>
+                <p class="text-[13px] font-medium">使用本地口语库检索</p>
+                <p class="text-[12px] text-surface-400 mt-0.5">只检索本机已导入的例句，不会自动下载公开语料。</p>
+              </div>
+            </label>
+            <label class="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" x-model="settings.translation.qa_auto_repair" aria-label="启用翻译后自动修复" class="mt-1 w-4 h-4">
+              <div>
+                <p class="text-[13px] font-medium">翻译后自动修复确定性问题</p>
+                <p class="text-[12px] text-surface-400 mt-0.5">发现漏译、英文残留或术语缺失时，仅把问题行发回模型修复；会增加一次额外调用。</p>
+              </div>
+            </label>
+            </div>
           </div>
         </div>
 

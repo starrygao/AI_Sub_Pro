@@ -28,6 +28,8 @@ data/config.json
 data/config.invalid-*.json
 data/knowledge.json
 data/knowledge.v1.backup.json
+data/translation_memory.sqlite3*
+data/phrase_library.sqlite3*
 
 # Local packaged ASR model cache (used by build_mac.sh when present)
 models/asr/

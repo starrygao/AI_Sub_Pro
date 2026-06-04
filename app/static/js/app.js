@@ -13,7 +13,7 @@ function app() {
       tmdb: {api_key:'', language:'zh-CN'},
       trailer: {max_video_height: 1080},
       asr: {},
-      translation: {},
+      translation: { use_translation_memory: true, use_phrase_library: true, qa_auto_repair: false },
       providers: {
         claude_cli: { enabled: true, model: 'claude-opus-4-7', timeout_sec: 180 },
         codex_cli: { enabled: true, model: 'gpt-5.5', timeout_sec: 180 },
@@ -35,6 +35,13 @@ function app() {
     kbSelectError: '',
     kbListRequestSeq: 0,
     kbSelectRequestSeq: 0,
+    kbSuggestions: [],
+    kbSuggestionLoading: false,
+    kbSuggestionError: '',
+    kbSuggestionActionPending: '',
+    qaReport: null,
+    qaReportLoading: false,
+    qaReportError: '',
     projectRenamePrompt: false,
     projectRenameInput: '',
     projectRenameTarget: null,
@@ -301,20 +308,84 @@ function app() {
 
     exportSrtLabel(format) {
       const labels = {
-        translated: '导出翻译字幕',
-        bilingual: '导出双语字幕',
-        original: '导出原文字幕',
+        translated: '另存翻译字幕',
+        bilingual: '另存双语字幕',
+        original: '另存原文字幕',
       };
-      return this.isExportingSrt(format) ? '导出中...' : (labels[format] || '导出字幕');
+      return this.isExportingSrt(format) ? '保存中...' : (labels[format] || '另存字幕');
     },
 
     exportUnavailableMessage(format) {
       if (!this.currentProject) return '请先打开项目';
-      if (this.isProjectBusy(this.currentProject)) return '项目处理中，完成后再导出';
+      if (this.isProjectBusy(this.currentProject)) return '项目处理中，完成后再保存';
       if (this.projectActionPending) return '当前操作未完成，请稍后再试';
-      if (format === 'original') return '还没有可导出的原文字幕';
-      if (format === 'translated' || format === 'bilingual') return '还没有可导出的翻译字幕';
-      return '不支持的导出格式';
+      if (format === 'original') return '还没有可保存的原文字幕';
+      if (format === 'translated' || format === 'bilingual') return '还没有可保存的翻译字幕';
+      return '不支持的字幕格式';
+    },
+
+    nativeApi() {
+      return (typeof window !== 'undefined' && window.pywebview && window.pywebview.api)
+        ? window.pywebview.api
+        : null;
+    },
+
+    safeDownloadFilename(filename, fallback = 'download') {
+      const raw = typeof filename === 'string' ? filename : '';
+      const base = raw.split(/[\\/]/).pop().replace(/[\u0000-\u001f\u007f/:\\]+/g, '_').replace(/_+/g, '_').trim();
+      const cleaned = base.replace(/^[ ._]+|[ ._]+$/g, '').slice(0, 180).replace(/[ ._]+$/g, '');
+      return cleaned || fallback;
+    },
+
+    videoOutputFilename(project = this.currentProject) {
+      if (!project) return 'subtitled-video.mp4';
+      const outputName = this.safeDownloadFilename(project.output_video || '', '');
+      if (outputName) return outputName;
+      const projectName = this.safeDownloadFilename(project.name || project.id || '', 'subtitled-video');
+      const stem = projectName.replace(/\.[^.]+$/, '') || 'subtitled-video';
+      return `${stem}_subtitled.mp4`;
+    },
+
+    saveVideoActionKey() {
+      return 'save-video';
+    },
+
+    isSavingVideo() {
+      return this.projectActionPending === this.saveVideoActionKey();
+    },
+
+    canSaveVideo() {
+      return !!this.currentProject?.output_video && !this.projectActionsDisabled(this.currentProject);
+    },
+
+    saveVideoLabel() {
+      return this.isSavingVideo() ? '保存中...' : '另存视频';
+    },
+
+    nativeSaveAvailable(method) {
+      const api = this.nativeApi();
+      return !!(api && typeof api[method] === 'function');
+    },
+
+    fallbackDownloadText(filename, content) {
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    },
+
+    fallbackDownloadUrl(url) {
+      if (typeof document === 'undefined') throw new Error('当前环境不支持下载');
+      const a = document.createElement('a');
+      a.href = url;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
     },
 
     projectMutationKey(action, id) {
@@ -490,6 +561,15 @@ function app() {
       normalized.translation.polish_provider = normalizeProvider(
         normalized.translation.polish_provider, ''
       );
+      for (const [key, fallback] of Object.entries({
+        use_translation_memory: true,
+        use_phrase_library: true,
+        qa_auto_repair: false,
+      })) {
+        if (typeof normalized.translation[key] !== 'boolean') {
+          normalized.translation[key] = fallback;
+        }
+      }
       return normalized;
     },
 
@@ -687,6 +767,130 @@ function app() {
         brands: '品牌/机构',
         slang: '术语/俚语',
       }[category] || category;
+    },
+
+    normalizeKbSuggestions(data) {
+      const items = Array.isArray(data?.suggestions) ? data.suggestions : [];
+      return items
+        .filter(item => item && typeof item === 'object' && !Array.isArray(item))
+        .map(item => ({
+          id: typeof item.id === 'string' ? item.id : '',
+          type: typeof item.type === 'string' ? item.type : 'phrase',
+          source: typeof item.source === 'string' ? item.source : '',
+          target: typeof item.target === 'string' ? item.target : '',
+          notes: typeof item.notes === 'string' ? item.notes : '',
+          confidence: typeof item.confidence === 'number' ? item.confidence : 0,
+          evidence: Array.isArray(item.evidence) ? item.evidence.filter(e => typeof e === 'string') : [],
+          status: typeof item.status === 'string' ? item.status : 'pending',
+          collision: typeof item.collision === 'string' ? item.collision : '',
+        }))
+        .filter(item => item.id && item.source && item.target);
+    },
+
+    normalizeQualityReport(data) {
+      const report = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+      const summary = report.summary && typeof report.summary === 'object' && !Array.isArray(report.summary)
+        ? report.summary
+        : {};
+      return {
+        status: typeof report.status === 'string' ? report.status : 'missing',
+        summary: {
+          issue_count: typeof summary.issue_count === 'number' ? summary.issue_count : 0,
+          by_type: summary.by_type && typeof summary.by_type === 'object' && !Array.isArray(summary.by_type)
+            ? summary.by_type
+            : {},
+        },
+        issues: Array.isArray(report.issues)
+          ? report.issues.filter(item => item && typeof item === 'object' && !Array.isArray(item))
+          : [],
+        repaired_blocks: Array.isArray(report.repaired_blocks) ? report.repaired_blocks : [],
+      };
+    },
+
+    async loadKbSuggestions() {
+      const projectId = this.currentProject?.id;
+      if (!projectId) return;
+      this.kbSuggestionLoading = true;
+      this.kbSuggestionError = '';
+      try {
+        const data = await this.api(`/api/knowledge/projects/${encodeURIComponent(projectId)}/suggestions`);
+        if (this.currentProject?.id !== projectId) return;
+        this.kbSuggestions = this.normalizeKbSuggestions(data);
+      } catch (e) {
+        if (this.currentProject?.id === projectId) {
+          this.kbSuggestionError = e.message || '加载建议失败';
+        }
+      } finally {
+        if (this.currentProject?.id === projectId) this.kbSuggestionLoading = false;
+      }
+    },
+
+    async generateKbSuggestions() {
+      const projectId = this.currentProject?.id;
+      if (!projectId || this.kbSuggestionActionPending) return;
+      this.kbSuggestionActionPending = 'generate';
+      this.kbSuggestionError = '';
+      try {
+        const data = await this.api(
+          `/api/knowledge/projects/${encodeURIComponent(projectId)}/suggestions/generate`,
+          'POST'
+        );
+        if (this.currentProject?.id !== projectId) return;
+        this.kbSuggestions = this.normalizeKbSuggestions(data);
+        this.toast('已生成知识库建议', 'success');
+      } catch (e) {
+        if (this.currentProject?.id === projectId) {
+          this.kbSuggestionError = e.message || '生成建议失败';
+          this.toast('生成知识库建议失败: ' + e.message, 'error');
+        }
+      } finally {
+        if (this.kbSuggestionActionPending === 'generate') this.kbSuggestionActionPending = '';
+      }
+    },
+
+    async setKbSuggestionStatus(id, status) {
+      const projectId = this.currentProject?.id;
+      if (!projectId || !id || this.kbSuggestionActionPending) return;
+      const actionKey = `suggestion:${id}`;
+      this.kbSuggestionActionPending = actionKey;
+      try {
+        const data = await this.api(
+          `/api/knowledge/projects/${encodeURIComponent(projectId)}/suggestions/${encodeURIComponent(id)}/status`,
+          'POST',
+          { status }
+        );
+        const suggestion = data?.suggestion;
+        if (this.currentProject?.id !== projectId || !suggestion) return;
+        const idx = this.kbSuggestions.findIndex(item => item.id === id);
+        if (idx >= 0) this.kbSuggestions.splice(idx, 1, this.normalizeKbSuggestions({suggestions: [suggestion]})[0]);
+        if (status === 'accepted') {
+          await this.loadKbProjects();
+          this.toast('已接受知识库建议', 'success');
+        }
+      } catch (e) {
+        this.toast('更新建议失败: ' + e.message, 'error');
+      } finally {
+        if (this.kbSuggestionActionPending === actionKey) this.kbSuggestionActionPending = '';
+      }
+    },
+
+    async loadQualityReport() {
+      const projectId = this.currentProject?.id;
+      if (!projectId) return;
+      this.qaReportLoading = true;
+      this.qaReportError = '';
+      try {
+        const data = await this.api(`/api/projects/${encodeURIComponent(projectId)}/quality-report`);
+        if (this.currentProject?.id !== projectId) return;
+        this.qaReport = this.normalizeQualityReport(data);
+      } catch (e) {
+        if (this.currentProject?.id === projectId) {
+          this.qaReportError = e.message || '加载质量报告失败';
+          this.qaReport = null;
+        }
+      } finally {
+        if (this.currentProject?.id === projectId) this.qaReportLoading = false;
+      }
     },
     // ---------- KB management ----------
     async loadKbProjects() {
@@ -1011,6 +1215,8 @@ function app() {
           }
           this.currentProject = null;
           this.subtitles = [];
+          this.qaReport = null;
+          this.kbSuggestions = [];
           this.progressPct = 0;
           this.progressMsg = '';
           projectsRefreshed = await this.setView('projects');
@@ -1111,9 +1317,13 @@ function app() {
         this.currentProject = project;
         this.applyWorkflowDefaultsFromProject(project);
         this.subtitles = Array.isArray(data.blocks) ? data.blocks.filter(b => this.isPlainObject(b)) : [];
+        this.qaReport = null;
+        this.kbSuggestions = [];
         await this.setView('detail');
         if (this.openProjectRequestSeq !== requestId) return;
         this.connectWS(id);
+        this.loadQualityReport();
+        this.loadKbSuggestions();
       } catch(e) {
         if (this.openProjectRequestSeq === requestId) this.toast(e.message, 'error');
       }
@@ -1570,18 +1780,54 @@ function app() {
       this.projectActionPending = actionKey;
       try {
         const data = await this.api(`/api/projects/${this.currentProject.id}/export?format=${format}`, 'POST');
-        const blob = new Blob([data.content], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = data.filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 0);
-        this.toast('导出成功');
+        const filename = this.safeDownloadFilename(data.filename, 'subtitles.srt');
+        if (this.nativeSaveAvailable('save_text_file')) {
+          const result = await this.nativeApi().save_text_file(filename, data.content || '');
+          if (result?.cancelled) {
+            this.toast('已取消保存');
+            return;
+          }
+          if (!result?.ok) throw new Error(result?.error || '保存字幕失败');
+          this.toast('字幕已保存');
+        } else {
+          this.fallbackDownloadText(filename, data.content || '');
+          this.toast('已开始下载字幕');
+        }
       } catch(e) { this.toast(e.message, 'error'); }
       finally {
+        if (this.projectActionPending === actionKey) this.projectActionPending = '';
+      }
+    },
+
+    async saveOutputVideo() {
+      if (!this.currentProject?.output_video) {
+        this.toast('还没有可保存的视频', 'error');
+        return;
+      }
+      if (this.projectActionsDisabled(this.currentProject)) {
+        this.toast('当前操作未完成，请稍后再试', 'error');
+        return;
+      }
+      const actionKey = this.saveVideoActionKey();
+      this.projectActionPending = actionKey;
+      try {
+        const pid = this.currentProject.id;
+        const filename = this.videoOutputFilename(this.currentProject);
+        if (this.nativeSaveAvailable('save_project_video')) {
+          const result = await this.nativeApi().save_project_video(pid, filename);
+          if (result?.cancelled) {
+            this.toast('已取消保存');
+            return;
+          }
+          if (!result?.ok) throw new Error(result?.error || '保存视频失败');
+          this.toast('视频已保存');
+        } else {
+          this.fallbackDownloadUrl(`/api/projects/${pid}/download-video`);
+          this.toast('已开始下载视频');
+        }
+      } catch(e) {
+        this.toast(e.message, 'error');
+      } finally {
         if (this.projectActionPending === actionKey) this.projectActionPending = '';
       }
     },

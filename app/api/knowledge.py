@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, StrictInt
 
 from app.engines.knowledge import KnowledgeBase, _get_singleton, invalidate_translator_kb
 from app.engines.kb_models import ProjectKb, TermEntry, StyleNotes
+from app.utils.project_store import load_project as _ps_load_project, project_dir as _ps_project_dir
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +35,10 @@ class ProjectKbIn(BaseModel):
     brands: List[TermEntryIn] = Field(default_factory=list)
     slang: List[TermEntryIn] = Field(default_factory=list)
     style_notes: StyleNotesIn = Field(default_factory=StyleNotesIn)
+
+
+class SuggestionStatusIn(BaseModel):
+    status: str
 
 
 def _get_kb() -> KnowledgeBase:
@@ -64,6 +69,79 @@ def _clean_terms(items: List[TermEntryIn]) -> List[TermEntry]:
             notes=_clean_text(item.notes),
         ))
     return terms
+
+
+def _project_suggestions_path(pid: str):
+    return _ps_project_dir(pid) / "kb_suggestions.json"
+
+
+def _load_project_for_suggestions(pid: str) -> dict:
+    try:
+        return _ps_load_project(pid)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="project not found")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid project id")
+
+
+def _load_project_subtitle_blocks(pid: str) -> list:
+    from app.utils.srt import parse_srt_file
+
+    pdir = _ps_project_dir(pid)
+    for name in ("filtered.srt", "raw.srt", "native.srt"):
+        path = pdir / name
+        if path.exists():
+            try:
+                return parse_srt_file(str(path))
+            except Exception as e:
+                log.warning("could not parse subtitles for suggestion extraction %s/%s: %s",
+                            pid, name, e)
+                return []
+    return []
+
+
+def _kb_key_for_project(pid: str, project: dict) -> str:
+    raw = project.get("show_title") or project.get("name") or pid
+    key = _clean_text(raw) if isinstance(raw, str) else ""
+    if not key:
+        return pid
+    import re
+
+    key = re.sub(r"[^A-Za-z0-9_-]+", "-", key).strip("-").lower()
+    return key[:64] or pid
+
+
+def _append_term_once(entries: list[TermEntry], source: str, target: str, notes: str = "") -> None:
+    for entry in entries:
+        if entry.source == source:
+            return
+    entries.append(TermEntry(source=source, target=target, notes=notes))
+
+
+def _accept_suggestion_into_kb(pid: str, project: dict, suggestion) -> None:
+    key = _kb_key_for_project(pid, project)
+    kb = _get_kb()
+    current = kb.get_project(key)
+    if current is None:
+        current = ProjectKb(
+            show_title=_clean_text(project.get("show_title") or project.get("name") or ""),
+            tmdb_id=project.get("tmdb_id") if isinstance(project.get("tmdb_id"), int) else None,
+        )
+
+    if suggestion.type in {"character", "person"}:
+        _append_term_once(current.characters, suggestion.source, suggestion.target, suggestion.notes)
+    elif suggestion.type == "place":
+        _append_term_once(current.places, suggestion.source, suggestion.target, suggestion.notes)
+    elif suggestion.type in {"organization", "title"}:
+        _append_term_once(current.brands, suggestion.source, suggestion.target, suggestion.notes)
+    elif suggestion.type == "style":
+        if suggestion.notes and suggestion.notes not in current.style_notes.rules:
+            current.style_notes.rules.append(suggestion.notes)
+    else:
+        _append_term_once(current.slang, suggestion.source, suggestion.target, suggestion.notes)
+
+    kb.put_project(key, current)
+    _invalidate_translator_kb()
 
 
 @router.get("/projects")
@@ -116,3 +194,44 @@ def delete_kb_project(key: str):
         raise HTTPException(status_code=404, detail="not found")
     _invalidate_translator_kb()
     return {"ok": True}
+
+
+@router.get("/projects/{pid}/suggestions")
+def list_project_suggestions(pid: str):
+    from app.engines.kb_suggestions import load_suggestions
+
+    _load_project_for_suggestions(pid)
+    return {"suggestions": [s.to_dict() for s in load_suggestions(_project_suggestions_path(pid))]}
+
+
+@router.post("/projects/{pid}/suggestions/generate")
+def generate_project_suggestions(pid: str):
+    from app.engines.kb_suggestions import extract_kb_suggestions, save_suggestions
+
+    project = _load_project_for_suggestions(pid)
+    blocks = _load_project_subtitle_blocks(pid)
+    existing_kb = _get_kb().select_for_project(project)
+    suggestions = extract_kb_suggestions(project, blocks, existing_kb=existing_kb)
+    save_suggestions(_project_suggestions_path(pid), suggestions)
+    return {"suggestions": [s.to_dict() for s in suggestions]}
+
+
+@router.post("/projects/{pid}/suggestions/{suggestion_id}/status")
+def update_project_suggestion_status(pid: str, suggestion_id: str, body: SuggestionStatusIn):
+    from app.engines.kb_suggestions import update_suggestion_status
+
+    project = _load_project_for_suggestions(pid)
+    try:
+        suggestion = update_suggestion_status(
+            _project_suggestions_path(pid),
+            suggestion_id,
+            body.status,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="suggestion not found")
+
+    if suggestion.status == "accepted":
+        _accept_suggestion_into_kb(pid, project, suggestion)
+    return {"suggestion": suggestion.to_dict()}

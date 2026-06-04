@@ -76,6 +76,8 @@ npm run start
 - 目标字幕语言。
 - 翻译批量大小和上下文窗口。
 - 重复文本与语气词过滤。
+- 用户修订记忆和本地口语库检索。
+- 可选的翻译后 QA 自动修复。
 - 用于预告片搜索的 TMDB API key。
 
 ## 处理本地视频
@@ -111,6 +113,33 @@ npm run start
 
 翻译器会在处理字幕批次时把这些条目作为上下文。
 
+## 翻译质量闭环
+
+AI Sub Pro 可以围绕字幕编辑流程自动提升译名一致性和口语自然度：
+
+- **自动知识库建议** 会检查项目元数据和字幕文本，提出角色、地点、组织、标题、
+  固定表达和风格规则候选。建议会保存在项目目录的 `kb_suggestions.json` 中，
+  等待你接受或拒绝。
+- **翻译记忆** 会学习你在编辑器中保存的字幕修改。本地 SQLite 数据库会记录原文、
+  机器初译和最终确认译文，后续翻译前优先检索相似案例。
+- **本地口语库检索** 可以使用你自行导入的例句。OpenSubtitles、Tatoeba 等公开
+  语料需要保留来源和 license 元数据后再导入，不会默认联网下载。
+- **QA 报告** 会在翻译后写入项目目录：
+  `translation_qa_report.json` 和 `translation_qa_report.md`。确定性检查包括
+  漏译、英文残留、重复 ID、知识库术语缺失、字幕过长和环境音处理。
+- **自动修复** 是可选项。启用后，应用只会把有问题的字幕行发回当前 provider 做
+  定向修复，不会重翻全文。
+
+本地运行确定性评测语料：
+
+```bash
+python3 -m app.evaluation.cli \
+  --corpus tests/fixtures/golden_corpus/translation_quality_loop.json \
+  --format markdown
+```
+
+默认评测命令只使用仓库内 fixture，不调用付费或联网翻译 provider。
+
 ## 数据位置
 
 开发模式下，运行数据保存在 `./data`。
@@ -129,8 +158,8 @@ export AI_SUB_PRO_DATA_DIR=/absolute/path/to/runtime-data
 pytest
 ```
 
-测试覆盖 API 路由、任务调度、字幕解析、provider 契约、项目存储安全和前端
-JavaScript 行为。
+测试覆盖 API 路由、任务调度、字幕解析、provider 契约、项目存储安全、翻译 QA、
+评测指标和前端 JavaScript 行为。
 
 ## 常见问题
 

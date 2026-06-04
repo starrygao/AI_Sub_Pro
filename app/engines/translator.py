@@ -27,6 +27,9 @@ from app.engines.providers.result_contract import (
     MISSING_TRANSLATION_ERROR,
     reconcile_translation_results,
 )
+from app.engines.kb_trace import TranslationContextTrace
+from app.engines.phrase_library import PhraseLibrary
+from app.engines.translation_memory import TranslationMemoryStore, _lang as _memory_lang
 
 log = logging.getLogger(__name__)
 
@@ -126,6 +129,15 @@ class SubtitleTranslator:
             _coerce_bool_setting(trans_cfg.get("full_doc_mode", False))
             or self.batch_size == 0
         )
+        self.use_translation_memory = _coerce_bool_setting(
+            trans_cfg.get("use_translation_memory", True),
+            True,
+        )
+        self.use_phrase_library = _coerce_bool_setting(
+            trans_cfg.get("use_phrase_library", True),
+            True,
+        )
+        self.last_quality_trace = TranslationContextTrace()
 
         # Primary provider — routed through the factory.
         primary_name = _coerce_provider_name(trans_cfg.get("primary_provider"), "openai")
@@ -259,7 +271,7 @@ class SubtitleTranslator:
         items = [{"id": b.index, "original": b.text} for b in active]
         # Reuse the existing batch prompt builder with empty context windows —
         # in full-doc mode every block is visible in the single payload.
-        system_prompt = self._build_prompt(target_lang, meta_info, kb_data, [], [])
+        system_prompt = self._build_prompt(target_lang, meta_info, kb_data, [], [], items=items)
 
         log.info("full_doc translate: %d blocks in one call", len(items))
         if callback:
@@ -389,7 +401,7 @@ class SubtitleTranslator:
 
             # Build system prompt
             system_prompt = self._build_prompt(
-                target_lang, meta_info, kb_data, context_before, context_after
+                target_lang, meta_info, kb_data, context_before, context_after, items=items
             )
 
             # Primary translation
@@ -534,6 +546,7 @@ class SubtitleTranslator:
     def _build_prompt(
         self, target_lang: str, meta_info: Dict, kb_data: Optional[Dict],
         context_before: List[Dict], context_after: List[str],
+        items: Optional[List[Dict]] = None,
     ) -> str:
         """Build translation system prompt with full context."""
         meta_info = meta_info if isinstance(meta_info, dict) else {}
@@ -554,6 +567,14 @@ class SubtitleTranslator:
             cast_str = ""
         if cast_str:
             parts.append(f"角色: {cast_str}")
+
+        memory_snippet, phrase_snippet = self._build_retrieval_snippets(
+            target_lang,
+            meta_info,
+            items or [],
+        )
+        if memory_snippet:
+            parts.append(memory_snippet)
 
         # v2 KB injection: select by project metadata + inject as hard constraints.
         # Falls back to legacy kb_data only when v2 produces no snippet.
@@ -578,6 +599,9 @@ class SubtitleTranslator:
             if legacy_terms:
                 terms_str = json.dumps(legacy_terms, ensure_ascii=False)
                 parts.append(f"术语表(严格遵守): {terms_str}")
+
+        if phrase_snippet:
+            parts.append(phrase_snippet)
 
         # Context window
         if context_before:
@@ -605,6 +629,109 @@ class SubtitleTranslator:
         ])
 
         return "\n".join(parts)
+
+    def _build_retrieval_snippets(
+        self,
+        target_lang: str,
+        meta_info: Dict,
+        items: List[Dict],
+    ) -> tuple[str, str]:
+        trace = TranslationContextTrace()
+        self.last_quality_trace = trace
+        if not items:
+            return "", ""
+
+        source_lang = _memory_lang(meta_info.get("original_language"), "en")
+        target_code = _memory_lang(target_lang, "zh-CN")
+
+        memory_lines = []
+        if self.use_translation_memory:
+            seen_memory = set()
+            try:
+                store = TranslationMemoryStore()
+                for item in items:
+                    original = item.get("original") if isinstance(item, dict) else ""
+                    if not isinstance(original, str) or not original.strip():
+                        continue
+                    for hit in store.retrieve(
+                        original,
+                        source_language=source_lang,
+                        target_language=target_code,
+                        limit=2,
+                    ):
+                        key = (hit.source_text, hit.final_translation)
+                        if key in seen_memory:
+                            continue
+                        seen_memory.add(key)
+                        trace.memory_hits.append({
+                            "source_text": hit.source_text,
+                            "final_translation": hit.final_translation,
+                            "project_name": hit.project_name,
+                            "score": hit.score,
+                        })
+                        memory_lines.append(
+                            f"  - Original: {hit.source_text}\n"
+                            f"    Previous machine translation: {hit.machine_translation}\n"
+                            f"    User-approved translation: {hit.final_translation}"
+                        )
+                        if len(memory_lines) >= 6:
+                            break
+                    if len(memory_lines) >= 6:
+                        break
+            except Exception as e:
+                log.warning("translation memory retrieval failed: %s", e)
+
+        phrase_lines = []
+        if self.use_phrase_library:
+            seen_phrases = set()
+            try:
+                library = PhraseLibrary()
+                for item in items:
+                    original = item.get("original") if isinstance(item, dict) else ""
+                    if not isinstance(original, str) or not original.strip():
+                        continue
+                    for hit in library.retrieve(
+                        original,
+                        source_language=source_lang,
+                        target_language=target_code,
+                        limit=2,
+                    ):
+                        key = (hit.source_text, hit.target_text)
+                        if key in seen_phrases:
+                            continue
+                        seen_phrases.add(key)
+                        trace.phrase_hits.append({
+                            "source_text": hit.source_text,
+                            "target_text": hit.target_text,
+                            "source_name": hit.source_name,
+                            "license": hit.license,
+                            "score": hit.score,
+                        })
+                        phrase_lines.append(
+                            f"  - {hit.source_text} → {hit.target_text}"
+                            f"  (source: {hit.source_name or 'local'}, license: {hit.license or 'unspecified'})"
+                        )
+                        if len(phrase_lines) >= 6:
+                            break
+                    if len(phrase_lines) >= 6:
+                        break
+            except Exception as e:
+                log.warning("phrase library retrieval failed: %s", e)
+
+        memory_snippet = ""
+        if memory_lines:
+            memory_snippet = "\n".join([
+                "User correction memory (highest priority, follow these user-approved rewrites when relevant):",
+                *memory_lines,
+            ])
+
+        phrase_snippet = ""
+        if phrase_lines:
+            phrase_snippet = "\n".join([
+                "Subtitle phrase examples (lower priority than project KB; use for natural phrasing only):",
+                *phrase_lines,
+            ])
+        return memory_snippet, phrase_snippet
 
     def _build_polish_prompt(
         self,

@@ -150,6 +150,66 @@ def test_knowledge_list_loader_keeps_empty_state_out_of_loading_path():
     assert result.returncode == 0, result.stderr
 
 
+def test_project_quality_helpers_load_suggestions_and_report():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const calls = [];
+          const toasts = [];
+          state.currentProject = {id: 'p1'};
+          state.toast = (message, type) => { toasts.push({message, type}); };
+          state.api = async (url, method = 'GET', body = null) => {
+            calls.push({url, method, body});
+            if (url === '/api/knowledge/projects/p1/suggestions') {
+              return {suggestions: [{id: 'place:hudson-oaks', type: 'place', source: 'Hudson Oaks', target: '哈德逊奥克斯', status: 'pending'}]};
+            }
+            if (url === '/api/knowledge/projects/p1/suggestions/generate') {
+              return {suggestions: [{id: 'place:hudson-oaks', type: 'place', source: 'Hudson Oaks', target: '哈德逊奥克斯', status: 'pending'}]};
+            }
+            if (url === '/api/knowledge/projects/p1/suggestions/place%3Ahudson-oaks/status') {
+              return {suggestion: {id: 'place:hudson-oaks', type: 'place', source: 'Hudson Oaks', target: '哈德逊奥克斯', status: 'accepted'}};
+            }
+            if (url === '/api/projects/p1/quality-report') {
+              return {status: 'needs_review', summary: {issue_count: 2, by_type: {english_residue: 1, kb_term_missing: 1}}, issues: []};
+            }
+            throw new Error(`unexpected API ${method} ${url}`);
+          };
+
+          await state.loadKbSuggestions();
+          if (state.kbSuggestions.length !== 1 || state.kbSuggestions[0].source !== 'Hudson Oaks') {
+            throw new Error(`suggestions not loaded: ${JSON.stringify(state.kbSuggestions)}`);
+          }
+          await state.generateKbSuggestions();
+          await state.setKbSuggestionStatus('place:hudson-oaks', 'accepted');
+          if (state.kbSuggestions[0].status !== 'accepted') {
+            throw new Error(`suggestion not updated: ${JSON.stringify(state.kbSuggestions)}`);
+          }
+          await state.loadQualityReport();
+          if (state.qaReport.summary.issue_count !== 2) {
+            throw new Error(`QA report not loaded: ${JSON.stringify(state.qaReport)}`);
+          }
+          if (!calls.some((call) => call.method === 'POST' && call.body?.status === 'accepted')) {
+            throw new Error(`expected accepted status call, got ${JSON.stringify(calls)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_knowledge_navigation_closes_new_kb_prompt_without_dirty_editor():
     result = run_js(
         """

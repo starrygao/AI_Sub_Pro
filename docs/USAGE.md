@@ -77,6 +77,8 @@ You can also configure:
 - Target subtitle language.
 - Translation batch size and context window.
 - Repetition and interjection filters.
+- Translation memory and local phrase-library retrieval.
+- Optional post-translation QA auto-repair.
 - TMDB API key for trailer search.
 
 ## Process a Local Video
@@ -113,6 +115,40 @@ The knowledge-base view stores local rules for consistent translations:
 
 The translator uses these entries as context while processing subtitle batches.
 
+## Translation Quality Loop
+
+AI Sub Pro can automatically improve translation consistency around the editor
+workflow:
+
+- **Automatic KB suggestions** inspect project metadata and subtitle text to
+  propose character, place, organization, title, phrase, and style entries.
+  Suggestions are stored in the project directory as `kb_suggestions.json` until
+  you accept or reject them.
+- **Translation memory** learns from subtitle edits you save in the editor. The
+  original source line, machine draft, and final user-approved translation stay
+  in a local SQLite database and are retrieved before future translations.
+- **Local phrase library retrieval** can use phrase examples that you import
+  locally. Public corpora such as OpenSubtitles or Tatoeba should be imported
+  only when their license/source metadata is preserved.
+- **QA reports** are written after translation as
+  `translation_qa_report.json` and `translation_qa_report.md` in the project
+  directory. The deterministic checks cover missing translations, English
+  residue, duplicate IDs, KB term misses, long subtitles, and sound-description
+  handling.
+- **Auto-repair** is optional. When enabled in Settings, the app sends only the
+  failed subtitle rows back to the selected provider for a targeted repair pass.
+
+Run the deterministic evaluation corpus locally:
+
+```bash
+python3 -m app.evaluation.cli \
+  --corpus tests/fixtures/golden_corpus/translation_quality_loop.json \
+  --format markdown
+```
+
+The default evaluation command uses stored fixture outputs and does not call a
+paid or network translation provider.
+
 ## Data Locations
 
 Development mode stores runtime data under `./data`.
@@ -133,7 +169,8 @@ pytest
 ```
 
 The test suite covers API routes, scheduling, subtitle parsing, provider
-contracts, project-store safety, and frontend JavaScript behavior.
+contracts, project-store safety, translation QA, evaluation metrics, and
+frontend JavaScript behavior.
 
 ## Troubleshooting
 
