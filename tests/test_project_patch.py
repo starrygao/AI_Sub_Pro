@@ -65,6 +65,50 @@ def test_patch_prefer_embedded_subtitle_off(client):
     assert g.json()["prefer_embedded_subtitle"] is False
 
 
+def test_workflow_state_endpoint_returns_project_state(client):
+    from app.engines.workflow_state import load_workflow_state, start_stage
+
+    pid = _make_project(client)
+    start_stage(pid, "asr", input_artifact="movie.mkv")
+
+    r = client.get(f"/api/projects/{pid}/workflow-state")
+
+    assert r.status_code == 200
+    assert r.json() == load_workflow_state(pid)
+
+
+def test_workflow_log_endpoint_downloads_stage_log(client):
+    from app.engines.workflow_state import append_stage_log
+
+    pid = _make_project(client)
+    append_stage_log(pid, "asr", "正在识别")
+
+    r = client.get(f"/api/projects/{pid}/logs/asr")
+
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+    assert f'filename="{pid}-asr.log"' in r.headers["content-disposition"]
+    assert "正在识别" in r.content.decode("utf-8")
+
+
+def test_workflow_log_endpoint_rejects_invalid_stage(client):
+    pid = _make_project(client)
+
+    r = client.get(f"/api/projects/{pid}/logs/not-a-stage")
+
+    assert r.status_code == 400
+    assert "stage" in r.json()["detail"]
+
+
+def test_workflow_log_endpoint_returns_404_when_log_missing(client):
+    pid = _make_project(client)
+
+    r = client.get(f"/api/projects/{pid}/logs/asr")
+
+    assert r.status_code == 404
+    assert "log" in r.json()["detail"].lower()
+
+
 def test_patch_selected_subtitle_track(client):
     pid = _make_project(client)
     r = client.patch(f"/api/projects/{pid}",
