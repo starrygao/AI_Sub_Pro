@@ -44,6 +44,7 @@ DEFAULT_CONFIG = {
         "max_video_height": 1080,    # 0 = best available; otherwise cap (1080 / 720 / 480)
     },
     "asr": {
+        "mode": "speed",
         "model_size": "large-v3-turbo",
         "language": "auto",
         "vad_filter": True,

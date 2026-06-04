@@ -1368,3 +1368,420 @@ def test_open_provider_page_rejects_unknown_provider_and_uses_noopener():
         }
         """
     )
+
+
+def test_mergeSubtitleWithNext_combines_adjacent_rows_and_persists():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          let persisted = 0;
+          state.currentProject = {id: 'p1'};
+          state.toast = () => {};
+          state.persistSubtitles = async () => { persisted += 1; state.renumberSubtitles(); };
+          state.subtitles = [
+            {
+              index: 1,
+              start: '00:00:00,000',
+              end: '00:00:01,000',
+              text: 'Hello',
+              translation: '你好',
+              filtered: false,
+              filter_reason: '',
+            },
+            {
+              index: 2,
+              start: '00:00:01,000',
+              end: '00:00:03,000',
+              text: 'world',
+              translation: '世界',
+              filtered: false,
+              filter_reason: '',
+            },
+          ];
+
+          await state.mergeSubtitleWithNext(0);
+
+          if (persisted !== 1) throw new Error(`expected one persist, got ${persisted}`);
+          if (state.subtitles.length !== 1) throw new Error(`expected one merged row, got ${state.subtitles.length}`);
+          const merged = state.subtitles[0];
+          if (merged.index !== 1 || merged.start !== '00:00:00,000' || merged.end !== '00:00:03,000') {
+            throw new Error(`expected merged timing/index, got ${JSON.stringify(merged)}`);
+          }
+          if (merged.text !== 'Hello\\nworld' || merged.translation !== '你好\\n世界') {
+            throw new Error(`expected joined text, got ${JSON.stringify(merged)}`);
+          }
+          if (state.subtitleActionPending !== '') {
+            throw new Error(`expected pending state to clear, got ${state.subtitleActionPending}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_mergeSubtitleWithNext_rolls_back_when_persist_fails():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const toasts = [];
+          state.currentProject = {id: 'p1'};
+          state.toast = (message, type) => { toasts.push({message, type}); };
+          state.persistSubtitles = async () => { throw new Error('backend rejected'); };
+          state.subtitles = [
+            {index: 1, start: '00:00:00,000', end: '00:00:01,000', text: 'A', translation: '甲', filtered: false, filter_reason: ''},
+            {index: 2, start: '00:00:01,000', end: '00:00:02,000', text: 'B', translation: '乙', filtered: false, filter_reason: ''},
+          ];
+          const before = JSON.stringify(state.subtitles);
+
+          await state.mergeSubtitleWithNext(0);
+
+          if (JSON.stringify(state.subtitles) !== before) {
+            throw new Error(`expected rollback, got ${JSON.stringify(state.subtitles)}`);
+          }
+          if (!toasts.some((t) => t.type === 'error' && t.message.includes('保存失败'))) {
+            throw new Error(`expected save failure toast, got ${JSON.stringify(toasts)}`);
+          }
+          if (state.subtitleActionPending !== '') {
+            throw new Error(`expected pending state to clear, got ${state.subtitleActionPending}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_subtitle_quality_summary_flags_timing_translation_and_reading_speed():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.subtitles = [
+          {
+            index: 1,
+            start: '00:00:00,000',
+            end: '00:00:02,000',
+            text: 'This subtitle line is deliberately very long and should trip the long line detector in the editor quality model.',
+            translation: '',
+            filtered: false,
+            filter_reason: '',
+          },
+          {
+            index: 2,
+            start: '00:00:01,500',
+            end: '00:00:01,500',
+            text: 'Too fast to read because this sentence has many characters packed into no duration.',
+            translation: '译文',
+            filtered: false,
+            filter_reason: '',
+          },
+          {
+            index: 3,
+            start: '00:00:01,400',
+            end: '00:00:03,000',
+            text: '',
+            translation: 'Only translated',
+            filtered: false,
+            filter_reason: '',
+          },
+        ];
+
+        const issues = state.subtitleQualityIssues();
+        const codes = issues.map((issue) => issue.code);
+        for (const expected of ['missing_translation', 'overlap', 'non_positive_duration', 'long_line', 'reading_speed', 'empty_source']) {
+          if (!codes.includes(expected)) {
+            throw new Error(`missing quality code ${expected}: ${JSON.stringify(issues)}`);
+          }
+        }
+        const summary = state.subtitleQualitySummary();
+        if (summary.total !== issues.length || summary.severe < 3 || summary.warning < 2) {
+          throw new Error(`unexpected summary ${JSON.stringify(summary)} for ${JSON.stringify(issues)}`);
+        }
+        if (!state.hasSevereSubtitleIssues()) {
+          throw new Error('expected severe subtitle issues');
+        }
+        """
+    )
+
+
+def test_subtitle_replace_preview_counts_without_mutating_rows():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.subtitles = [
+          {index: 1, text: 'Tony Stark enters', translation: 'Stark 来了', filtered: false},
+          {index: 2, text: 'Pepper waits', translation: 'stark 迟到了', filtered: false},
+          {index: 3, text: 'Archived Stark', translation: 'Stark filtered', filtered: true},
+        ];
+        state.subtitleFindText = 'Stark';
+        state.subtitleReplaceText = '史塔克';
+        state.subtitleReplaceScope = 'translation';
+        state.subtitleReplaceCaseSensitive = false;
+        const before = JSON.stringify(state.subtitles);
+
+        const preview = state.subtitleReplacePreview();
+
+        if (preview.count !== 2 || preview.rows.length !== 2) {
+          throw new Error(`expected two replacement hits, got ${JSON.stringify(preview)}`);
+        }
+        if (JSON.stringify(state.subtitles) !== before) {
+          throw new Error('replace preview mutated subtitles');
+        }
+        """
+    )
+
+
+def test_apply_subtitle_replace_persists_and_rolls_back_on_failure():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          let persisted = 0;
+          const toasts = [];
+          state.currentProject = {id: 'p1'};
+          state.toast = (message, type) => { toasts.push({message, type}); };
+          state.persistSubtitles = async () => { persisted += 1; state.renumberSubtitles(); };
+          state.subtitles = [
+            {index: 1, text: 'Tony Stark', translation: 'Stark 来了', filtered: false},
+            {index: 2, text: 'Pepper', translation: 'stark 迟到了', filtered: false},
+          ];
+          state.subtitleFindText = 'Stark';
+          state.subtitleReplaceText = '史塔克';
+          state.subtitleReplaceScope = 'translation';
+          state.subtitleReplaceCaseSensitive = false;
+
+          await state.applySubtitleReplace();
+
+          if (persisted !== 1) throw new Error(`expected one persist, got ${persisted}`);
+          if (state.subtitles[0].translation !== '史塔克 来了' || state.subtitles[1].translation !== '史塔克 迟到了') {
+            throw new Error(`unexpected replaced translations: ${JSON.stringify(state.subtitles)}`);
+          }
+          if (!toasts.some((t) => t.message.includes('已替换 2 处'))) {
+            throw new Error(`expected replacement toast, got ${JSON.stringify(toasts)}`);
+          }
+
+          const beforeFailure = JSON.stringify(state.subtitles);
+          state.persistSubtitles = async () => { throw new Error('backend rejected'); };
+          state.subtitleFindText = '史塔克';
+          state.subtitleReplaceText = 'Stark';
+
+          await state.applySubtitleReplace();
+
+          if (JSON.stringify(state.subtitles) !== beforeFailure) {
+            throw new Error(`expected rollback after failed replace, got ${JSON.stringify(state.subtitles)}`);
+          }
+          if (state.subtitleActionPending !== '') {
+            throw new Error(`expected pending state to clear, got ${state.subtitleActionPending}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_export_quality_requires_confirmation_before_api_call_for_severe_issues():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          Blob: function(parts, options) {
+            this.parts = parts;
+            this.options = options;
+          },
+          URL: {
+            createObjectURL: () => 'blob:quality-export',
+            revokeObjectURL: () => {},
+          },
+          document: {
+            body: { appendChild: () => {} },
+            createElement: () => ({ click: () => {}, remove: () => {} }),
+          },
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          let calls = 0;
+          let confirms = 0;
+          state.currentProject = {id: 'p1', status: 'translated'};
+          state.subtitles = [
+            {index: 1, start: '00:00:00,000', end: '00:00:00,000', text: '', translation: '可导出的译文', filtered: false},
+          ];
+          state.toast = () => {};
+          state.askConfirm = async (options) => {
+            confirms += 1;
+            if (!String(options.message || '').includes('严重问题')) {
+              throw new Error(`expected severe warning message, got ${JSON.stringify(options)}`);
+            }
+            return confirms > 1;
+          };
+          state.api = async (url, method) => {
+            calls += 1;
+            if (url !== '/api/projects/p1/export?format=translated' || method !== 'POST') {
+              throw new Error(`unexpected export API ${method} ${url}`);
+            }
+            return {content: 'Translated subtitle', filename: 'movie.translated.srt'};
+          };
+
+          await state.exportSrt('translated');
+          if (calls !== 0 || confirms !== 1) {
+            throw new Error(`declined export should not call API, got calls=${calls} confirms=${confirms}`);
+          }
+
+          await state.exportSrt('translated');
+          if (calls !== 1 || confirms !== 2) {
+            throw new Error(`accepted export should call API once, got calls=${calls} confirms=${confirms}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_subtitle_timeline_segments_use_project_duration_and_clamp_widths():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.currentProject = {id: 'p1', duration: 4};
+        state.subtitles = [
+          {index: 1, start: '00:00:00,000', end: '00:00:01,000', text: 'A', translation: '甲', filtered: false},
+          {index: 2, start: '00:00:02,000', end: '00:00:06,000', text: 'B', translation: '乙', filtered: false},
+          {index: 3, start: 'bad', end: '00:00:03,000', text: 'C', translation: '丙', filtered: true},
+        ];
+
+        const segments = state.subtitleTimelineSegments();
+
+        if (segments.length !== 3) throw new Error(`expected 3 segments, got ${JSON.stringify(segments)}`);
+        if (segments[0].left !== 0 || segments[0].width !== 25) {
+          throw new Error(`unexpected first segment ${JSON.stringify(segments[0])}`);
+        }
+        if (segments[1].left !== 50 || segments[1].width !== 50) {
+          throw new Error(`expected clamped second segment, got ${JSON.stringify(segments[1])}`);
+        }
+        if (!segments[2].filtered || segments[2].width <= 0) {
+          throw new Error(`expected filtered fallback segment, got ${JSON.stringify(segments[2])}`);
+        }
+        """
+    )
+
+
+def test_subtitle_shortcuts_dispatch_common_editor_actions():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const calls = [];
+          state.saveEdit = async (idx) => { calls.push(['save', idx]); };
+          state.splitSubtitle = async (idx) => { calls.push(['split', idx]); };
+          state.mergeSubtitleWithNext = async (idx) => { calls.push(['merge', idx]); };
+          state.addSubtitleAfter = async (idx) => { calls.push(['add', idx]); };
+          state.deleteSubtitle = async (idx) => { calls.push(['delete', idx]); };
+          const event = (key, extra = {}) => ({
+            key,
+            ctrlKey: true,
+            metaKey: false,
+            shiftKey: false,
+            prevented: false,
+            preventDefault() { this.prevented = true; },
+            ...extra,
+          });
+
+          const save = event('Enter');
+          const split = event('S', {shiftKey: true});
+          const merge = event('m', {shiftKey: true});
+          const add = event('A', {shiftKey: true});
+          const del = event('Backspace');
+          const ignored = event('x', {ctrlKey: false, metaKey: false});
+
+          await state.handleSubtitleShortcut(save, 4);
+          await state.handleSubtitleShortcut(split, 4);
+          await state.handleSubtitleShortcut(merge, 4);
+          await state.handleSubtitleShortcut(add, 4);
+          await state.handleSubtitleShortcut(del, 4);
+          const ignoredResult = await state.handleSubtitleShortcut(ignored, 4);
+
+          const expected = JSON.stringify([
+            ['save', 4],
+            ['split', 4],
+            ['merge', 4],
+            ['add', 4],
+            ['delete', 4],
+          ]);
+          if (JSON.stringify(calls) !== expected) {
+            throw new Error(`unexpected shortcut dispatch ${JSON.stringify(calls)}`);
+          }
+          for (const item of [save, split, merge, add, del]) {
+            if (!item.prevented) throw new Error(`expected ${item.key} shortcut to prevent default`);
+          }
+          if (ignored.prevented || ignoredResult !== false) {
+            throw new Error('plain key should be ignored without preventDefault');
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )

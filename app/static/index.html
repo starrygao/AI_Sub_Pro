@@ -424,6 +424,22 @@
           <p class="text-[13px] text-surface-400 mt-0.5">所有字幕翻译项目</p>
         </div>
         <div class="projects-list-actions flex items-center gap-3">
+          <input x-model="projectSearch"
+                 aria-label="搜索项目"
+                 placeholder="搜索项目..."
+                 class="projects-filter-input px-3 py-2 rounded-xl text-[12px]">
+          <select x-model="projectStatusFilter" aria-label="按状态筛选项目" class="px-3 py-2 rounded-xl text-[12px]">
+            <option value="all">全部状态</option>
+            <option value="running">运行中</option>
+            <option value="error">失败</option>
+            <option value="translated">已翻译</option>
+            <option value="completed">已完成</option>
+          </select>
+          <select x-model="projectSortMode" aria-label="项目排序" class="px-3 py-2 rounded-xl text-[12px]">
+            <option value="recent">最近创建</option>
+            <option value="name">名称</option>
+            <option value="status">状态</option>
+          </select>
           <label class="flex items-center gap-2 text-[12px] text-surface-500 cursor-pointer">
             <input type="checkbox" x-model="showArchived" @change="loadProjects()" aria-label="显示归档项目" class="accent-accent">
             显示归档
@@ -437,18 +453,34 @@
         </div>
       </div>
 
+      <div x-show="recentTaskProjects().length>0" class="projects-recent-tasks glass rounded-2xl p-3 mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-[12.5px] font-semibold">最近任务</p>
+          <span class="text-[11px] text-surface-400" x-text="`${recentTaskProjects().length} 个`"></span>
+        </div>
+        <div class="flex gap-2 overflow-x-auto">
+          <template x-for="p in recentTaskProjects()" :key="p.id">
+            <button @click="openProject(p.id)"
+                    class="projects-recent-task btn-secondary px-3 py-2 rounded-xl text-left min-w-48">
+              <span class="block text-[12px] font-medium truncate" x-text="p.name || p.id"></span>
+              <span class="block text-[11px] text-surface-500 truncate" x-text="p.status === 'error' ? projectErrorNextAction(p) : (p.progress_msg || statusLabel(p))"></span>
+            </button>
+          </template>
+        </div>
+      </div>
+
       <!-- Empty -->
-      <div x-show="projects.length===0" class="text-center py-20">
+      <div x-show="filteredProjects().length===0" class="text-center py-20">
         <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-surface-100 flex items-center justify-center">
           <svg class="w-8 h-8 text-surface-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>
         </div>
-        <p class="text-[15px] text-surface-400">暂无项目</p>
-        <p class="text-[13px] text-surface-300 mt-1">在首页拖入视频开始使用</p>
+        <p class="text-[15px] text-surface-400" x-text="projects.length ? '没有符合条件的项目' : '暂无项目'"></p>
+        <p class="text-[13px] text-surface-300 mt-1" x-text="projects.length ? '调整筛选条件或显示归档项目' : '在首页拖入视频开始使用'"></p>
       </div>
 
       <!-- Project Cards -->
       <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        <template x-for="p in projects" :key="p.id">
+        <template x-for="p in filteredProjects()" :key="p.id">
           <div class="glass rounded-2xl p-5 cursor-pointer hover:shadow-lg transition-all duration-200"
                role="button"
                tabindex="0"
@@ -713,6 +745,44 @@
                 x-text="projectActionPending === 'start-full' ? '启动中...' : '重试'"></button>
       </div>
 
+      <div x-show="workflowState || workflowStateLoading || workflowStateError"
+           class="flex-shrink-0 mx-6 mt-3 glass rounded-2xl p-3 border-l-2 border-l-warn">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <p class="text-[12.5px] font-semibold">工作流状态</p>
+            <p x-show="workflowStateLoading" class="text-[11px] text-surface-400 mt-0.5">正在加载恢复信息...</p>
+            <p x-show="workflowStateError" class="text-[11px] text-danger mt-0.5 truncate" x-text="workflowStateError" :title="workflowStateError"></p>
+            <p x-show="workflowState && !workflowStateLoading && !workflowStateError" class="text-[11px] text-surface-400 mt-0.5">
+              <span x-text="workflowFailedStages().length ? `${workflowFailedStages().length} 个失败阶段` : '暂无失败阶段'"></span>
+            </p>
+          </div>
+          <button @click="resumeWorkflow()"
+                  :disabled="projectActionsDisabled(currentProject)"
+                  class="btn-secondary px-3 py-1.5 rounded-lg text-[12px] font-medium shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                  x-text="workflowActionPending === 'resume' ? '恢复中...' : '恢复流程'"></button>
+        </div>
+        <div x-show="workflowFailedStages().length > 0" class="mt-2 divide-y divide-black/[0.06]">
+          <template x-for="item in workflowFailedStages()" :key="item.stage">
+            <div class="py-2 flex items-center justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-[12px] font-medium truncate" :title="item.stage" x-text="workflowStageLabel(item.stage)"></p>
+                <p class="text-[11px] text-surface-400 truncate"
+                   :title="item.error_summary || item.error || ''"
+                   x-text="item.error_summary || item.error || '失败阶段可重试，日志可下载排查'"></p>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <a :href="`/api/projects/${currentProject.id}/logs/${item.stage}`"
+                   class="btn-secondary px-3 py-1.5 rounded-lg text-[11px] font-medium no-underline whitespace-nowrap">下载日志</a>
+                <button @click="retryWorkflowStage(item.stage)"
+                        :disabled="projectActionsDisabled(currentProject)"
+                        class="btn-primary px-3 py-1.5 rounded-lg text-[11px] font-medium whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+                        x-text="workflowActionPending === ('retry:' + item.stage) ? '重试中...' : '重试'"></button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
       <!-- Progress bar (when processing) -->
       <div x-show="isProjectBusy(currentProject)" class="flex-shrink-0 px-6 mt-3">
         <div class="glass rounded-2xl p-4">
@@ -741,6 +811,63 @@
           <p class="text-[12px] text-surface-300 mt-1">点击「一键处理」开始</p>
         </div>
 
+        <div x-show="subtitles.length>0" class="subtitle-editor-toolbar glass rounded-2xl p-3 mb-3">
+          <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_9rem_auto_auto] gap-2 items-center">
+            <input x-model="subtitleFindText"
+                   aria-label="查找字幕文本"
+                   placeholder="查找字幕..."
+                   class="px-3 py-2 rounded-xl text-[12px]">
+            <input x-model="subtitleReplaceText"
+                   aria-label="替换为"
+                   placeholder="替换为..."
+                   class="px-3 py-2 rounded-xl text-[12px]">
+            <select x-model="subtitleReplaceScope" aria-label="替换范围" class="px-3 py-2 rounded-xl text-[12px]">
+              <option value="translation">译文</option>
+              <option value="text">原文</option>
+              <option value="all">原文 + 译文</option>
+            </select>
+            <label class="flex items-center gap-2 text-[12px] text-surface-500 whitespace-nowrap">
+              <input type="checkbox" x-model="subtitleReplaceCaseSensitive" aria-label="区分大小写替换">
+              区分大小写
+            </label>
+            <button @click="applySubtitleReplace()"
+                    :disabled="subtitleActionsDisabled() || subtitleReplacePreview().count === 0"
+                    class="btn-secondary px-3 py-2 rounded-xl text-[12px] font-medium disabled:opacity-40 disabled:cursor-not-allowed">
+              <span x-text="subtitleReplacePreview().count ? `替换 ${subtitleReplacePreview().count} 处` : '无匹配'"></span>
+            </button>
+          </div>
+          <div class="subtitle-quality-strip mt-3 flex flex-wrap items-center gap-3 text-[12px]">
+            <span class="pill" :class="subtitleQualitySummary().severe ? 'text-danger' : 'text-surface-500'">
+              严重 <strong x-text="subtitleQualitySummary().severe"></strong>
+            </span>
+            <span class="pill">
+              提醒 <strong x-text="subtitleQualitySummary().warning"></strong>
+            </span>
+            <span x-show="subtitleQualitySummary().issues.length"
+                  class="text-surface-500 truncate"
+                  x-text="subtitleQualitySummary().issues[0]?.message || ''"></span>
+            <span x-show="!subtitleQualitySummary().issues.length" class="text-success">导出检查未发现明显问题</span>
+          </div>
+        </div>
+
+        <div x-show="subtitles.length>0" class="subtitle-timeline-panel glass rounded-2xl p-3 mb-3">
+          <div class="subtitle-waveform" aria-hidden="true">
+            <template x-for="n in 48" :key="n">
+              <span :style="`height:${18 + ((n * 17) % 28)}%`"></span>
+            </template>
+          </div>
+          <div class="subtitle-timeline-track" role="img" aria-label="字幕时间轴">
+            <template x-for="segment in subtitleTimelineSegments()" :key="segment.index">
+              <button type="button"
+                      class="subtitle-timeline-segment"
+                      :class="segment.filtered ? 'is-filtered' : ''"
+                      :style="`left:${segment.left}%; width:${segment.width}%;`"
+                      :aria-label="segment.label"
+                      :title="segment.label"></button>
+            </template>
+          </div>
+        </div>
+
         <div x-show="subtitles.length>0" class="subtitle-table-panel glass rounded-2xl overflow-hidden">
           <table class="w-full text-[13px]">
             <thead class="sticky top-0 bg-white/80 backdrop-blur-xl border-b border-black/[0.06] z-10">
@@ -754,7 +881,9 @@
             </thead>
             <tbody>
               <template x-for="(s, idx) in subtitles" :key="idx">
-                <tr class="sub-row border-b border-black/[0.03] last:border-0" :class="s.filtered ? 'opacity-25' : ''">
+                <tr class="sub-row border-b border-black/[0.03] last:border-0"
+                    :class="s.filtered ? 'opacity-25' : ''"
+                    @keydown="handleSubtitleShortcut($event, idx)">
                   <td class="px-4 py-2.5 text-[12px] text-surface-300 tabular-nums" x-text="s.index"></td>
                   <td class="px-4 py-2.5 text-[12px] text-surface-400 font-mono tabular-nums" x-text="s.start?.substring(0,8)"></td>
                   <td class="px-4 py-2.5 text-surface-700" x-text="s.text"></td>
@@ -782,6 +911,10 @@
                               :disabled="subtitleActionsDisabled()"
                               class="btn-secondary w-7 h-7 rounded-lg text-[12px] disabled:opacity-40 disabled:cursor-not-allowed"
                               aria-label="分割这一行字幕" title="分割这一行">÷</button>
+                      <button @click="mergeSubtitleWithNext(idx)"
+                              :disabled="subtitleActionsDisabled() || idx >= subtitles.length - 1"
+                              class="btn-secondary w-7 h-7 rounded-lg text-[12px] disabled:opacity-40 disabled:cursor-not-allowed"
+                              aria-label="合并下一行字幕" title="合并下一行">⇄</button>
                       <button @click="deleteSubtitle(idx)"
                               :disabled="subtitleActionsDisabled()"
                               class="btn-secondary w-7 h-7 rounded-lg text-[12px] text-danger disabled:opacity-40 disabled:cursor-not-allowed"
@@ -810,9 +943,17 @@
       <h2 class="text-[22px] font-semibold mb-1">系统设置</h2>
       <p class="text-[13px] text-surface-400 mb-6">配置 API 密钥、语音识别和翻译选项</p>
 
+      <nav class="settings-section-nav flex flex-wrap gap-2 mb-5 text-[12px]" aria-label="设置分组">
+        <a href="#settings-providers" class="btn-secondary px-3 py-1.5 rounded-lg no-underline">Provider</a>
+        <a href="#settings-asr" class="btn-secondary px-3 py-1.5 rounded-lg no-underline">ASR</a>
+        <a href="#settings-translation-export" class="btn-secondary px-3 py-1.5 rounded-lg no-underline">翻译/导出</a>
+        <a href="#settings-tmdb" class="btn-secondary px-3 py-1.5 rounded-lg no-underline">TMDB</a>
+        <a href="#settings-storage-release" class="btn-secondary px-3 py-1.5 rounded-lg no-underline">存储/发布</a>
+      </nav>
+
       <div class="space-y-5">
         <!-- API 密钥 (shown when any selected translation service needs a key) -->
-        <div class="glass rounded-2xl p-5" x-show="settingsNeedsApiKeyPanel()" x-cloak>
+        <div id="settings-providers" class="glass rounded-2xl p-5" x-show="settingsNeedsApiKeyPanel()" x-cloak>
           <h3 class="text-[13px] font-semibold mb-4 flex items-center gap-2">
             <svg class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" /></svg>
             API 密钥
@@ -948,12 +1089,20 @@
         </div>
 
         <!-- ASR -->
-        <div class="glass rounded-2xl p-5">
+        <div id="settings-asr" class="glass rounded-2xl p-5">
           <h3 class="text-[13px] font-semibold mb-4 flex items-center gap-2">
             <svg class="w-4 h-4 text-[#AF52DE]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" /></svg>
             语音识别 (ASR)
           </h3>
           <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">ASR 模式</label>
+              <select x-model="settings.asr.mode" aria-label="ASR 模式" class="w-full px-3 py-2 rounded-xl text-[13px]">
+                <option value="speed">速度优先</option>
+                <option value="accuracy">准确优先</option>
+                <option value="offline">离线优先</option>
+              </select>
+            </div>
             <div>
               <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">Whisper 模型</label>
               <select x-model="settings.asr.model_size" aria-label="Whisper 模型" class="w-full px-3 py-2 rounded-xl text-[13px]">
@@ -976,10 +1125,14 @@
               <label class="flex items-center gap-2 text-[13px]"><input type="checkbox" x-model="settings.asr.use_demucs" aria-label="启用 Demucs 人声分离"> Demucs</label>
             </div>
           </div>
+          <div x-show="sysCheck?.asr_recommendation && !sysCheckLoading && !sysCheckError" class="mt-4 rounded-xl border border-surface-200 px-3 py-2 text-[12px] text-surface-600">
+            <p class="font-medium text-surface-700" x-text="asrRecommendationSummary()"></p>
+            <p class="mt-1 text-surface-400" x-text="sysCheck?.asr_recommendation?.reason || ''"></p>
+          </div>
         </div>
 
         <!-- Translation -->
-        <div class="glass rounded-2xl p-5">
+        <div id="settings-translation-export" class="glass rounded-2xl p-5">
           <h3 class="text-[13px] font-semibold mb-4 flex items-center gap-2">
             <svg class="w-4 h-4 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802" /></svg>
             翻译设置
@@ -1050,7 +1203,7 @@
         </div>
 
         <!-- 预告片 (TMDB) — always visible, separate from translation provider -->
-        <div class="glass rounded-2xl p-5">
+        <div id="settings-tmdb" class="glass rounded-2xl p-5">
           <h3 class="text-[13px] font-semibold mb-4 flex items-center gap-2">
             <svg class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg>
             预告片 (TMDB)
@@ -1098,6 +1251,13 @@
           </select>
           <p class="text-[11px] text-surface-400 mt-2">
             上限分辨率；YouTube 实际可用画质可能更低
+          </p>
+        </div>
+
+        <div id="settings-storage-release" class="glass rounded-2xl p-5">
+          <h3 class="text-[13px] font-semibold mb-2">存储 / 发布</h3>
+          <p class="text-[12px] text-surface-500 leading-relaxed">
+            项目数据保存在本机用户数据目录。发布包默认是基础 app；离线 ASR 模型和重型依赖通过可选包或本机下载补齐。
           </p>
         </div>
 
@@ -1191,6 +1351,87 @@
                         class="btn-secondary px-3 py-1.5 rounded-lg text-[12px] text-danger disabled:opacity-50 disabled:cursor-not-allowed"
                         x-text="kbActionPending === 'delete' ? '删除中...' : '删除'"></button>
                 <span x-show="kbDirty" class="text-[11px] text-surface-400">有未保存的修改</span>
+              </div>
+            </div>
+
+            <!-- Suggestion review -->
+            <div class="glass rounded-2xl p-5">
+              <div class="flex items-center justify-between gap-3 mb-3">
+                <h3 class="text-[13px] font-semibold uppercase">建议审核</h3>
+                <div class="flex items-center gap-2">
+                  <button @click="loadKbSuggestions()"
+                          :disabled="kbSuggestionsLoading || !!kbActionPending || !currentProject"
+                          class="btn-secondary px-3 py-1.5 rounded-lg text-[12px] disabled:opacity-50 disabled:cursor-not-allowed"
+                          x-text="kbSuggestionsLoading ? '加载中...' : '刷新建议'"></button>
+                  <button @click="acceptKbSuggestions()"
+                          :disabled="kbSuggestionsLoading || !!kbActionPending || kbDirty || !kbSuggestions.some(s => s.selected)"
+                          class="btn-primary px-3 py-1.5 rounded-lg text-[12px] disabled:opacity-50 disabled:cursor-not-allowed"
+                          x-text="kbActionPending === 'suggestions' ? '接受中...' : '接受选中'"></button>
+                </div>
+              </div>
+              <div x-show="kbSuggestionsError" x-cloak class="mb-3 rounded-lg border border-danger/30 px-3 py-2 text-[12px] text-danger" style="background: rgba(220,38,38,0.06);">
+                <p x-text="'加载失败：' + kbSuggestionsError"></p>
+              </div>
+              <div x-show="kbSuggestionsLoading" x-cloak class="py-4 text-center text-[12px] text-surface-400">
+                加载建议...
+              </div>
+              <div x-show="!kbSuggestionsLoading && kbSuggestions.length === 0" class="py-4 text-center text-[12px] text-surface-400">
+                暂无建议
+              </div>
+              <div x-show="!kbSuggestionsLoading && kbSuggestions.length > 0" class="divide-y divide-surface-200">
+                <template x-for="(suggestion, i) in kbSuggestions" :key="i">
+                  <div class="py-3 grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] gap-3 items-center">
+                    <input type="checkbox"
+                           x-model="suggestion.selected"
+                           :disabled="kbSuggestionsLoading || !!kbActionPending"
+                           :aria-label="'选择建议 ' + (i + 1)"
+                           class="accent-accent disabled:opacity-50 disabled:cursor-not-allowed">
+                    <div class="min-w-0">
+                      <div class="text-[12px] font-medium truncate" x-text="suggestion.source || '-'"></div>
+                      <div class="text-[11px] text-surface-400"
+                           x-text="[suggestion.category ? kbCategoryLabel(suggestion.category) : '', suggestion.collision || ''].filter(Boolean).join(' · ')"></div>
+                    </div>
+                    <input x-model="suggestion.target"
+                           :disabled="!suggestion.selected || kbSuggestionsLoading || !!kbActionPending"
+                           :aria-label="'建议 ' + (i + 1) + ' 译文'"
+                           placeholder="译文"
+                           class="w-full px-2 py-1.5 rounded-lg text-[12px] border border-surface-200 disabled:bg-surface-50 disabled:text-surface-400">
+                    <input x-model="suggestion.notes"
+                           :disabled="!suggestion.selected || kbSuggestionsLoading || !!kbActionPending"
+                           :aria-label="'建议 ' + (i + 1) + ' 备注'"
+                           placeholder="备注"
+                           class="w-full px-2 py-1.5 rounded-lg text-[12px] border border-surface-200 disabled:bg-surface-50 disabled:text-surface-400">
+                    <button @click="rejectKbSuggestion(suggestion)"
+                            :disabled="kbSuggestionsLoading || !!kbActionPending || !(typeof suggestion.source === 'string' && suggestion.source.trim())"
+                            class="btn-secondary px-3 py-1.5 rounded-lg text-[12px] text-danger disabled:opacity-50 disabled:cursor-not-allowed"
+                            x-text="kbActionPending === 'reject:' + (typeof suggestion.source === 'string' ? suggestion.source.trim() : '') ? '拒绝中...' : '拒绝'"></button>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- Usage trace -->
+            <div class="glass rounded-2xl p-5">
+              <div class="flex items-center justify-between gap-3 mb-3">
+                <h3 class="text-[13px] font-semibold uppercase">命中追踪</h3>
+                <span x-show="kbTraceLoading" class="text-[11px] text-surface-400">加载中...</span>
+              </div>
+              <div x-show="kbTraceError" x-cloak class="mb-3 rounded-lg border border-danger/30 px-3 py-2 text-[12px] text-danger" style="background: rgba(220,38,38,0.06);">
+                <p x-text="'加载失败：' + kbTraceError"></p>
+              </div>
+              <div x-show="kbUsageTrace?.matches?.length" class="divide-y divide-surface-200">
+                <template x-for="(match, i) in kbUsageTrace?.matches || []" :key="i">
+                  <div class="py-3 grid grid-cols-[1fr_auto] gap-3 items-start">
+                    <div class="min-w-0">
+                      <div class="text-[12px] font-medium truncate" x-text="match.source || match.text || match.term || '-'"></div>
+                      <div class="text-[11px] text-surface-400 truncate" x-text="match.target || match.translation || ''"></div>
+                    </div>
+                    <span class="text-[11px] text-surface-400" x-text="match.category ? kbCategoryLabel(match.category) : ''"></span>
+                  </div>
+                </template>
+              </div>
+              <div x-show="!kbTraceLoading && !kbTraceError && !(kbUsageTrace?.matches?.length)" class="py-4 text-center text-[12px] text-surface-400">
+                暂无命中
               </div>
             </div>
 

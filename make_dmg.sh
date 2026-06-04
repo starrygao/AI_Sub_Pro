@@ -110,6 +110,20 @@ else
     create_hdiutil_dmg
 fi
 
+prepare_release_metadata() {
+    if command -v python3 >/dev/null 2>&1; then
+        python3 tools/release/prepare_release.py \
+            --dist-dir dist \
+            --output dist/release-size-report.json \
+            --checksum-dir dist
+        echo "  release metadata: dist/release-size-report.json and .sha256 files"
+    else
+        echo "  python3 not found; skipped release checksum metadata"
+    fi
+}
+
+prepare_release_metadata
+
 # ── 第5步: 完成 ──
 echo ""
 echo "[5/5] 构建完成!"

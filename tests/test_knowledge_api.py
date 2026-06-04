@@ -222,3 +222,303 @@ def test_kb_saved_upserts_preserve_existing_projects(patched_kb_file):
     reloaded.load()
     assert reloaded.get_project("one").show_title == "One"
     assert reloaded.get_project("two").show_title == "Two"
+
+
+def test_kb_suggestions_endpoint_returns_project_suggestions(tmp_project_dir, patched_kb_file):
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_suggest"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {
+        "id": pid,
+        "name": "Moonlit Case",
+        "tmdb_id": 101,
+        "cast": ["Maya Chen"],
+        "overview": "Maya Chen visits the Moonlit Club.",
+    })
+    (pdir / "raw.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nMaya Chen enters the Moonlit Club.\n\n",
+        encoding="utf-8",
+    )
+
+    response = client.get(f"/api/knowledge/projects/{pid}/suggestions")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["project_id"] == pid
+    assert any(item["source"] == "Maya Chen" for item in data["suggestions"])
+
+
+def test_kb_usage_trace_endpoint_returns_existing_trace(tmp_project_dir, patched_kb_file):
+    import json
+
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_trace"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case"})
+    trace = {
+        "project": {"show_title": "Moonlit Case"},
+        "matches": [
+            {"category": "characters", "source": "Maya Chen", "target": "玛雅·陈"},
+            "bad-row",
+        ],
+        "extra": "kept",
+    }
+    (pdir / "kb_usage_trace.json").write_text(json.dumps(trace), encoding="utf-8")
+
+    response = client.get(f"/api/knowledge/projects/{pid}/usage-trace")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "project": {"show_title": "Moonlit Case"},
+        "matches": [
+            {"category": "characters", "source": "Maya Chen", "target": "玛雅·陈"},
+        ],
+        "extra": "kept",
+    }
+
+
+def test_kb_usage_trace_endpoint_missing_file_returns_empty_trace(tmp_project_dir, patched_kb_file):
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_trace_missing"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case"})
+
+    response = client.get(f"/api/knowledge/projects/{pid}/usage-trace")
+
+    assert response.status_code == 200
+    assert response.json() == {"project": {}, "matches": []}
+
+
+def test_kb_usage_trace_endpoint_returns_404_for_missing_project(patched_kb_file):
+    from app.main import app
+
+    client = TestClient(app)
+
+    response = client.get("/api/knowledge/projects/missing_trace_project/usage-trace")
+
+    assert response.status_code == 404
+
+
+def test_kb_usage_trace_endpoint_rejects_corrupt_json(tmp_project_dir, patched_kb_file):
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_trace_corrupt"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case"})
+    (pdir / "kb_usage_trace.json").write_text("{not json", encoding="utf-8")
+
+    response = client.get(f"/api/knowledge/projects/{pid}/usage-trace")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "KB usage trace file is invalid"
+
+
+def test_kb_accept_suggestions_persists_entries(tmp_project_dir, patched_kb_file):
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_accept"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case", "tmdb_id": 101})
+
+    response = client.post(f"/api/knowledge/projects/{pid}/suggestions/accept", json={
+        "key": "moonlit",
+        "show_title": "Moonlit Case",
+        "tmdb_id": 101,
+        "entries": [
+            {"source": "Maya Chen", "target": "玛雅·陈", "category": "characters", "notes": "lead"}
+        ],
+    })
+
+    assert response.status_code == 200
+    saved = client.get("/api/knowledge/projects/moonlit").json()
+    assert saved["characters"][0]["source"] == "Maya Chen"
+    assert saved["characters"][0]["target"] == "玛雅·陈"
+
+
+def test_kb_reject_suggestions_persists_project_decision(tmp_project_dir, patched_kb_file):
+    import json
+
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_reject"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case", "tmdb_id": 101})
+
+    response = client.post(f"/api/knowledge/projects/{pid}/suggestions/reject", json={
+        "sources": ["Noisy Phrase", "Unused Name"]
+    })
+
+    assert response.status_code == 200
+    data = json.loads((pdir / "kb_suggestion_decisions.json").read_text(encoding="utf-8"))
+    assert data["rejected_sources"] == ["Noisy Phrase", "Unused Name"]
+
+
+def test_kb_accept_suggestions_skips_duplicate_blank_target_and_invalid_category(
+    tmp_project_dir,
+    patched_kb_file,
+):
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_accept_robust"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case", "tmdb_id": 101})
+    client.post(f"/api/knowledge/projects/{pid}/suggestions/accept", json={
+        "key": "moonlit",
+        "show_title": "Moonlit Case",
+        "tmdb_id": 101,
+        "entries": [
+            {"source": "Maya Chen", "target": "玛雅·陈", "category": "characters", "notes": "lead"}
+        ],
+    })
+
+    response = client.post(f"/api/knowledge/projects/{pid}/suggestions/accept", json={
+        "key": "moonlit",
+        "show_title": "Moonlit Case",
+        "tmdb_id": 101,
+        "entries": [
+            {"source": " maya chen ", "target": "重复", "category": "characters", "notes": ""},
+            {"source": "Moonlit Club", "target": "", "category": "places", "notes": ""},
+            {"source": "Ignored", "target": "忽略", "category": "unknown", "notes": ""},
+            {"source": "Moonlit Club", "target": "月光俱乐部", "category": "places", "notes": ""},
+        ],
+    })
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] == 1
+    saved = client.get("/api/knowledge/projects/moonlit").json()
+    assert saved["characters"] == [{"source": "Maya Chen", "target": "玛雅·陈", "notes": "lead"}]
+    assert saved["places"] == [{"source": "Moonlit Club", "target": "月光俱乐部", "notes": ""}]
+
+
+def test_kb_suggestions_endpoint_returns_404_for_missing_project(patched_kb_file):
+    from app.main import app
+
+    client = TestClient(app)
+
+    response = client.get("/api/knowledge/projects/missing_project/suggestions")
+
+    assert response.status_code == 404
+
+
+def test_kb_accept_suggestions_rejects_invalid_key_without_persisting(tmp_project_dir, patched_kb_file):
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_bad_key"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case", "tmdb_id": 101})
+
+    response = client.post(f"/api/knowledge/projects/{pid}/suggestions/accept", json={
+        "key": "bad/key",
+        "show_title": "Moonlit Case",
+        "entries": [
+            {"source": "Maya Chen", "target": "玛雅·陈", "category": "characters", "notes": "lead"}
+        ],
+    })
+
+    assert response.status_code == 400
+    projects = client.get("/api/knowledge/projects").json()["projects"]
+    assert all(project["key"] != "bad/key" for project in projects)
+
+
+def test_kb_accept_suggestions_rejects_blank_key(tmp_project_dir, patched_kb_file):
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_blank_key"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case", "tmdb_id": 101})
+
+    response = client.post(f"/api/knowledge/projects/{pid}/suggestions/accept", json={
+        "key": "  ",
+        "entries": [],
+    })
+
+    assert response.status_code == 400
+
+
+def test_kb_accept_suggestions_rejects_non_positive_tmdb_id(tmp_project_dir, patched_kb_file):
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_bad_tmdb"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case", "tmdb_id": 101})
+
+    response = client.post(f"/api/knowledge/projects/{pid}/suggestions/accept", json={
+        "key": "moonlit",
+        "tmdb_id": 0,
+        "entries": [],
+    })
+
+    assert response.status_code == 400
+
+
+def test_kb_reject_suggestions_merges_and_dedupes_project_decisions(tmp_project_dir, patched_kb_file):
+    import json
+
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_reject_merge"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case", "tmdb_id": 101})
+
+    first = client.post(f"/api/knowledge/projects/{pid}/suggestions/reject", json={
+        "sources": ["Noisy Phrase", "Unused Name"]
+    })
+    second = client.post(f"/api/knowledge/projects/{pid}/suggestions/reject", json={
+        "sources": ["noisy phrase", "New Name", "Unused Name", "  "]
+    })
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    data = json.loads((pdir / "kb_suggestion_decisions.json").read_text(encoding="utf-8"))
+    assert data["rejected_sources"] == ["Noisy Phrase", "Unused Name", "New Name"]
+
+
+def test_kb_suggestions_endpoint_filters_rejected_sources(tmp_project_dir, patched_kb_file):
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_suggest_rejected"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {
+        "id": pid,
+        "name": "Moonlit Case",
+        "tmdb_id": 101,
+        "cast": ["Maya Chen"],
+        "overview": "Maya Chen visits the Moonlit Club.",
+    })
+
+    reject = client.post(f"/api/knowledge/projects/{pid}/suggestions/reject", json={
+        "sources": ["maya chen"]
+    })
+    response = client.get(f"/api/knowledge/projects/{pid}/suggestions")
+
+    assert reject.status_code == 200
+    assert response.status_code == 200
+    sources = {item["source"] for item in response.json()["suggestions"]}
+    assert "Maya Chen" not in sources

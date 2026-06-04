@@ -2,6 +2,41 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## Unreleased - Quality Evaluation And KB Review
+
+This unreleased milestone documents the deterministic evaluation loop and the
+new Knowledge Base review tools. No packaged app or DMG is attached for this
+unreleased milestone.
+
+Highlights:
+
+- Added release pipeline documentation covering the `v*` tag trigger, dry-run
+  release preparation, checksum verification, and size-report review.
+- Split base app packages from optional local ASR packages. macOS and Windows
+  builds now keep local ASR models/backends out of default packages unless
+  `AISUBPRO_BUNDLE_LOCAL_ASR=1` is set.
+- macOS DMG builds now run the release preparation helper after DMG creation
+  when Python is available, producing checksum files and
+  `release-size-report.json`.
+- Added `python3 -m app.evaluation.cli` for deterministic golden-corpus
+  translation quality reports without network calls or paid providers.
+- Added a project Knowledge Base suggestion review workflow based on TMDB
+  metadata and current subtitles, with edit, accept, and reject actions.
+- Added KB usage trace recording for translation runs, with a project API and
+  frontend panel showing which KB entries were used when trace data exists.
+- Added intent-level ASR modes for speed, accuracy, and offline use, with
+  backend/model recommendations based on detected local backends and model
+  cache status.
+- Added structured workflow state with bounded per-stage logs, failing-stage
+  display, log download, retry, and resume from the last verified artifact.
+
+Quality/Verification:
+
+- Deterministic evaluation CLI passed and wrote reports for 7 cases to
+  `build/evaluation/milestone1.json` and `build/evaluation/milestone1.md`.
+- Focused milestone tests passed: `109 passed in 1.66s`.
+- Full test suite passed: `838 passed in 45.70s`.
+
 ## v1.1.1 - Knowledge Base Injection Fix
 
 This patch release fixes the project-specific Knowledge Base v2 injection path

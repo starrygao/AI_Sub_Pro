@@ -26,6 +26,17 @@ def test_update_progress_persists_to_disk(tmp_project_dir):
     assert payload["progress"] == 40
 
 
+def test_update_progress_appends_stage_log(tmp_project_dir):
+    from app.engines.scheduler import update_progress
+    from app.engines.workflow_state import stage_log_path
+
+    update_progress("pid_log", stage="asr", local_pct=10, msg="正在识别")
+
+    path = stage_log_path("pid_log", "asr")
+    assert path.exists()
+    assert "正在识别" in path.read_text(encoding="utf-8")
+
+
 def test_get_progress_reads_disk_when_memory_empty(tmp_project_dir):
     from app.engines.scheduler import get_progress, progress_store
 

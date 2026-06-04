@@ -127,6 +127,69 @@ def test_upload_burn_uses_single_track_with_legacy_style(patched_projects_dir, m
     assert t.font_size >= 18
 
 
+def test_burn_pipeline_refuses_symlinked_output_path(patched_projects_dir, monkeypatch):
+    from app.api import translate as api_translate
+    from app.engines.workflow_state import load_workflow_state
+
+    pid = "u_symlink_output"
+    pdir = _seed_project(patched_projects_dir, pid, source_type="upload")
+    outside = patched_projects_dir.parent / "outside-output.mp4"
+    outside.write_bytes(b"outside")
+    (pdir / "original_subtitled.mp4").symlink_to(outside)
+    calls = []
+
+    def fake_burn(video, tracks, output, **kw):
+        calls.append((video, tracks, output))
+        Path(output).write_bytes(b"pwned")
+        return True
+
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+
+    api_translate._run_burn_pipeline(pid)
+
+    assert calls == []
+    assert outside.read_bytes() == b"outside"
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["status"] == "translated"
+    assert "输出路径无效" in project["error"]
+    state = load_workflow_state(pid)
+    assert state["stages"]["burn"]["status"] == "failed"
+
+
+def test_start_burn_refuses_symlinked_output_path(patched_projects_dir, monkeypatch):
+    from app.api import translate as api_translate
+
+    pid = "start_symlink_output"
+    pdir = _seed_project(patched_projects_dir, pid, source_type="upload")
+    outside = patched_projects_dir.parent / "outside-start-output.mp4"
+    outside.write_bytes(b"outside")
+    (pdir / "original_subtitled.mp4").symlink_to(outside)
+    calls = []
+
+    def fake_burn(video, tracks, output, **kw):
+        calls.append((video, tracks, output))
+        Path(output).write_bytes(b"pwned")
+        return True
+
+    monkeypatch.setattr(api_translate, "active_tasks", {})
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+
+    result = api_translate.start_burn(pid=pid)
+    assert result["status"] == "started"
+
+    with api_translate._tasks_lock:
+        thread = api_translate.active_tasks.get(pid)
+    if thread is not None:
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+    assert calls == []
+    assert outside.read_bytes() == b"outside"
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["status"] == "translated"
+    assert "输出路径无效" in project["error"]
+
+
 def test_burn_without_subtitles_records_visible_error(patched_projects_dir):
     from app.api import translate as api_translate
 

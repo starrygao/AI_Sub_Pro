@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "film-proper-noun",
+      "tags": ["film", "proper_noun"],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {"name": "Moonlit Case", "tmdb_id": 101, "cast": ["Elsbeth Tascioni"]},
+      "source_blocks": [
+        {"id": "1", "text": "Elsbeth, the Moonlit Club is not a joke."}
+      ],
+      "candidate_blocks": [
+        {"id": "1", "translation": "艾尔斯贝丝，月光俱乐部不是玩笑。"}
+      ],
+      "expected_terms": [
+        {"source": "Elsbeth", "target": "艾尔斯贝丝"},
+        {"source": "Moonlit Club", "target": "月光俱乐部"}
+      ],
+      "reference_blocks": [
+        {"id": "1", "translation": "艾尔斯贝丝，月光俱乐部不是玩笑。"}
+      ]
+    },
+    {
+      "id": "series-colloquial",
+      "tags": ["series", "colloquial"],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {"name": "Harbor Room S01E02", "tmdb_id": 202, "cast": ["Maya Chen"]},
+      "source_blocks": [
+        {"id": "1", "text": "Maya, that plan is way off."}
+      ],
+      "candidate_blocks": [
+        {"id": "1", "translation": "玛雅，这个计划太离谱了。"}
+      ],
+      "expected_terms": [
+        {"source": "Maya", "target": "玛雅"}
+      ],
+      "reference_blocks": [
+        {"id": "1", "translation": "玛雅，这个计划太离谱了。"}
+      ]
+    },
+    {
+      "id": "trailer-tagline",
+      "tags": ["trailer"],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {"name": "Last Signal Trailer", "tmdb_id": 303, "overview": "A rescue team hears one final call."},
+      "source_blocks": [
+        {"id": "1", "text": "This summer, one signal changes everything."}
+      ],
+      "candidate_blocks": [
+        {"id": "1", "translation": "这个夏天，一个信号改变一切。"}
+      ],
+      "expected_terms": [
+        {"source": "signal", "target": "信号"}
+      ],
+      "reference_blocks": [
+        {"id": "1", "translation": "这个夏天，一个信号改变一切。"}
+      ]
+    },
+    {
+      "id": "pun-line",
+      "tags": ["pun"],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {"name": "Bread Winner", "tmdb_id": 404},
+      "source_blocks": [
+        {"id": "1", "text": "I knead answers, not excuses."}
+      ],
+      "candidate_blocks": [
+        {"id": "1", "translation": "我要的是答案，不是借口。"}
+      ],
+      "expected_terms": [
+        {"source": "knead", "target": "揉"}
+      ],
+      "reference_blocks": [
+        {"id": "1", "translation": "我要的是答案，不是借口。"}
+      ]
+    },
+    {
+      "id": "long-sentence",
+      "tags": ["long_sentence"],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {"name": "Long Night", "tmdb_id": 505},
+      "source_blocks": [
+        {"id": "1", "text": "When the doors finally opened, everyone who had waited in silence realized the warning had been real."}
+      ],
+      "candidate_blocks": [
+        {"id": "1", "translation": "当门终于打开时，所有沉默等待的人都意识到那个警告是真的。"}
+      ],
+      "expected_terms": [
+        {"source": "warning", "target": "警告"}
+      ],
+      "reference_blocks": [
+        {"id": "1", "translation": "当门终于打开时，所有沉默等待的人都意识到那个警告是真的。"}
+      ]
+    },
+    {
+      "id": "missing-translation-fixture",
+      "tags": ["film"],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {"name": "Silent Frame", "tmdb_id": 606},
+      "source_blocks": [
+        {"id": "1", "text": "Do not leave the frame."},
+        {"id": "2", "text": "Stay with me."}
+      ],
+      "candidate_blocks": [
+        {"id": "1", "translation": "不要离开画面。"},
+        {"id": "2", "translation": ""}
+      ],
+      "expected_terms": [
+        {"source": "frame", "target": "画面"}
+      ],
+      "reference_blocks": [
+        {"id": "1", "translation": "不要离开画面。"},
+        {"id": "2", "translation": "跟着我。"}
+      ]
+    },
+    {
+      "id": "format-preservation-fixture",
+      "tags": ["series"],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {"name": "Code Room", "tmdb_id": 707},
+      "source_blocks": [
+        {"id": "1", "text": "<i>Run protocol 7.</i>"}
+      ],
+      "candidate_blocks": [
+        {"id": "1", "translation": "<i>执行 7 号协议。</i>"}
+      ],
+      "expected_terms": [
+        {"source": "protocol 7", "target": "7 号协议"}
+      ],
+      "reference_blocks": [
+        {"id": "1", "translation": "<i>执行 7 号协议。</i>"}
+      ]
+    }
+  ]
+}

@@ -37,18 +37,48 @@ fi
 echo "  ffmpeg:  $FFMPEG_PATH"
 echo "  ffprobe: $FFPROBE_PATH"
 
+BUNDLE_LOCAL_ASR="${AISUBPRO_BUNDLE_LOCAL_ASR:-0}"
 ASR_MODEL_DATA_ARGS=()
-if [ -d "$ROOT_DIR/models/asr" ]; then
-    ASR_MODEL_DATA_ARGS+=(--add-data "${ROOT_DIR}/models/asr:models/asr")
-    echo "  bundled ASR models: $ROOT_DIR/models/asr"
-fi
-
 ASR_BACKEND_ARGS=()
-if python3 -c "import faster_whisper" 2>/dev/null; then
-    ASR_BACKEND_ARGS+=(--hidden-import faster_whisper --collect-all faster_whisper)
-    echo "  faster-whisper: available (will be bundled)"
+LOCAL_ASR_EXCLUDE_ARGS=()
+if [ "$BUNDLE_LOCAL_ASR" = "1" ]; then
+    if [ -d "$ROOT_DIR/models/asr" ]; then
+        ASR_MODEL_DATA_ARGS+=(--add-data "${ROOT_DIR}/models/asr:models/asr")
+        echo "  bundled ASR models: $ROOT_DIR/models/asr"
+    else
+        echo "  bundled ASR models: none found under models/asr"
+    fi
+
+    if python3 -c "import faster_whisper" 2>/dev/null; then
+        ASR_BACKEND_ARGS+=(--hidden-import faster_whisper --collect-all faster_whisper)
+        echo "  faster-whisper: available (will be bundled)"
+    else
+        echo "  faster-whisper: not installed (optional backend skipped)"
+    fi
+    if python3 -c "import mlx_whisper" 2>/dev/null; then
+        ASR_BACKEND_ARGS+=(--hidden-import mlx_whisper --collect-all mlx --collect-all mlx_whisper)
+        echo "  mlx-whisper: available (will be bundled)"
+    else
+        echo "  mlx-whisper: not installed (optional backend skipped)"
+    fi
+    if python3 -c "import whisper" 2>/dev/null; then
+        ASR_BACKEND_ARGS+=(--hidden-import whisper)
+        echo "  openai-whisper: available (will be bundled)"
+    else
+        echo "  openai-whisper: not installed (optional backend skipped)"
+    fi
 else
-    echo "  faster-whisper: not installed (optional backend skipped)"
+    LOCAL_ASR_EXCLUDE_ARGS=(
+        --exclude-module torch
+        --exclude-module torchaudio
+        --exclude-module torchvision
+        --exclude-module whisper
+        --exclude-module faster_whisper
+        --exclude-module mlx
+        --exclude-module mlx_whisper
+        --exclude-module ctranslate2
+    )
+    echo "  Local ASR packaging: disabled (set AISUBPRO_BUNDLE_LOCAL_ASR=1 to bundle models and optional ASR backends)"
 fi
 
 # Step 2: Frontend assets
@@ -118,8 +148,6 @@ python3 -m PyInstaller \
     --hidden-import websockets \
     --hidden-import webview \
     --hidden-import webview.platforms.cocoa \
-    --hidden-import mlx_whisper \
-    --hidden-import whisper \
     "${ASR_BACKEND_ARGS[@]}" \
     --hidden-import yt_dlp \
     --hidden-import yt_dlp.utils \
@@ -146,6 +174,7 @@ python3 -m PyInstaller \
     --exclude-module guessit.test.test_yml \
     --exclude-module tensorboard \
     --exclude-module torch.utils.tensorboard \
+    "${LOCAL_ASR_EXCLUDE_ARGS[@]}" \
     --exclude-module webview.platforms.android \
     --exclude-module webview.platforms.win32 \
     --exclude-module webview.platforms.winforms \
@@ -155,13 +184,6 @@ python3 -m PyInstaller \
     --exclude-module webview.platforms.qt \
     --exclude-module webview.platforms.cef \
     --exclude-module urllib3.contrib.emscripten \
-    --collect-all mlx \
-    --collect-all openai \
-    --collect-all starlette \
-    --collect-all httpx \
-    --collect-all mlx_whisper \
-    --collect-all yt_dlp \
-    --collect-all yt_dlp_ejs \
     app/main.py
 
 # No launcher needed - main.py handles pywebview native window directly
@@ -172,5 +194,5 @@ APP_SIZE=$(du -sh "dist/AI Sub Pro.app" | awk '{print $1}')
 echo "  Output: dist/AI Sub Pro.app ($APP_SIZE)"
 echo "  Run:    open 'dist/AI Sub Pro.app'"
 echo ""
-echo "  Note: Whisper model can be bundled under models/asr or downloaded on first use."
+echo "  Note: set AISUBPRO_BUNDLE_LOCAL_ASR=1 to bundle local ASR models/backends."
 echo "  Data is stored at: ~/AI_Sub_Pro_Data/"

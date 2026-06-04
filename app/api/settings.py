@@ -10,6 +10,7 @@ from typing import Optional
 
 from app.config import Config
 import app.engines.providers  # noqa: F401  (load provider modules before concurrent requests)
+from app.engines.asr_capabilities import ASR_MODES, detect_asr_capabilities, recommend_asr_settings
 from app.engines.knowledge import _get_singleton as _kb_singleton, invalidate_translator_kb
 
 log = logging.getLogger(__name__)
@@ -364,6 +365,12 @@ def _validate_settings_update(data: dict) -> None:
 
     asr = data.get("asr") if isinstance(data, dict) else None
     if isinstance(asr, dict):
+        _require_non_blank_str("asr", asr, "mode")
+        if "mode" in asr:
+            asr["mode"] = asr["mode"].strip()
+            if asr["mode"] not in ASR_MODES:
+                allowed = ", ".join(ASR_MODES)
+                raise HTTPException(status_code=400, detail=f"ASR mode must be one of: {allowed}")
         _require_non_blank_str("asr", asr, "model_size")
         _require_non_blank_str("asr", asr, "language")
         _require_int("asr", asr, "beam_size", min_value=1, max_value=20)
@@ -531,6 +538,11 @@ def system_check():
     cfg = Config.to_dict()
     raw_asr = cfg.get("asr", {})
     asr_cfg = raw_asr if isinstance(raw_asr, dict) else {}
+    asr_mode = asr_cfg.get("mode") if isinstance(asr_cfg.get("mode"), str) else "speed"
+    if asr_mode not in ASR_MODES:
+        asr_mode = "speed"
+    asr_capabilities = detect_asr_capabilities(asr_cfg)
+    asr_recommendation = recommend_asr_settings(asr_mode, asr_capabilities)
     model_name = asr_cfg.get("model_size") if isinstance(asr_cfg.get("model_size"), str) else "large-v3-turbo"
     from app.engines.asr import resolve_mlx_model_source
     model_source = resolve_mlx_model_source(model_name)
@@ -565,6 +577,9 @@ def system_check():
         "model_size": model_size,
         "model_name": model_name,
         "whisper_model_source": model_source.get("source", "unknown"),
+        "asr_mode": asr_mode,
+        "asr_capabilities": asr_capabilities,
+        "asr_recommendation": asr_recommendation,
         **translation,
         "mlx_whisper": has_mlx,
         "mlx_error": mlx_error,

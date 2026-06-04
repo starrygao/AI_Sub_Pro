@@ -14,9 +14,11 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Query
 from fastapi import Path as PathParam
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, StrictInt
 
 from app.config import PROJECTS_DIR
+from app.engines.workflow_state import load_workflow_state, stage_log_path
 from app.utils.project_store import (
     project_dir as _ps_project_dir,
     load_project as _ps_load_project,
@@ -639,6 +641,40 @@ async def upload_video(file: UploadFile = File(...)):
 def get_project(pid: str = PathParam(pattern=PID_PATTERN)):
     """Get project detail."""
     return _load_project(pid)
+
+
+@router.get("/{pid}/workflow-state")
+def get_workflow_state(pid: str = PathParam(pattern=PID_PATTERN)):
+    """Get structured workflow state for a project."""
+    _load_project(pid)
+    return load_workflow_state(pid)
+
+
+@router.get("/{pid}/logs/{stage}")
+def download_workflow_log(stage: str, pid: str = PathParam(pattern=PID_PATTERN)):
+    """Download a persisted workflow stage log."""
+    _load_project(pid)
+    try:
+        path = stage_log_path(pid, stage)
+    except ValueError:
+        raise HTTPException(400, "Invalid workflow stage")
+    log_dir = path.parent
+    if log_dir.is_symlink():
+        raise HTTPException(400, "Workflow log directory is invalid")
+    if path.is_symlink():
+        raise HTTPException(400, "Workflow log is invalid")
+    if not path.is_file():
+        raise HTTPException(404, "Workflow log not found")
+    try:
+        resolved_project_dir = _project_dir(pid).resolve()
+        path.resolve().relative_to(resolved_project_dir)
+    except ValueError:
+        raise HTTPException(400, "Workflow log is invalid")
+    return FileResponse(
+        path,
+        media_type="text/plain; charset=utf-8",
+        filename=f"{pid}-{stage}.log",
+    )
 
 
 _PATCHABLE_FIELDS = {
