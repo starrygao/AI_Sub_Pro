@@ -38,6 +38,10 @@ def test_default_config_uses_packaging_friendly_asr_model():
     assert DEFAULT_CONFIG["asr"]["model_size"] == "large-v3-turbo"
 
 
+def test_default_config_has_asr_mode():
+    assert DEFAULT_CONFIG["asr"]["mode"] == "speed"
+
+
 def test_config_loads_and_merges_partial_saved_config(tmp_path, monkeypatch):
     """Old config.json without new sections still loads; new keys populate from DEFAULT_CONFIG."""
     import app.config as cfg
