@@ -25,7 +25,7 @@ from app.utils.media import (
 )
 from app.api.settings import require_translation_ready
 from app.api.projects import _apply_safe_defaults
-from app.utils.project_store import atomic_write_json, mutate_project, PID_PATTERN
+from app.utils.project_store import atomic_write_json, mutate_project, PID_PATTERN, project_dir
 from app.engines.kb_trace import write_kb_usage_trace
 from app.engines.scheduler import (
     get_progress as _scheduler_get_progress,
@@ -170,6 +170,31 @@ def _reject_busy_project(project: dict) -> None:
         raise HTTPException(409, "Project is already running")
 
 
+def _safe_project_artifact_path(pid: str, filename: str) -> Optional[Path]:
+    rel = Path(filename)
+    if rel.is_absolute() or ".." in rel.parts:
+        return None
+    try:
+        pdir = project_dir(pid)
+        candidate = pdir / rel
+        if candidate.is_symlink():
+            return None
+        resolved = candidate.resolve(strict=True)
+    except (OSError, ValueError):
+        return None
+    if not resolved.is_relative_to(pdir) or not resolved.is_file():
+        return None
+    return resolved
+
+
+def _first_safe_project_artifact(pid: str, filenames: list[str]) -> tuple[Optional[str], Optional[Path]]:
+    for filename in filenames:
+        path = _safe_project_artifact_path(pid, filename)
+        if path is not None:
+            return filename, path
+    return None, None
+
+
 def _latest_failed_stage(pid: str) -> str:
     state = load_workflow_state(pid)
     stages = state.get("stages", {}) if isinstance(state, dict) else {}
@@ -182,14 +207,9 @@ def _latest_failed_stage(pid: str) -> str:
 
 
 def _resume_stage_for_project(pid: str) -> str:
-    pdir = PROJECTS_DIR / pid
-    if (pdir / "translated.srt").exists() or (pdir / "bilingual.srt").exists():
+    if _first_safe_project_artifact(pid, ["translated.srt", "bilingual.srt"])[0]:
         return "burn"
-    if (
-        (pdir / "filtered.srt").exists()
-        or (pdir / "raw.srt").exists()
-        or (pdir / "native.srt").exists()
-    ):
+    if _first_safe_project_artifact(pid, ["filtered.srt", "raw.srt", "native.srt"])[0]:
         return "translate"
     return "asr"
 
@@ -585,12 +605,12 @@ def _translation_failed_completely(blocks) -> Optional[str]:
     return next((b.translation_error for b in active if b.translation_error), None)
 
 
-def _find_subtitle_source(pdir: str) -> tuple[Optional[str], Optional[str]]:
-    for fname in ["filtered.srt", "raw.srt", "native.srt"]:
-        fpath = os.path.join(pdir, fname)
-        if os.path.exists(fpath):
-            return fname, fpath
-    return None, None
+def _find_subtitle_source(pid: str) -> tuple[Optional[str], Optional[str]]:
+    source_name, source_path = _first_safe_project_artifact(
+        pid,
+        ["filtered.srt", "raw.srt", "native.srt"],
+    )
+    return source_name, str(source_path) if source_path is not None else None
 
 
 def _run_translate_pipeline(pid: str, target_language: str, owns_registration: bool = True):
@@ -606,7 +626,7 @@ def _run_translate_pipeline(pid: str, target_language: str, owns_registration: b
             project = _load_project(pid)
             pdir = str(PROJECTS_DIR / pid)
             cfg = Config.to_dict()
-            source_name, source_path = _find_subtitle_source(pdir)
+            source_name, source_path = _find_subtitle_source(pid)
             _best_effort_start_stage(
                 pid,
                 "translate",
@@ -731,11 +751,11 @@ def _build_bilingual_tracks(pid: str):
     # translated.srt already contains the target-language text; filtered.srt
     # contains the source-language (English for trailers) text. Timestamps match
     # because both were written from the same block list during translate stage.
-    translated = pdir / "translated.srt"
-    filtered = pdir / "filtered.srt"
-    if translated.exists():
+    translated = _safe_project_artifact_path(pid, "translated.srt")
+    filtered = _safe_project_artifact_path(pid, "filtered.srt")
+    if translated is not None:
         zh_path.write_bytes(translated.read_bytes())
-    if filtered.exists():
+    if filtered is not None:
         en_path.write_bytes(filtered.read_bytes())
 
     # Dynamic sizing. Without a cheap video-height probe here, use 1080 as a sane
@@ -806,9 +826,7 @@ def _run_burn_pipeline(pid: str):
 
             if project.get("source_type") == "trailer":
                 # Trailer: bilingual (zh big on top, en small below).
-                translated = os.path.join(pdir, "translated.srt")
-                filtered = os.path.join(pdir, "filtered.srt")
-                if not (os.path.exists(translated) or os.path.exists(filtered)):
+                if not _first_safe_project_artifact(pid, ["translated.srt", "filtered.srt"])[0]:
                     reason = "无字幕文件可烧录"
                     _mark_burn_unavailable(pid, reason)
                     _best_effort_fail_stage(pid, "burn", reason)
@@ -817,16 +835,14 @@ def _run_burn_pipeline(pid: str):
                 tracks = _build_bilingual_tracks(pid)
             else:
                 # Upload: single-track legacy style. Prefer bilingual.srt if present.
-                srt_path = os.path.join(pdir, "bilingual.srt")
-                if not os.path.exists(srt_path):
-                    srt_path = os.path.join(pdir, "translated.srt")
-                if not os.path.exists(srt_path):
+                _, srt_path = _first_safe_project_artifact(pid, ["bilingual.srt", "translated.srt"])
+                if srt_path is None:
                     reason = "无字幕文件可烧录"
                     _mark_burn_unavailable(pid, reason)
                     _best_effort_fail_stage(pid, "burn", reason)
                     _emit_progress(pid, "burn", 100, "翻译完成 (无字幕文件可烧录)")
                     return
-                tracks = [_build_upload_legacy_track(srt_path)]
+                tracks = [_build_upload_legacy_track(str(srt_path))]
 
             base_name = os.path.splitext(os.path.basename(video_path))[0]
             output_video = os.path.join(pdir, f"{base_name}_subtitled.mp4")
@@ -1064,9 +1080,7 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                 _check_cancel(pid)
 
                 if project.get("source_type") == "trailer":
-                    translated = os.path.join(pdir, "translated.srt")
-                    filtered = os.path.join(pdir, "filtered.srt")
-                    if not (os.path.exists(translated) or os.path.exists(filtered)):
+                    if not _first_safe_project_artifact(pid, ["translated.srt", "filtered.srt"])[0]:
                         reason = "无字幕文件可烧录"
                         _mark_burn_unavailable(pid)
                         _best_effort_fail_stage(pid, "burn", reason)
@@ -1074,16 +1088,14 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                         return
                     tracks = _build_bilingual_tracks(pid)
                 else:
-                    srt_path = os.path.join(pdir, "bilingual.srt")
-                    if not os.path.exists(srt_path):
-                        srt_path = os.path.join(pdir, "translated.srt")
-                    if not os.path.exists(srt_path):
+                    _, srt_path = _first_safe_project_artifact(pid, ["bilingual.srt", "translated.srt"])
+                    if srt_path is None:
                         reason = "无字幕文件可烧录"
                         _mark_burn_unavailable(pid)
                         _best_effort_fail_stage(pid, "burn", reason)
                         _emit_progress(pid, "burn", 0, "字幕烧录失败 (无字幕文件)")
                         return
-                    tracks = [_build_upload_legacy_track(srt_path)]
+                    tracks = [_build_upload_legacy_track(str(srt_path))]
 
                 base_name = os.path.splitext(os.path.basename(video_path))[0]
                 output_video = os.path.join(pdir, f"{base_name}_subtitled.mp4")

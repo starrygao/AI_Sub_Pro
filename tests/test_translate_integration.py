@@ -160,6 +160,88 @@ def test_resume_chooses_translate_when_filtered_srt_exists(tmp_project_dir, monk
     assert dummy.started is True
 
 
+def test_resume_ignores_translated_srt_directory(tmp_project_dir, monkeypatch):
+    from app.api import projects as projects_api
+    from app.api import translate as api_translate
+    from app.utils import project_store
+    from app.main import app
+
+    pid = "resumedir"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "error",
+        "pipeline_stage": None,
+    }), encoding="utf-8")
+    (pdir / "translated.srt").mkdir()
+
+    monkeypatch.setattr(projects_api, "PROJECTS_DIR", tmp_project_dir)
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_project_dir)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_project_dir)
+    monkeypatch.setattr(api_translate, "active_tasks", {})
+
+    class DummyThread:
+        started = False
+
+        def start(self):
+            self.started = True
+
+    dummy = DummyThread()
+    monkeypatch.setattr(api_translate, "try_register_task", lambda *args, **kwargs: dummy)
+
+    response = TestClient(app).post(f"/api/projects/{pid}/resume")
+
+    assert response.status_code == 200
+    assert response.json()["stage"] == "asr"
+    assert dummy.started is True
+
+
+def test_resume_ignores_raw_srt_symlink_outside_project(tmp_project_dir, monkeypatch):
+    from app.api import projects as projects_api
+    from app.api import translate as api_translate
+    from app.utils import project_store
+    from app.main import app
+
+    pid = "resumesymlink"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "error",
+        "pipeline_stage": None,
+        "target_language": "Japanese",
+    }), encoding="utf-8")
+    outside = tmp_project_dir.parent / "outside.srt"
+    outside.write_text("1\n00:00:00,000 --> 00:00:01,000\nOutside\n\n", encoding="utf-8")
+    (pdir / "raw.srt").symlink_to(outside)
+
+    monkeypatch.setattr(projects_api, "PROJECTS_DIR", tmp_project_dir)
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_project_dir)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_project_dir)
+    monkeypatch.setattr(api_translate, "active_tasks", {})
+    monkeypatch.setattr(api_translate, "require_translation_ready", lambda: None)
+
+    class DummyThread:
+        started = False
+
+        def start(self):
+            self.started = True
+
+    dummy = DummyThread()
+    monkeypatch.setattr(api_translate, "try_register_task", lambda *args, **kwargs: dummy)
+
+    response = TestClient(app).post(f"/api/projects/{pid}/resume")
+
+    assert response.status_code == 200
+    assert response.json()["stage"] == "asr"
+    assert dummy.started is True
+
+
 def test_reset_workflow_for_action_preserves_retry_count(tmp_project_dir):
     from app.api import translate as api_translate
     from app.engines.workflow_state import fail_stage, load_workflow_state, reset_workflow
