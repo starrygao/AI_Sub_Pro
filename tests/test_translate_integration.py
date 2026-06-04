@@ -2,6 +2,49 @@ from unittest.mock import patch
 import json
 from datetime import timedelta
 
+from fastapi.testclient import TestClient
+
+
+def test_start_asr_initializes_workflow_state(tmp_project_dir, monkeypatch):
+    from app.api import projects as projects_api
+    from app.api import translate as api_translate
+    from app.utils import project_store
+    from app.main import app
+
+    pid = "asrstate1"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "created",
+        "selected_audio_track": 0,
+        "audio_tracks": [{"index": 0, "codec": "aac", "lang": "eng"}],
+    }), encoding="utf-8")
+
+    monkeypatch.setattr(projects_api, "PROJECTS_DIR", tmp_project_dir)
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_project_dir)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_project_dir)
+    monkeypatch.setattr(api_translate, "active_tasks", {})
+
+    class DummyThread:
+        started = False
+
+        def start(self):
+            self.started = True
+
+    dummy = DummyThread()
+    monkeypatch.setattr(api_translate, "try_register_task", lambda *args, **kwargs: dummy)
+
+    response = TestClient(app).post(f"/api/projects/{pid}/start-asr", json={})
+
+    assert response.status_code == 200
+    assert dummy.started is True
+    state = json.loads((pdir / "workflow_state.json").read_text(encoding="utf-8"))
+    assert set(state["stages"]) == {"asr"}
+    assert state["stages"]["asr"]["status"] == "pending"
+
 
 def test_emit_progress_routes_through_scheduler():
     """_emit_progress must delegate to scheduler.update_progress (single source of truth).

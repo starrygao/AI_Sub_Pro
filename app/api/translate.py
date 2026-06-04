@@ -36,6 +36,13 @@ from app.engines.scheduler import (
     reset_cancel,
     request_cancel,
 )
+from app.engines.workflow_state import (
+    cancel_workflow,
+    fail_stage,
+    finish_stage,
+    reset_workflow,
+    start_stage,
+)
 from app.utils.errors import redact_error_message
 
 log = logging.getLogger(__name__)
@@ -176,6 +183,66 @@ def _persist_workflow_options(
     mutate_project(pid, _apply, normalize=_apply_safe_defaults)
 
 
+def _reset_workflow_for_action(pid: str, action: str) -> dict:
+    stages_by_action = {
+        "asr": ["asr"],
+        "translate": ["translate"],
+        "full": ["asr", "translate", "burn"],
+        "burn": ["burn"],
+    }
+    try:
+        stages = stages_by_action[action]
+    except KeyError as exc:
+        raise ValueError(f"unknown workflow action: {action!r}") from exc
+    return reset_workflow(pid, stages)
+
+
+def _best_effort_start_stage(pid: str, stage: str, *, input_artifact: str = "") -> None:
+    try:
+        start_stage(pid, stage, input_artifact=input_artifact)
+    except Exception as e:
+        log.warning("workflow start failed pid=%s stage=%s: %s", pid, stage, e)
+
+
+def _best_effort_finish_stage(
+    pid: str,
+    stage: str,
+    *,
+    output_artifact: str = "",
+    resume_eligible: bool = True,
+) -> None:
+    try:
+        finish_stage(
+            pid,
+            stage,
+            output_artifact=output_artifact,
+            resume_eligible=resume_eligible,
+        )
+    except Exception as e:
+        log.warning("workflow finish failed pid=%s stage=%s: %s", pid, stage, e)
+
+
+def _best_effort_fail_stage(pid: str, stage: str, exc: BaseException | str) -> None:
+    try:
+        fail_stage(pid, stage, exc)
+    except Exception as e:
+        log.warning("workflow fail failed pid=%s stage=%s: %s", pid, stage, e)
+
+
+def _best_effort_cancel_workflow(pid: str, stage: str) -> None:
+    try:
+        cancel_workflow(pid, stage)
+    except Exception as e:
+        log.warning("workflow cancel failed pid=%s stage=%s: %s", pid, stage, e)
+
+
+def _best_effort_mark_exception(pid: str, stage: str, exc: BaseException) -> None:
+    if is_cancelled(pid):
+        _best_effort_cancel_workflow(pid, stage)
+    else:
+        _best_effort_fail_stage(pid, stage, exc)
+
+
 def _resolve_audio_track(project: dict, requested: Optional[int]) -> int:
     value = requested if requested is not None else project.get("selected_audio_track", 0)
     if value is None:
@@ -296,9 +363,20 @@ def _run_asr_pipeline(pid: str, audio_track: int, language: str, owns_registrati
             project = _load_project(pid)
             pdir = str(PROJECTS_DIR / pid)
             video_path = project["video_path"]
+            _best_effort_start_stage(
+                pid,
+                "asr",
+                input_artifact=project.get("video_path", ""),
+            )
 
             # Fast path: use embedded subtitle if present + enabled.
             if _try_bypass_asr_with_embedded_subtitle(pid, project, pdir):
+                _best_effort_finish_stage(
+                    pid,
+                    "asr",
+                    output_artifact="filtered.srt",
+                    resume_eligible=True,
+                )
                 return
 
             # Step 1: Audio preprocessing
@@ -379,9 +457,16 @@ def _run_asr_pipeline(pid: str, audio_track: int, language: str, owns_registrati
 
             mutate_project(pid, lambda p: p.update({"status": "asr_done", "error": None}),
                            normalize=_apply_safe_defaults)
+            _best_effort_finish_stage(
+                pid,
+                "asr",
+                output_artifact="filtered.srt",
+                resume_eligible=True,
+            )
 
     except Exception as e:
         log.exception("ASR pipeline failed for %s", pid)
+        _best_effort_mark_exception(pid, "asr", e)
         error_msg = _safe_error_message(e)
         try:
             mutate_project(pid, lambda p: p.update({"status": "error",
@@ -412,6 +497,14 @@ def _translation_failed_completely(blocks) -> Optional[str]:
     return next((b.translation_error for b in active if b.translation_error), None)
 
 
+def _find_subtitle_source(pdir: str) -> tuple[Optional[str], Optional[str]]:
+    for fname in ["filtered.srt", "raw.srt", "native.srt"]:
+        fpath = os.path.join(pdir, fname)
+        if os.path.exists(fpath):
+            return fname, fpath
+    return None, None
+
+
 def _run_translate_pipeline(pid: str, target_language: str, owns_registration: bool = True):
     """Run translation pipeline in background thread.
 
@@ -425,19 +518,20 @@ def _run_translate_pipeline(pid: str, target_language: str, owns_registration: b
             project = _load_project(pid)
             pdir = str(PROJECTS_DIR / pid)
             cfg = Config.to_dict()
+            source_name, source_path = _find_subtitle_source(pdir)
+            _best_effort_start_stage(
+                pid,
+                "translate",
+                input_artifact=source_name or "",
+            )
 
             # Load subtitle blocks
             _emit_progress(pid, "translate", 0, "正在加载字幕...")
             _check_cancel(pid)
             from app.utils.srt import parse_srt_file
             blocks = None
-            source_name = None
-            for fname in ["filtered.srt", "raw.srt", "native.srt"]:
-                fpath = os.path.join(pdir, fname)
-                if os.path.exists(fpath):
-                    blocks = parse_srt_file(fpath)
-                    source_name = fname
-                    break
+            if source_path:
+                blocks = parse_srt_file(source_path)
 
             if not blocks:
                 raise RuntimeError("No subtitle file found. Run ASR first.")
@@ -516,9 +610,16 @@ def _run_translate_pipeline(pid: str, target_language: str, owns_registration: b
 
             mutate_project(pid, lambda p: p.update({"status": "translated", "error": None}),
                            normalize=_apply_safe_defaults)
+            _best_effort_finish_stage(
+                pid,
+                "translate",
+                output_artifact="translated.srt",
+                resume_eligible=True,
+            )
 
     except Exception as e:
         log.exception("Translation pipeline failed for %s", pid)
+        _best_effort_mark_exception(pid, "translate", e)
         error_msg = _safe_error_message(e)
         try:
             mutate_project(pid, lambda p: p.update({"status": "error",
@@ -605,55 +706,72 @@ def _run_burn_pipeline(pid: str):
     On success: status=completed, output_video set.
     On burn failure: status=translated with an error note (translation still usable).
     """
-    with slot("burn", pid):
-        _emit_progress(pid, "burn", 0, "正在烧录字幕到视频...")
-        _check_cancel(pid)
+    try:
+        with slot("burn", pid):
+            project = _load_project(pid)
+            pdir = str(PROJECTS_DIR / pid)
+            video_path = project["video_path"]
+            _best_effort_start_stage(pid, "burn", input_artifact=video_path)
 
-        project = _load_project(pid)
-        pdir = str(PROJECTS_DIR / pid)
-        video_path = project["video_path"]
+            _emit_progress(pid, "burn", 0, "正在烧录字幕到视频...")
+            _check_cancel(pid)
 
-        if project.get("source_type") == "trailer":
-            # Trailer: bilingual (zh big on top, en small below).
-            translated = os.path.join(pdir, "translated.srt")
-            filtered = os.path.join(pdir, "filtered.srt")
-            if not (os.path.exists(translated) or os.path.exists(filtered)):
-                _mark_burn_unavailable(pid)
-                _emit_progress(pid, "burn", 100, "翻译完成 (无字幕文件可烧录)")
-                return
-            tracks = _build_bilingual_tracks(pid)
-        else:
-            # Upload: single-track legacy style. Prefer bilingual.srt if present.
-            srt_path = os.path.join(pdir, "bilingual.srt")
-            if not os.path.exists(srt_path):
-                srt_path = os.path.join(pdir, "translated.srt")
-            if not os.path.exists(srt_path):
-                _mark_burn_unavailable(pid)
-                _emit_progress(pid, "burn", 100, "翻译完成 (无字幕文件可烧录)")
-                return
-            tracks = [_build_upload_legacy_track(srt_path)]
+            if project.get("source_type") == "trailer":
+                # Trailer: bilingual (zh big on top, en small below).
+                translated = os.path.join(pdir, "translated.srt")
+                filtered = os.path.join(pdir, "filtered.srt")
+                if not (os.path.exists(translated) or os.path.exists(filtered)):
+                    reason = "无字幕文件可烧录"
+                    _mark_burn_unavailable(pid, reason)
+                    _best_effort_fail_stage(pid, "burn", reason)
+                    _emit_progress(pid, "burn", 100, "翻译完成 (无字幕文件可烧录)")
+                    return
+                tracks = _build_bilingual_tracks(pid)
+            else:
+                # Upload: single-track legacy style. Prefer bilingual.srt if present.
+                srt_path = os.path.join(pdir, "bilingual.srt")
+                if not os.path.exists(srt_path):
+                    srt_path = os.path.join(pdir, "translated.srt")
+                if not os.path.exists(srt_path):
+                    reason = "无字幕文件可烧录"
+                    _mark_burn_unavailable(pid, reason)
+                    _best_effort_fail_stage(pid, "burn", reason)
+                    _emit_progress(pid, "burn", 100, "翻译完成 (无字幕文件可烧录)")
+                    return
+                tracks = [_build_upload_legacy_track(srt_path)]
 
-        base_name = os.path.splitext(os.path.basename(video_path))[0]
-        output_video = os.path.join(pdir, f"{base_name}_subtitled.mp4")
-        success = burn_subtitles(
-            video_path, tracks, output_video,
-            callback=lambda msg: _emit_progress(pid, "burn", 50, msg),
-        )
-        if success:
-            _out = output_video
-            mutate_project(pid, lambda p: p.update({"status": "completed",
-                                                     "output_video": _out,
-                                                     "error": None}),
-                           normalize=_apply_safe_defaults)
-            _emit_progress(pid, "burn", 100, "全部完成! 字幕已烧录到视频")
-            from app.engines.audio import cleanup_intermediate
-            cleanup_intermediate(pdir)
-        else:
-            # Burning failed but translation succeeded - still usable
-            mutate_project(pid, lambda p: p.update({"status": "translated",
-                                                     "error": "字幕烧录失败，但翻译已完成"}),
-                           normalize=_apply_safe_defaults)
-            _emit_progress(pid, "burn", 100, "翻译完成，但字幕烧录失败")
+            base_name = os.path.splitext(os.path.basename(video_path))[0]
+            output_video = os.path.join(pdir, f"{base_name}_subtitled.mp4")
+            success = burn_subtitles(
+                video_path, tracks, output_video,
+                callback=lambda msg: _emit_progress(pid, "burn", 50, msg),
+            )
+            if success:
+                _out = output_video
+                mutate_project(pid, lambda p: p.update({"status": "completed",
+                                                         "output_video": _out,
+                                                         "error": None}),
+                               normalize=_apply_safe_defaults)
+                _best_effort_finish_stage(
+                    pid,
+                    "burn",
+                    output_artifact=output_video,
+                    resume_eligible=True,
+                )
+                _emit_progress(pid, "burn", 100, "全部完成! 字幕已烧录到视频")
+                from app.engines.audio import cleanup_intermediate
+                cleanup_intermediate(pdir)
+            else:
+                # Burning failed but translation succeeded - still usable
+                reason = "字幕烧录失败，但翻译已完成"
+                mutate_project(pid, lambda p: p.update({"status": "translated",
+                                                         "error": reason}),
+                               normalize=_apply_safe_defaults)
+                _best_effort_fail_stage(pid, "burn", reason)
+                _emit_progress(pid, "burn", 100, "翻译完成，但字幕烧录失败")
+    except Exception as e:
+        _best_effort_mark_exception(pid, "burn", e)
+        raise
 
 
 def _run_full_pipeline(pid: str, audio_track: int, language: str, target_language: str):
@@ -704,6 +822,7 @@ def start_asr(pid: str = PathParam(pattern=PID_PATTERN), req: ASRRequest = ASRRe
         raise HTTPException(409, "Task already running for this project")
     try:
         _persist_workflow_options(pid, audio_track=audio_track, language=language)
+        _reset_workflow_for_action(pid, "asr")
     except Exception:
         unregister_task(pid)
         raise
@@ -731,6 +850,7 @@ def start_translate(pid: str = PathParam(pattern=PID_PATTERN), req: TranslateReq
         raise HTTPException(409, "Task already running for this project")
     try:
         _persist_workflow_options(pid, target_language=target_lang)
+        _reset_workflow_for_action(pid, "translate")
     except Exception:
         unregister_task(pid)
         raise
@@ -767,6 +887,7 @@ def start_full(pid: str = PathParam(pattern=PID_PATTERN), req: FullPipelineReque
             language=language,
             target_language=target_lang,
         )
+        _reset_workflow_for_action(pid, "full")
     except Exception:
         unregister_task(pid)
         raise
@@ -783,9 +904,12 @@ def cancel_task(pid: str = PathParam(pattern=PID_PATTERN)):
         or bool(project.get("pipeline_stage"))
     )
     if is_task_registered(pid) or cancellable_pipeline:
+        raw_stage = project.get("pipeline_stage")
+        stage = raw_stage if raw_stage in {"download", "asr", "translate", "burn"} else "asr"
         # Signal worker threads via scheduler cancel events — they'll observe at
         # the next _check_cancel checkpoint and raise.
         request_cancel(pid)
+        _best_effort_cancel_workflow(pid, stage)
         try:
             mutate_project(pid, lambda p: p.update({"status": "error",
                                                      "pipeline_stage": None,
@@ -793,7 +917,6 @@ def cancel_task(pid: str = PathParam(pattern=PID_PATTERN)):
                            normalize=_apply_safe_defaults)
         except Exception:
             pass
-        stage = project.get("pipeline_stage") if isinstance(project.get("pipeline_stage"), str) else "asr"
         _emit_progress(pid, stage, 0, "已取消")
         return {"status": "cancelled"}
     return {"status": "no_task"}
@@ -808,16 +931,20 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
     def _burn_task():
         try:
             with slot("burn", pid):
-                _emit_progress(pid, "burn", 0, "正在烧录字幕到视频...")
-                _check_cancel(pid)
                 pdir = str(PROJECTS_DIR / pid)
                 video_path = project["video_path"]
+                _best_effort_start_stage(pid, "burn", input_artifact=video_path)
+
+                _emit_progress(pid, "burn", 0, "正在烧录字幕到视频...")
+                _check_cancel(pid)
 
                 if project.get("source_type") == "trailer":
                     translated = os.path.join(pdir, "translated.srt")
                     filtered = os.path.join(pdir, "filtered.srt")
                     if not (os.path.exists(translated) or os.path.exists(filtered)):
+                        reason = "无字幕文件可烧录"
                         _mark_burn_unavailable(pid)
+                        _best_effort_fail_stage(pid, "burn", reason)
                         _emit_progress(pid, "burn", 0, "字幕烧录失败 (无字幕文件)")
                         return
                     tracks = _build_bilingual_tracks(pid)
@@ -826,7 +953,9 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                     if not os.path.exists(srt_path):
                         srt_path = os.path.join(pdir, "translated.srt")
                     if not os.path.exists(srt_path):
+                        reason = "无字幕文件可烧录"
                         _mark_burn_unavailable(pid)
+                        _best_effort_fail_stage(pid, "burn", reason)
                         _emit_progress(pid, "burn", 0, "字幕烧录失败 (无字幕文件)")
                         return
                     tracks = [_build_upload_legacy_track(srt_path)]
@@ -843,6 +972,12 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                                                              "output_video": _out,
                                                              "error": None}),
                                    normalize=_apply_safe_defaults)
+                    _best_effort_finish_stage(
+                        pid,
+                        "burn",
+                        output_artifact=output_video,
+                        resume_eligible=True,
+                    )
                     _emit_progress(pid, "burn", 100, "字幕烧录完成!")
                     from app.engines.audio import cleanup_intermediate
                     cleanup_intermediate(pdir)
@@ -850,11 +985,14 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                     # Burn failed but translation is still valid — mirror
                     # _run_burn_pipeline so the UI sees a real failure state
                     # instead of stale 'translated' with no error note.
+                    reason = "字幕烧录失败，但翻译已完成"
                     mutate_project(pid, lambda p: p.update({"status": "translated",
-                                                             "error": "字幕烧录失败，但翻译已完成"}),
+                                                             "error": reason}),
                                    normalize=_apply_safe_defaults)
+                    _best_effort_fail_stage(pid, "burn", reason)
                     _emit_progress(pid, "burn", 0, "字幕烧录失败")
         except Exception as e:
+            _best_effort_mark_exception(pid, "burn", e)
             error_msg = _safe_error_message(e, 120)
             try:
                 mutate_project(pid, lambda p: p.update({"status": "translated",
@@ -874,6 +1012,11 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
         )
     except TaskAlreadyRunning:
         raise HTTPException(409, "Task already running for this project")
+    try:
+        _reset_workflow_for_action(pid, "burn")
+    except Exception:
+        unregister_task(pid)
+        raise
     t.start()
     return {"status": "started", "message": "Burning subtitles into video"}
 
