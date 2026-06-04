@@ -1757,6 +1757,83 @@ function app() {
       return [value.slice(0, cut).trim(), value.slice(cut).trim()];
     },
 
+    subtitleDurationMs(item) {
+      if (!this.isPlainObject(item)) return 0;
+      return this.parseSrtTime(item.end) - this.parseSrtTime(item.start);
+    },
+
+    joinSubtitleText(left, right) {
+      return [left, right]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .join('\n');
+    },
+
+    subtitleQualityIssues() {
+      const issues = [];
+      const lineLimit = 42;
+      const readingSpeedLimit = 22;
+      let previous = null;
+      const addIssue = (item, idx, code, severity, message) => {
+        issues.push({
+          code,
+          severity,
+          index: Number.isInteger(item?.index) ? item.index : idx + 1,
+          message,
+        });
+      };
+
+      this.subtitles.forEach((item, idx) => {
+        if (!this.isPlainObject(item) || item.filtered) return;
+        const startMs = this.parseSrtTime(item.start);
+        const endMs = this.parseSrtTime(item.end);
+        const durationMs = endMs - startMs;
+        const sourceText = typeof item.text === 'string' ? item.text.trim() : '';
+        const translationText = typeof item.translation === 'string' ? item.translation.trim() : '';
+
+        if (previous && startMs < previous.endMs) {
+          addIssue(item, idx, 'overlap', 'severe', `第 ${idx + 1} 行与上一行时间重叠`);
+        }
+        if (durationMs <= 0) {
+          addIssue(item, idx, 'non_positive_duration', 'severe', `第 ${idx + 1} 行时长无效`);
+        }
+        if (!sourceText) {
+          addIssue(item, idx, 'empty_source', 'severe', `第 ${idx + 1} 行缺少原文`);
+        }
+        if (sourceText && !translationText) {
+          addIssue(item, idx, 'missing_translation', 'severe', `第 ${idx + 1} 行缺少译文`);
+        }
+
+        const lines = `${sourceText}\n${translationText}`.split(/\r?\n/);
+        if (lines.some((line) => line.trim().length > lineLimit)) {
+          addIssue(item, idx, 'long_line', 'warning', `第 ${idx + 1} 行过长`);
+        }
+        const readableChars = Math.max(sourceText.length, translationText.length);
+        const seconds = durationMs / 1000;
+        if (readableChars > 0 && (seconds <= 0 || readableChars / seconds > readingSpeedLimit)) {
+          addIssue(item, idx, 'reading_speed', 'warning', `第 ${idx + 1} 行阅读速度过快`);
+        }
+
+        previous = { endMs };
+      });
+
+      return issues;
+    },
+
+    subtitleQualitySummary() {
+      const issues = this.subtitleQualityIssues();
+      return issues.reduce((summary, issue) => {
+        summary.total += 1;
+        if (issue.severity === 'severe') summary.severe += 1;
+        else summary.warning += 1;
+        return summary;
+      }, { total: 0, severe: 0, warning: 0, issues });
+    },
+
+    hasSevereSubtitleIssues() {
+      return this.subtitleQualitySummary().severe > 0;
+    },
+
     renumberSubtitles() {
       this.subtitles.forEach((s, i) => { s.index = i + 1; });
     },
@@ -1871,6 +1948,37 @@ function app() {
       try {
         await this.persistSubtitles();
         this.toast('已分割字幕行');
+      } catch(e) {
+        this.restoreSubtitles(before);
+        this.toast('保存失败', 'error');
+      } finally {
+        if (this.subtitleActionPending === actionKey) this.subtitleActionPending = '';
+      }
+    },
+
+    async mergeSubtitleWithNext(idx) {
+      if (this.subtitleActionsDisabled()) return;
+      if (!this.isValidSubtitleIndex(idx) || idx >= this.subtitles.length - 1) return;
+      const item = this.subtitles[idx];
+      const next = this.subtitles[idx + 1];
+      const startMs = this.parseSrtTime(item.start);
+      const nextEndMs = this.parseSrtTime(next?.end);
+      if (nextEndMs <= startMs) {
+        this.toast('相邻字幕时间无效，无法合并', 'error');
+        return;
+      }
+      const actionKey = this.subtitleActionKey('merge', idx);
+      this.subtitleActionPending = actionKey;
+      const before = this.subtitleSnapshot();
+      item.end = next.end || item.end;
+      item.text = this.joinSubtitleText(item.text, next.text);
+      item.translation = this.joinSubtitleText(item.translation, next.translation);
+      item.filtered = !!item.filtered && !!next.filtered;
+      item.filter_reason = this.joinSubtitleText(item.filter_reason, next.filter_reason);
+      this.subtitles.splice(idx + 1, 1);
+      try {
+        await this.persistSubtitles();
+        this.toast('已合并字幕行');
       } catch(e) {
         this.restoreSubtitles(before);
         this.toast('保存失败', 'error');
