@@ -1527,3 +1527,161 @@ def test_subtitle_quality_summary_flags_timing_translation_and_reading_speed():
         }
         """
     )
+
+
+def test_subtitle_replace_preview_counts_without_mutating_rows():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.subtitles = [
+          {index: 1, text: 'Tony Stark enters', translation: 'Stark 来了', filtered: false},
+          {index: 2, text: 'Pepper waits', translation: 'stark 迟到了', filtered: false},
+          {index: 3, text: 'Archived Stark', translation: 'Stark filtered', filtered: true},
+        ];
+        state.subtitleFindText = 'Stark';
+        state.subtitleReplaceText = '史塔克';
+        state.subtitleReplaceScope = 'translation';
+        state.subtitleReplaceCaseSensitive = false;
+        const before = JSON.stringify(state.subtitles);
+
+        const preview = state.subtitleReplacePreview();
+
+        if (preview.count !== 2 || preview.rows.length !== 2) {
+          throw new Error(`expected two replacement hits, got ${JSON.stringify(preview)}`);
+        }
+        if (JSON.stringify(state.subtitles) !== before) {
+          throw new Error('replace preview mutated subtitles');
+        }
+        """
+    )
+
+
+def test_apply_subtitle_replace_persists_and_rolls_back_on_failure():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          let persisted = 0;
+          const toasts = [];
+          state.currentProject = {id: 'p1'};
+          state.toast = (message, type) => { toasts.push({message, type}); };
+          state.persistSubtitles = async () => { persisted += 1; state.renumberSubtitles(); };
+          state.subtitles = [
+            {index: 1, text: 'Tony Stark', translation: 'Stark 来了', filtered: false},
+            {index: 2, text: 'Pepper', translation: 'stark 迟到了', filtered: false},
+          ];
+          state.subtitleFindText = 'Stark';
+          state.subtitleReplaceText = '史塔克';
+          state.subtitleReplaceScope = 'translation';
+          state.subtitleReplaceCaseSensitive = false;
+
+          await state.applySubtitleReplace();
+
+          if (persisted !== 1) throw new Error(`expected one persist, got ${persisted}`);
+          if (state.subtitles[0].translation !== '史塔克 来了' || state.subtitles[1].translation !== '史塔克 迟到了') {
+            throw new Error(`unexpected replaced translations: ${JSON.stringify(state.subtitles)}`);
+          }
+          if (!toasts.some((t) => t.message.includes('已替换 2 处'))) {
+            throw new Error(`expected replacement toast, got ${JSON.stringify(toasts)}`);
+          }
+
+          const beforeFailure = JSON.stringify(state.subtitles);
+          state.persistSubtitles = async () => { throw new Error('backend rejected'); };
+          state.subtitleFindText = '史塔克';
+          state.subtitleReplaceText = 'Stark';
+
+          await state.applySubtitleReplace();
+
+          if (JSON.stringify(state.subtitles) !== beforeFailure) {
+            throw new Error(`expected rollback after failed replace, got ${JSON.stringify(state.subtitles)}`);
+          }
+          if (state.subtitleActionPending !== '') {
+            throw new Error(`expected pending state to clear, got ${state.subtitleActionPending}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_export_quality_requires_confirmation_before_api_call_for_severe_issues():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          Blob: function(parts, options) {
+            this.parts = parts;
+            this.options = options;
+          },
+          URL: {
+            createObjectURL: () => 'blob:quality-export',
+            revokeObjectURL: () => {},
+          },
+          document: {
+            body: { appendChild: () => {} },
+            createElement: () => ({ click: () => {}, remove: () => {} }),
+          },
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          let calls = 0;
+          let confirms = 0;
+          state.currentProject = {id: 'p1', status: 'translated'};
+          state.subtitles = [
+            {index: 1, start: '00:00:00,000', end: '00:00:00,000', text: '', translation: '可导出的译文', filtered: false},
+          ];
+          state.toast = () => {};
+          state.askConfirm = async (options) => {
+            confirms += 1;
+            if (!String(options.message || '').includes('严重问题')) {
+              throw new Error(`expected severe warning message, got ${JSON.stringify(options)}`);
+            }
+            return confirms > 1;
+          };
+          state.api = async (url, method) => {
+            calls += 1;
+            if (url !== '/api/projects/p1/export?format=translated' || method !== 'POST') {
+              throw new Error(`unexpected export API ${method} ${url}`);
+            }
+            return {content: 'Translated subtitle', filename: 'movie.translated.srt'};
+          };
+
+          await state.exportSrt('translated');
+          if (calls !== 0 || confirms !== 1) {
+            throw new Error(`declined export should not call API, got calls=${calls} confirms=${confirms}`);
+          }
+
+          await state.exportSrt('translated');
+          if (calls !== 1 || confirms !== 2) {
+            throw new Error(`accepted export should call API once, got calls=${calls} confirms=${confirms}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )

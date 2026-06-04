@@ -66,6 +66,11 @@ function app() {
     editingIdx: -1,
     editText: '',
     subtitleActionPending: '',
+    subtitleFindText: '',
+    subtitleReplaceText: '',
+    subtitleReplaceScope: 'translation',
+    subtitleReplaceCaseSensitive: false,
+    subtitleQualityOverride: '',
     progressPct: 0,
     progressMsg: '',
     toasts: [],
@@ -1785,16 +1790,17 @@ function app() {
 
       this.subtitles.forEach((item, idx) => {
         if (!this.isPlainObject(item) || item.filtered) return;
-        const startMs = this.parseSrtTime(item.start);
-        const endMs = this.parseSrtTime(item.end);
+        const hasTiming = typeof item.start === 'string' && typeof item.end === 'string';
+        const startMs = hasTiming ? this.parseSrtTime(item.start) : 0;
+        const endMs = hasTiming ? this.parseSrtTime(item.end) : 0;
         const durationMs = endMs - startMs;
         const sourceText = typeof item.text === 'string' ? item.text.trim() : '';
         const translationText = typeof item.translation === 'string' ? item.translation.trim() : '';
 
-        if (previous && startMs < previous.endMs) {
+        if (hasTiming && previous && startMs < previous.endMs) {
           addIssue(item, idx, 'overlap', 'severe', `第 ${idx + 1} 行与上一行时间重叠`);
         }
-        if (durationMs <= 0) {
+        if (hasTiming && durationMs <= 0) {
           addIssue(item, idx, 'non_positive_duration', 'severe', `第 ${idx + 1} 行时长无效`);
         }
         if (!sourceText) {
@@ -1810,11 +1816,11 @@ function app() {
         }
         const readableChars = Math.max(sourceText.length, translationText.length);
         const seconds = durationMs / 1000;
-        if (readableChars > 0 && (seconds <= 0 || readableChars / seconds > readingSpeedLimit)) {
+        if (hasTiming && readableChars > 0 && (seconds <= 0 || readableChars / seconds > readingSpeedLimit)) {
           addIssue(item, idx, 'reading_speed', 'warning', `第 ${idx + 1} 行阅读速度过快`);
         }
 
-        previous = { endMs };
+        if (hasTiming) previous = { endMs };
       });
 
       return issues;
@@ -1832,6 +1838,110 @@ function app() {
 
     hasSevereSubtitleIssues() {
       return this.subtitleQualitySummary().severe > 0;
+    },
+
+    subtitleReplaceFields() {
+      const scope = this.subtitleReplaceScope || 'translation';
+      if (scope === 'source' || scope === 'text') return ['text'];
+      if (scope === 'all') return ['text', 'translation'];
+      return ['translation'];
+    },
+
+    escapeRegExp(value) {
+      return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    },
+
+    replaceInSubtitleField(value, find, replacement, caseSensitive = false) {
+      const source = String(value || '');
+      const needle = String(find || '');
+      if (!needle) return { value: source, count: 0 };
+      const flags = caseSensitive ? 'g' : 'gi';
+      const pattern = new RegExp(this.escapeRegExp(needle), flags);
+      let count = 0;
+      const next = source.replace(pattern, () => {
+        count += 1;
+        return String(replacement || '');
+      });
+      return { value: next, count };
+    },
+
+    subtitleReplacePreview() {
+      const find = String(this.subtitleFindText || '');
+      const replacement = String(this.subtitleReplaceText || '');
+      const rows = [];
+      let count = 0;
+      if (!find) return { count, rows, scope: this.subtitleReplaceScope || 'translation' };
+      const fields = this.subtitleReplaceFields();
+      this.subtitles.forEach((item, idx) => {
+        if (!this.isPlainObject(item) || item.filtered) return;
+        let rowCount = 0;
+        fields.forEach((field) => {
+          rowCount += this.replaceInSubtitleField(
+            item[field],
+            find,
+            replacement,
+            !!this.subtitleReplaceCaseSensitive
+          ).count;
+        });
+        if (rowCount > 0) {
+          count += rowCount;
+          rows.push({
+            index: Number.isInteger(item.index) ? item.index : idx + 1,
+            count: rowCount,
+          });
+        }
+      });
+      return { count, rows, scope: this.subtitleReplaceScope || 'translation' };
+    },
+
+    async applySubtitleReplace() {
+      if (this.subtitleActionsDisabled()) return;
+      const preview = this.subtitleReplacePreview();
+      if (!preview.count) {
+        this.toast('没有找到可替换的字幕文本', 'error');
+        return;
+      }
+      const actionKey = this.subtitleActionKey('replace', 0);
+      this.subtitleActionPending = actionKey;
+      const before = this.subtitleSnapshot();
+      const fields = this.subtitleReplaceFields();
+      this.subtitles.forEach((item) => {
+        if (!this.isPlainObject(item) || item.filtered) return;
+        fields.forEach((field) => {
+          const replaced = this.replaceInSubtitleField(
+            item[field],
+            this.subtitleFindText,
+            this.subtitleReplaceText,
+            !!this.subtitleReplaceCaseSensitive
+          );
+          item[field] = replaced.value;
+        });
+      });
+      try {
+        await this.persistSubtitles();
+        this.toast(`已替换 ${preview.count} 处`);
+      } catch(e) {
+        this.restoreSubtitles(before);
+        this.toast('保存失败', 'error');
+      } finally {
+        if (this.subtitleActionPending === actionKey) this.subtitleActionPending = '';
+      }
+    },
+
+    subtitleExportWarningMessage(format) {
+      const summary = this.subtitleQualitySummary();
+      if (!summary.total) return '';
+      const firstSevere = summary.issues.find((issue) => issue.severity === 'severe');
+      const issueText = firstSevere?.message || summary.issues[0]?.message || '字幕存在质量提示';
+      const formatLabel = {
+        translated: '翻译字幕',
+        bilingual: '双语字幕',
+        original: '原文字幕',
+      }[format] || '字幕';
+      if (summary.severe > 0) {
+        return `${formatLabel}仍有 ${summary.severe} 个严重问题、${summary.warning} 个提醒。${issueText}。是否继续导出？`;
+      }
+      return `${formatLabel}仍有 ${summary.warning} 个质量提醒。${issueText}。是否继续导出？`;
     },
 
     renumberSubtitles() {
@@ -1991,6 +2101,16 @@ function app() {
       if (!this.canExportSrt(format)) {
         this.toast(this.exportUnavailableMessage(format), 'error');
         return;
+      }
+      const warningMessage = this.subtitleExportWarningMessage(format);
+      if (this.hasSevereSubtitleIssues() && warningMessage) {
+        const confirmed = await this.askConfirm({
+          title: '继续导出字幕？',
+          message: warningMessage,
+          confirmText: '继续导出',
+          intent: 'warning',
+        });
+        if (!confirmed) return;
       }
       const actionKey = this.exportActionKey(format);
       this.projectActionPending = actionKey;
