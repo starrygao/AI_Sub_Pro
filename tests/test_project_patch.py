@@ -100,6 +100,25 @@ def test_workflow_log_endpoint_rejects_invalid_stage(client):
     assert "stage" in r.json()["detail"]
 
 
+def test_workflow_log_endpoint_rejects_symlinked_log_directory(client, tmp_path):
+    from app.api import projects
+
+    pid = _make_project(client)
+    outside = tmp_path / "outside-logs"
+    outside.mkdir()
+    outside_secret = "outside log content must not be exposed"
+    (outside / "asr.log").write_text(outside_secret, encoding="utf-8")
+    (projects.PROJECTS_DIR / pid / "workflow_logs").symlink_to(
+        outside,
+        target_is_directory=True,
+    )
+
+    r = client.get(f"/api/projects/{pid}/logs/asr")
+
+    assert r.status_code == 400
+    assert outside_secret not in r.text
+
+
 def test_workflow_log_endpoint_returns_404_when_log_missing(client):
     pid = _make_project(client)
 

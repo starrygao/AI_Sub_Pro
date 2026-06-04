@@ -658,10 +658,18 @@ def download_workflow_log(stage: str, pid: str = PathParam(pattern=PID_PATTERN))
         path = stage_log_path(pid, stage)
     except ValueError:
         raise HTTPException(400, "Invalid workflow stage")
+    log_dir = path.parent
+    if log_dir.is_symlink():
+        raise HTTPException(400, "Workflow log directory is invalid")
     if path.is_symlink():
         raise HTTPException(400, "Workflow log is invalid")
     if not path.is_file():
         raise HTTPException(404, "Workflow log not found")
+    try:
+        resolved_project_dir = _project_dir(pid).resolve()
+        path.resolve().relative_to(resolved_project_dir)
+    except ValueError:
+        raise HTTPException(400, "Workflow log is invalid")
     return FileResponse(
         path,
         media_type="text/plain; charset=utf-8",
