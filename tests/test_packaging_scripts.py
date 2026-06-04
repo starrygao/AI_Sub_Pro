@@ -29,6 +29,10 @@ def test_release_workflow_supports_pr_dry_run_tag_release_and_uploads():
     assert "docs/RELEASE_NOTES.md" in workflow
     assert "docs/RELEASE_NOTES.zh-CN.md" in workflow
     assert "bash make_dmg.sh" in workflow
+    assert "brew install ffmpeg-full" in workflow
+    assert "brew --prefix ffmpeg-full" in workflow
+    assert '"$GITHUB_PATH"' in workflow
+    assert "grep \" subtitles \"" in workflow
     assert "github.event_name != 'pull_request'" in workflow
     assert "startsWith(github.ref, 'refs/tags/v')" in workflow
     assert "gh release upload" in workflow or "actions/upload-release-asset" in workflow
