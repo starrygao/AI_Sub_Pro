@@ -694,6 +694,131 @@ def _find_subtitle_source(pid: str) -> tuple[Optional[str], Optional[str]]:
     return source_name, str(source_path) if source_path is not None else None
 
 
+def _project_kb_terms(project_kb) -> dict:
+    terms = {}
+    if project_kb is None:
+        return terms
+    for attr in ("characters", "places", "brands", "slang"):
+        for entry in getattr(project_kb, attr, []) or []:
+            source = getattr(entry, "source", "")
+            target = getattr(entry, "target", "")
+            if isinstance(source, str) and isinstance(target, str) and source.strip() and target.strip():
+                terms[source.strip()] = target.strip()
+    return terms
+
+
+def _auto_repair_quality_issues(
+    cfg: dict,
+    translator,
+    blocks,
+    report,
+    target_language: str,
+    project_kb,
+) -> list[dict]:
+    trans_cfg = cfg.get("translation", {}) if isinstance(cfg, dict) else {}
+    if not isinstance(trans_cfg, dict) or not trans_cfg.get("qa_auto_repair", False):
+        return []
+    if not report.issues:
+        return []
+    try:
+        from app.engines.providers.result_contract import reconcile_translation_results
+        from app.engines.translation_qa import build_repair_items, build_repair_prompt
+
+        repair_items = build_repair_items(blocks, report.issues)
+        if not repair_items:
+            return []
+        prompt = build_repair_prompt(
+            target_language,
+            repair_items,
+            report.issues,
+            kb_terms=_project_kb_terms(project_kb),
+        )
+        primary = getattr(translator, "primary", None)
+        if primary is None or not hasattr(primary, "translate_batch"):
+            return []
+        raw_results = primary.translate_batch(repair_items, prompt)
+        results = reconcile_translation_results(
+            raw_results if isinstance(raw_results, list) else [],
+            repair_items,
+        )
+        if hasattr(translator, "_apply_results"):
+            target_blocks = [
+                block for block in blocks
+                if any(str(item.get("id")) == str(getattr(block, "index", "")) for item in repair_items)
+            ]
+            translator._apply_results(target_blocks, results)
+        else:
+            by_id = {
+                str(result.get("id")): result.get("translation", "")
+                for result in results
+                if isinstance(result, dict) and isinstance(result.get("translation"), str)
+            }
+            for block in blocks:
+                translation = by_id.get(str(getattr(block, "index", "")))
+                if translation:
+                    block.translation = translation
+        return [
+            {"id": result.get("id"), "translation": result.get("translation", "")}
+            for result in results
+            if isinstance(result, dict) and result.get("translation")
+        ]
+    except Exception as e:
+        log.warning("translation QA auto-repair failed: %s", e)
+        return []
+
+
+def _persist_translation_quality_report(
+    pid: str,
+    pdir: str,
+    project: dict,
+    blocks,
+    target_language: str,
+    translator,
+    cfg: dict,
+) -> list[dict]:
+    """Run deterministic QA and persist report artifacts without failing translation."""
+    try:
+        from app.engines.knowledge import _get_singleton
+        from app.engines.translation_qa import run_quality_checks, save_quality_report
+
+        project_kb = _get_singleton().select_for_project(project)
+        trace_obj = getattr(translator, "last_quality_trace", None)
+        trace = trace_obj.to_dict() if hasattr(trace_obj, "to_dict") else {}
+        report = run_quality_checks(
+            blocks,
+            project_kb=project_kb,
+            target_language=target_language,
+            trace=trace,
+        )
+        repaired = _auto_repair_quality_issues(
+            cfg,
+            translator,
+            blocks,
+            report,
+            target_language,
+            project_kb,
+        )
+        if repaired:
+            report = run_quality_checks(
+                blocks,
+                project_kb=project_kb,
+                target_language=target_language,
+                trace=trace,
+            )
+            report.repaired_blocks = repaired
+
+        root = Path(pdir)
+        save_quality_report(
+            report,
+            json_path=root / "translation_qa_report.json",
+            markdown_path=root / "translation_qa_report.md",
+        )
+        return repaired
+    except Exception as e:
+        log.warning("translation QA report failed for %s: %s", pid, e)
+        return []
+
+
 def _run_translate_pipeline(pid: str, target_language: str, owns_registration: bool = True):
     """Run translation pipeline in background thread.
 
@@ -777,6 +902,19 @@ def _run_translate_pipeline(pid: str, target_language: str, owns_registration: b
             fail_msg = _translation_failed_completely(blocks)
             if fail_msg:
                 raise RuntimeError(f"翻译失败: {fail_msg}")
+
+            _emit_progress(pid, "translate", 92, "正在检查翻译质量...")
+            repaired = _persist_translation_quality_report(
+                pid,
+                pdir,
+                project,
+                blocks,
+                target_language,
+                translator,
+                cfg,
+            )
+            if repaired:
+                log.info("translation QA repaired %d block(s) for %s", len(repaired), pid)
 
             # Save results
             _emit_progress(pid, "translate", 95, "正在保存结果...")

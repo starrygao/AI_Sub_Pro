@@ -8,7 +8,13 @@ from pydantic import BaseModel, Field, StrictInt
 
 from app.engines.knowledge import KnowledgeBase, _get_singleton, invalidate_translator_kb
 from app.engines.kb_models import ProjectKb, TermEntry, StyleNotes
-from app.engines.kb_suggestions import suggest_kb_entries
+from app.engines.kb_suggestions import (
+    extract_kb_suggestions,
+    load_suggestions,
+    save_suggestions,
+    suggest_kb_entries,
+    update_suggestion_status,
+)
 from app.utils.project_store import atomic_write_json, project_dir, validate_pid
 from app.utils.srt import parse_srt_file
 
@@ -56,6 +62,10 @@ class SuggestionAcceptIn(BaseModel):
 
 class SuggestionRejectIn(BaseModel):
     sources: List[str] = Field(default_factory=list)
+
+
+class SuggestionStatusIn(BaseModel):
+    status: str
 
 
 def _get_kb() -> KnowledgeBase:
@@ -209,6 +219,57 @@ def _normalize_usage_trace(data: dict) -> dict:
     return normalized
 
 
+def _project_suggestions_path(pdir) -> object:
+    return pdir / "kb_suggestions.json"
+
+
+def _kb_key_for_project(pid: str, project: dict) -> str:
+    import re
+
+    raw = project.get("show_title") or project.get("name") or pid
+    key = _clean_text(raw) if isinstance(raw, str) else ""
+    if not key:
+        return pid
+    key = re.sub(r"[^A-Za-z0-9_-]+", "-", key).strip("-").lower()
+    return key[:64] or pid
+
+
+def _append_term_once(entries: list[TermEntry], source: str, target: str, notes: str = "") -> None:
+    folded = _clean_text(source).casefold()
+    if not folded or not _clean_text(target):
+        return
+    for entry in entries:
+        if _clean_text(entry.source).casefold() == folded:
+            return
+    entries.append(TermEntry(source=_clean_text(source), target=_clean_text(target), notes=_clean_text(notes)))
+
+
+def _accept_status_suggestion_into_kb(pid: str, project: dict, suggestion) -> None:
+    if not _clean_text(getattr(suggestion, "target", "")):
+        return
+    key = _kb_key_for_project(pid, project)
+    kb_store = _get_kb()
+    proj = kb_store.get_project(key)
+    if proj is None:
+        proj = ProjectKb(
+            show_title=_clean_text(project.get("show_title") or project.get("name") or ""),
+            tmdb_id=project.get("tmdb_id") if isinstance(project.get("tmdb_id"), int) else None,
+        )
+
+    category = _clean_text(getattr(suggestion, "category", "")).casefold()
+    if category == "characters":
+        _append_term_once(proj.characters, suggestion.source, suggestion.target, suggestion.notes)
+    elif category == "places":
+        _append_term_once(proj.places, suggestion.source, suggestion.target, suggestion.notes)
+    elif category == "brands":
+        _append_term_once(proj.brands, suggestion.source, suggestion.target, suggestion.notes)
+    else:
+        _append_term_once(proj.slang, suggestion.source, suggestion.target, suggestion.notes)
+
+    kb_store.put_project(key, proj)
+    _invalidate_translator_kb()
+
+
 @router.get("/projects")
 def list_kb_projects():
     return {"projects": [
@@ -220,6 +281,12 @@ def list_kb_projects():
 @router.get("/projects/{pid}/suggestions")
 def get_kb_project_suggestions(pid: str):
     pdir, project = _load_project_or_http(pid)
+    persisted = load_suggestions(_project_suggestions_path(pdir))
+    if persisted:
+        return {
+            "project_id": pid,
+            "suggestions": [item.to_dict() for item in persisted],
+        }
     subtitles = _subtitle_dicts_for_project(pdir)
     existing_kb = _get_kb().select_for_project(project)
     suggestions = suggest_kb_entries(project, subtitles, existing_kb)
@@ -233,6 +300,37 @@ def get_kb_project_suggestions(pid: str):
         "project_id": pid,
         "suggestions": [item.to_dict() for item in suggestions],
     }
+
+
+@router.post("/projects/{pid}/suggestions/generate")
+def generate_kb_project_suggestions(pid: str):
+    pdir, project = _load_project_or_http(pid)
+    subtitles = _subtitle_dicts_for_project(pdir)
+    existing_kb = _get_kb().select_for_project(project)
+    suggestions = extract_kb_suggestions(project, subtitles, existing_kb)
+    save_suggestions(_project_suggestions_path(pdir), suggestions)
+    return {
+        "project_id": pid,
+        "suggestions": [item.to_dict() for item in suggestions],
+    }
+
+
+@router.post("/projects/{pid}/suggestions/{suggestion_id}/status")
+def update_kb_project_suggestion_status(pid: str, suggestion_id: str, body: SuggestionStatusIn):
+    pdir, project = _load_project_or_http(pid)
+    try:
+        suggestion = update_suggestion_status(
+            _project_suggestions_path(pdir),
+            suggestion_id,
+            body.status,
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid suggestion status")
+    except KeyError:
+        raise HTTPException(status_code=404, detail="suggestion not found")
+    if suggestion.status == "accepted":
+        _accept_status_suggestion_into_kb(pid, project, suggestion)
+    return {"ok": True, "suggestion": suggestion.to_dict()}
 
 
 @router.get("/projects/{pid}/usage-trace")

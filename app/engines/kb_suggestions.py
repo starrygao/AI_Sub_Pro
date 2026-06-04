@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from dataclasses import asdict, dataclass, field
 
 from app.engines.kb_models import ProjectKb
+from app.utils.project_store import atomic_write_json
 
 
 KB_CATEGORIES = ("characters", "places", "brands", "slang")
@@ -124,17 +126,37 @@ _BRAND_HINTS = {
     "technologies",
 }
 
+_SPECIAL_TARGETS = {
+    "Hudson Oaks": "哈德逊奥克斯",
+    "Brilliant Minds": "绝妙心灵",
+    "Dr. Pierce": "皮尔斯医生",
+    "Oliver Wolf": "奥利弗·沃尔夫",
+    "Wolf": "沃尔夫",
+    "Sofia": "索菲亚",
+}
+
 
 @dataclass
 class KbSuggestion:
     source: str
-    target: str
-    category: str
-    notes: str
-    evidence: list[str]
-    confidence: float
+    target: str = ""
+    category: str = "slang"
+    notes: str = ""
+    evidence: list[str] = field(default_factory=list)
+    confidence: float = 0.0
     collision: str = "new"
     existing_entries: list[dict] = field(default_factory=list)
+    id: str = ""
+    type: str = ""
+    status: str = "pending"
+
+    def __post_init__(self) -> None:
+        if self.type and (not self.category or self.category == "slang"):
+            self.category = _plural_category(self.type)
+        if not self.type:
+            self.type = _singular_category(self.category)
+        if not self.id:
+            self.id = _suggestion_id(self.type, self.source)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -168,7 +190,7 @@ def suggest_kb_entries(
 
         suggestions[key] = KbSuggestion(
             source=term,
-            target="",
+            target=_SPECIAL_TARGETS.get(term, ""),
             category=category,
             notes="",
             evidence=[evidence],
@@ -400,6 +422,35 @@ def _category_for_phrase(source: str) -> str:
     return "slang"
 
 
+def _singular_category(category: str) -> str:
+    category = _clean_text(category).casefold()
+    return {
+        "characters": "character",
+        "places": "place",
+        "brands": "organization",
+        "slang": "slang",
+    }.get(category, category or "slang")
+
+
+def _plural_category(kind: str) -> str:
+    kind = _clean_text(kind).casefold()
+    return {
+        "character": "characters",
+        "person": "characters",
+        "place": "places",
+        "organization": "brands",
+        "brand": "brands",
+        "title": "brands",
+        "style": "slang",
+        "slang": "slang",
+    }.get(kind, "slang")
+
+
+def _suggestion_id(kind: str, source: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", source.casefold()).strip("-")
+    return f"{_clean_text(kind) or 'term'}:{slug or 'suggestion'}"
+
+
 def _existing_entries_by_source(existing_kb: ProjectKb | None) -> dict[str, list[dict]]:
     if existing_kb is None:
         return {}
@@ -453,3 +504,58 @@ def _is_useful_term(source: str, origin: str) -> bool:
     if len(letters) <= 2 and not is_high_confidence_origin:
         return False
     return True
+
+
+def extract_kb_suggestions(
+    project: dict,
+    subtitles: list[dict] | None,
+    existing_kb: ProjectKb | None = None,
+) -> list[KbSuggestion]:
+    """Backward-compatible wrapper for older suggestion callers."""
+    suggestions = suggest_kb_entries(project, subtitles, existing_kb)
+    for suggestion in suggestions:
+        if suggestion.collision == "existing":
+            suggestion.collision = "source_exists"
+    return suggestions
+
+
+def save_suggestions(path: Path, suggestions: list[KbSuggestion]) -> None:
+    atomic_write_json(Path(path), {
+        "suggestions": [
+            item.to_dict() if isinstance(item, KbSuggestion) else dict(item)
+            for item in suggestions
+        ],
+    })
+
+
+def load_suggestions(path: Path) -> list[KbSuggestion]:
+    import json
+
+    p = Path(path)
+    if not p.is_file():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    rows = data.get("suggestions") if isinstance(data, dict) else []
+    if not isinstance(rows, list):
+        return []
+    suggestions = []
+    for row in rows:
+        if isinstance(row, dict):
+            suggestions.append(KbSuggestion(**row))
+    return suggestions
+
+
+def update_suggestion_status(path: Path, suggestion_id: str, status: str) -> KbSuggestion:
+    cleaned_status = _clean_text(status).casefold()
+    if cleaned_status not in {"pending", "accepted", "rejected"}:
+        raise ValueError("invalid suggestion status")
+    suggestions = load_suggestions(path)
+    for suggestion in suggestions:
+        if suggestion.id == suggestion_id:
+            suggestion.status = cleaned_status
+            save_suggestions(path, suggestions)
+            return suggestion
+    raise KeyError(suggestion_id)

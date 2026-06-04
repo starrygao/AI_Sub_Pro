@@ -20,7 +20,7 @@ function app() {
       tmdb: {api_key:'', language:'zh-CN'},
       trailer: {max_video_height: 1080},
       asr: {mode: 'speed'},
-      translation: {},
+      translation: { use_translation_memory: true, use_phrase_library: true, qa_auto_repair: false },
       providers: {
         claude_cli: { enabled: true, model: 'claude-opus-4-7', timeout_sec: 180 },
         codex_cli: { enabled: true, model: 'gpt-5.5', timeout_sec: 180 },
@@ -50,6 +50,13 @@ function app() {
     kbTraceLoading: false,
     kbTraceError: '',
     kbTraceRequestSeq: 0,
+    kbSuggestionLoading: false,
+    kbSuggestionError: '',
+    kbSuggestionActionPending: '',
+    qaReport: null,
+    qaReportLoading: false,
+    qaReportError: '',
+    qaReportRequestSeq: 0,
     projectRenamePrompt: false,
     projectRenameInput: '',
     projectRenameTarget: null,
@@ -352,6 +359,38 @@ function app() {
       if (format === 'original') return '还没有可导出的原文字幕';
       if (format === 'translated' || format === 'bilingual') return '还没有可导出的翻译字幕';
       return '不支持的导出格式';
+    },
+
+    safeDownloadFilename(value, fallback = 'download') {
+      const raw = String(value || fallback).split(/[\\/]+/).pop() || fallback;
+      const cleaned = raw
+        .replace(/^\.+/, '')
+        .replace(/[<>:"/\\|?*\x00-\x1F]+/g, '_')
+        .trim();
+      return cleaned || fallback;
+    },
+
+    nativeSaveApi() {
+      return (typeof window !== 'undefined' && window.pywebview?.api)
+        ? window.pywebview.api
+        : null;
+    },
+
+    canSaveVideo() {
+      if (!this.currentProject || this.projectActionsDisabled(this.currentProject)) return false;
+      return !!String(this.currentProject.output_video || '').trim()
+        && this.currentProject.status === 'completed';
+    },
+
+    isSavingVideo() {
+      return this.projectActionPending === 'save-video';
+    },
+
+    saveVideoUnavailableMessage() {
+      if (!this.currentProject) return '请先打开项目';
+      if (this.isProjectBusy(this.currentProject)) return '项目处理中，完成后再保存';
+      if (this.projectActionPending) return '当前操作未完成，请稍后再试';
+      return '视频尚未完成，暂时不能保存';
     },
 
     projectMutationKey(action, id) {
@@ -886,6 +925,9 @@ function app() {
       this.kbSuggestions = [];
       this.kbSuggestionsLoading = false;
       this.kbSuggestionsError = '';
+      this.kbSuggestionLoading = false;
+      this.kbSuggestionError = '';
+      this.kbSuggestionActionPending = '';
     },
 
     clearKbUsageTrace() {
@@ -893,6 +935,13 @@ function app() {
       this.kbUsageTrace = null;
       this.kbTraceLoading = false;
       this.kbTraceError = '';
+    },
+
+    clearQualityReport() {
+      this.qaReportRequestSeq += 1;
+      this.qaReport = null;
+      this.qaReportLoading = false;
+      this.qaReportError = '';
     },
 
     async loadKbSuggestions() {
@@ -903,7 +952,9 @@ function app() {
       const projectId = String(this.currentProject.id);
       const requestId = ++this.kbSuggestionsRequestSeq;
       this.kbSuggestionsLoading = true;
+      this.kbSuggestionLoading = true;
       this.kbSuggestionsError = '';
+      this.kbSuggestionError = '';
       try {
         const data = await this.api(`/api/knowledge/projects/${encodeURIComponent(projectId)}/suggestions`);
         if (this.kbSuggestionsRequestSeq !== requestId || String(this.currentProject?.id || '') !== projectId) return;
@@ -923,11 +974,119 @@ function app() {
       } catch (e) {
         if (this.kbSuggestionsRequestSeq === requestId && String(this.currentProject?.id || '') === projectId) {
           this.kbSuggestionsError = e.message || '加载建议失败';
+          this.kbSuggestionError = this.kbSuggestionsError;
           this.toast('加载 KB 建议失败: ' + e.message, 'error');
         }
       } finally {
         if (this.kbSuggestionsRequestSeq === requestId && String(this.currentProject?.id || '') === projectId) {
           this.kbSuggestionsLoading = false;
+          this.kbSuggestionLoading = false;
+        }
+      }
+    },
+
+    async generateKbSuggestions() {
+      if (!this.currentProject?.id || this.kbSuggestionActionPending) return;
+      const projectId = String(this.currentProject.id);
+      this.kbSuggestionActionPending = 'generate';
+      this.kbSuggestionLoading = true;
+      this.kbSuggestionsLoading = true;
+      this.kbSuggestionError = '';
+      this.kbSuggestionsError = '';
+      try {
+        const data = await this.api(`/api/knowledge/projects/${encodeURIComponent(projectId)}/suggestions/generate`, 'POST');
+        if (String(this.currentProject?.id || '') !== projectId) return;
+        const raw = Array.isArray(data?.suggestions) ? data.suggestions : [];
+        this.kbSuggestions = raw
+          .filter(item => this.isPlainObject(item))
+          .map(item => ({
+            ...item,
+            target: typeof item.target === 'string' ? item.target : '',
+            notes: typeof item.notes === 'string' ? item.notes : '',
+            selected: item.status === 'accepted' ? false : !!(item.selected ?? true),
+          }));
+      } catch (e) {
+        if (String(this.currentProject?.id || '') === projectId) {
+          this.kbSuggestionError = e.message || '生成建议失败';
+          this.kbSuggestionsError = this.kbSuggestionError;
+          this.toast('生成 KB 建议失败: ' + e.message, 'error');
+        }
+      } finally {
+        if (this.kbSuggestionActionPending === 'generate') this.kbSuggestionActionPending = '';
+        if (String(this.currentProject?.id || '') === projectId) {
+          this.kbSuggestionLoading = false;
+          this.kbSuggestionsLoading = false;
+        }
+      }
+    },
+
+    async setKbSuggestionStatus(item, status) {
+      const suggestionId = typeof item === 'string' ? item : String(item?.id || '');
+      if (!this.currentProject?.id || !suggestionId || this.kbSuggestionActionPending) return;
+      const projectId = String(this.currentProject.id);
+      const pendingKey = `${status}:${suggestionId}`;
+      this.kbSuggestionActionPending = pendingKey;
+      this.kbSuggestionError = '';
+      try {
+        const data = await this.api(
+          `/api/knowledge/projects/${encodeURIComponent(projectId)}/suggestions/${encodeURIComponent(suggestionId)}/status`,
+          'POST',
+          {status},
+        );
+        if (String(this.currentProject?.id || '') !== projectId) return;
+        const updated = this.isPlainObject(data?.suggestion) ? data.suggestion : null;
+        this.kbSuggestions = this.kbSuggestions.map(suggestion => (
+          suggestion?.id === suggestionId ? {...suggestion, ...(updated || {}), status} : suggestion
+        ));
+      } catch (e) {
+        if (String(this.currentProject?.id || '') === projectId) {
+          this.kbSuggestionError = e.message || '更新建议失败';
+          this.toast('更新 KB 建议失败: ' + e.message, 'error');
+        }
+      } finally {
+        if (this.kbSuggestionActionPending === pendingKey) this.kbSuggestionActionPending = '';
+      }
+    },
+
+    normalizeQualityReport(data) {
+      const src = this.isPlainObject(data) ? data : {};
+      const summary = this.isPlainObject(src.summary) ? src.summary : {};
+      const issues = Array.isArray(src.issues)
+        ? src.issues.filter(item => this.isPlainObject(item))
+        : [];
+      return {
+        ...src,
+        status: typeof src.status === 'string' ? src.status : 'missing',
+        issues,
+        summary: {
+          issue_count: Number.isFinite(Number(summary.issue_count)) ? Number(summary.issue_count) : issues.length,
+          by_type: this.isPlainObject(summary.by_type) ? summary.by_type : {},
+          ...summary,
+        },
+      };
+    },
+
+    async loadQualityReport() {
+      if (!this.currentProject?.id) {
+        this.clearQualityReport();
+        return;
+      }
+      const projectId = String(this.currentProject.id);
+      const requestId = ++this.qaReportRequestSeq;
+      this.qaReportLoading = true;
+      this.qaReportError = '';
+      try {
+        const data = await this.api(`/api/projects/${encodeURIComponent(projectId)}/quality-report`);
+        if (this.qaReportRequestSeq !== requestId || String(this.currentProject?.id || '') !== projectId) return;
+        this.qaReport = this.normalizeQualityReport(data);
+      } catch (e) {
+        if (this.qaReportRequestSeq === requestId && String(this.currentProject?.id || '') === projectId) {
+          this.qaReportError = e.message || '加载质量报告失败';
+          this.qaReport = this.normalizeQualityReport({status: 'missing'});
+        }
+      } finally {
+        if (this.qaReportRequestSeq === requestId && String(this.currentProject?.id || '') === projectId) {
+          this.qaReportLoading = false;
         }
       }
     },
@@ -1307,6 +1466,7 @@ function app() {
         this.toast('项目已创建，开始处理...');
         this.clearKbSuggestions();
         this.clearKbUsageTrace();
+        this.clearQualityReport();
         this.currentProject = p;
         this.workflowState = null;
         this.workflowStateError = '';
@@ -1357,6 +1517,7 @@ function app() {
           this.workflowActionPending = '';
           this.clearKbSuggestions();
           this.clearKbUsageTrace();
+          this.clearQualityReport();
           this.subtitles = [];
           this.progressPct = 0;
           this.progressMsg = '';
@@ -1458,11 +1619,13 @@ function app() {
         if (this.currentProject?.id !== project.id) {
           this.clearKbSuggestions();
           this.clearKbUsageTrace();
+          this.clearQualityReport();
         }
         this.currentProject = project;
         await this.loadWorkflowState();
         if (this.openProjectRequestSeq !== requestId || this.currentProject?.id !== project.id) return;
         this.loadKbUsageTrace();
+        this.loadQualityReport();
         this.applyWorkflowDefaultsFromProject(project);
         this.subtitles = Array.isArray(data.blocks) ? data.blocks.filter(b => this.isPlainObject(b)) : [];
         await this.setView('detail');
@@ -2239,11 +2402,19 @@ function app() {
       this.projectActionPending = actionKey;
       try {
         const data = await this.api(`/api/projects/${this.currentProject.id}/export?format=${format}`, 'POST');
+        const filename = this.safeDownloadFilename(data.filename, `${format || 'subtitles'}.srt`);
+        const nativeApi = this.nativeSaveApi();
+        if (nativeApi && typeof nativeApi.save_text_file === 'function') {
+          const result = await nativeApi.save_text_file(filename, String(data.content || ''));
+          if (result && result.ok === false) throw new Error(result.error || '保存失败');
+          this.toast('字幕已保存');
+          return;
+        }
         const blob = new Blob([data.content], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = data.filename;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -2251,6 +2422,33 @@ function app() {
         this.toast('导出成功');
       } catch(e) { this.toast(e.message, 'error'); }
       finally {
+        if (this.projectActionPending === actionKey) this.projectActionPending = '';
+      }
+    },
+
+    async saveOutputVideo() {
+      if (!this.canSaveVideo()) {
+        this.toast(this.saveVideoUnavailableMessage(), 'error');
+        return;
+      }
+      const nativeApi = this.nativeSaveApi();
+      if (!nativeApi || typeof nativeApi.save_project_video !== 'function') {
+        this.toast('当前环境不支持保存视频', 'error');
+        return;
+      }
+      const actionKey = 'save-video';
+      this.projectActionPending = actionKey;
+      try {
+        const filename = this.safeDownloadFilename(
+          this.currentProject.output_video,
+          `${this.currentProject.name || 'output'}_subtitled.mp4`,
+        );
+        const result = await nativeApi.save_project_video(this.currentProject.id, filename);
+        if (result && result.ok === false) throw new Error(result.error || '保存失败');
+        this.toast('视频已保存');
+      } catch(e) {
+        this.toast(e.message || '保存视频失败', 'error');
+      } finally {
         if (this.projectActionPending === actionKey) this.projectActionPending = '';
       }
     },

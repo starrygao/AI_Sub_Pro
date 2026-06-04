@@ -176,7 +176,8 @@ def test_codex_cli_invoke_passes_prompt_via_stdin_and_last_message_file(tmp_path
         text = p._invoke(items, "SYSPROMPT")
 
     assert text == '[{"id": 1, "translation": "y"}]'
-    assert captured["cmd"][:2] == ["codex", "exec"]
+    assert captured["cmd"][:4] == ["codex", "--ask-for-approval", "never", "exec"]
+    assert captured["cmd"].index("--ask-for-approval") < captured["cmd"].index("exec")
     assert "--output-last-message" in captured["cmd"]
     assert "--sandbox" in captured["cmd"]
     assert captured["input"] and "SYSPROMPT" in captured["input"]

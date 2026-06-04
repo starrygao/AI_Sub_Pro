@@ -123,13 +123,13 @@ class CodexCliProvider(BaseProvider):
         path = Path(output_path)
         cmd = [
             "codex",
+            "--ask-for-approval",
+            "never",
             "exec",
             "--model",
             self.model,
             "--sandbox",
             "read-only",
-            "--ask-for-approval",
-            "never",
             "--skip-git-repo-check",
             "--ephemeral",
             "--color",

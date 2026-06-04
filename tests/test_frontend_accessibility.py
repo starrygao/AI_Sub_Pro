@@ -141,6 +141,10 @@ def test_project_detail_export_actions_have_disabled_and_pending_states():
     assert "canExportSrt(format)" in js
     assert "isExportingSrt(format)" in js
     assert "hasExportableTranslatedSubtitles()" in js
+    assert "@click=\"saveOutputVideo()\"" in html
+    assert ":disabled=\"!canSaveVideo()\"" in html
+    assert "download-video`" not in html
+    assert "saveOutputVideo()" in js
 
 
 def test_click_navigation_uses_set_view_guard():

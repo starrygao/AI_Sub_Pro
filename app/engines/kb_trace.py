@@ -1,9 +1,24 @@
 """Knowledge-base usage trace helpers."""
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from app.engines.kb_models import ProjectKb
 from app.utils.project_store import atomic_write_json
+
+
+@dataclass
+class TranslationContextTrace:
+    memory_hits: list[dict] = field(default_factory=list)
+    phrase_hits: list[dict] = field(default_factory=list)
+    kb_hits: list[dict] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "memory_hits": list(self.memory_hits),
+            "phrase_hits": list(self.phrase_hits),
+            "kb_hits": list(self.kb_hits),
+        }
 
 
 def trace_for_project_kb(kb: ProjectKb | None) -> dict[str, Any]:

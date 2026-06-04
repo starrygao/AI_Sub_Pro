@@ -485,6 +485,111 @@ def test_translate_pipeline_tolerates_malformed_progress_callback_values(tmp_pat
     assert project["status"] == "translated"
 
 
+def test_translate_pipeline_writes_quality_report(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transqa"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n"
+        "2\n00:00:02,000 --> 00:00:03,000\nAre you okay?\n\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {"translation": {}})
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            pass
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "你好"
+            blocks[1].translation = "Are you okay?"
+            return blocks
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "needs_review"
+    assert report["summary"]["by_type"]["english_residue"] == 1
+    assert (pdir / "translation_qa_report.md").exists()
+
+
+def test_translate_pipeline_can_auto_repair_quality_issues(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transrepair"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nAre you okay?\n\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {"qa_auto_repair": True},
+    })
+
+    class FakePrimary:
+        def translate_batch(self, items, system_prompt):
+            assert items == [{"id": 1, "original": "Are you okay?", "draft": "Are you okay?"}]
+            assert "Are you okay?" in system_prompt
+            return [{"id": 1, "translation": "你还好吗？"}]
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            self.primary = FakePrimary()
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "Are you okay?"
+            return blocks
+
+        def _apply_results(self, blocks, results):
+            for block in blocks:
+                for result in results:
+                    if str(result.get("id")) == str(block.index):
+                        block.translation = result.get("translation", "")
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    translated = (pdir / "translated.srt").read_text(encoding="utf-8")
+    report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
+    assert "你还好吗？" in translated
+    assert report["status"] == "ok"
+    assert report["repaired_blocks"] == [{"id": 1, "translation": "你还好吗？"}]
+
+
 def test_translate_pipeline_redacts_exception_details_in_project_error(tmp_path, monkeypatch):
     from app.api import translate as api_translate
     from app.utils import project_store
