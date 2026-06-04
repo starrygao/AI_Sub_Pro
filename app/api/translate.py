@@ -142,6 +142,10 @@ class FullPipelineRequest(BaseModel):
     target_language: Optional[str] = None
 
 
+class RetryRequest(BaseModel):
+    stage: Optional[str] = None
+
+
 def _load_project(pid: str) -> dict:
     from app.utils.project_store import load_project as _ps_load_project
     try:
@@ -164,6 +168,36 @@ def _load_project(pid: str) -> dict:
 def _reject_busy_project(project: dict) -> None:
     if project.get("status") == "processing" or project.get("pipeline_stage"):
         raise HTTPException(409, "Project is already running")
+
+
+def _latest_failed_stage(pid: str) -> str:
+    state = load_workflow_state(pid)
+    stages = state.get("stages", {}) if isinstance(state, dict) else {}
+    if isinstance(stages, dict):
+        for stage in ("burn", "translate", "asr", "download"):
+            item = stages.get(stage)
+            if isinstance(item, dict) and item.get("status") == "failed":
+                return stage
+    return "asr"
+
+
+def _resume_stage_for_project(pid: str) -> str:
+    pdir = PROJECTS_DIR / pid
+    if (pdir / "translated.srt").exists() or (pdir / "bilingual.srt").exists():
+        return "burn"
+    if (
+        (pdir / "filtered.srt").exists()
+        or (pdir / "raw.srt").exists()
+        or (pdir / "native.srt").exists()
+    ):
+        return "translate"
+    return "asr"
+
+
+def _add_launch_stage(response: dict, stage: str) -> dict:
+    body = dict(response)
+    body["stage"] = stage
+    return body
 
 
 def _persist_workflow_options(
@@ -947,6 +981,43 @@ def start_full(pid: str = PathParam(pattern=PID_PATTERN), req: FullPipelineReque
         raise
     t.start()
     return {"status": "started", "message": "Full pipeline started"}
+
+
+def _launch_resume_stage(pid: str, project: dict, stage: str) -> dict:
+    if stage == "asr":
+        response = start_asr(pid, ASRRequest(language=project.get("asr_language")))
+    elif stage == "translate":
+        response = start_translate(
+            pid,
+            TranslateRequest(target_language=project.get("target_language")),
+        )
+    elif stage == "burn":
+        response = start_burn(pid)
+    else:
+        raise HTTPException(400, "stage must be asr, translate, or burn")
+    return _add_launch_stage(response, stage)
+
+
+@router.post("/{pid}/retry")
+def retry_project(pid: str = PathParam(pattern=PID_PATTERN), req: RetryRequest = RetryRequest()):
+    """Retry the latest failed workflow stage, or a requested supported stage."""
+    project = _load_project(pid)
+    if is_task_registered(pid):
+        raise HTTPException(409, "Task already running for this project")
+    _reject_busy_project(project)
+    stage = req.stage.strip() if req.stage is not None else _latest_failed_stage(pid)
+    return _launch_resume_stage(pid, project, stage)
+
+
+@router.post("/{pid}/resume")
+def resume_project(pid: str = PathParam(pattern=PID_PATTERN)):
+    """Resume the workflow from the best available local artifact."""
+    project = _load_project(pid)
+    if is_task_registered(pid):
+        raise HTTPException(409, "Task already running for this project")
+    _reject_busy_project(project)
+    stage = _resume_stage_for_project(pid)
+    return _launch_resume_stage(pid, project, stage)
 
 
 @router.post("/{pid}/cancel")
