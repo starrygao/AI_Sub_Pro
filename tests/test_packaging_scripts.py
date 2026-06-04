@@ -1,7 +1,154 @@
+import hashlib
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+RELEASE_VERSION = "1.2.0"
+
+
+def test_release_workflow_supports_pr_dry_run_tag_release_and_uploads():
+    workflow_path = ROOT / ".github" / "workflows" / "release.yml"
+
+    workflow = workflow_path.read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in workflow
+    assert "pull_request:" in workflow
+    assert "tags:" in workflow
+    assert "- 'v*'" in workflow or '- "v*"' in workflow
+    assert "dry-run" in workflow
+    assert "--allow-empty" in workflow
+    assert "tools/release/prepare_release.py" in workflow
+    assert "sha256" in workflow.lower()
+    assert "release-size-report.json" in workflow
+    assert "python3 -m pytest -q" in workflow
+    assert "npm run build:css" in workflow
+    assert "tests/test_packaging_scripts.py" in workflow
+    assert "docs/RELEASE_NOTES.md" in workflow
+    assert "docs/RELEASE_NOTES.zh-CN.md" in workflow
+    assert "bash make_dmg.sh" in workflow
+    assert "brew install ffmpeg-full" in workflow
+    assert "brew --prefix ffmpeg-full" in workflow
+    assert '"$GITHUB_PATH"' in workflow
+    assert "grep \" subtitles \"" in workflow
+    assert "github.event_name != 'pull_request'" in workflow
+    assert "startsWith(github.ref, 'refs/tags/v')" in workflow
+    assert "gh release upload" in workflow or "actions/upload-release-asset" in workflow
+    assert "contents: read" in workflow
+    publish_job = workflow[workflow.index("  publish:"):]
+    assert "permissions:" in publish_job
+    assert "contents: write" in publish_job
+    validate_job = workflow[workflow.index("  validate:"):workflow.index("  publish:")]
+    assert "contents: write" not in validate_job
+    assert "gh release upload \"$TAG_NAME\" dist/* --clobber" not in workflow
+    assert "find dist -maxdepth 1 -type f" in workflow
+
+
+def test_release_prepare_writes_sha256_files_and_size_report(tmp_path):
+    dist_dir = tmp_path / "dist"
+    checksum_dir = tmp_path / "checksums"
+    output_path = tmp_path / "release-size-report.json"
+    dist_dir.mkdir()
+    artifact = dist_dir / "AI Sub Pro.dmg"
+    artifact.write_bytes(b"release artifact")
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools" / "release" / "prepare_release.py"),
+            "--dist-dir",
+            str(dist_dir),
+            "--output",
+            str(output_path),
+            "--checksum-dir",
+            str(checksum_dir),
+        ],
+        cwd=ROOT,
+        check=True,
+    )
+
+    expected_digest = hashlib.sha256(b"release artifact").hexdigest()
+    checksum_file = checksum_dir / f"{artifact.name}.sha256"
+    report = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert checksum_file.read_text(encoding="utf-8") == f"{expected_digest}  {artifact.name}\n"
+    assert report["artifact_count"] == 1
+    assert report["total_bytes"] == len(b"release artifact")
+    assert report["artifacts"] == [
+        {
+            "name": artifact.name,
+            "path": str(artifact),
+            "size_bytes": len(b"release artifact"),
+            "sha256": expected_digest,
+            "checksum_path": str(checksum_file),
+        }
+    ]
+
+
+def test_release_prepare_allows_empty_dist_with_explicit_flag(tmp_path):
+    dist_dir = tmp_path / "dist"
+    output_path = tmp_path / "release-size-report.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools" / "release" / "prepare_release.py"),
+            "--dist-dir",
+            str(dist_dir),
+            "--output",
+            str(output_path),
+            "--checksum-dir",
+            str(dist_dir),
+            "--allow-empty",
+        ],
+        cwd=ROOT,
+        check=True,
+    )
+
+    report = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert dist_dir.exists()
+    assert report["artifact_count"] == 0
+    assert report["total_bytes"] == 0
+    assert report["artifacts"] == []
+
+
+def test_package_json_exposes_release_prepare_script():
+    root_package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+
+    assert root_package["scripts"]["release:prepare"] == (
+        "python3 tools/release/prepare_release.py "
+        "--dist-dir dist --output dist/release-size-report.json --checksum-dir dist"
+    )
+
+
+def test_release_version_is_consistent_across_packaging_and_docs():
+    root_package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    package_lock = json.loads((ROOT / "package-lock.json").read_text(encoding="utf-8"))
+    electron_package = json.loads((ROOT / "electron" / "package.json").read_text(encoding="utf-8"))
+    make_dmg = (ROOT / "make_dmg.sh").read_text(encoding="utf-8")
+    app_main = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
+    usage_en = (ROOT / "docs" / "USAGE.md").read_text(encoding="utf-8")
+    usage_zh = (ROOT / "docs" / "USAGE.zh-CN.md").read_text(encoding="utf-8")
+    release_notes_en = (ROOT / "docs" / "RELEASE_NOTES.md").read_text(encoding="utf-8")
+    release_notes_zh = (ROOT / "docs" / "RELEASE_NOTES.zh-CN.md").read_text(encoding="utf-8")
+
+    assert root_package["version"] == RELEASE_VERSION
+    assert package_lock["version"] == RELEASE_VERSION
+    assert package_lock["packages"][""]["version"] == RELEASE_VERSION
+    assert electron_package["version"] == RELEASE_VERSION
+    assert f'VERSION="{RELEASE_VERSION}"' in make_dmg
+    assert f"AI_Sub_Pro_v{RELEASE_VERSION}.dmg" in make_dmg
+    assert f'version="{RELEASE_VERSION}"' in app_main
+
+    for doc in (usage_en, usage_zh, release_notes_en, release_notes_zh):
+        assert f"v{RELEASE_VERSION}" in doc
+        assert f"AI_Sub_Pro_v{RELEASE_VERSION}.dmg" in doc
+
+    assert "AI_Sub_Pro_v1.1.1.dmg.part-" not in usage_en
+    assert "AI_Sub_Pro_v1.1.1.dmg.part-" not in usage_zh
 
 
 def test_build_mac_preserves_tracked_pyinstaller_spec():
@@ -15,17 +162,51 @@ def test_build_mac_preserves_tracked_pyinstaller_spec():
     assert '--add-data "${ROOT_DIR}/app:app"' in script
 
 
-def test_build_mac_can_bundle_local_asr_models_and_optional_faster_whisper():
+def test_build_mac_optional_asr_packaging_is_opt_in_by_default():
     script = (ROOT / "build_mac.sh").read_text(encoding="utf-8")
 
+    assert 'BUNDLE_LOCAL_ASR="${AISUBPRO_BUNDLE_LOCAL_ASR:-0}"' in script
+    assert 'if [ "$BUNDLE_LOCAL_ASR" = "1" ]; then' in script
+    assert "Local ASR packaging: disabled" in script
     assert "ASR_MODEL_DATA_ARGS" in script
     assert '[ -d "$ROOT_DIR/models/asr" ]' in script
     assert '--add-data "${ROOT_DIR}/models/asr:models/asr"' in script
     assert '"${ASR_MODEL_DATA_ARGS[@]}"' in script
     assert "ASR_BACKEND_ARGS" in script
+    assert "LOCAL_ASR_EXCLUDE_ARGS" in script
     assert 'python3 -c "import faster_whisper"' in script
     assert "--collect-all faster_whisper" in script
+    assert "--exclude-module torch" in script
+    assert "--exclude-module whisper" in script
+    assert "--exclude-module faster_whisper" in script
+    assert "--exclude-module mlx_whisper" in script
     assert '"${ASR_BACKEND_ARGS[@]}"' in script
+    assert '"${LOCAL_ASR_EXCLUDE_ARGS[@]}"' in script
+    assert script.index('BUNDLE_LOCAL_ASR="${AISUBPRO_BUNDLE_LOCAL_ASR:-0}"') < script.index('[ -d "$ROOT_DIR/models/asr" ]')
+    assert script.index('if [ "$BUNDLE_LOCAL_ASR" = "1" ]; then') < script.index('python3 -c "import faster_whisper"')
+    assert script.index('"${LOCAL_ASR_EXCLUDE_ARGS[@]}"') < script.index("app/main.py")
+
+
+def test_build_win_optional_asr_packaging_mirrors_mac_opt_in_variable():
+    script = (ROOT / "build_win.bat").read_text(encoding="utf-8")
+
+    assert 'if "%AISUBPRO_BUNDLE_LOCAL_ASR%"=="" set "AISUBPRO_BUNDLE_LOCAL_ASR=0"' in script
+    assert 'if "%AISUBPRO_BUNDLE_LOCAL_ASR%"=="1" (' in script
+    assert "Local ASR packaging: disabled" in script
+    assert "ASR_MODEL_DATA_ARGS" in script
+    assert 'if exist "models\\asr" set "ASR_MODEL_DATA_ARGS=--add-data models\\asr;models\\asr"' in script
+    assert "ASR_BACKEND_ARGS" in script
+    assert "LOCAL_ASR_EXCLUDE_ARGS" in script
+    assert 'python -c "import faster_whisper"' in script
+    assert "--collect-all faster_whisper" in script
+    assert "--exclude-module torch" in script
+    assert "--exclude-module whisper" in script
+    assert "--exclude-module faster_whisper" in script
+    assert "--exclude-module mlx_whisper" in script
+    assert "%ASR_MODEL_DATA_ARGS%" in script
+    assert "%ASR_BACKEND_ARGS%" in script
+    assert "%LOCAL_ASR_EXCLUDE_ARGS%" in script
+    assert script.index('if "%AISUBPRO_BUNDLE_LOCAL_ASR%"=="" set "AISUBPRO_BUNDLE_LOCAL_ASR=0"') < script.index('python -c "import faster_whisper"')
 
 
 def test_build_mac_requires_subtitle_capable_ffmpeg():
@@ -64,6 +245,22 @@ def test_pyinstaller_builds_exclude_test_only_modules():
 
     assert "--exclude-module pytest" in build_win
     assert "--exclude-module torch.utils.tensorboard" in build_win
+
+
+def test_pyinstaller_base_package_avoids_broad_runtime_collect_all():
+    build_mac = (ROOT / "build_mac.sh").read_text(encoding="utf-8")
+    build_win = (ROOT / "build_win.bat").read_text(encoding="utf-8")
+    broad_runtime_collections = (
+        "openai",
+        "starlette",
+        "httpx",
+        "yt_dlp",
+        "yt_dlp_ejs",
+    )
+
+    for package in broad_runtime_collections:
+        assert f"--collect-all {package}" not in build_mac
+        assert f"--collect-all {package}" not in build_win
 
 
 def test_mac_pyinstaller_excludes_non_macos_optional_platform_modules():
@@ -133,6 +330,31 @@ def test_make_dmg_uses_stable_hdiutil_by_default_and_create_dmg_is_opt_in():
     assert script.index('USE_CREATE_DMG="${AISUBPRO_USE_CREATE_DMG:-0}"') < script.index('if [ "$USE_CREATE_DMG" = "1" ]')
     assert 'else\n    # 用系统自带的 hdiutil' in script
     assert script.index('else\n    # 用系统自带的 hdiutil') < script.index('create_hdiutil_dmg\nfi')
+
+
+def test_make_dmg_checksum_hook_runs_release_prepare_after_dmg_when_python_available():
+    script = (ROOT / "make_dmg.sh").read_text(encoding="utf-8")
+
+    assert "prepare_release_metadata()" in script
+    assert "command -v python3" in script
+    assert "tools/release/prepare_release.py" in script
+    assert "--dist-dir dist" in script
+    assert "--output dist/release-size-report.json" in script
+    assert "--checksum-dir dist" in script
+    assert script.index('hdiutil create -volname "${APP_NAME}"') < script.index("prepare_release_metadata")
+    assert script.index("prepare_release_metadata") < script.index("[5/5] 构建完成!")
+
+
+def test_release_checklist_docs_cover_trigger_dry_run_checksum_and_optional_asr_strategy():
+    english = (ROOT / "docs" / "RELEASE_CHECKLIST.md").read_text(encoding="utf-8").lower()
+    chinese = (ROOT / "docs" / "RELEASE_CHECKLIST.zh-CN.md").read_text(encoding="utf-8").lower()
+
+    for doc in (english, chinese):
+        assert "v*" in doc
+        assert "dry run" in doc or "dry-run" in doc or "dry run" in doc.replace(" ", "")
+        assert "checksum" in doc or "sha-256" in doc or "sha256" in doc or "校验" in doc
+        assert "aisubpro_bundle_local_asr" in doc
+        assert "optional asr" in doc or "optional local asr" in doc or "可选 asr" in doc
 
 
 def test_make_dmg_cleans_failed_create_dmg_temp_mounts_before_fallback():

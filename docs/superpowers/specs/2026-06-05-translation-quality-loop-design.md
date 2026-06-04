@@ -219,7 +219,7 @@ Add a deterministic evaluation package under `app/evaluation/` with:
 - CLI runner:
 
 ```bash
-python3 -m app.evaluation.cli --corpus tests/fixtures/golden_corpus/milestone1.json --format markdown
+python3 -m app.evaluation.cli --corpus tests/fixtures/golden_corpus/milestone1.json --json-out build/evaluation/milestone1.json --markdown-out build/evaluation/milestone1.md
 ```
 
 Default CI mode must not call a paid or network provider. Provider-backed

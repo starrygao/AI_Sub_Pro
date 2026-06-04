@@ -27,7 +27,7 @@ from app.engines.providers.result_contract import (
     MISSING_TRANSLATION_ERROR,
     reconcile_translation_results,
 )
-from app.engines.kb_trace import TranslationContextTrace
+from app.engines.kb_trace import TranslationContextTrace, trace_for_project_kb
 from app.engines.phrase_library import PhraseLibrary
 from app.engines.translation_memory import TranslationMemoryStore, _lang as _memory_lang
 
@@ -106,6 +106,7 @@ class SubtitleTranslator:
 
     def __init__(self, config: dict):
         self.config = config
+        self._kb_usage_trace = {"project": {}, "matches": []}
         trans_cfg = _dict_section(config, "translation")
         api_keys = _dict_section(config, "api_keys")
         providers_cfg = _dict_section(config, "providers")
@@ -225,6 +226,16 @@ class SubtitleTranslator:
                 getattr(self.primary, "context_window_tokens", "?"),
             )
         return self._translate_batched(blocks, target_lang, meta_info, kb_data, callback)
+
+    def get_kb_usage_trace(self) -> dict:
+        """Return a defensive copy of the latest KB usage trace."""
+        trace = self._kb_usage_trace if isinstance(self._kb_usage_trace, dict) else {}
+        project = trace.get("project") if isinstance(trace.get("project"), dict) else {}
+        matches = trace.get("matches") if isinstance(trace.get("matches"), list) else []
+        return {
+            "project": dict(project),
+            "matches": [dict(match) for match in matches if isinstance(match, dict)],
+        }
 
     # ----------------------------------------------------------- full-doc path
     def _fallback_batch_size(self, blocks: List[SubtitleBlock]) -> int:
@@ -581,11 +592,13 @@ class SubtitleTranslator:
         kb_snippet = ""
         try:
             project_kb = _shared_kb.select_for_project(meta_info)
+            self._kb_usage_trace = trace_for_project_kb(project_kb)
             if project_kb is not None:
                 kb_snippet = _kb_build_snippet(project_kb)
         except Exception as _e:  # pragma: no cover — defensive
             log.warning("KB v2 injection failed: %s", _e)
             kb_snippet = ""
+            self._kb_usage_trace = trace_for_project_kb(None)
 
         if kb_snippet:
             parts.append(kb_snippet)
@@ -708,7 +721,7 @@ class SubtitleTranslator:
                             "score": hit.score,
                         })
                         phrase_lines.append(
-                            f"  - {hit.source_text} → {hit.target_text}"
+                            f"  - {hit.source_text} -> {hit.target_text}"
                             f"  (source: {hit.source_name or 'local'}, license: {hit.license or 'unspecified'})"
                         )
                         if len(phrase_lines) >= 6:
@@ -771,11 +784,13 @@ class SubtitleTranslator:
         kb_snippet = ""
         try:
             project_kb = _shared_kb.select_for_project(meta_info)
+            self._kb_usage_trace = trace_for_project_kb(project_kb)
             if project_kb is not None:
                 kb_snippet = _kb_build_snippet(project_kb)
         except Exception as _e:  # pragma: no cover — defensive
             log.warning("KB v2 injection failed (polish): %s", _e)
             kb_snippet = ""
+            self._kb_usage_trace = trace_for_project_kb(None)
 
         if kb_snippet:
             parts.append(kb_snippet)

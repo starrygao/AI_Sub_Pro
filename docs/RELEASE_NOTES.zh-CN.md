@@ -2,6 +2,59 @@
 
 语言：[English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.2.0 - 质量评测、工作流恢复、字幕编辑器与发布流水线
+
+这个版本把 v2 升级工作作为新的 macOS 安装包发布。它新增确定性质量评测、知识库
+审校工具、ASR 意图模式、可恢复的长任务工作流、专业字幕编辑能力，以及可重复的
+release pipeline。
+
+主要内容：
+
+- 新增字幕编辑器质量检查、合并、批量查找/替换、导出警告、键盘友好控制，以及
+  便于快速审校的 timeline strip。
+- 新增项目列表筛选、分组设置锚点，以及更明确的 provider、ASR、导出和网络错误
+  下一步处理提示。
+- 新增 release pipeline 文档，覆盖 `v*` tag trigger、dry-run release
+  preparation、checksum 校验和 size report 检查。
+- 将基础应用安装包与 optional local ASR package / 可选本地 ASR 包拆分。macOS
+  和 Windows 默认打包不再包含本地 ASR 模型或后端；只有设置
+  `AISUBPRO_BUNDLE_LOCAL_ASR=1` 时才会打包。
+- macOS DMG 构建在生成 DMG 后，如果 Python 可用，会运行 release preparation
+  helper，生成 checksum 文件和 `release-size-report.json`。
+- 新增 `python3 -m app.evaluation.cli`，用于基于 golden corpus 生成确定性的
+  翻译质量报告，不调用网络服务或付费 provider。
+- 新增项目知识库建议审校流程，可根据 TMDB 元数据和当前字幕生成建议词条，并
+  支持编辑、接受和拒绝。
+- 新增翻译过程中的 KB 使用 trace 记录，并通过项目 API 和前端面板展示可用的
+  最近一次 KB 命中情况。
+- 新增面向意图的 ASR 模式，支持速度优先、准确率优先和离线优先，并根据检测到
+  的本地后端和模型缓存状态给出后端/模型推荐。
+- 新增结构化工作流状态、受限长度的分阶段日志、失败阶段展示、日志下载、重试，
+  以及从最后一个已验证产物继续处理。
+
+质量验证：
+
+- 确定性评测 CLI 已通过，并为 7 个用例写出
+  `build/evaluation/milestone1.json` 和 `build/evaluation/milestone1.md`。
+- v2 聚合合并验证已通过：`902 passed in 104.00s`。
+- release 分支验证已通过：`903 passed in 118.10s`。
+- 打包脚本检查已通过：`31 passed in 0.16s`。
+- 本地 v1.2.0 DMG 已使用 `AISUBPRO_BUNDLE_LOCAL_ASR=0` 构建通过，且
+  `hdiutil verify dist/AI_Sub_Pro_v1.2.0.dmg` 报告 checksum 有效。
+- v2 合并前 GitHub Actions release dry-run validation 已通过。
+
+安装包：
+
+- 已为 macOS 用户附加 `AI_Sub_Pro_v1.2.0.dmg`，并提供对应的
+  `AI_Sub_Pro_v1.2.0.dmg.sha256` 校验文件和 `release-size-report.json`。
+- tag 前本地 release artifact 校验记录 SHA256
+  `e076b9776cccdcaf04051d863457b9d401addf6ea14417a265b55b31b97ac253`，大小
+  `88,518,339` bytes。
+- 附带的 macOS 安装包是 base app build，不包含本地 Whisper 模型文件，也不包含
+  optional ASR backend packages / 可选 ASR 后端包。
+- Windows 安装包需要在 Windows 机器上运行 `build_win.bat` 生成；当前 release
+  暂未附带预编译 Windows 安装包，请先使用源码安装。
+
 ## v1.1.1 - 知识库注入修复
 
 这个补丁版本修复真实翻译流程中的项目知识库 v2 注入路径。

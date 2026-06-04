@@ -477,6 +477,72 @@ def test_frontend_local_cli_panel_is_visible_for_claude_or_codex_provider():
     assert result.returncode == 0, result.stderr
 
 
+def test_frontend_formats_asr_recommendation_from_system_check():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.sysCheck = {
+          asr_recommendation: {
+            mode: 'offline',
+            backend: 'mlx_whisper',
+            model_size: 'large-v3-turbo',
+            download_required: false,
+            download_hint: '~1.6GB',
+            reason: '离线优先',
+          },
+        };
+
+        if (state.asrModeLabel('speed') !== '速度优先') throw new Error('missing speed label');
+        const summary = state.asrRecommendationSummary();
+        if (!summary.includes('离线优先')) throw new Error(`missing mode label: ${summary}`);
+        if (!summary.includes('mlx_whisper')) throw new Error(`missing backend summary: ${summary}`);
+        if (!summary.includes('large-v3-turbo')) throw new Error(`missing model summary: ${summary}`);
+        if (!summary.includes('本地可用')) throw new Error(`missing local availability: ${summary}`);
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_frontend_normalizes_asr_mode_from_settings_payload():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+
+        const invalid = state.normalizeSettings({asr: {mode: ' invalid '}});
+        if (invalid.asr.mode !== 'speed') {
+          throw new Error(`expected invalid ASR mode to fall back to speed, got ${invalid.asr.mode}`);
+        }
+
+        const trimmed = state.normalizeSettings({asr: {mode: ' accuracy '}});
+        if (trimmed.asr.mode !== 'accuracy') {
+          throw new Error(`expected trimmed ASR mode, got ${trimmed.asr.mode}`);
+        }
+
+        const missing = state.normalizeSettings({asr: {}});
+        if (missing.asr.mode !== 'speed') {
+          throw new Error(`expected missing ASR mode to default to speed, got ${missing.asr.mode}`);
+        }
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_frontend_codex_cli_panel_is_visible_for_primary_or_polish_provider():
     result = run_js(
         """
@@ -2029,3 +2095,77 @@ def test_frontend_subtitle_delete_waits_for_app_confirmation():
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_project_filter_recent_tasks_and_next_action_helpers():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.projects = [
+          {id: 'p1', name: 'Alpha Cut', status: 'error', error: 'OpenAI API key sk-secret missing', created_at: '2026-06-04T08:00:00Z', archived: false},
+          {id: 'p2', name: 'Beta Daily', status: 'processing', pipeline_stage: 'translate', created_at: '2026-06-04T09:00:00Z', archived: false},
+          {id: 'p3', name: 'Gamma Done', status: 'completed', created_at: '2026-06-02T09:00:00Z', archived: true},
+          {id: 'p4', name: 'Delta Cut', status: 'translated', created_at: '2026-06-03T09:00:00Z', archived: false},
+        ];
+
+        state.showArchived = false;
+        state.projectSearch = 'cut';
+        state.projectStatusFilter = 'all';
+        state.projectSortMode = 'name';
+        const searched = state.filteredProjects().map((p) => p.id).join(',');
+        if (searched !== 'p1,p4') throw new Error(`unexpected search filter ${searched}`);
+
+        state.projectSearch = '';
+        state.projectStatusFilter = 'running';
+        const running = state.filteredProjects().map((p) => p.id).join(',');
+        if (running !== 'p2') throw new Error(`unexpected running filter ${running}`);
+
+        state.projectStatusFilter = 'completed';
+        state.showArchived = true;
+        const completed = state.filteredProjects().map((p) => p.id).join(',');
+        if (completed !== 'p3') throw new Error(`unexpected completed filter ${completed}`);
+
+        const recentTasks = state.recentTaskProjects(3).map((p) => p.id).join(',');
+        if (recentTasks !== 'p2,p1,p4') throw new Error(`unexpected recent task order ${recentTasks}`);
+
+        const providerAction = state.projectErrorNextAction(state.projects[0]);
+        if (!providerAction.includes('设置') || providerAction.includes('sk-secret')) {
+          throw new Error(`provider action should point to settings and redact secrets, got ${providerAction}`);
+        }
+        if (!state.projectErrorNextAction('ffmpeg subtitles filter not found').includes('ffmpeg')) {
+          throw new Error('ffmpeg errors should point to ffmpeg install guidance');
+        }
+        if (!state.projectErrorNextAction('network timeout').includes('网络')) {
+          throw new Error('network errors should mention network retry guidance');
+        }
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_settings_group_navigation_markup_is_present():
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+
+    for snippet in (
+        "settings-section-nav",
+        'href="#settings-providers"',
+        'id="settings-providers"',
+        'href="#settings-asr"',
+        'id="settings-asr"',
+        'href="#settings-translation-export"',
+        'id="settings-translation-export"',
+        'href="#settings-tmdb"',
+        'id="settings-tmdb"',
+        'href="#settings-storage-release"',
+        'id="settings-storage-release"',
+    ):
+        assert snippet in html

@@ -526,6 +526,20 @@ def test_update_settings_rejects_blank_required_string_values(monkeypatch):
         assert field in r.json()["detail"]
 
 
+def test_update_settings_rejects_invalid_asr_mode(monkeypatch):
+    from app.main import app
+    client = TestClient(app)
+    monkeypatch.setattr(
+        "app.api.settings.Config.update",
+        lambda data: (_ for _ in ()).throw(AssertionError("Config.update should not be called")),
+    )
+
+    r = client.post("/api/settings", json={"asr": {"mode": "balanced"}})
+
+    assert r.status_code == 400
+    assert "ASR mode" in r.json()["detail"]
+
+
 def test_models_endpoint_returns_claude_cli_static_models_without_api_key():
     from app.main import app
     client = TestClient(app)
@@ -811,6 +825,80 @@ def test_system_check_accepts_logged_in_codex_cli_without_api_key():
     assert data["codex_cli_installed"] is True
     assert data["codex_cli_logged_in"] is True
     assert data["ready"] is True
+
+
+def test_system_check_includes_asr_capabilities_and_recommendation(monkeypatch):
+    import app.api.settings as settings_api
+    from app.main import app
+    client = TestClient(app)
+
+    monkeypatch.setattr(settings_api, "detect_asr_capabilities", lambda cfg: {
+        "platform": {"system": "Darwin", "machine": "arm64", "apple_silicon": True},
+        "backends": {"mlx_whisper": {"installed": True, "accelerated": True}},
+        "models": {
+            "large-v3-turbo": {
+                "available": True,
+                "download_hint": "~1.6GB",
+                "source": "bundled",
+            }
+        },
+    })
+    monkeypatch.setattr(settings_api, "recommend_asr_settings", lambda mode, caps: {
+        "mode": mode,
+        "backend": "mlx_whisper",
+        "model_size": "large-v3-turbo",
+        "ready": True,
+        "download_required": False,
+        "download_hint": "~1.6GB",
+        "reason": "速度优先",
+    })
+
+    with patch("app.utils.media.check_ffmpeg", return_value=True), \
+         patch("app.api.settings.Config.to_dict", return_value=_system_check_config(
+             primary_provider="openai",
+             api_keys={"openai": "sk-test"},
+         )):
+        r = client.get("/api/system-check")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["asr_mode"] == "speed"
+    assert data["asr_capabilities"]["platform"]["apple_silicon"] is True
+    assert data["asr_recommendation"]["backend"] == "mlx_whisper"
+    assert data["whisper_model"] in {True, False}
+    assert "translation_ready" in data
+    assert "mlx_whisper" in data
+    assert "mlx_error" in data
+    assert "ready" in data
+
+
+def test_system_check_degrades_invalid_persisted_asr_mode(monkeypatch):
+    import app.api.settings as settings_api
+    from app.main import app
+    client = TestClient(app)
+
+    monkeypatch.setattr(settings_api, "detect_asr_capabilities", lambda cfg: {"backends": {}, "models": {}})
+
+    captured = {}
+
+    def fake_recommend(mode, caps):
+        captured["mode"] = mode
+        return {"mode": mode, "backend": "", "ready": False}
+
+    monkeypatch.setattr(settings_api, "recommend_asr_settings", fake_recommend)
+
+    with patch("app.utils.media.check_ffmpeg", return_value=True), \
+         patch("app.api.settings.Config.to_dict", return_value={
+             **_system_check_config(primary_provider="openai", api_keys={"openai": "sk-test"}),
+             "asr": {"mode": "bad-mode", "model_size": "large-v3-turbo"},
+         }):
+        r = client.get("/api/system-check")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["asr_mode"] == "speed"
+    assert data["asr_recommendation"]["mode"] == "speed"
+    assert captured["mode"] == "speed"
 
 
 def test_system_check_reports_configured_bundled_asr_model(monkeypatch, tmp_path):

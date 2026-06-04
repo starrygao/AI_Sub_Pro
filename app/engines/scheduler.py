@@ -20,6 +20,7 @@ from typing import Dict, Iterator, Optional
 
 from app import config as cfg
 from app.config import PROJECTS_DIR
+from app.engines.workflow_state import append_stage_log
 from app.utils.project_store import atomic_write_json, project_dir, validate_pid
 
 log = logging.getLogger(__name__)
@@ -113,6 +114,16 @@ def update_progress(pid: str, stage: str, local_pct: int, msg: str) -> None:
         atomic_write_json(project_dir(pid) / "progress.json", payload)
     except Exception as e:
         log.warning("persist progress failed pid=%s: %s", pid, e)
+    if payload["stage"] and payload["message"]:
+        try:
+            append_stage_log(pid, payload["stage"], payload["message"])
+        except Exception as e:
+            log.warning(
+                "append stage log failed pid=%s stage=%s: %s",
+                pid,
+                payload["stage"],
+                e,
+            )
 
 
 def _normalize_progress_payload(data: dict) -> dict:

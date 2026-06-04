@@ -36,7 +36,7 @@
 - Create: `tests/fixtures/golden_corpus/milestone1.json`
 - Test: `tests/test_eval_corpus.py`
 
-- [ ] **Step 1: Write the failing corpus tests**
+- [x] **Step 1: Write the failing corpus tests**
 
 Create `tests/test_eval_corpus.py`:
 
@@ -74,13 +74,13 @@ def test_load_golden_corpus_normalizes_cases():
     assert first.expected_terms
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m pytest -q tests/test_eval_corpus.py`
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'app.evaluation'`.
 
-- [ ] **Step 3: Create the corpus fixture**
+- [x] **Step 3: Create the corpus fixture**
 
 Create `tests/fixtures/golden_corpus/milestone1.json`:
 
@@ -229,7 +229,7 @@ Create `tests/fixtures/golden_corpus/milestone1.json`:
 }
 ```
 
-- [ ] **Step 4: Implement corpus loader**
+- [x] **Step 4: Implement corpus loader**
 
 Create `app/evaluation/__init__.py`:
 
@@ -350,13 +350,13 @@ def load_corpus_file(path: str | Path) -> GoldenCorpus:
     return GoldenCorpus(version=version, cases=[_case(item) for item in cases_raw])
 ```
 
-- [ ] **Step 5: Run corpus tests**
+- [x] **Step 5: Run corpus tests**
 
 Run: `python3 -m pytest -q tests/test_eval_corpus.py`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/evaluation/__init__.py app/evaluation/corpus.py tests/fixtures/golden_corpus/milestone1.json tests/test_eval_corpus.py
@@ -369,7 +369,7 @@ git commit -m "test: add golden corpus loader"
 - Create: `app/evaluation/metrics.py`
 - Test: `tests/test_eval_metrics.py`
 
-- [ ] **Step 1: Write failing metric tests**
+- [x] **Step 1: Write failing metric tests**
 
 Create `tests/test_eval_metrics.py`:
 
@@ -426,13 +426,13 @@ def test_evaluate_case_catches_bad_output():
     assert result["format"]["broken_ids"] == ["1"]
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run: `python3 -m pytest -q tests/test_eval_metrics.py`
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'app.evaluation.metrics'`.
 
-- [ ] **Step 3: Implement metrics**
+- [x] **Step 3: Implement metrics**
 
 Create `app/evaluation/metrics.py`:
 
@@ -539,13 +539,13 @@ def evaluate_case(case: CorpusCase) -> dict[str, Any]:
     }
 ```
 
-- [ ] **Step 4: Run metric tests**
+- [x] **Step 4: Run metric tests**
 
 Run: `python3 -m pytest -q tests/test_eval_metrics.py`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/evaluation/metrics.py tests/test_eval_metrics.py
@@ -559,7 +559,7 @@ git commit -m "feat: add translation quality metrics"
 - Create: `app/evaluation/cli.py`
 - Test: `tests/test_eval_cli.py`
 
-- [ ] **Step 1: Write failing CLI tests**
+- [x] **Step 1: Write failing CLI tests**
 
 Create `tests/test_eval_cli.py`:
 
@@ -600,13 +600,13 @@ def test_eval_cli_writes_json_and_markdown(tmp_path):
     assert "Manual scoring" in markdown
 ```
 
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
 
 Run: `python3 -m pytest -q tests/test_eval_cli.py`
 
 Expected: FAIL with `No module named app.evaluation.cli`.
 
-- [ ] **Step 3: Implement reports**
+- [x] **Step 3: Implement reports**
 
 Create `app/evaluation/reports.py`:
 
@@ -682,7 +682,7 @@ def write_markdown_report(report: dict[str, Any], path: str | Path) -> None:
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 ```
 
-- [ ] **Step 4: Implement CLI**
+- [x] **Step 4: Implement CLI**
 
 Create `app/evaluation/cli.py`:
 
@@ -720,13 +720,13 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 5: Run CLI tests**
+- [x] **Step 5: Run CLI tests**
 
 Run: `python3 -m pytest -q tests/test_eval_cli.py tests/test_eval_metrics.py tests/test_eval_corpus.py`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/evaluation/reports.py app/evaluation/cli.py tests/test_eval_cli.py
@@ -739,7 +739,7 @@ git commit -m "feat: add translation evaluation CLI"
 - Create: `app/engines/kb_suggestions.py`
 - Test: `tests/test_kb_suggestions.py`
 
-- [ ] **Step 1: Write failing suggestion tests**
+- [x] **Step 1: Write failing suggestion tests**
 
 Create `tests/test_kb_suggestions.py`:
 
@@ -783,13 +783,13 @@ def test_suggest_kb_entries_ignores_short_noise():
     assert suggestions == []
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run: `python3 -m pytest -q tests/test_kb_suggestions.py`
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'app.engines.kb_suggestions'`.
 
-- [ ] **Step 3: Implement suggestion engine**
+- [x] **Step 3: Implement suggestion engine**
 
 Create `app/engines/kb_suggestions.py`:
 
@@ -919,13 +919,13 @@ def suggest_kb_entries(project: dict, subtitles: list[dict] | None, existing_kb:
     return suggestions
 ```
 
-- [ ] **Step 4: Run suggestion tests**
+- [x] **Step 4: Run suggestion tests**
 
 Run: `python3 -m pytest -q tests/test_kb_suggestions.py`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/engines/kb_suggestions.py tests/test_kb_suggestions.py
@@ -938,7 +938,7 @@ git commit -m "feat: suggest knowledge base entries"
 - Modify: `app/api/knowledge.py`
 - Test: `tests/test_knowledge_api.py`
 
-- [ ] **Step 1: Write failing API tests**
+- [x] **Step 1: Write failing API tests**
 
 Append to `tests/test_knowledge_api.py`:
 
@@ -1014,13 +1014,13 @@ def test_kb_reject_suggestions_persists_project_decision(tmp_project_dir, patche
     assert data["rejected_sources"] == ["Noisy Phrase", "Unused Name"]
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run: `python3 -m pytest -q tests/test_knowledge_api.py::test_kb_suggestions_endpoint_returns_project_suggestions tests/test_knowledge_api.py::test_kb_accept_suggestions_persists_entries tests/test_knowledge_api.py::test_kb_reject_suggestions_persists_project_decision`
 
 Expected: FAIL with 404 for the new endpoints.
 
-- [ ] **Step 3: Add request models and helpers**
+- [x] **Step 3: Add request models and helpers**
 
 Modify `app/api/knowledge.py`:
 
@@ -1053,7 +1053,7 @@ def _append_term(target: list[TermEntry], entry: SuggestionAcceptEntryIn) -> Non
     target.append(TermEntry(source=source, target=translated, notes=_clean_text(entry.notes)))
 ```
 
-- [ ] **Step 4: Add suggestion endpoints**
+- [x] **Step 4: Add suggestion endpoints**
 
 Modify `app/api/knowledge.py` with imports:
 
@@ -1133,13 +1133,13 @@ def reject_project_suggestions(pid: str, body: SuggestionRejectIn):
     return {"ok": True, "rejected": len(sources)}
 ```
 
-- [ ] **Step 5: Run API tests**
+- [x] **Step 5: Run API tests**
 
 Run: `python3 -m pytest -q tests/test_knowledge_api.py tests/test_kb_suggestions.py`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/api/knowledge.py tests/test_knowledge_api.py
@@ -1154,7 +1154,7 @@ git commit -m "feat: expose knowledge base suggestions"
 - Modify: `app/api/translate.py`
 - Test: `tests/test_translator_kb_integration.py`
 
-- [ ] **Step 1: Write failing trace tests**
+- [x] **Step 1: Write failing trace tests**
 
 Append to `tests/test_translator_kb_integration.py`:
 
@@ -1198,13 +1198,13 @@ def test_translator_records_kb_usage_trace(monkeypatch):
     assert trace["matches"][0]["target"] == "玛雅·陈"
 ```
 
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
 
 Run: `python3 -m pytest -q tests/test_translator_kb_integration.py::test_translator_records_kb_usage_trace`
 
 Expected: FAIL because `get_kb_usage_trace` does not exist.
 
-- [ ] **Step 3: Implement trace helper**
+- [x] **Step 3: Implement trace helper**
 
 Create `app/engines/kb_trace.py`:
 
@@ -1255,7 +1255,7 @@ def write_kb_usage_trace(project_dir: Path, trace: dict[str, Any]) -> None:
     atomic_write_json(project_dir / "kb_usage_trace.json", trace)
 ```
 
-- [ ] **Step 4: Modify translator to store trace**
+- [x] **Step 4: Modify translator to store trace**
 
 Modify `app/engines/translator.py`:
 
@@ -1287,7 +1287,7 @@ Inside `_build_prompt`, after selecting the effective project KB, call:
 
 Use the existing local variable name that currently holds the selected `ProjectKb`. If the current method does not name it `project_kb`, introduce that name where `select_for_project` is called and pass it to both `build_prompt_snippet` and `trace_for_project_kb`.
 
-- [ ] **Step 5: Persist trace after translation**
+- [x] **Step 5: Persist trace after translation**
 
 Modify `app/api/translate.py` in each translation task after `translator.translate(...)` returns and before the task is marked complete:
 
@@ -1306,13 +1306,13 @@ Then persist:
 
 If multiple translation paths instantiate `SubtitleTranslator`, apply the same persistence block to each path that writes `translated.srt`.
 
-- [ ] **Step 6: Run trace tests**
+- [x] **Step 6: Run trace tests**
 
 Run: `python3 -m pytest -q tests/test_translator_kb_integration.py tests/test_translate_integration.py`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add app/engines/kb_trace.py app/engines/translator.py app/api/translate.py tests/test_translator_kb_integration.py
@@ -1326,7 +1326,7 @@ git commit -m "feat: record knowledge base usage traces"
 - Modify: `app/static/index.html`
 - Test: `tests/test_frontend_knowledge_js.py`
 
-- [ ] **Step 1: Write failing frontend tests**
+- [x] **Step 1: Write failing frontend tests**
 
 Append to `tests/test_frontend_knowledge_js.py`:
 
@@ -1400,13 +1400,13 @@ def test_knowledge_html_contains_suggestion_and_trace_panels():
     assert "kbUsageTrace" in html
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run: `python3 -m pytest -q tests/test_frontend_knowledge_js.py::test_knowledge_frontend_loads_and_accepts_suggestions tests/test_frontend_knowledge_js.py::test_knowledge_html_contains_suggestion_and_trace_panels`
 
 Expected: FAIL because state fields and HTML panels do not exist.
 
-- [ ] **Step 3: Add frontend state and methods**
+- [x] **Step 3: Add frontend state and methods**
 
 Modify `app/static/js/app.js` initial state:
 
@@ -1469,7 +1469,7 @@ Add methods near KB management:
     },
 ```
 
-- [ ] **Step 4: Add HTML panels**
+- [x] **Step 4: Add HTML panels**
 
 Modify `app/static/index.html` in the knowledge view, below the existing KB editor actions:
 
@@ -1508,13 +1508,13 @@ Modify `app/static/index.html` in the knowledge view, below the existing KB edit
 </section>
 ```
 
-- [ ] **Step 5: Run frontend tests**
+- [x] **Step 5: Run frontend tests**
 
 Run: `python3 -m pytest -q tests/test_frontend_knowledge_js.py`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/static/js/app.js app/static/index.html tests/test_frontend_knowledge_js.py
@@ -1529,7 +1529,7 @@ git commit -m "feat: add KB suggestion review UI"
 - Test: `tests/test_knowledge_api.py`
 - Test: `tests/test_frontend_knowledge_js.py`
 
-- [ ] **Step 1: Write failing API test**
+- [x] **Step 1: Write failing API test**
 
 Append to `tests/test_knowledge_api.py`:
 
@@ -1553,7 +1553,7 @@ def test_kb_usage_trace_endpoint_reads_project_trace(tmp_project_dir, patched_kb
     assert response.json()["matches"][0]["source"] == "Maya"
 ```
 
-- [ ] **Step 2: Add usage trace endpoint**
+- [x] **Step 2: Add usage trace endpoint**
 
 Modify `app/api/knowledge.py`:
 
@@ -1577,7 +1577,7 @@ def get_project_usage_trace(pid: str):
     }
 ```
 
-- [ ] **Step 3: Add frontend trace loader**
+- [x] **Step 3: Add frontend trace loader**
 
 Modify `app/static/js/app.js`:
 
@@ -1599,13 +1599,13 @@ Modify `app/static/js/app.js`:
 
 Call `await this.loadKbUsageTrace();` in `openProject` after subtitles load, so the panel updates when a project is opened.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `python3 -m pytest -q tests/test_knowledge_api.py tests/test_frontend_knowledge_js.py`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/api/knowledge.py app/static/js/app.js tests/test_knowledge_api.py tests/test_frontend_knowledge_js.py
@@ -1620,7 +1620,7 @@ git commit -m "feat: expose KB usage trace"
 - Modify: `README.md`
 - Modify: `README.zh-CN.md`
 
-- [ ] **Step 1: Document eval CLI in English**
+- [x] **Step 1: Document eval CLI in English**
 
 Add to `docs/USAGE.md` after the testing section:
 
@@ -1642,7 +1642,7 @@ or paid providers. The report includes terminology hit rate, format breakage
 rate, missing translation rate, row alignment rate, and a manual scoring table.
 ```
 
-- [ ] **Step 2: Document KB suggestions in English**
+- [x] **Step 2: Document KB suggestions in English**
 
 Add to `docs/USAGE.md` knowledge-base workflow section:
 
@@ -1654,7 +1654,7 @@ translation, the KB panel shows which entries were used by the latest run when
 trace data is available.
 ```
 
-- [ ] **Step 3: Add Simplified Chinese docs**
+- [x] **Step 3: Add Simplified Chinese docs**
 
 Add equivalent sections to `docs/USAGE.zh-CN.md`:
 
@@ -1682,7 +1682,7 @@ Add this KB workflow note:
 本次翻译使用过的 KB 词条。
 ```
 
-- [ ] **Step 4: Update README feature bullets**
+- [x] **Step 4: Update README feature bullets**
 
 Add one bullet to both `README.md` and `README.zh-CN.md`:
 
@@ -1696,7 +1696,7 @@ Chinese:
 - 使用 golden corpus 运行确定性的翻译质量评测。
 ```
 
-- [ ] **Step 5: Run focused and full verification**
+- [x] **Step 5: Run focused and full verification**
 
 Run:
 
@@ -1716,7 +1716,7 @@ Expected:
 - Full pytest PASS.
 - `git diff --check` prints no output.
 
-- [ ] **Step 6: Commit docs**
+- [x] **Step 6: Commit docs**
 
 ```bash
 git add docs/USAGE.md docs/USAGE.zh-CN.md README.md README.zh-CN.md
@@ -1725,7 +1725,7 @@ git commit -m "docs: document translation evaluation and KB suggestions"
 
 ## Final Milestone 1 Gate
 
-- [ ] **Step 1: Run evaluation CLI**
+- [x] **Step 1: Run evaluation CLI**
 
 Run:
 
@@ -1738,7 +1738,7 @@ python3 -m app.evaluation.cli \
 
 Expected: command exits 0 and writes both files.
 
-- [ ] **Step 2: Inspect report summary**
+- [x] **Step 2: Inspect report summary**
 
 Run:
 
@@ -1755,7 +1755,7 @@ PY
 
 Expected: prints summary and exits 0.
 
-- [ ] **Step 3: Run full milestone verification**
+- [x] **Step 3: Run full milestone verification**
 
 Run:
 
@@ -1769,7 +1769,7 @@ git status --short --branch
 
 Expected: all checks pass and `git status` shows only the current branch/tracking line.
 
-- [ ] **Step 4: Request code review**
+- [x] **Step 4: Request code review**
 
 Use `requesting-code-review` on the milestone branch. Review focus:
 
@@ -1779,11 +1779,11 @@ Use `requesting-code-review` on the milestone branch. Review focus:
 - Frontend suggestion acceptance cannot write entries without user-provided targets.
 - No API keys or runtime data are written to docs, fixtures, or reports.
 
-- [ ] **Step 5: Address review**
+- [x] **Step 5: Address review**
 
 Use `receiving-code-review` for any findings. Each accepted finding gets its own test or verification command.
 
-- [ ] **Step 6: Finish branch**
+- [x] **Step 6: Finish branch**
 
 Use `verification-before-completion`, then `finishing-a-development-branch`.
 

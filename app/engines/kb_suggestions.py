@@ -1,78 +1,130 @@
-"""Project-local knowledge-base suggestion extraction and persistence."""
+"""Generate candidate knowledge base entries from project metadata and subtitles."""
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Iterable, List, Optional
+from dataclasses import asdict, dataclass, field
 
 from app.engines.kb_models import ProjectKb
 from app.utils.project_store import atomic_write_json
 
 
-_CAPITALIZED_SPAN_RE = re.compile(
-    r"\b(?:Dr\.|Mr\.|Mrs\.|Ms\.)?\s*[A-Z][A-Za-z']+(?:\s+[A-Z][A-Za-z']+){0,4}"
-)
-_FALSE_POSITIVES = {
-    "A",
-    "An",
-    "And",
-    "But",
-    "He",
-    "Her",
-    "His",
-    "I",
-    "If",
-    "It",
-    "She",
-    "So",
-    "The",
-    "They",
-    "This",
-    "We",
-    "What",
-    "When",
-    "Where",
-    "Who",
-    "Why",
-    "You",
-    "Yes",
-    "No",
-    "Okay",
-    "Right",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
+KB_CATEGORIES = ("characters", "places", "brands", "slang")
+
+_WORD_RE = re.compile(r"\b[A-Za-z]+(?:['-][A-Za-z]+)*\b")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+_TITLE_CONNECTORS = {"a", "an", "at", "for", "in", "of", "on", "the", "to"}
+_RELATION_CONNECTORS = {"at", "in", "on", "to"}
+_PROTECTED_CONNECTED_TITLES = {
+    ("lord", "of", "the", "rings"),
+    ("once", "upon", "a", "time"),
+    ("only", "murders", "in", "the", "building"),
+    ("the", "last", "of", "us"),
+    ("this", "is", "us"),
 }
-_PLACE_HINT_WORDS = {
-    "Acres",
-    "Avenue",
-    "Bay",
-    "Beach",
-    "Center",
-    "Centre",
-    "Clinic",
-    "Club",
-    "Court",
-    "Heights",
-    "Hospital",
-    "House",
-    "Inn",
-    "Lake",
-    "Oaks",
-    "Park",
-    "Road",
-    "Room",
-    "School",
-    "Street",
-    "Tower",
-    "Valley",
+_SENTENCE_START_PREFIX_CHARS = set("\"'([{<-")
+_SENTENCE_BOUNDARY_TRAILING_CHARS = set("\"')]} ")
+_DENIED_PROSE_STARTERS = {
+    "he",
+    "i",
+    "it",
+    "later",
+    "meanwhile",
+    "she",
+    "that",
+    "these",
+    "they",
+    "this",
+    "those",
+    "today",
+    "tomorrow",
+    "tonight",
+    "we",
+    "yesterday",
 }
-_PLACE_PREPOSITIONS = {"at", "in", "inside", "into", "near", "from", "to", "toward", "towards"}
+
+_NOISE_TERMS = {
+    "a",
+    "ai",
+    "an",
+    "and",
+    "as",
+    "at",
+    "by",
+    "for",
+    "in",
+    "it",
+    "of",
+    "ok",
+    "on",
+    "or",
+    "the",
+    "to",
+    "tv",
+    "uk",
+    "us",
+}
+
+_PLACE_HINTS = {
+    "airport",
+    "avenue",
+    "bar",
+    "beach",
+    "bridge",
+    "building",
+    "cafe",
+    "center",
+    "centre",
+    "church",
+    "city",
+    "club",
+    "college",
+    "county",
+    "court",
+    "empire",
+    "hospital",
+    "hotel",
+    "house",
+    "island",
+    "kingdom",
+    "lake",
+    "mall",
+    "museum",
+    "park",
+    "plaza",
+    "restaurant",
+    "river",
+    "road",
+    "school",
+    "station",
+    "street",
+    "theater",
+    "theatre",
+    "town",
+    "university",
+    "village",
+}
+
+_BRAND_HINTS = {
+    "bank",
+    "channel",
+    "corp",
+    "corporation",
+    "inc",
+    "labs",
+    "llc",
+    "ltd",
+    "motors",
+    "network",
+    "news",
+    "pictures",
+    "records",
+    "studio",
+    "studios",
+    "tech",
+    "technologies",
+}
 
 _SPECIAL_TARGETS = {
     "Hudson Oaks": "哈德逊奥克斯",
@@ -86,246 +138,424 @@ _SPECIAL_TARGETS = {
 
 @dataclass
 class KbSuggestion:
-    id: str
-    type: str
     source: str
-    target: str
+    target: str = ""
+    category: str = "slang"
     notes: str = ""
-    confidence: float = 0.5
-    evidence: List[str] = field(default_factory=list)
+    evidence: list[str] = field(default_factory=list)
+    confidence: float = 0.0
+    collision: str = "new"
+    existing_entries: list[dict] = field(default_factory=list)
+    id: str = ""
+    type: str = ""
     status: str = "pending"
-    collision: str = ""
-    created_at: str = ""
+
+    def __post_init__(self) -> None:
+        if self.type and (not self.category or self.category == "slang"):
+            self.category = _plural_category(self.type)
+        if not self.type:
+            self.type = _singular_category(self.category)
+        if not self.id:
+            self.id = _suggestion_id(self.type, self.source)
 
     def to_dict(self) -> dict:
         return asdict(self)
 
-    @classmethod
-    def from_dict(cls, value: dict) -> "KbSuggestion":
-        if not isinstance(value, dict):
-            return cls(id="", type="phrase", source="", target="")
-        evidence = value.get("evidence")
-        return cls(
-            id=_clean_text(value.get("id")),
-            type=_clean_text(value.get("type")) or "phrase",
-            source=_clean_text(value.get("source")),
-            target=_clean_text(value.get("target")),
-            notes=_clean_text(value.get("notes")),
-            confidence=_clean_confidence(value.get("confidence")),
-            evidence=[_clean_text(item) for item in evidence if _clean_text(item)]
-            if isinstance(evidence, list)
-            else [],
-            status=_clean_status(value.get("status")),
-            collision=_clean_text(value.get("collision")),
-            created_at=_clean_text(value.get("created_at")),
+
+def suggest_kb_entries(
+    project: dict,
+    subtitles: list[dict] | None,
+    existing_kb: ProjectKb | None,
+) -> list[KbSuggestion]:
+    """Suggest candidate KB entries from project metadata and subtitle text."""
+    existing_entries = _existing_entries_by_source(existing_kb)
+    suggestions: dict[str, KbSuggestion] = {}
+
+    for source, category, evidence, confidence, origin in _iter_candidates(project, subtitles):
+        term = _normalize_source(source)
+        if not _is_useful_term(term, origin):
+            continue
+
+        key = term.casefold()
+        matches = existing_entries.get(key, [])
+        collision = _collision_status(matches)
+        if key in suggestions:
+            suggestion = suggestions[key]
+            if evidence not in suggestion.evidence:
+                suggestion.evidence.append(evidence)
+            suggestion.confidence = max(suggestion.confidence, confidence)
+            suggestion.collision = collision
+            suggestion.existing_entries = list(matches)
+            continue
+
+        suggestions[key] = KbSuggestion(
+            source=term,
+            target=_SPECIAL_TARGETS.get(term, ""),
+            category=category,
+            notes="",
+            evidence=[evidence],
+            confidence=confidence,
+            collision=collision,
+            existing_entries=list(matches),
         )
+
+    return list(suggestions.values())
+
+
+def _iter_candidates(project: dict, subtitles: list[dict] | None):
+    project = project if isinstance(project, dict) else {}
+
+    for source, evidence in _cast_names(project.get("cast")):
+        confidence = 0.95 if evidence == "cast" else 0.9
+        yield source, "characters", evidence, confidence, evidence
+
+    for field in ("title", "name", "show_title", "original_title"):
+        title = _normalize_source(project.get(field))
+        if title:
+            yield title, _category_for_phrase(title), "title", 0.75, field
+
+    for phrase in _title_case_phrases(project.get("overview")):
+        yield phrase, _category_for_phrase(phrase), "overview", 0.6, "overview"
+
+    for subtitle in subtitles or []:
+        if not isinstance(subtitle, dict):
+            continue
+        index = subtitle.get("index")
+        evidence = f"subtitle:{index}" if index is not None else "subtitle"
+        for phrase in _title_case_phrases(subtitle.get("text")):
+            yield phrase, _category_for_phrase(phrase), evidence, 0.55, "subtitle"
+
+
+def _cast_names(cast):
+    if not isinstance(cast, list):
+        return
+
+    for item in cast:
+        if isinstance(item, str):
+            yield item, "cast"
+            continue
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        character = item.get("character")
+        if isinstance(name, str):
+            yield name, "cast"
+        if isinstance(character, str):
+            yield character, "character"
+
+
+def _title_case_phrases(value) -> list[str]:
+    text = _clean_text(value)
+    if not text:
+        return []
+
+    tokens = [(match.group(0), match.start(), match.end()) for match in _WORD_RE.finditer(text)]
+    phrases: list[str] = []
+    i = 0
+    while i < len(tokens):
+        word = tokens[i][0]
+        if not _is_title_word(word):
+            i += 1
+            continue
+
+        phrase_words = [word]
+        pending_connectors: list[str] = []
+        j = i + 1
+        while j < len(tokens):
+            if not _is_soft_phrase_gap(text[tokens[j - 1][2]:tokens[j][1]]):
+                break
+
+            next_word = tokens[j][0]
+            if _is_title_word(next_word):
+                if pending_connectors and _is_acronym_span(phrase_words) and _is_acronym_word(next_word):
+                    break
+                phrase_words.extend(pending_connectors)
+                pending_connectors = []
+                phrase_words.append(next_word)
+                j += 1
+                continue
+            if _is_title_connector(next_word):
+                pending_connectors.append(next_word)
+                j += 1
+                continue
+            break
+
+        phrase_words = _drop_denied_starter(phrase_words, text, tokens[i][1])
+        for split_words in _split_relational_phrases(phrase_words):
+            phrase = _normalize_source(" ".join(split_words))
+            if phrase:
+                phrases.append(phrase)
+        i = j
+
+    return phrases
+
+
+def _is_title_word(word: str) -> bool:
+    if _is_title_connector(word):
+        return False
+    letters = [char for char in word if char.isalpha()]
+    if len(letters) < 2:
+        return False
+    if "".join(letters).isupper():
+        return True
+    return word[0].isupper() and any(char.islower() for char in word)
+
+
+def _is_title_connector(word: str) -> bool:
+    return word == word.casefold() and word.casefold() in _TITLE_CONNECTORS
+
+
+def _is_soft_phrase_gap(gap: str) -> bool:
+    return bool(gap) and all(char in " \t" for char in gap)
+
+
+def _drop_denied_starter(phrase_words: list[str], text: str, start: int) -> list[str]:
+    if not phrase_words:
+        return []
+    if _is_protected_connected_title(phrase_words):
+        return phrase_words
+    if phrase_words[0].casefold() not in _DENIED_PROSE_STARTERS:
+        return phrase_words
+    if not _starts_sentence(text, start):
+        return phrase_words
+
+    remaining = phrase_words[1:]
+    if _has_multiword_title_phrase(remaining) or any(_is_acronym_word(word) for word in remaining):
+        return remaining
+    return []
+
+
+def _split_relational_phrases(phrase_words: list[str]) -> list[list[str]]:
+    if not phrase_words:
+        return []
+    if _is_protected_connected_title(phrase_words):
+        return [phrase_words]
+
+    chunks = [phrase_words]
+    changed = True
+    while changed:
+        changed = False
+        next_chunks: list[list[str]] = []
+        for chunk in chunks:
+            split_chunks = _split_first_relational_phrase(chunk)
+            next_chunks.extend(split_chunks)
+            if len(split_chunks) > 1:
+                changed = True
+        chunks = next_chunks
+
+    return [chunk for chunk in chunks if chunk]
+
+
+def _split_first_relational_phrase(phrase_words: list[str]) -> list[list[str]]:
+    if _is_protected_connected_title(phrase_words):
+        return [phrase_words]
+
+    for index, word in enumerate(phrase_words):
+        if not _is_relation_connector(word):
+            continue
+        left = _trim_edge_connectors(phrase_words[:index])
+        right = _trim_edge_connectors(phrase_words[index + 1:])
+        if _has_title_word(left) and _has_title_word(right):
+            return [left, right]
+
+    return [phrase_words]
+
+
+def _is_protected_connected_title(words: list[str]) -> bool:
+    return tuple(word.casefold() for word in words) in _PROTECTED_CONNECTED_TITLES
+
+
+def _is_relation_connector(word: str) -> bool:
+    return word == word.casefold() and word.casefold() in _RELATION_CONNECTORS
+
+
+def _trim_edge_connectors(words: list[str]) -> list[str]:
+    start = 0
+    end = len(words)
+    while start < end and _is_title_connector(words[start]):
+        start += 1
+    while end > start and _is_title_connector(words[end - 1]):
+        end -= 1
+    return words[start:end]
+
+
+def _starts_sentence(text: str, start: int) -> bool:
+    prefix = text[:start].rstrip()
+    if not prefix:
+        return True
+    if all(char.isspace() or char in _SENTENCE_START_PREFIX_CHARS for char in prefix):
+        return True
+
+    index = len(prefix) - 1
+    while index >= 0 and prefix[index] in _SENTENCE_BOUNDARY_TRAILING_CHARS:
+        index -= 1
+    return index >= 0 and prefix[index] in ".!?"
+
+
+def _has_multiword_title_phrase(words: list[str]) -> bool:
+    return sum(1 for word in words if _is_title_word(word)) >= 2
+
+
+def _has_title_word(words: list[str]) -> bool:
+    return any(_is_title_word(word) for word in words)
+
+
+def _is_acronym_span(words: list[str]) -> bool:
+    title_words = [word for word in words if _is_title_word(word)]
+    return bool(title_words) and all(_is_acronym_word(word) for word in title_words)
+
+
+def _is_acronym_word(word: str) -> bool:
+    letters = "".join(char for char in word if char.isalpha())
+    return len(letters) >= 2 and letters.isupper()
+
+
+def _category_for_phrase(source: str) -> str:
+    words = [word.strip(".,:;!?()[]{}\"'").casefold() for word in source.split()]
+    if not words:
+        return "slang"
+    last = words[-1]
+    if last in _PLACE_HINTS:
+        return "places"
+    if last in _BRAND_HINTS:
+        return "brands"
+    return "slang"
+
+
+def _singular_category(category: str) -> str:
+    category = _clean_text(category).casefold()
+    return {
+        "characters": "character",
+        "places": "place",
+        "brands": "organization",
+        "slang": "slang",
+    }.get(category, category or "slang")
+
+
+def _plural_category(kind: str) -> str:
+    kind = _clean_text(kind).casefold()
+    return {
+        "character": "characters",
+        "person": "characters",
+        "place": "places",
+        "organization": "brands",
+        "brand": "brands",
+        "title": "brands",
+        "style": "slang",
+        "slang": "slang",
+    }.get(kind, "slang")
+
+
+def _suggestion_id(kind: str, source: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", source.casefold()).strip("-")
+    return f"{_clean_text(kind) or 'term'}:{slug or 'suggestion'}"
+
+
+def _existing_entries_by_source(existing_kb: ProjectKb | None) -> dict[str, list[dict]]:
+    if existing_kb is None:
+        return {}
+
+    matches: dict[str, list[dict]] = {}
+    for category in KB_CATEGORIES:
+        for entry in getattr(existing_kb, category, []) or []:
+            source = _normalize_source(getattr(entry, "source", ""))
+            if source:
+                matches.setdefault(source.casefold(), []).append(
+                    {
+                        "category": category,
+                        "source": source,
+                        "target": _clean_text(getattr(entry, "target", "")),
+                        "notes": _clean_text(getattr(entry, "notes", "")),
+                    }
+                )
+    return matches
+
+
+def _collision_status(existing_entries: list[dict]) -> str:
+    if not existing_entries:
+        return "new"
+    distinct_matches = {(entry["category"], entry["target"]) for entry in existing_entries}
+    if len(distinct_matches) == 1:
+        return "existing"
+    return "ambiguous"
+
+
+def _normalize_source(value) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    text = _WHITESPACE_RE.sub(" ", text)
+    text = text.strip(" \t\r\n.,:;!?()[]{}\"'")
+    return text.strip()
 
 
 def _clean_text(value) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def _clean_status(value) -> str:
-    text = _clean_text(value)
-    return text if text in {"pending", "accepted", "rejected"} else "pending"
-
-
-def _clean_confidence(value) -> float:
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return 0.5
-    if parsed < 0:
-        return 0.0
-    if parsed > 1:
-        return 1.0
-    return parsed
-
-
-def _slug(value: str) -> str:
-    text = re.sub(r"[^A-Za-z0-9]+", "-", value.lower()).strip("-")
-    return text or "suggestion"
-
-
-def _suggestion_id(kind: str, source: str) -> str:
-    return f"{kind}:{_slug(source)}"
-
-
-def _iter_text_blocks(blocks: Iterable) -> Iterable[tuple[str, str]]:
-    for pos, block in enumerate(blocks or [], start=1):
-        if isinstance(block, dict):
-            text = _clean_text(block.get("text"))
-            raw_index = block.get("index", pos)
-        else:
-            text = _clean_text(getattr(block, "text", ""))
-            raw_index = getattr(block, "index", pos)
-        if text:
-            yield str(raw_index), text
-
-
-def _candidate_type(source: str, text: str, match_start: int, metadata_names: set[str]) -> str:
-    if source in metadata_names:
-        return "character"
-    stripped = source.replace("Dr. ", "").replace("Mr. ", "").replace("Mrs. ", "").replace("Ms. ", "")
-    if source.startswith(("Dr. ", "Mr. ", "Mrs. ", "Ms. ")):
-        return "person"
-    words = stripped.split()
-    if words and words[-1] in _PLACE_HINT_WORDS:
-        return "place"
-    prefix = text[:match_start].lower().split()
-    if prefix and prefix[-1].strip(".,!?;:") in _PLACE_PREPOSITIONS and len(words) >= 2:
-        return "place"
-    if len(words) >= 2:
-        return "person"
-    return "phrase"
-
-
-def _target_for(source: str, kind: str) -> str:
-    if source in _SPECIAL_TARGETS:
-        return _SPECIAL_TARGETS[source]
-    if source.startswith("Dr. "):
-        return f"{source[4:]}医生"
-    return source
-
-
-def _existing_terms(kb: Optional[ProjectKb]) -> tuple[set[str], set[str]]:
-    if kb is None:
-        return set(), set()
-    entries = []
-    for attr in ("characters", "places", "brands", "slang"):
-        entries.extend(getattr(kb, attr, []) or [])
-    sources = {_clean_text(getattr(entry, "source", "")) for entry in entries}
-    targets = {_clean_text(getattr(entry, "target", "")) for entry in entries}
-    return {s for s in sources if s}, {t for t in targets if t}
-
-
-def _collision_for(source: str, target: str, kb: Optional[ProjectKb]) -> str:
-    sources, targets = _existing_terms(kb)
-    if source in sources:
-        return "source_exists"
-    if target and target in targets:
-        return "target_exists"
-    return ""
-
-
-def _metadata_names(project: dict) -> set[str]:
-    names = set()
-    if not isinstance(project, dict):
-        return names
-    for key in ("show_title", "name", "original_title", "title"):
-        value = _clean_text(project.get(key))
-        if value:
-            names.add(value)
-    cast = project.get("cast")
-    if isinstance(cast, list):
-        for item in cast:
-            if isinstance(item, str):
-                name = _clean_text(item)
-            elif isinstance(item, dict):
-                name = _clean_text(item.get("character")) or _clean_text(item.get("name"))
-            else:
-                name = ""
-            if name:
-                names.add(name)
-    return names
+def _is_useful_term(source: str, origin: str) -> bool:
+    if not source:
+        return False
+    folded = source.casefold()
+    is_high_confidence_origin = origin in {"cast", "character", "title", "name", "show_title", "original_title"}
+    if folded in _NOISE_TERMS and (not is_high_confidence_origin or len(folded) == 1):
+        return False
+    letters = [char for char in source if char.isalpha()]
+    if len(letters) <= 2 and not is_high_confidence_origin:
+        return False
+    return True
 
 
 def extract_kb_suggestions(
     project: dict,
-    blocks: Iterable,
-    *,
-    existing_kb: Optional[ProjectKb] = None,
+    subtitles: list[dict] | None,
+    existing_kb: ProjectKb | None = None,
 ) -> list[KbSuggestion]:
-    """Extract explainable KB suggestions from project metadata and subtitles."""
-    metadata_names = _metadata_names(project)
-    candidates: dict[str, KbSuggestion] = {}
-
-    for name in metadata_names:
-        if name in _FALSE_POSITIVES:
-            continue
-        kind = "character" if len(name.split()) >= 2 else "phrase"
-        target = _target_for(name, kind)
-        item = KbSuggestion(
-            id=_suggestion_id(kind, name),
-            type=kind,
-            source=name,
-            target=target,
-            confidence=0.7,
-            evidence=["metadata"],
-            collision=_collision_for(name, target, existing_kb),
-        )
-        candidates[item.source] = item
-
-    for idx, text in _iter_text_blocks(blocks):
-        for match in _CAPITALIZED_SPAN_RE.finditer(text):
-            source = re.sub(r"\s+", " ", match.group(0)).strip(" -")
-            if not source or source in _FALSE_POSITIVES:
-                continue
-            if len(source) == 1 or source.lower() == source:
-                continue
-            kind = _candidate_type(source, text, match.start(), metadata_names)
-            if kind == "phrase" and len(source.split()) < 2 and source not in metadata_names:
-                continue
-            target = _target_for(source, kind)
-            evidence = f"subtitle:{idx}"
-            current = candidates.get(source)
-            confidence = 0.8 if kind in {"place", "person", "character"} else 0.55
-            if current is None:
-                candidates[source] = KbSuggestion(
-                    id=_suggestion_id(kind, source),
-                    type=kind,
-                    source=source,
-                    target=target,
-                    confidence=confidence,
-                    evidence=[evidence],
-                    collision=_collision_for(source, target, existing_kb),
-                )
-            else:
-                if evidence not in current.evidence:
-                    current.evidence.append(evidence)
-                current.confidence = max(current.confidence, min(1.0, confidence + 0.05))
-                if current.type == "phrase" and kind != "phrase":
-                    current.type = kind
-                    current.id = _suggestion_id(kind, source)
-
-    return sorted(
-        [item for item in candidates.values() if item.source and item.target],
-        key=lambda item: (-item.confidence, item.type, item.source.lower()),
-    )
-
-
-def load_suggestions(path: Path) -> list[KbSuggestion]:
-    path = Path(path)
-    if not path.exists():
-        return []
-    try:
-        import json
-
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-    items = raw.get("suggestions") if isinstance(raw, dict) else []
-    if not isinstance(items, list):
-        return []
-    suggestions = [KbSuggestion.from_dict(item) for item in items]
-    return [item for item in suggestions if item.id and item.source and item.target]
+    """Backward-compatible wrapper for older suggestion callers."""
+    suggestions = suggest_kb_entries(project, subtitles, existing_kb)
+    for suggestion in suggestions:
+        if suggestion.collision == "existing":
+            suggestion.collision = "source_exists"
+    return suggestions
 
 
 def save_suggestions(path: Path, suggestions: list[KbSuggestion]) -> None:
-    atomic_write_json(
-        Path(path),
-        {"version": 1, "suggestions": [item.to_dict() for item in suggestions]},
-    )
+    atomic_write_json(Path(path), {
+        "suggestions": [
+            item.to_dict() if isinstance(item, KbSuggestion) else dict(item)
+            for item in suggestions
+        ],
+    })
+
+
+def load_suggestions(path: Path) -> list[KbSuggestion]:
+    import json
+
+    p = Path(path)
+    if not p.is_file():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    rows = data.get("suggestions") if isinstance(data, dict) else []
+    if not isinstance(rows, list):
+        return []
+    suggestions = []
+    for row in rows:
+        if isinstance(row, dict):
+            suggestions.append(KbSuggestion(**row))
+    return suggestions
 
 
 def update_suggestion_status(path: Path, suggestion_id: str, status: str) -> KbSuggestion:
-    clean_status = _clean_status(status)
-    if clean_status != status:
+    cleaned_status = _clean_text(status).casefold()
+    if cleaned_status not in {"pending", "accepted", "rejected"}:
         raise ValueError("invalid suggestion status")
     suggestions = load_suggestions(path)
-    for item in suggestions:
-        if item.id == suggestion_id:
-            item.status = clean_status
+    for suggestion in suggestions:
+        if suggestion.id == suggestion_id:
+            suggestion.status = cleaned_status
             save_suggestions(path, suggestions)
-            return item
+            return suggestion
     raise KeyError(suggestion_id)

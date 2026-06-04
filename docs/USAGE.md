@@ -9,14 +9,19 @@ and knowledge-base data on the user's machine.
 
 Prebuilt packages are attached to GitHub Releases when available.
 
-- macOS users can download all `AI_Sub_Pro_v1.1.1.dmg.part-*` assets
-  (`part-aa` through `part-ar`) from the `v1.1.1` release, join them with
-  `cat AI_Sub_Pro_v1.1.1.dmg.part-* > AI_Sub_Pro_v1.1.1.dmg`, open the DMG,
-  drag **AI Sub Pro** into **Applications**, then right-click and choose **Open**
-  on first launch if Gatekeeper blocks an unsigned build.
+- macOS users can download `AI_Sub_Pro_v1.2.0.dmg` and
+  `AI_Sub_Pro_v1.2.0.dmg.sha256` from the `v1.2.0` release, verify the
+  checksum with `shasum -a 256 -c AI_Sub_Pro_v1.2.0.dmg.sha256`, open the
+  DMG, drag **AI Sub Pro** into **Applications**, then right-click and choose
+  **Open** on first launch if Gatekeeper blocks an unsigned build.
 - Windows users can run a published Windows package when available. The current
   release does not include a prebuilt Windows installer yet; build from source
   on a Windows machine with `build_win.bat`.
+
+Default packages are base-app builds. They do not include local Whisper model
+files or optional ASR backend packages. Offline-oriented packages must be built
+explicitly with `AISUBPRO_BUNDLE_LOCAL_ASR=1` and should be labeled as optional
+ASR packages in the release notes.
 
 ## Install
 
@@ -81,6 +86,27 @@ You can also configure:
 - Optional post-translation QA auto-repair.
 - TMDB API key for trailer search.
 
+## ASR Modes
+
+The ASR mode expresses intent rather than naming one fixed backend:
+
+- **Speed first** chooses the fastest available local backend. On Apple
+  Silicon this is usually `mlx-whisper` with `large-v3-turbo`.
+- **Accuracy first** prefers a larger model and a backend with VAD or beam
+  search support when available.
+- **Offline first** prefers bundled or cached models and reports when a model
+  download is required.
+
+`/api/system-check` reports detected ASR backends, model cache status, and the
+current backend/model recommendation. Tests simulate these checks without
+downloading models.
+
+For source builds, optional ASR backends can be installed in the local Python
+environment. For packaged builds, those optional local ASR packages and
+`models/asr` are bundled only when the package maintainer sets
+`AISUBPRO_BUNDLE_LOCAL_ASR=1`; otherwise models may download on first use or be
+read from the normal local cache.
+
 ## Process a Local Video
 
 1. Drag a video into the home screen or paste a local video path.
@@ -92,6 +118,18 @@ You can also configure:
 
 If the video already has a text subtitle track, AI Sub Pro can skip ASR and
 use the embedded subtitle as the source timeline.
+
+## Workflow Recovery
+
+Long-running workflows write structured progress to `workflow_state.json` in
+the project runtime data. The state records each stage, bounded per-stage logs,
+the failing stage when a workflow stops, and the last verified artifact that can
+be used for recovery.
+
+The project page can show the failing stage, download the captured logs, retry a
+failed stage, or resume processing from the last verified artifact. Retry and
+resume use the same per-task locks as normal processing, so only one workflow
+operation can run for a project at a time.
 
 ## Trailer Workflow
 
@@ -114,6 +152,14 @@ The knowledge-base view stores local rules for consistent translations:
 - Project-level style rules.
 
 The translator uses these entries as context while processing subtitle batches.
+Project pages can also scan TMDB metadata and the current subtitles for
+suggested knowledge-base entries. Review each suggestion, edit the preferred
+translation or note, then accept selected entries into the project KB or reject
+entries that should not be suggested again.
+
+After translation, the project Knowledge Base panel can show the latest usage
+trace when trace data is available. The trace explains which KB entries matched
+the source subtitles and were included during translation.
 
 ## Translation Quality Loop
 
@@ -143,7 +189,8 @@ Run the deterministic evaluation corpus locally:
 ```bash
 python3 -m app.evaluation.cli \
   --corpus tests/fixtures/golden_corpus/translation_quality_loop.json \
-  --format markdown
+  --json-out build/evaluation/translation_quality_loop.json \
+  --markdown-out build/evaluation/translation_quality_loop.md
 ```
 
 The default evaluation command uses stored fixture outputs and does not call a
@@ -171,6 +218,21 @@ pytest
 The test suite covers API routes, scheduling, subtitle parsing, provider
 contracts, project-store safety, translation QA, evaluation metrics, and
 frontend JavaScript behavior.
+
+## Translation Quality Evaluation
+
+Run the deterministic golden-corpus evaluation after changing translator,
+provider, or knowledge-base behavior:
+
+```bash
+mkdir -p build/evaluation
+python3 -m app.evaluation.cli --corpus tests/fixtures/golden_corpus/milestone1.json --json-out build/evaluation/milestone1.json --markdown-out build/evaluation/milestone1.md
+```
+
+The default milestone corpus uses checked-in candidate outputs and does not
+call network services or paid translation providers. Reports include
+terminology coverage, row alignment, missing translations, format preservation,
+and manual scoring placeholders for reviewer notes.
 
 ## Troubleshooting
 

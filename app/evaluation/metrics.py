@@ -1,87 +1,125 @@
-"""Deterministic metrics for golden translation corpus outputs."""
+"""Deterministic translation quality metrics."""
 from __future__ import annotations
 
 import re
+from typing import Any
 
-from app.evaluation.corpus import GoldenCorpus
-
-
-_ENGLISH_RE = re.compile(r"[A-Za-z]{3,}")
+from app.evaluation.corpus import CorpusCase
 
 
-def _is_chinese_target(value: str) -> bool:
-    text = (value or "").strip().lower()
-    return text in {"zh-cn", "zh", "chs", "简体中文", "中文"}
+_TAG_RE = re.compile(r"</?[a-zA-Z][^>]*>")
 
 
-def _candidate_map(case) -> dict[str, str]:
-    return {
-        str(block.get("id")): (block.get("translation") or "")
-        for block in case.candidate_blocks
-        if isinstance(block, dict)
-    }
+def _by_id(blocks: list[dict[str, str]], text_key: str) -> dict[str, str]:
+    result = {}
+    for block in blocks:
+        block_id = str(block.get("id", "")).strip()
+        if block_id:
+            value = block.get(text_key, "")
+            result[block_id] = value if isinstance(value, str) else ""
+    return result
 
 
-def evaluate_case(case, *, max_chars: int = 32) -> dict:
-    candidates = _candidate_map(case)
-    source_ids = [str(block.get("id")) for block in case.source_blocks]
-    missing = 0
-    english_residue = 0
-    length_violations = 0
-    term_hits = 0
-    term_total = 0
+def _tags(text: str) -> list[str]:
+    return _TAG_RE.findall(text if isinstance(text, str) else "")
 
-    source_text = "\n".join(block.get("text", "") for block in case.source_blocks)
-    translation_text = "\n".join(candidates.values())
-    for source_id in source_ids:
-        translation = candidates.get(source_id, "")
-        if not translation.strip():
-            missing += 1
-        if _is_chinese_target(case.target_language) and _ENGLISH_RE.search(translation):
-            english_residue += 1
-        if max_chars > 0 and len(re.sub(r"\s+", "", translation)) > max_chars:
-            length_violations += 1
 
+def _round(value: float) -> float:
+    return round(value, 4)
+
+
+def terminology_score(case: CorpusCase, candidate_by_id: dict[str, str]) -> dict[str, Any]:
+    combined = "\n".join(candidate_by_id.values())
+    hits = []
+    misses = []
     for term in case.expected_terms:
-        source = term.get("source", "")
-        target = term.get("target", "")
-        if not source or not target:
-            continue
-        if source.lower() not in source_text.lower():
-            continue
-        term_total += 1
-        if target in translation_text:
-            term_hits += 1
-
-    aligned = len(candidates) == len(source_ids) and set(candidates) == set(source_ids)
+        target = term["target"]
+        if target and target in combined:
+            hits.append(term)
+        else:
+            misses.append(term)
+    total = len(case.expected_terms)
     return {
-        "id": case.id,
+        "hit_count": len(hits),
+        "total": total,
+        "hit_rate": _round(len(hits) / total) if total else 1.0,
+        "misses": misses,
+    }
+
+
+def missing_translation_score(
+    candidate_by_id: dict[str, str], source_ids: list[str] | None = None
+) -> dict[str, Any]:
+    missing_ids = [
+        block_id for block_id, text in candidate_by_id.items() if not text.strip()
+    ]
+    if source_ids is None:
+        source_missing_ids = []
+        missing_count = len(missing_ids)
+        total = len(candidate_by_id)
+    else:
+        source_missing_ids = [
+            block_id
+            for block_id in source_ids
+            if not candidate_by_id.get(block_id, "").strip()
+        ]
+        missing_count = len(source_missing_ids)
+        total = len(source_ids)
+    return {
+        "missing_ids": missing_ids,
+        "source_missing_ids": source_missing_ids,
+        "missing_count": missing_count,
+        "source_missing_count": len(source_missing_ids),
+        "candidate_missing_count": len(missing_ids),
+        "total": total,
+        "rate": _round(missing_count / total) if total else 0.0,
+    }
+
+
+def row_alignment_score(case: CorpusCase, candidate_by_id: dict[str, str]) -> dict[str, Any]:
+    source_ids = {str(block["id"]) for block in case.source_blocks}
+    candidate_ids = set(candidate_by_id)
+    missing = sorted(source_ids - candidate_ids)
+    extra = sorted(candidate_ids - source_ids)
+    aligned = len(source_ids & candidate_ids)
+    total_ids = len(source_ids | candidate_ids)
+    return {
+        "source_count": len(source_ids),
+        "candidate_count": len(candidate_ids),
+        "missing_ids": missing,
+        "extra_ids": extra,
+        "rate": _round(aligned / total_ids) if total_ids else 1.0,
+    }
+
+
+def format_score(case: CorpusCase, candidate_by_id: dict[str, str]) -> dict[str, Any]:
+    source_by_id = _by_id(case.source_blocks, "text")
+    broken = []
+    for block_id, source_text in source_by_id.items():
+        expected_tags = _tags(source_text)
+        candidate_tags = _tags(candidate_by_id.get(block_id, ""))
+        if candidate_tags != expected_tags:
+            broken.append(block_id)
+    total_tagged = sum(
+        1
+        for block_id, source_text in source_by_id.items()
+        if _tags(source_text) or _tags(candidate_by_id.get(block_id, ""))
+    )
+    return {
+        "broken_ids": broken,
+        "tagged_count": total_tagged,
+        "breakage_rate": _round(len(broken) / total_tagged) if total_tagged else 0.0,
+    }
+
+
+def evaluate_case(case: CorpusCase) -> dict[str, Any]:
+    candidate_by_id = _by_id(case.candidate_blocks, "translation")
+    source_ids = list(_by_id(case.source_blocks, "text"))
+    return {
+        "case_id": case.id,
         "tags": list(case.tags),
-        "missing_translation_count": missing,
-        "english_residue_count": english_residue,
-        "length_violation_count": length_violations,
-        "terminology_hits": term_hits,
-        "terminology_total": term_total,
-        "alignment_ok": aligned,
-    }
-
-
-def evaluate_corpus(corpus: GoldenCorpus, *, max_chars: int = 32) -> dict:
-    cases = [evaluate_case(case, max_chars=max_chars) for case in corpus.cases]
-    term_hits = sum(case["terminology_hits"] for case in cases)
-    term_total = sum(case["terminology_total"] for case in cases)
-    aligned = sum(1 for case in cases if case["alignment_ok"])
-    case_count = len(cases)
-    metrics = {
-        "terminology_hit_rate": (term_hits / term_total) if term_total else 1.0,
-        "missing_translation_count": sum(case["missing_translation_count"] for case in cases),
-        "english_residue_count": sum(case["english_residue_count"] for case in cases),
-        "length_violation_count": sum(case["length_violation_count"] for case in cases),
-        "alignment_rate": (aligned / case_count) if case_count else 1.0,
-    }
-    return {
-        "version": corpus.version,
-        "case_count": case_count,
-        "metrics": metrics,
-        "cases": cases,
+        "terminology": terminology_score(case, candidate_by_id),
+        "missing_translation": missing_translation_score(candidate_by_id, source_ids),
+        "row_alignment": row_alignment_score(case, candidate_by_id),
+        "format": format_score(case, candidate_by_id),
     }

@@ -1,36 +1,37 @@
-"""CLI entry point for deterministic translation quality evaluation."""
+"""Command line entry point for translation quality evaluation."""
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
-from app.evaluation.corpus import CorpusValidationError, load_corpus_file
-from app.evaluation.metrics import evaluate_corpus
-from app.evaluation.reports import report_to_json, report_to_markdown
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Evaluate a golden subtitle translation corpus.")
-    parser.add_argument("--corpus", required=True, help="Path to golden corpus JSON")
-    parser.add_argument("--format", choices=("json", "markdown"), default="markdown")
-    parser.add_argument("--max-chars", type=int, default=32)
-    return parser
+from app.evaluation.corpus import load_corpus_file
+from app.evaluation.metrics import evaluate_case
+from app.evaluation.reports import (
+    build_report,
+    write_json_report,
+    write_markdown_report,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
+    parser = argparse.ArgumentParser(
+        description="Evaluate a golden translation corpus and write reports."
+    )
+    parser.add_argument("--corpus", required=True, type=Path)
+    parser.add_argument("--json-out", required=True, type=Path)
+    parser.add_argument("--markdown-out", required=True, type=Path)
     args = parser.parse_args(argv)
-    try:
-        corpus = load_corpus_file(Path(args.corpus))
-        report = evaluate_corpus(corpus, max_chars=args.max_chars)
-    except CorpusValidationError as exc:
-        print(f"Corpus error: {exc}", file=sys.stderr)
-        return 2
-    if args.format == "json":
-        print(report_to_json(report), end="")
-    else:
-        print(report_to_markdown(report), end="")
+
+    corpus = load_corpus_file(args.corpus)
+    case_results = [evaluate_case(case) for case in corpus.cases]
+    report = build_report(case_results)
+    write_json_report(report, args.json_out)
+    write_markdown_report(report, args.markdown_out)
+
+    print(
+        "Wrote translation quality reports "
+        f"for {len(case_results)} cases: {args.json_out} and {args.markdown_out}"
+    )
     return 0
 
 

@@ -1,1 +1,1 @@
-"""Deterministic translation quality evaluation helpers."""
+"""Translation quality evaluation helpers."""

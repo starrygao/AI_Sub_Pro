@@ -171,6 +171,25 @@ textarea,
   background: rgba(15,118,110,0.08);
 }
 
+.projects-filter-input {
+  min-width: 12rem;
+}
+
+.projects-recent-tasks {
+  overflow: hidden;
+}
+
+.projects-recent-task {
+  min-width: 12rem;
+  max-width: 18rem;
+}
+
+.settings-section-nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.25rem;
+}
+
 .settings-login-button,
 .kb-new-button {
   align-items: center;
@@ -283,6 +302,71 @@ textarea:focus-visible,
   min-height: 2.5rem;
   padding-top: 0.25rem;
   padding-bottom: 0.25rem;
+}
+
+.subtitle-editor-toolbar {
+  overflow: hidden;
+}
+
+.subtitle-editor-toolbar input,
+.subtitle-editor-toolbar select,
+.subtitle-editor-toolbar button {
+  min-height: 2.5rem;
+}
+
+.subtitle-quality-strip {
+  min-height: 1.75rem;
+}
+
+.subtitle-timeline-panel {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.subtitle-waveform {
+  height: 1.75rem;
+  display: grid;
+  grid-template-columns: repeat(48, minmax(2px, 1fr));
+  align-items: center;
+  gap: 2px;
+}
+
+.subtitle-waveform span {
+  display: block;
+  width: 100%;
+  min-height: 0.25rem;
+  border-radius: 999px;
+  background: #dbe4ea;
+}
+
+.subtitle-timeline-track {
+  position: relative;
+  height: 1.25rem;
+  border-radius: 999px;
+  background: #eef2f6;
+  overflow: hidden;
+}
+
+.subtitle-timeline-segment {
+  position: absolute;
+  top: 0.1875rem;
+  height: 0.875rem;
+  min-width: 0.35rem;
+  border-radius: 999px;
+  background: #0f766e;
+  border: 0;
+  opacity: 0.9;
+}
+
+.subtitle-timeline-segment:hover,
+.subtitle-timeline-segment:focus-visible {
+  opacity: 1;
+  box-shadow: 0 0 0 2px rgba(15,118,110,0.18);
+}
+
+.subtitle-timeline-segment.is-filtered {
+  background: #94a3b8;
+  opacity: 0.45;
 }
 
 /* Checkbox */
@@ -423,9 +507,16 @@ input[type="checkbox"] {
 
   .projects-list-actions {
     justify-content: space-between;
+    flex-wrap: wrap;
   }
 
   .projects-list-actions label {
+    min-width: 0;
+  }
+
+  .projects-filter-input,
+  .projects-list-actions select {
+    flex: 1 1 calc(50% - 0.375rem);
     min-width: 0;
   }
 
@@ -504,6 +595,18 @@ input[type="checkbox"] {
     background: transparent;
     border: 0;
     box-shadow: none;
+  }
+
+  .subtitle-editor-toolbar {
+    padding: 0.75rem;
+  }
+
+  .subtitle-editor-toolbar .grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .subtitle-timeline-panel {
+    padding: 0.75rem;
   }
 
   .subtitle-table-panel table,

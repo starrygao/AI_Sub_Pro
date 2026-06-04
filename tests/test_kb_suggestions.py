@@ -1,121 +1,414 @@
-import json
-
-import pytest
-from fastapi.testclient import TestClient
-
-
-@pytest.fixture
-def client(tmp_project_dir, monkeypatch):
-    from app.api import knowledge as knowledge_api
-    from app.api import projects as projects_api
-    from app.utils import project_store
-
-    monkeypatch.setattr(projects_api, "PROJECTS_DIR", tmp_project_dir)
-    monkeypatch.setattr(knowledge_api, "PROJECTS_DIR", tmp_project_dir, raising=False)
-    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_project_dir)
-
-    from app.main import app
-    return TestClient(app)
-
-
-def test_extract_suggestions_finds_places_and_people():
-    from app.engines.kb_suggestions import extract_kb_suggestions
+def test_suggest_kb_entries_from_tmdb_and_subtitles():
+    from app.engines.kb_suggestions import suggest_kb_entries
+    from app.engines.kb_models import ProjectKb, TermEntry
 
     project = {
-        "name": "Brilliant Minds S02E15",
-        "show_title": "Brilliant Minds",
-        "cast": ["Dr. Pierce", "Oliver Wolf"],
+        "name": "Moonlit Case",
+        "tmdb_id": 101,
+        "title": "Moonlit Case",
+        "original_title": "Moonlit Case",
+        "cast": ["Elsbeth Tascioni", {"name": "Maya Chen", "character": "Detective Chen"}],
+        "overview": "Elsbeth follows a case at the Moonlit Club.",
     }
-    blocks = [
-        {"index": 1, "text": "Hudson Oaks is giving resort vibes."},
-        {"index": 2, "text": "I need to go to Hudson Oaks to save Sofia."},
-        {"index": 3, "text": "Shoot your shot, Dr. Pierce."},
-        {"index": 4, "text": "The patient is waiting."},
+    subtitles = [
+        {"index": 1, "text": "Elsbeth meets Maya Chen at the Moonlit Club."},
+        {"index": 2, "text": "Detective Chen waits."},
     ]
+    existing = ProjectKb(characters=[TermEntry(source="Elsbeth Tascioni", target="艾尔斯贝丝")])
 
-    suggestions = extract_kb_suggestions(project, blocks)
-    by_source = {s.source: s for s in suggestions}
+    suggestions = suggest_kb_entries(project, subtitles, existing)
 
-    assert by_source["Hudson Oaks"].type == "place"
-    assert by_source["Hudson Oaks"].target == "哈德逊奥克斯"
-    assert by_source["Dr. Pierce"].type in {"person", "character"}
-    assert "The" not in by_source
-    assert "I" not in by_source
+    by_source = {item.source: item for item in suggestions}
+    assert by_source["Maya Chen"].category == "characters"
+    assert by_source["Moonlit Club"].category in {"places", "brands", "slang"}
+    assert by_source["Elsbeth Tascioni"].collision == "existing"
+    assert by_source["Maya Chen"].evidence
 
 
-def test_extract_suggestions_marks_existing_collisions():
+def test_suggest_kb_entries_ignores_short_noise():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"name": "A", "cast": ["A"]},
+        [{"index": 1, "text": "OK. TV. A."}],
+        None,
+    )
+
+    assert suggestions == []
+
+
+def test_suggest_kb_entries_dedupes_and_collides_case_insensitively():
     from app.engines.kb_models import ProjectKb, TermEntry
-    from app.engines.kb_suggestions import extract_kb_suggestions
+    from app.engines.kb_suggestions import suggest_kb_entries
 
-    existing = ProjectKb(
-        places=[TermEntry(source="Hudson Oaks", target="哈德森橡树")]
+    suggestions = suggest_kb_entries(
+        {
+            "title": "Moonlit Case",
+            "cast": [{"name": "Maya Chen", "character": "Detective Chen"}],
+            "overview": "Maya Chen returns to the Moonlit Case.",
+        },
+        [{"index": 3, "text": "maya chen saw Detective Chen."}],
+        ProjectKb(characters=[TermEntry(source="detective chen", target="陈警探")]),
     )
 
-    suggestions = extract_kb_suggestions(
-        {"name": "Show"},
-        [{"index": 1, "text": "We are going to Hudson Oaks."}],
-        existing_kb=existing,
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source).count("Maya Chen") == 1
+    assert by_source["Detective Chen"].collision == "existing"
+
+
+def test_suggest_kb_entries_preserves_full_metadata_titles():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {
+            "title": "The Last of Us",
+            "name": "Lord of the Rings",
+            "original_title": "The Last of Us",
+        },
+        None,
+        None,
     )
 
-    hudson = next(s for s in suggestions if s.source == "Hudson Oaks")
-    assert hudson.collision == "source_exists"
-    assert hudson.status == "pending"
+    by_source = {item.source: item for item in suggestions}
+    assert "The Last of Us" in by_source
+    assert "Lord of the Rings" in by_source
+    assert "Last" not in by_source
+    assert "Lord" not in by_source
+    assert by_source["The Last of Us"].evidence == ["title"]
 
 
-def test_suggestions_round_trip_and_status_updates(tmp_path):
-    from app.engines.kb_suggestions import (
-        KbSuggestion,
-        load_suggestions,
-        save_suggestions,
-        update_suggestion_status,
+def test_suggest_kb_entries_uses_show_title_as_metadata_title():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"show_title": "The Matrix"},
+        None,
+        None,
     )
 
-    path = tmp_path / "kb_suggestions.json"
-    save_suggestions(path, [
-        KbSuggestion(
-            id="place:hudson-oaks",
-            type="place",
-            source="Hudson Oaks",
-            target="哈德逊奥克斯",
-            confidence=0.8,
-            evidence=["subtitle:1"],
-        )
-    ])
-
-    loaded = load_suggestions(path)
-    assert loaded[0].source == "Hudson Oaks"
-    assert loaded[0].status == "pending"
-
-    updated = update_suggestion_status(path, "place:hudson-oaks", "accepted")
-    assert updated.status == "accepted"
-    assert json.loads(path.read_text(encoding="utf-8"))["suggestions"][0]["status"] == "accepted"
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["The Matrix"]
+    assert by_source["The Matrix"].evidence == ["title"]
 
 
-def test_project_suggestion_api_generates_and_updates(client, tmp_project_dir):
-    pid = "suggest1"
-    pdir = tmp_project_dir / pid
-    pdir.mkdir(parents=True)
-    (pdir / "project.json").write_text(json.dumps({
-        "id": pid,
-        "name": "Brilliant Minds S02E15",
-        "status": "asr_done",
-        "video_path": "/fake/video.mkv",
-        "show_title": "Brilliant Minds",
-    }), encoding="utf-8")
-    (pdir / "filtered.srt").write_text(
-        "1\n00:00:00,000 --> 00:00:01,000\nHudson Oaks is quiet.\n\n",
-        encoding="utf-8",
+def test_suggest_kb_entries_keeps_short_high_confidence_terms():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {
+            "title": "Up",
+            "name": "It",
+            "show_title": "HP",
+            "cast": ["Li"],
+        },
+        None,
+        None,
     )
 
-    response = client.post(f"/api/knowledge/projects/{pid}/suggestions/generate")
-    assert response.status_code == 200
-    body = response.json()
-    assert any(item["source"] == "Hudson Oaks" for item in body["suggestions"])
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Li", "Up", "It", "HP"]
+    assert by_source["Li"].category == "characters"
+    assert by_source["Up"].evidence == ["title"]
+    assert by_source["It"].evidence == ["title"]
+    assert by_source["HP"].evidence == ["title"]
 
-    suggestion_id = next(item["id"] for item in body["suggestions"] if item["source"] == "Hudson Oaks")
-    response = client.post(
-        f"/api/knowledge/projects/{pid}/suggestions/{suggestion_id}/status",
-        json={"status": "rejected"},
+
+def test_suggest_kb_entries_preserves_connected_overview_phrase():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "we watched The Last of Us tonight."},
+        None,
+        None,
     )
-    assert response.status_code == 200
-    assert response.json()["suggestion"]["status"] == "rejected"
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["The Last of Us"]
+    assert "The Last of Us" in by_source
+    assert "The Last" not in by_source
+    assert by_source["The Last of Us"].evidence == ["overview"]
+
+
+def test_suggest_kb_entries_preserves_connected_subtitle_phrase():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {},
+        [{"index": 4, "text": "He quotes Lord of the Rings."}],
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Lord of the Rings"]
+    assert "Lord of the Rings" in by_source
+    assert "Lord" not in by_source
+    assert "Rings" not in by_source
+    assert by_source["Lord of the Rings"].evidence == ["subtitle:4"]
+
+
+def test_suggest_kb_entries_keeps_apostrophe_names_from_prose():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "O'Neill visits the Moonlit Club."},
+        None,
+        None,
+    )
+
+    sources = {item.source for item in suggestions}
+    assert "O'Neill" in sources
+    assert "Moonlit Club" in sources
+
+
+def test_suggest_kb_entries_splits_parallel_character_phrases():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "Maya Chen and Detective Chen arrive."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen", "Detective Chen"]
+    assert "Maya Chen and Detective Chen" not in by_source
+
+
+def test_suggest_kb_entries_splits_parallel_connected_titles():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "The Last of Us and Lord of the Rings."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["The Last of Us", "Lord of the Rings"]
+    assert "The Last of Us and Lord of the Rings" not in by_source
+
+
+def test_suggest_kb_entries_drops_sentence_start_adverb_from_entity():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "Tonight Maya Chen arrives."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen"]
+    assert "Tonight Maya Chen" not in by_source
+    assert "Tonight" not in by_source
+
+
+def test_suggest_kb_entries_drops_sentence_start_pronoun():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "She meets Maya Chen."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen"]
+    assert "She" not in by_source
+
+
+def test_suggest_kb_entries_preserves_in_the_connected_title():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "Only Murders in the Building returns."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Only Murders in the Building"]
+    assert "Only Murders" not in by_source
+    assert "Building" not in by_source
+
+
+def test_suggest_kb_entries_preserves_a_connected_title():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "Once Upon a Time ended."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Once Upon a Time"]
+    assert "Once Upon" not in by_source
+    assert "Time" not in by_source
+
+
+def test_suggest_kb_entries_splits_at_relational_phrase():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "Maya Chen at the Moonlit Club."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen", "Moonlit Club"]
+    assert "Maya Chen at the Moonlit Club" not in by_source
+
+
+def test_suggest_kb_entries_splits_in_relational_phrase():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "Maya Chen in New York."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen", "New York"]
+    assert "Maya Chen in New York" not in by_source
+
+
+def test_suggest_kb_entries_splits_the_relational_phrase():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "The Matrix at the Moonlit Club."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["The Matrix", "Moonlit Club"]
+    assert "The Matrix at the Moonlit Club" not in by_source
+
+
+def test_suggest_kb_entries_keeps_acronym_after_denied_starter():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "Tonight NASA launches."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["NASA"]
+    assert "Tonight NASA" not in by_source
+    assert "Tonight" not in by_source
+
+
+def test_suggest_kb_entries_splits_multiple_relational_phrases():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "Maya Chen at the Moonlit Club in New York."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen", "Moonlit Club", "New York"]
+    assert "Maya Chen at the Moonlit Club in New York" not in by_source
+    assert "Moonlit Club in New York" not in by_source
+
+
+def test_suggest_kb_entries_drops_quoted_sentence_start_adverb():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "\"Tonight Maya Chen arrives.\""},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen"]
+    assert "Tonight Maya Chen" not in by_source
+    assert "Tonight" not in by_source
+
+
+def test_suggest_kb_entries_drops_dash_sentence_start_adverb():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "- Tonight Maya Chen arrives."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen"]
+    assert "Tonight Maya Chen" not in by_source
+    assert "Tonight" not in by_source
+
+
+def test_suggest_kb_entries_preserves_denied_starter_connected_title():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "This Is Us returns."},
+        None,
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["This Is Us"]
+    assert "Is Us" not in by_source
+
+
+def test_suggest_kb_entries_splits_newline_separated_subtitle_phrases():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {},
+        [{"index": 8, "text": "Maya Chen\nDetective Chen"}],
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert list(by_source) == ["Maya Chen", "Detective Chen"]
+    assert "Maya Chen Detective Chen" not in by_source
+
+
+def test_suggest_kb_entries_reports_ambiguous_existing_collisions():
+    from app.engines.kb_models import ProjectKb, TermEntry
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"title": "Acme"},
+        None,
+        ProjectKb(
+            characters=[TermEntry(source="Acme", target="艾克米")],
+            brands=[TermEntry(source="ACME", target="阿克米", notes="company")],
+        ),
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert by_source["Acme"].collision == "ambiguous"
+    assert by_source["Acme"].existing_entries == [
+        {"category": "characters", "source": "Acme", "target": "艾克米", "notes": ""},
+        {"category": "brands", "source": "ACME", "target": "阿克米", "notes": "company"},
+    ]
+    assert by_source["Acme"].to_dict()["existing_entries"] == by_source["Acme"].existing_entries
+
+
+def test_suggest_kb_entries_keeps_uppercase_acronyms_but_ignores_noise():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"overview": "NASA meets FBI at IKEA. OK. TV."},
+        None,
+        None,
+    )
+
+    sources = {item.source for item in suggestions}
+    assert {"NASA", "FBI", "IKEA"} <= sources
+    assert "OK" not in sources
+    assert "TV" not in sources

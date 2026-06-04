@@ -1,11 +1,11 @@
 #!/bin/bash
 # 构建 AI Sub Pro macOS DMG 安装包
-# 产出: dist/AI_Sub_Pro_v1.1.1.dmg
+# 产出: dist/AI_Sub_Pro_v1.2.0.dmg
 set -e
 cd "$(dirname "$0")"
 
 APP_NAME="AI Sub Pro"
-VERSION="1.1.1"
+VERSION="1.2.0"
 DMG_NAME="AI_Sub_Pro_v${VERSION}"
 APP_PATH="dist/${APP_NAME}.app"
 DMG_STAGING=""
@@ -109,6 +109,20 @@ else
     # 用系统自带的 hdiutil
     create_hdiutil_dmg
 fi
+
+prepare_release_metadata() {
+    if command -v python3 >/dev/null 2>&1; then
+        python3 tools/release/prepare_release.py \
+            --dist-dir dist \
+            --output dist/release-size-report.json \
+            --checksum-dir dist
+        echo "  release metadata: dist/release-size-report.json and .sha256 files"
+    else
+        echo "  python3 not found; skipped release checksum metadata"
+    fi
+}
+
+prepare_release_metadata
 
 # ── 第5步: 完成 ──
 echo ""
