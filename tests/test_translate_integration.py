@@ -242,6 +242,69 @@ def test_resume_ignores_raw_srt_symlink_outside_project(tmp_project_dir, monkeyp
     assert dummy.started is True
 
 
+def test_build_bilingual_tracks_skips_symlinked_generated_zh_output(tmp_project_dir, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "tracksymlink"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir(parents=True)
+    (pdir / "translated.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n你好\n\n",
+        encoding="utf-8",
+    )
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n",
+        encoding="utf-8",
+    )
+    outside = tmp_project_dir.parent / "outside-zh.srt"
+    outside.write_text("keep me\n", encoding="utf-8")
+    (pdir / "zh.srt").symlink_to(outside)
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_project_dir)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_project_dir)
+
+    tracks = api_translate._build_bilingual_tracks(pid)
+
+    assert outside.read_text(encoding="utf-8") == "keep me\n"
+    track_paths = {track.path for track in tracks}
+    assert str(pdir / "zh.srt") not in track_paths
+    assert str(pdir / "en.srt") in track_paths
+    assert (pdir / "en.srt").is_file()
+    assert not (pdir / "en.srt").is_symlink()
+
+
+def test_build_bilingual_tracks_generates_regular_project_local_tracks(tmp_project_dir, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "trackregular"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir(parents=True)
+    (pdir / "translated.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n你好\n\n",
+        encoding="utf-8",
+    )
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_project_dir)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_project_dir)
+
+    tracks = api_translate._build_bilingual_tracks(pid)
+
+    pdir_resolved = pdir.resolve()
+    track_paths = [track.path for track in tracks]
+    assert track_paths == [str(pdir / "zh.srt"), str(pdir / "en.srt")]
+    for track_path in track_paths:
+        path = pdir / (track_path.rsplit("/", 1)[-1])
+        assert path.is_file()
+        assert not path.is_symlink()
+        assert path.resolve().is_relative_to(pdir_resolved)
+
+
 def test_reset_workflow_for_action_preserves_retry_count(tmp_project_dir):
     from app.api import translate as api_translate
     from app.engines.workflow_state import fail_stage, load_workflow_state, reset_workflow

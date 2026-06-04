@@ -7,6 +7,7 @@ import json
 import asyncio
 import logging
 import math
+import tempfile
 import threading
 from pathlib import Path
 from typing import Dict
@@ -193,6 +194,57 @@ def _first_safe_project_artifact(pid: str, filenames: list[str]) -> tuple[Option
         if path is not None:
             return filename, path
     return None, None
+
+
+def _write_generated_project_artifact(
+    pid: str,
+    filename: str,
+    data: bytes,
+    pdir: Path,
+) -> Optional[Path]:
+    rel = Path(filename)
+    if rel.is_absolute() or ".." in rel.parts:
+        return None
+    tmp: Optional[Path] = None
+    try:
+        path = pdir / rel
+        if path.is_symlink():
+            log.warning(
+                "refusing to overwrite symlinked generated artifact pid=%s file=%s",
+                pid,
+                filename,
+            )
+            return None
+        if path.exists() and not path.is_file():
+            log.warning(
+                "refusing to overwrite non-regular generated artifact pid=%s file=%s",
+                pid,
+                filename,
+            )
+            return None
+        if not path.parent.resolve().is_relative_to(pdir):
+            return None
+        with tempfile.NamedTemporaryFile(
+            "wb",
+            dir=path.parent,
+            prefix=f"{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as f:
+            tmp = Path(f.name)
+            f.write(data)
+        os.replace(tmp, path)
+        tmp = None
+    except (OSError, ValueError) as e:
+        log.warning("failed to write generated artifact pid=%s file=%s: %s", pid, filename, e)
+        return None
+    finally:
+        if tmp is not None and tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+    return _safe_project_artifact_path(pid, filename)
 
 
 def _latest_failed_stage(pid: str) -> str:
@@ -743,9 +795,7 @@ def _run_translate_pipeline(pid: str, target_language: str, owns_registration: b
 
 def _build_bilingual_tracks(pid: str):
     """For trailer projects: generate available zh/en SRT tracks."""
-    pdir = PROJECTS_DIR / pid
-    zh_path = pdir / "zh.srt"
-    en_path = pdir / "en.srt"
+    pdir = project_dir(pid)
 
     # Regenerate zh/en SRTs from translated.srt / filtered.srt.
     # translated.srt already contains the target-language text; filtered.srt
@@ -753,10 +803,12 @@ def _build_bilingual_tracks(pid: str):
     # because both were written from the same block list during translate stage.
     translated = _safe_project_artifact_path(pid, "translated.srt")
     filtered = _safe_project_artifact_path(pid, "filtered.srt")
+    zh_path = None
+    en_path = None
     if translated is not None:
-        zh_path.write_bytes(translated.read_bytes())
+        zh_path = _write_generated_project_artifact(pid, "zh.srt", translated.read_bytes(), pdir)
     if filtered is not None:
-        en_path.write_bytes(filtered.read_bytes())
+        en_path = _write_generated_project_artifact(pid, "en.srt", filtered.read_bytes(), pdir)
 
     # Dynamic sizing. Without a cheap video-height probe here, use 1080 as a sane
     # default — compute_font_sizes clamps below 18 anyway.
@@ -764,7 +816,7 @@ def _build_bilingual_tracks(pid: str):
     zh_size, en_size = compute_font_sizes(video_height)
 
     tracks = []
-    if zh_path.exists():
+    if zh_path is not None:
         tracks.append(SubtitleTrack(
             path=str(zh_path),
             font_name=resolve_font("zh"),
@@ -772,7 +824,7 @@ def _build_bilingual_tracks(pid: str):
             outline_width=2.0,
             margin_v=70,
         ))
-    if en_path.exists():
+    if en_path is not None:
         tracks.append(SubtitleTrack(
             path=str(en_path),
             font_name=resolve_font("en"),
