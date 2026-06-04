@@ -1005,7 +1005,8 @@ def retry_project(pid: str = PathParam(pattern=PID_PATTERN), req: RetryRequest =
     if is_task_registered(pid):
         raise HTTPException(409, "Task already running for this project")
     _reject_busy_project(project)
-    stage = req.stage.strip() if req.stage is not None else _latest_failed_stage(pid)
+    requested_stage = req.stage.strip() if isinstance(req.stage, str) else ""
+    stage = requested_stage or _latest_failed_stage(pid)
     return _launch_resume_stage(pid, project, stage)
 
 

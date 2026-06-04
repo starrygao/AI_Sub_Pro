@@ -73,6 +73,49 @@ def test_retry_rejects_active_task(tmp_project_dir, monkeypatch):
     assert response.status_code == 409
 
 
+def test_retry_blank_stage_falls_back_to_latest_failed(tmp_project_dir, monkeypatch):
+    from app.api import projects as projects_api
+    from app.api import translate as api_translate
+    from app.engines.workflow_state import fail_stage, reset_workflow
+    from app.utils import project_store
+    from app.main import app
+
+    pid = "retryblank"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "error",
+        "pipeline_stage": None,
+        "target_language": "Japanese",
+    }), encoding="utf-8")
+    reset_workflow(pid, ["asr", "translate"])
+    fail_stage(pid, "translate", RuntimeError("translator failed"))
+
+    monkeypatch.setattr(projects_api, "PROJECTS_DIR", tmp_project_dir)
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_project_dir)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_project_dir)
+    monkeypatch.setattr(api_translate, "active_tasks", {})
+    monkeypatch.setattr(api_translate, "require_translation_ready", lambda: None)
+
+    class DummyThread:
+        started = False
+
+        def start(self):
+            self.started = True
+
+    dummy = DummyThread()
+    monkeypatch.setattr(api_translate, "try_register_task", lambda *args, **kwargs: dummy)
+
+    response = TestClient(app).post(f"/api/projects/{pid}/retry", json={"stage": "   "})
+
+    assert response.status_code == 200
+    assert response.json()["stage"] == "translate"
+    assert dummy.started is True
+
+
 def test_resume_chooses_translate_when_filtered_srt_exists(tmp_project_dir, monkeypatch):
     from app.api import projects as projects_api
     from app.api import translate as api_translate
