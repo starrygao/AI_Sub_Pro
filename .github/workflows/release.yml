@@ -11,8 +11,8 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Release dry-run and upload
+  validate:
+    name: Release dry-run validation
     runs-on: macos-latest
 
     steps:
@@ -24,6 +24,26 @@ jobs:
         with:
           python-version: '3.x'
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Python dependencies
+        run: python3 -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Build frontend CSS
+        run: npm run build:css
+
+      - name: Run test suite
+        run: python3 -m pytest -q
+
+      - name: Run packaging script checks
+        run: python3 -m pytest -q tests/test_packaging_scripts.py
+
+      - name: Verify bilingual release notes exist
+        run: test -s docs/RELEASE_NOTES.md && test -s docs/RELEASE_NOTES.zh-CN.md
+
       - name: Prepare release metadata dry-run
         run: python3 tools/release/prepare_release.py --dist-dir dist --output dist/release-size-report.json --checksum-dir dist --allow-empty
 
@@ -32,8 +52,39 @@ jobs:
           find dist -maxdepth 1 -name '*.sha256' -print -exec cat {} \;
           cat dist/release-size-report.json
 
+  publish:
+    name: Build and upload GitHub release
+    needs: validate
+    runs-on: macos-latest
+    if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Python dependencies
+        run: python3 -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Install macOS media dependencies
+        run: brew install ffmpeg || true
+
+      - name: Build macOS DMG
+        run: bash make_dmg.sh
+
+      - name: Prepare release metadata
+        run: python3 tools/release/prepare_release.py --dist-dir dist --output dist/release-size-report.json --checksum-dir dist
+
       - name: Upload GitHub release artifacts
-        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}

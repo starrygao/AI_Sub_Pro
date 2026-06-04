@@ -22,6 +22,14 @@ def test_release_workflow_supports_pr_dry_run_tag_release_and_uploads():
     assert "tools/release/prepare_release.py" in workflow
     assert "sha256" in workflow.lower()
     assert "release-size-report.json" in workflow
+    assert "python3 -m pytest -q" in workflow
+    assert "npm run build:css" in workflow
+    assert "tests/test_packaging_scripts.py" in workflow
+    assert "docs/RELEASE_NOTES.md" in workflow
+    assert "docs/RELEASE_NOTES.zh-CN.md" in workflow
+    assert "bash make_dmg.sh" in workflow
+    assert "github.event_name != 'pull_request'" in workflow
+    assert "startsWith(github.ref, 'refs/tags/v')" in workflow
     assert "gh release upload" in workflow or "actions/upload-release-asset" in workflow
 
 
