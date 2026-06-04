@@ -68,6 +68,7 @@ def test_asr_mode_and_recommendation_are_visible_in_settings():
 
     assert 'x-model="settings.asr.mode"' in html
     assert 'aria-label="ASR 模式"' in html
+    assert 'x-show="sysCheck?.asr_recommendation && !sysCheckLoading && !sysCheckError"' in html
     assert "asrRecommendationSummary()" in html
     assert "sysCheck?.asr_recommendation?.reason" in html
     assert "asrModeLabel" in js

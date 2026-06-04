@@ -511,6 +511,38 @@ def test_frontend_formats_asr_recommendation_from_system_check():
     assert result.returncode == 0, result.stderr
 
 
+def test_frontend_normalizes_asr_mode_from_settings_payload():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+
+        const invalid = state.normalizeSettings({asr: {mode: ' invalid '}});
+        if (invalid.asr.mode !== 'speed') {
+          throw new Error(`expected invalid ASR mode to fall back to speed, got ${invalid.asr.mode}`);
+        }
+
+        const trimmed = state.normalizeSettings({asr: {mode: ' accuracy '}});
+        if (trimmed.asr.mode !== 'accuracy') {
+          throw new Error(`expected trimmed ASR mode, got ${trimmed.asr.mode}`);
+        }
+
+        const missing = state.normalizeSettings({asr: {}});
+        if (missing.asr.mode !== 'speed') {
+          throw new Error(`expected missing ASR mode to default to speed, got ${missing.asr.mode}`);
+        }
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_frontend_codex_cli_panel_is_visible_for_primary_or_polish_provider():
     result = run_js(
         """

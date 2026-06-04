@@ -498,6 +498,11 @@ function app() {
       normalized.translation.polish_provider = normalizeProvider(
         normalized.translation.polish_provider, ''
       );
+      const allowedAsrModes = ['speed', 'accuracy', 'offline'];
+      const asrMode = typeof normalized.asr.mode === 'string'
+        ? normalized.asr.mode.trim()
+        : '';
+      normalized.asr.mode = allowedAsrModes.includes(asrMode) ? asrMode : 'speed';
       return normalized;
     },
 
