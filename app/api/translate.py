@@ -235,6 +235,11 @@ def _resolve_cancel_stage(pid: str, project: dict) -> str:
         if isinstance(item, dict) and item.get("status") == "running":
             return stage
 
+    for stage in ("download", "asr", "translate", "burn"):
+        item = stages.get(stage)
+        if isinstance(item, dict) and item.get("status") != "succeeded":
+            return stage
+
     single_stage = [
         (stage, item)
         for stage, item in stages.items()

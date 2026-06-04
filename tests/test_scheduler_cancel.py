@@ -97,3 +97,42 @@ def test_cancel_registered_translate_uses_running_workflow_stage(tmp_project_dir
         assert state["stages"]["translate"]["status"] == "cancelled"
     finally:
         reset_cancel(pid)
+
+
+def test_cancel_registered_full_pipeline_uses_next_pending_stage(tmp_project_dir, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.api import translate
+    from app.engines.scheduler import reset_cancel
+    from app.engines.workflow_state import finish_stage, load_workflow_state, reset_workflow
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    monkeypatch.setattr(translate, "active_tasks", {})
+    pid = "cancel-full-next"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir()
+    atomic_write_json(pdir / "project.json", {
+        "id": pid,
+        "name": "Cancel Full Next Stage",
+        "video_path": str(tmp_project_dir / "video.mp4"),
+        "status": "processing",
+        "pipeline_stage": None,
+        "audio_tracks": [],
+        "subtitle_tracks": [],
+    })
+    reset_workflow(pid, ["asr", "translate", "burn"])
+    finish_stage(pid, "asr", output_artifact="filtered.srt")
+    translate.active_tasks[pid] = object()
+
+    try:
+        response = TestClient(app).post(f"/api/projects/{pid}/cancel")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "cancelled"
+        state = load_workflow_state(pid)
+        assert state["stages"]["asr"]["status"] == "succeeded"
+        assert state["stages"]["translate"]["status"] == "cancelled"
+        assert state["stages"]["burn"]["status"] == "pending"
+    finally:
+        reset_cancel(pid)
