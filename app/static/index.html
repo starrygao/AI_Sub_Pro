@@ -955,6 +955,14 @@
           </h3>
           <div class="grid grid-cols-2 gap-4">
             <div>
+              <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">ASR 模式</label>
+              <select x-model="settings.asr.mode" aria-label="ASR 模式" class="w-full px-3 py-2 rounded-xl text-[13px]">
+                <option value="speed">速度优先</option>
+                <option value="accuracy">准确优先</option>
+                <option value="offline">离线优先</option>
+              </select>
+            </div>
+            <div>
               <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">Whisper 模型</label>
               <select x-model="settings.asr.model_size" aria-label="Whisper 模型" class="w-full px-3 py-2 rounded-xl text-[13px]">
                 <option value="tiny">tiny (最快)</option><option value="base">base</option><option value="small">small</option>
@@ -975,6 +983,10 @@
               <label class="flex items-center gap-2 text-[13px]"><input type="checkbox" x-model="settings.asr.vad_filter" aria-label="启用 VAD 过滤"> VAD 过滤</label>
               <label class="flex items-center gap-2 text-[13px]"><input type="checkbox" x-model="settings.asr.use_demucs" aria-label="启用 Demucs 人声分离"> Demucs</label>
             </div>
+          </div>
+          <div x-show="sysCheck?.asr_recommendation" class="mt-4 rounded-xl border border-surface-200 px-3 py-2 text-[12px] text-surface-600">
+            <p class="font-medium text-surface-700" x-text="asrRecommendationSummary()"></p>
+            <p class="mt-1 text-surface-400" x-text="sysCheck?.asr_recommendation?.reason || ''"></p>
           </div>
         </div>
 

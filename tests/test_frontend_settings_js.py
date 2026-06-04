@@ -477,6 +477,40 @@ def test_frontend_local_cli_panel_is_visible_for_claude_or_codex_provider():
     assert result.returncode == 0, result.stderr
 
 
+def test_frontend_formats_asr_recommendation_from_system_check():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.sysCheck = {
+          asr_recommendation: {
+            mode: 'offline',
+            backend: 'mlx_whisper',
+            model_size: 'large-v3-turbo',
+            download_required: false,
+            download_hint: '~1.6GB',
+            reason: '离线优先',
+          },
+        };
+
+        if (state.asrModeLabel('speed') !== '速度优先') throw new Error('missing speed label');
+        const summary = state.asrRecommendationSummary();
+        if (!summary.includes('离线优先')) throw new Error(`missing mode label: ${summary}`);
+        if (!summary.includes('mlx_whisper')) throw new Error(`missing backend summary: ${summary}`);
+        if (!summary.includes('large-v3-turbo')) throw new Error(`missing model summary: ${summary}`);
+        if (!summary.includes('本地可用')) throw new Error(`missing local availability: ${summary}`);
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_frontend_codex_cli_panel_is_visible_for_primary_or_polish_provider():
     result = run_js(
         """

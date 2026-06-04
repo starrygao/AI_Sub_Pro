@@ -62,6 +62,17 @@ def test_settings_controls_have_accessible_names():
         assert label in html
 
 
+def test_asr_mode_and_recommendation_are_visible_in_settings():
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
+
+    assert 'x-model="settings.asr.mode"' in html
+    assert 'aria-label="ASR 模式"' in html
+    assert "asrRecommendationSummary()" in html
+    assert "sysCheck?.asr_recommendation?.reason" in html
+    assert "asrModeLabel" in js
+
+
 def test_checkbox_controls_have_explicit_accessible_names():
     html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
 

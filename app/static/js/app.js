@@ -12,7 +12,7 @@ function app() {
       api_keys: {openai:'',deepseek:'',gemini:''},
       tmdb: {api_key:'', language:'zh-CN'},
       trailer: {max_video_height: 1080},
-      asr: {},
+      asr: {mode: 'speed'},
       translation: {},
       providers: {
         claude_cli: { enabled: true, model: 'claude-opus-4-7', timeout_sec: 180 },
@@ -614,6 +614,33 @@ function app() {
       } finally {
         if (this.sysCheckRequestSeq === requestId) this.sysCheckLoading = false;
       }
+    },
+
+    asrModeLabel(mode) {
+      const normalized = typeof mode === 'string' ? mode.trim() : '';
+      return {
+        speed: '速度优先',
+        accuracy: '准确优先',
+        offline: '离线优先',
+      }[normalized] || normalized || '速度优先';
+    },
+
+    asrRecommendationSummary() {
+      const rec = this.isPlainObject(this.sysCheck?.asr_recommendation)
+        ? this.sysCheck.asr_recommendation
+        : {};
+      if (!Object.keys(rec).length) return '暂无 ASR 推荐';
+      const backend = typeof rec.backend === 'string' && rec.backend.trim()
+        ? rec.backend.trim()
+        : '未检测到后端';
+      const model = typeof rec.model_size === 'string' && rec.model_size.trim()
+        ? rec.model_size.trim()
+        : '未选择模型';
+      const hint = typeof rec.download_hint === 'string' ? rec.download_hint.trim() : '';
+      const availability = rec.download_required
+        ? (hint ? `需下载 ${hint}` : '需下载模型')
+        : (rec.ready === false && !rec.backend && !rec.model_size ? '本地不可用' : '本地可用');
+      return `${this.asrModeLabel(rec.mode)}：${backend} / ${model}，${availability}`;
     },
 
     translationProviderLabel(provider) {
