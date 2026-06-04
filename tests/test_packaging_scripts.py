@@ -31,6 +31,14 @@ def test_release_workflow_supports_pr_dry_run_tag_release_and_uploads():
     assert "github.event_name != 'pull_request'" in workflow
     assert "startsWith(github.ref, 'refs/tags/v')" in workflow
     assert "gh release upload" in workflow or "actions/upload-release-asset" in workflow
+    assert "contents: read" in workflow
+    publish_job = workflow[workflow.index("  publish:"):]
+    assert "permissions:" in publish_job
+    assert "contents: write" in publish_job
+    validate_job = workflow[workflow.index("  validate:"):workflow.index("  publish:")]
+    assert "contents: write" not in validate_job
+    assert "gh release upload \"$TAG_NAME\" dist/* --clobber" not in workflow
+    assert "find dist -maxdepth 1 -type f" in workflow
 
 
 def test_release_prepare_writes_sha256_files_and_size_report(tmp_path):
