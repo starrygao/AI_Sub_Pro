@@ -317,6 +317,50 @@ def test_project_detail_subtitles_have_mobile_card_layout_and_touch_actions():
         assert snippet in css
 
 
+def test_subtitle_editor_toolbar_and_timeline_controls_are_present():
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
+    css = (ROOT / "app/static/css/app.css").read_text(encoding="utf-8")
+
+    for snippet in (
+        "subtitle-editor-toolbar",
+        'x-model="subtitleFindText"',
+        'aria-label="查找字幕文本"',
+        'x-model="subtitleReplaceText"',
+        'aria-label="替换为"',
+        'x-model="subtitleReplaceScope"',
+        'aria-label="替换范围"',
+        'x-model="subtitleReplaceCaseSensitive"',
+        'aria-label="区分大小写替换"',
+        "subtitleReplacePreview().count",
+        "applySubtitleReplace()",
+        "subtitleQualitySummary().severe",
+        "subtitleQualitySummary().warning",
+        "subtitle-timeline-panel",
+        "subtitleTimelineSegments()",
+        "mergeSubtitleWithNext(idx)",
+        'aria-label="合并下一行字幕"',
+        "handleSubtitleShortcut($event, idx)",
+    ):
+        assert snippet in html
+
+    for snippet in (
+        "subtitleTimelineSegments()",
+        "handleSubtitleShortcut(event, idx)",
+        "mergeSubtitleWithNext(idx)",
+        "applySubtitleReplace()",
+    ):
+        assert snippet in js
+
+    for snippet in (
+        ".subtitle-editor-toolbar",
+        ".subtitle-quality-strip",
+        ".subtitle-timeline-panel",
+        ".subtitle-timeline-segment",
+    ):
+        assert snippet in css
+
+
 def test_main_shell_has_mobile_responsive_layout_rules():
     html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
     css = (ROOT / "app/static/css/app.css").read_text(encoding="utf-8")

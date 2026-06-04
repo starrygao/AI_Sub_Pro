@@ -1944,6 +1944,52 @@ function app() {
       return `${formatLabel}仍有 ${summary.warning} 个质量提醒。${issueText}。是否继续导出？`;
     },
 
+    subtitleTimelineDurationMs() {
+      const projectDuration = Number(this.currentProject?.duration);
+      if (Number.isFinite(projectDuration) && projectDuration > 0) return projectDuration * 1000;
+      return this.subtitles.reduce((maxEnd, item) => {
+        if (!this.isPlainObject(item)) return maxEnd;
+        return Math.max(maxEnd, this.parseSrtTime(item.end));
+      }, 0);
+    },
+
+    subtitleTimelineSegments() {
+      const durationMs = this.subtitleTimelineDurationMs();
+      if (!durationMs) return [];
+      const roundPct = (value) => Math.round(value * 100) / 100;
+      return this.subtitles
+        .filter((item) => this.isPlainObject(item))
+        .map((item, idx) => {
+          const startMs = Math.max(0, Math.min(durationMs, this.parseSrtTime(item.start)));
+          const rawEndMs = this.parseSrtTime(item.end);
+          const endMs = Math.max(startMs, Math.min(durationMs, rawEndMs));
+          const left = roundPct((startMs / durationMs) * 100);
+          const width = roundPct(Math.max(0.8, ((endMs - startMs) / durationMs) * 100));
+          return {
+            index: Number.isInteger(item.index) ? item.index : idx + 1,
+            left,
+            width: Math.min(width, roundPct(100 - left)),
+            filtered: !!item.filtered,
+            label: `第 ${Number.isInteger(item.index) ? item.index : idx + 1} 行 ${item.start || ''} - ${item.end || ''}`.trim(),
+          };
+        });
+    },
+
+    async handleSubtitleShortcut(event, idx) {
+      if (!event || !(event.metaKey || event.ctrlKey)) return false;
+      const key = String(event.key || '').toLowerCase();
+      let action = null;
+      if (key === 'enter' && !event.shiftKey) action = () => this.saveEdit(idx);
+      else if (event.shiftKey && key === 's') action = () => this.splitSubtitle(idx);
+      else if (event.shiftKey && key === 'm') action = () => this.mergeSubtitleWithNext(idx);
+      else if (event.shiftKey && key === 'a') action = () => this.addSubtitleAfter(idx);
+      else if (key === 'backspace' || key === 'delete') action = () => this.deleteSubtitle(idx);
+      if (!action) return false;
+      event.preventDefault?.();
+      await action();
+      return true;
+    },
+
     renumberSubtitles() {
       this.subtitles.forEach((s, i) => { s.index = i + 1; });
     },

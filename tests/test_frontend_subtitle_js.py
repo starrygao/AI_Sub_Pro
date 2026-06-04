@@ -1685,3 +1685,103 @@ def test_export_quality_requires_confirmation_before_api_call_for_severe_issues(
         });
         """
     )
+
+
+def test_subtitle_timeline_segments_use_project_duration_and_clamp_widths():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.currentProject = {id: 'p1', duration: 4};
+        state.subtitles = [
+          {index: 1, start: '00:00:00,000', end: '00:00:01,000', text: 'A', translation: '甲', filtered: false},
+          {index: 2, start: '00:00:02,000', end: '00:00:06,000', text: 'B', translation: '乙', filtered: false},
+          {index: 3, start: 'bad', end: '00:00:03,000', text: 'C', translation: '丙', filtered: true},
+        ];
+
+        const segments = state.subtitleTimelineSegments();
+
+        if (segments.length !== 3) throw new Error(`expected 3 segments, got ${JSON.stringify(segments)}`);
+        if (segments[0].left !== 0 || segments[0].width !== 25) {
+          throw new Error(`unexpected first segment ${JSON.stringify(segments[0])}`);
+        }
+        if (segments[1].left !== 50 || segments[1].width !== 50) {
+          throw new Error(`expected clamped second segment, got ${JSON.stringify(segments[1])}`);
+        }
+        if (!segments[2].filtered || segments[2].width <= 0) {
+          throw new Error(`expected filtered fallback segment, got ${JSON.stringify(segments[2])}`);
+        }
+        """
+    )
+
+
+def test_subtitle_shortcuts_dispatch_common_editor_actions():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const calls = [];
+          state.saveEdit = async (idx) => { calls.push(['save', idx]); };
+          state.splitSubtitle = async (idx) => { calls.push(['split', idx]); };
+          state.mergeSubtitleWithNext = async (idx) => { calls.push(['merge', idx]); };
+          state.addSubtitleAfter = async (idx) => { calls.push(['add', idx]); };
+          state.deleteSubtitle = async (idx) => { calls.push(['delete', idx]); };
+          const event = (key, extra = {}) => ({
+            key,
+            ctrlKey: true,
+            metaKey: false,
+            shiftKey: false,
+            prevented: false,
+            preventDefault() { this.prevented = true; },
+            ...extra,
+          });
+
+          const save = event('Enter');
+          const split = event('S', {shiftKey: true});
+          const merge = event('m', {shiftKey: true});
+          const add = event('A', {shiftKey: true});
+          const del = event('Backspace');
+          const ignored = event('x', {ctrlKey: false, metaKey: false});
+
+          await state.handleSubtitleShortcut(save, 4);
+          await state.handleSubtitleShortcut(split, 4);
+          await state.handleSubtitleShortcut(merge, 4);
+          await state.handleSubtitleShortcut(add, 4);
+          await state.handleSubtitleShortcut(del, 4);
+          const ignoredResult = await state.handleSubtitleShortcut(ignored, 4);
+
+          const expected = JSON.stringify([
+            ['save', 4],
+            ['split', 4],
+            ['merge', 4],
+            ['add', 4],
+            ['delete', 4],
+          ]);
+          if (JSON.stringify(calls) !== expected) {
+            throw new Error(`unexpected shortcut dispatch ${JSON.stringify(calls)}`);
+          }
+          for (const item of [save, split, merge, add, del]) {
+            if (!item.prevented) throw new Error(`expected ${item.key} shortcut to prevent default`);
+          }
+          if (ignored.prevented || ignoredResult !== false) {
+            throw new Error('plain key should be ignored without preventDefault');
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )

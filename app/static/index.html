@@ -779,6 +779,63 @@
           <p class="text-[12px] text-surface-300 mt-1">点击「一键处理」开始</p>
         </div>
 
+        <div x-show="subtitles.length>0" class="subtitle-editor-toolbar glass rounded-2xl p-3 mb-3">
+          <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_9rem_auto_auto] gap-2 items-center">
+            <input x-model="subtitleFindText"
+                   aria-label="查找字幕文本"
+                   placeholder="查找字幕..."
+                   class="px-3 py-2 rounded-xl text-[12px]">
+            <input x-model="subtitleReplaceText"
+                   aria-label="替换为"
+                   placeholder="替换为..."
+                   class="px-3 py-2 rounded-xl text-[12px]">
+            <select x-model="subtitleReplaceScope" aria-label="替换范围" class="px-3 py-2 rounded-xl text-[12px]">
+              <option value="translation">译文</option>
+              <option value="text">原文</option>
+              <option value="all">原文 + 译文</option>
+            </select>
+            <label class="flex items-center gap-2 text-[12px] text-surface-500 whitespace-nowrap">
+              <input type="checkbox" x-model="subtitleReplaceCaseSensitive" aria-label="区分大小写替换">
+              区分大小写
+            </label>
+            <button @click="applySubtitleReplace()"
+                    :disabled="subtitleActionsDisabled() || subtitleReplacePreview().count === 0"
+                    class="btn-secondary px-3 py-2 rounded-xl text-[12px] font-medium disabled:opacity-40 disabled:cursor-not-allowed">
+              <span x-text="subtitleReplacePreview().count ? `替换 ${subtitleReplacePreview().count} 处` : '无匹配'"></span>
+            </button>
+          </div>
+          <div class="subtitle-quality-strip mt-3 flex flex-wrap items-center gap-3 text-[12px]">
+            <span class="pill" :class="subtitleQualitySummary().severe ? 'text-danger' : 'text-surface-500'">
+              严重 <strong x-text="subtitleQualitySummary().severe"></strong>
+            </span>
+            <span class="pill">
+              提醒 <strong x-text="subtitleQualitySummary().warning"></strong>
+            </span>
+            <span x-show="subtitleQualitySummary().issues.length"
+                  class="text-surface-500 truncate"
+                  x-text="subtitleQualitySummary().issues[0]?.message || ''"></span>
+            <span x-show="!subtitleQualitySummary().issues.length" class="text-success">导出检查未发现明显问题</span>
+          </div>
+        </div>
+
+        <div x-show="subtitles.length>0" class="subtitle-timeline-panel glass rounded-2xl p-3 mb-3">
+          <div class="subtitle-waveform" aria-hidden="true">
+            <template x-for="n in 48" :key="n">
+              <span :style="`height:${18 + ((n * 17) % 28)}%`"></span>
+            </template>
+          </div>
+          <div class="subtitle-timeline-track" role="img" aria-label="字幕时间轴">
+            <template x-for="segment in subtitleTimelineSegments()" :key="segment.index">
+              <button type="button"
+                      class="subtitle-timeline-segment"
+                      :class="segment.filtered ? 'is-filtered' : ''"
+                      :style="`left:${segment.left}%; width:${segment.width}%;`"
+                      :aria-label="segment.label"
+                      :title="segment.label"></button>
+            </template>
+          </div>
+        </div>
+
         <div x-show="subtitles.length>0" class="subtitle-table-panel glass rounded-2xl overflow-hidden">
           <table class="w-full text-[13px]">
             <thead class="sticky top-0 bg-white/80 backdrop-blur-xl border-b border-black/[0.06] z-10">
@@ -792,7 +849,9 @@
             </thead>
             <tbody>
               <template x-for="(s, idx) in subtitles" :key="idx">
-                <tr class="sub-row border-b border-black/[0.03] last:border-0" :class="s.filtered ? 'opacity-25' : ''">
+                <tr class="sub-row border-b border-black/[0.03] last:border-0"
+                    :class="s.filtered ? 'opacity-25' : ''"
+                    @keydown="handleSubtitleShortcut($event, idx)">
                   <td class="px-4 py-2.5 text-[12px] text-surface-300 tabular-nums" x-text="s.index"></td>
                   <td class="px-4 py-2.5 text-[12px] text-surface-400 font-mono tabular-nums" x-text="s.start?.substring(0,8)"></td>
                   <td class="px-4 py-2.5 text-surface-700" x-text="s.text"></td>
@@ -820,6 +879,10 @@
                               :disabled="subtitleActionsDisabled()"
                               class="btn-secondary w-7 h-7 rounded-lg text-[12px] disabled:opacity-40 disabled:cursor-not-allowed"
                               aria-label="分割这一行字幕" title="分割这一行">÷</button>
+                      <button @click="mergeSubtitleWithNext(idx)"
+                              :disabled="subtitleActionsDisabled() || idx >= subtitles.length - 1"
+                              class="btn-secondary w-7 h-7 rounded-lg text-[12px] disabled:opacity-40 disabled:cursor-not-allowed"
+                              aria-label="合并下一行字幕" title="合并下一行">⇄</button>
                       <button @click="deleteSubtitle(idx)"
                               :disabled="subtitleActionsDisabled()"
                               class="btn-secondary w-7 h-7 rounded-lg text-[12px] text-danger disabled:opacity-40 disabled:cursor-not-allowed"
