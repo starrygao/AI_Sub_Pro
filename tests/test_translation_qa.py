@@ -117,7 +117,7 @@ def test_quality_checks_do_not_flag_short_consistent_cjk_names():
 
     blocks = [
         _block(1, "Li Na arrived.", "李娜到了。"),
-        _block(2, "I saw Li Na.", "我看见李娜。"),
+        _block(2, "I saw Li Na run.", "我看见李娜跑了。"),
     ]
 
     report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)

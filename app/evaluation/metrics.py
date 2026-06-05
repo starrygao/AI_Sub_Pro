@@ -113,6 +113,15 @@ def _repeated_proper_names(source_by_id: dict[str, str]) -> list[str]:
     return sorted(name for name, count in counts.items() if count > 1)
 
 
+def _is_short_source_name(proper_name: str) -> bool:
+    tokens = proper_name.split()
+    return (
+        len(tokens) == 2
+        and sum(len(token) for token in tokens) <= 6
+        and max((len(token) for token in tokens), default=0) <= 3
+    )
+
+
 def _cjk_compact_text(text: str) -> str:
     return "".join(_CJK_RE.findall(_compact_whitespace(text)))
 
@@ -178,6 +187,14 @@ def _shared_cjk_anchor(translations: list[str]) -> str:
         if any(anchor != other and anchor in other for other in unsafe):
             continue
         return anchor
+    return ""
+
+
+def _short_name_cjk_anchor(translations: list[str]) -> str:
+    common = _common_cjk_substrings(translations, min_length=2)
+    for anchor in common:
+        if len(anchor) <= 3:
+            return anchor
     return ""
 
 
@@ -308,13 +325,16 @@ def proper_name_consistency_score(
         if len(observations) < 2:
             continue
 
-        shared_anchor = _shared_cjk_anchor(
-            [
-                cjk_text
-                for cjk_text in (_cjk_compact_text(item["translation"]) for item in observations)
-                if cjk_text
-            ]
-        )
+        cjk_translations = [
+            cjk_text
+            for cjk_text in (_cjk_compact_text(item["translation"]) for item in observations)
+            if cjk_text
+        ]
+        shared_anchor = ""
+        if _is_short_source_name(proper_name):
+            shared_anchor = _short_name_cjk_anchor(cjk_translations)
+        if not shared_anchor:
+            shared_anchor = _shared_cjk_anchor(cjk_translations)
 
         target_forms = []
         for item in observations:
