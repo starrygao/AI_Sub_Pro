@@ -2,7 +2,7 @@
 
 语言：[English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
-## Unreleased - 内置口语 Starter Pack
+## v1.2.1 - 内置口语包与翻译完成状态修复
 
 主要内容：
 
@@ -11,11 +11,29 @@
   手动准备这些基础例句。
 - 口语包导入会保留 pack id、版本、标签、来源和 license 元数据，并避免重复启动
   产生重复行。
+- 项目详情和项目列表读取时会叠加当前 scheduler 进度，避免前端轮询时被旧的
+  `project.json` 进度覆盖。
+- 翻译完成统计会忽略 `[Music]` 这类可留空的环境音描述行，并在翻译结束时持久化
+  最终进度和状态字段。
 
 质量验证：
 
+- 完整测试套件已通过：`926 passed in 54.80s`。
 - 新增回归测试，覆盖 pack 幂等导入、新版本补充导入、内置 pack 发现、日语/韩语
   检索分词，以及翻译 prompt 注入。
+- 新增集成测试，覆盖环境音描述行完成统计和运行时进度合并。
+
+安装包：
+
+- 已为 macOS 用户附加 `AI_Sub_Pro_v1.2.1.dmg`，并提供对应的
+  `AI_Sub_Pro_v1.2.1.dmg.sha256` 校验文件和 `release-size-report.json`。
+- tag 前本地 release artifact 校验记录 SHA256
+  `ec2809c0663359dbe6d55f24e87f75648454a9995b147c4a443409f683094efc`，大小
+  `88,498,628` bytes。
+- 附带的 macOS 安装包是 base app build，不包含本地 Whisper 模型文件，也不包含
+  optional ASR backend packages / 可选 ASR 后端包。
+- Windows 安装包需要在 Windows 机器上运行 `build_win.bat` 生成；当前 release
+  暂未附带预编译 Windows 安装包，请先使用源码安装。
 
 ## v1.2.0 - 质量评测、工作流恢复、字幕编辑器与发布流水线
 

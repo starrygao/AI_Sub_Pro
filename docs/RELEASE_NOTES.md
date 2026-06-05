@@ -2,7 +2,7 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
-## Unreleased - Bundled Colloquial Starter Packs
+## v1.2.1 - Bundled Colloquial Packs And Translation Completion Fixes
 
 Highlights:
 
@@ -13,11 +13,33 @@ Highlights:
   manual setup step.
 - Phrase pack imports now preserve pack id, version, tags, source, and license
   metadata while avoiding duplicate rows across repeated startups.
+- Project detail/list reads now overlay live scheduler progress while a
+  workflow is running, so frontend polling does not regress to stale
+  `project.json` progress.
+- Translation completion accounting now ignores blank sound-description rows
+  such as `[Music]` and persists final progress/status fields when translation
+  finishes.
 
 Quality/Verification:
 
+- Full test suite passed: `926 passed in 54.80s`.
 - Added regression tests for pack idempotency, newer-version imports, bundled
   pack discovery, Japanese/Korean retrieval tokenization, and prompt injection.
+- Added integration coverage for blank sound-description completion handling
+  and runtime progress merging.
+
+Packages:
+
+- `AI_Sub_Pro_v1.2.1.dmg` is attached for macOS users, with a matching
+  `AI_Sub_Pro_v1.2.1.dmg.sha256` checksum file and
+  `release-size-report.json`.
+- Local release artifact verification recorded SHA256
+  `ec2809c0663359dbe6d55f24e87f75648454a9995b147c4a443409f683094efc` and
+  size `88,498,628` bytes before tagging.
+- The attached macOS package is the base app build. It does not bundle local
+  Whisper model files or optional ASR backend packages.
+- Windows packaging currently requires a Windows machine and `build_win.bat`;
+  no prebuilt Windows installer is attached to this release.
 
 ## v1.2.0 - Quality, Workflow, Editor, And Release Pipeline
 

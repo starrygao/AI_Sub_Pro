@@ -1,6 +1,6 @@
 {
   "name": "ai-sub-pro",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "AI-powered subtitle translation tool",
   "main": "main.js",
   "scripts": {

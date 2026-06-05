@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASE_VERSION = "1.2.0"
+RELEASE_VERSION = "1.2.1"
 
 
 def test_release_workflow_supports_pr_dry_run_tag_release_and_uploads():
