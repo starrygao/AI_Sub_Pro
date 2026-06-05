@@ -168,6 +168,24 @@ def test_proper_name_consistency_score_allows_same_long_cjk_name_in_different_co
     assert result["issues"] == []
 
 
+def test_proper_name_consistency_score_allows_same_long_name_in_natural_contexts():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "I like Hudson Oaks.",
+            "2": "She hates Hudson Oaks.",
+        },
+        {
+            "1": "我喜欢哈德逊奥克斯。",
+            "2": "她讨厌哈德逊奥克斯。",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
 def test_proper_name_consistency_score_flags_longer_shared_prefix_extension():
     from app.evaluation.metrics import proper_name_consistency_score
 

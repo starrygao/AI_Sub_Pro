@@ -210,6 +210,17 @@ def _is_context_boundary(char: str) -> bool:
     return not char or char in _SHORT_NAME_CONTEXT_CHARS
 
 
+def _source_name_boundaries(source_text: str, proper_name: str) -> tuple[bool, bool]:
+    match = re.search(rf"\b{re.escape(proper_name)}\b", _clean_text(source_text))
+    if not match:
+        return False, False
+    before = source_text[:match.start()].strip()
+    after = source_text[match.end():].strip()
+    start_boundary = not before or not re.search(r"[A-Za-z0-9]", before)
+    end_boundary = not after or not re.search(r"[A-Za-z0-9]", after)
+    return start_boundary, end_boundary
+
+
 def _shared_cjk_anchor(translations: list[str]) -> str:
     common = _common_cjk_substrings(translations, min_length=2)
     if not common:
@@ -252,11 +263,16 @@ def _target_signature(translation: str, shared_anchor: str = "") -> str:
     return _compact_whitespace(translation)
 
 
-def _long_name_signature(translation: str, shared_anchor: str) -> str:
+def _long_name_signature(source_text: str, proper_name: str, translation: str, shared_anchor: str) -> str:
     cjk_text = _cjk_compact_text(translation)
     if not shared_anchor or shared_anchor not in cjk_text:
         return cjk_text or _compact_whitespace(translation)
     before, after = _anchor_neighbors(cjk_text, shared_anchor)
+    source_starts_with_name, source_ends_with_name = _source_name_boundaries(source_text, proper_name)
+    if source_ends_with_name and not after:
+        return shared_anchor
+    if source_starts_with_name and not before:
+        return shared_anchor
     if _is_context_boundary(before) and _is_context_boundary(after):
         return shared_anchor
     return cjk_text or _compact_whitespace(translation)
@@ -398,7 +414,12 @@ def proper_name_consistency_score(
             if _is_short_source_name(proper_name):
                 signature = _target_signature(item["translation"], shared_anchor)
             else:
-                signature = _long_name_signature(item["translation"], shared_anchor)
+                signature = _long_name_signature(
+                    item["source_text"],
+                    proper_name,
+                    item["translation"],
+                    shared_anchor,
+                )
             item["target_signature"] = signature
             item["target_anchor"] = shared_anchor
             if signature not in target_forms:
