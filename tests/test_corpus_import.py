@@ -360,6 +360,25 @@ def test_import_delimited_corpus_rejects_malformed_quoted_rows(
         )
 
 
+def test_import_corpus_dry_run_still_raises_on_malformed_quoted_csv_before_cap(tmp_path):
+    corpus = tmp_path / "phrases.csv"
+    corpus.write_text(
+        'source,target\nHello,"world\nnext,valid\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CorpusImportError, match="invalid csv file"):
+        import_corpus(
+            corpus,
+            input_format="csv",
+            source_name="unit-quoted-error",
+            license_name="local-test",
+            source_language="en",
+            target_language="zh-CN",
+            dry_run=True,
+        )
+
+
 @pytest.mark.parametrize(
     ("filename", "input_format", "body"),
     [
@@ -405,6 +424,51 @@ def test_import_delimited_corpus_stops_at_cap_before_malformed_quoted_row(
         "source_text": "Hello",
         "target_text": "你好",
     }]
+
+
+@pytest.mark.parametrize(
+    ("filename", "input_format", "body"),
+    [
+        (
+            "phrases.csv",
+            "csv",
+            'source,target\nHello,你好\nBroken,"unterminated\n',
+        ),
+        (
+            "phrases.tsv",
+            "tsv",
+            'source\ttarget\nHello\t你好\nBroken\t"unterminated\n',
+        ),
+    ],
+)
+def test_import_corpus_non_dry_run_avoids_partial_writes_on_fatal_delimited_parse_error(
+    tmp_path,
+    filename,
+    input_format,
+    body,
+):
+    corpus = tmp_path / filename
+    db = tmp_path / "phrases.sqlite3"
+    library = PhraseLibrary(db)
+    corpus.write_text(body, encoding="utf-8")
+
+    with pytest.raises(CorpusImportError):
+        import_corpus(
+            corpus,
+            input_format=input_format,
+            source_name="unit-no-partial-write",
+            license_name="local-test",
+            source_language="en",
+            target_language="zh-CN",
+            library=library,
+        )
+
+    assert library.retrieve(
+        "Hello",
+        source_language="en",
+        target_language="zh-CN",
+        limit=5,
+    ) == []
 
 
 def test_import_corpus_caps_retained_error_samples(tmp_path):

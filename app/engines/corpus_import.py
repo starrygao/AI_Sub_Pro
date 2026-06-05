@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import csv
 import json
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from collections import Counter
 from typing import Iterable, Iterator
 
-from app.engines.phrase_library import PhraseLibrary
+from app.engines.phrase_library import PhraseLibrary, default_phrase_library_path
 
 SUPPORTED_INPUT_FORMATS = {"jsonl", "tsv", "csv"}
 DEFAULT_MAX_ROWS = 5000
@@ -20,6 +21,43 @@ MAX_ERROR_SAMPLES = 50
 
 class CorpusImportError(ValueError):
     """Raised when corpus import arguments or inputs are invalid."""
+
+
+@dataclass(frozen=True)
+class _CandidateRow:
+    row_number: int
+    source_text: str
+    target_text: str
+
+
+class _ExistingDuplicateChecker:
+    def __init__(self, connection) -> None:
+        self._connection = connection
+
+    def __call__(self, dedupe_key: tuple[str, str, str, str, str]) -> bool:
+        source_text, target_text, source_language, target_language, source_name = dedupe_key
+        row = self._connection.execute(
+            """
+            SELECT 1 FROM phrase_examples
+            WHERE source_text = ?
+              AND target_text = ?
+              AND source_language = ?
+              AND target_language = ?
+              AND source_name = ?
+            LIMIT 1
+            """,
+            (
+                source_text,
+                target_text,
+                source_language,
+                target_language,
+                source_name,
+            ),
+        ).fetchone()
+        return row is not None
+
+    def close(self) -> None:
+        self._connection.close()
 
 
 @dataclass
@@ -104,60 +142,31 @@ def import_corpus(
         tags=tags,
     )
     corpus_path = _validate_path(path)
-    active_library = library
-    if active_library is None and not dry_run:
-        active_library = PhraseLibrary()
-
     report = CorpusImportReport()
-    seen: set[tuple[str, str, str, str, str]] = set()
-    scanned_rows = 0
-    max_scanned_rows = _coerce_max_scanned_rows(
-        _max_scanned_rows,
-        max_rows=metadata.max_rows,
+    candidates = _collect_candidate_rows(
+        corpus_path,
+        metadata=metadata,
+        report=report,
+        dry_run=dry_run,
+        library=library,
+        max_scanned_rows=_max_scanned_rows,
     )
 
-    rows = iter(_iter_rows(corpus_path, metadata))
-    while report.accepted < metadata.max_rows and scanned_rows < max_scanned_rows:
-        try:
-            row_number, row, parser_error = next(rows)
-        except StopIteration:
-            break
-        scanned_rows += 1
-        if parser_error is not None:
-            report.rejected += 1
-            report.add_error(row_number=row_number, error=parser_error)
-            continue
-        source_text = _normalize_text(row.get(metadata.source_column))
-        target_text = _normalize_text(row.get(metadata.target_column))
-        row_error = _validate_row(source_text=source_text, target_text=target_text)
-        if row_error is not None:
-            report.rejected += 1
-            report.add_error(row_number=row_number, error=row_error)
-            continue
-        dedupe_key = (
-            source_text,
-            target_text,
-            metadata.source_language,
-            metadata.target_language,
-            metadata.source_name,
-        )
-        if dedupe_key in seen:
-            report.duplicates += 1
-            continue
-        seen.add(dedupe_key)
-
-        if dry_run:
-            report.accepted += 1
+    if dry_run:
+        report.accepted = len(candidates)
+        for candidate in candidates:
             report.add_sample(
-                row_number=row_number,
-                source_text=source_text,
-                target_text=target_text,
+                row_number=candidate.row_number,
+                source_text=candidate.source_text,
+                target_text=candidate.target_text,
             )
-            continue
+        return report
 
+    active_library = library or PhraseLibrary()
+    for candidate in candidates:
         entry_id = active_library.add_phrase(
-            source_text=source_text,
-            target_text=target_text,
+            source_text=candidate.source_text,
+            target_text=candidate.target_text,
             source_language=metadata.source_language,
             target_language=metadata.target_language,
             source_name=metadata.source_name,
@@ -169,13 +178,10 @@ def import_corpus(
             continue
         report.accepted += 1
         report.add_sample(
-            row_number=row_number,
-            source_text=source_text,
-            target_text=target_text,
+            row_number=candidate.row_number,
+            source_text=candidate.source_text,
+            target_text=candidate.target_text,
         )
-
-    if report.accepted >= metadata.max_rows or scanned_rows >= max_scanned_rows:
-        report.limited = True
 
     return report
 
@@ -260,6 +266,108 @@ def _coerce_max_scanned_rows(value, *, max_rows: int) -> int:
     return max(max_rows, min(parsed, MAX_IMPORT_ROWS))
 
 
+def _collect_candidate_rows(
+    corpus_path: Path,
+    *,
+    metadata: _ValidatedMetadata,
+    report: CorpusImportReport,
+    dry_run: bool,
+    library: PhraseLibrary | None,
+    max_scanned_rows: int | None,
+) -> list[_CandidateRow]:
+    candidates: list[_CandidateRow] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    scanned_rows = 0
+    scan_limit = _coerce_max_scanned_rows(
+        max_scanned_rows,
+        max_rows=metadata.max_rows,
+    )
+    duplicate_checker = None if dry_run else _build_existing_duplicate_checker(
+        library=library,
+        metadata=metadata,
+    )
+
+    try:
+        rows = iter(_iter_rows(corpus_path, metadata))
+        while len(candidates) < metadata.max_rows and scanned_rows < scan_limit:
+            try:
+                row_number, row, parser_error = next(rows)
+            except StopIteration:
+                break
+            scanned_rows += 1
+            if parser_error is not None:
+                report.rejected += 1
+                report.add_error(row_number=row_number, error=parser_error)
+                continue
+            source_text = _normalize_text(row.get(metadata.source_column))
+            target_text = _normalize_text(row.get(metadata.target_column))
+            row_error = _validate_row(source_text=source_text, target_text=target_text)
+            if row_error is not None:
+                report.rejected += 1
+                report.add_error(row_number=row_number, error=row_error)
+                continue
+            dedupe_key = (
+                source_text,
+                target_text,
+                metadata.source_language,
+                metadata.target_language,
+                metadata.source_name,
+            )
+            if dedupe_key in seen:
+                report.duplicates += 1
+                continue
+            seen.add(dedupe_key)
+            if duplicate_checker is not None and duplicate_checker(dedupe_key):
+                report.duplicates += 1
+                continue
+            candidates.append(_CandidateRow(
+                row_number=row_number,
+                source_text=source_text,
+                target_text=target_text,
+            ))
+    finally:
+        if duplicate_checker is not None:
+            duplicate_checker.close()
+
+    if len(candidates) >= metadata.max_rows or scanned_rows >= scan_limit:
+        report.limited = True
+    return candidates
+
+
+def _build_existing_duplicate_checker(
+    *,
+    library: PhraseLibrary | None,
+    metadata: _ValidatedMetadata,
+):
+    if library is not None:
+        database_path = library.path
+    else:
+        database_path = default_phrase_library_path()
+    database_path = Path(database_path)
+    if not database_path.exists() or not database_path.is_file():
+        return None
+
+    connection = sqlite3.connect(str(database_path))
+
+    try:
+        has_phrase_examples = connection.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'phrase_examples'
+            LIMIT 1
+            """
+        ).fetchone()
+        if has_phrase_examples is None:
+            connection.close()
+            return None
+    except sqlite3.Error:
+        connection.close()
+        return None
+
+    return _ExistingDuplicateChecker(connection)
+
+
 def _require_metadata(name: str, value) -> str:
     normalized = _normalize_text(value)
     if not normalized:
@@ -328,6 +436,9 @@ def _iter_delimited_rows(
     delimiter = "\t" if metadata.input_format == "tsv" else ","
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         try:
+            # Python's csv dialect still treats bare quote characters inside
+            # unquoted text as literal content; strict mode catches structural
+            # quote errors such as unterminated quoted fields.
             reader = csv.DictReader(handle, delimiter=delimiter, strict=True)
             if not reader.fieldnames:
                 raise CorpusImportError("corpus file is missing a header row")
