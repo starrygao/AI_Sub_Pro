@@ -168,6 +168,24 @@ def test_proper_name_consistency_score_flags_shared_prefix_long_transliteration(
     assert result["issues"][0]["source"] == "Alexander Hamilton"
 
 
+def test_proper_name_consistency_score_flags_competing_prefix_transliteration():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Hudson Oaks is quiet.",
+            "2": "Hudson Oaks is closed.",
+        },
+        {
+            "1": "哈德森奥克斯",
+            "2": "赫德森奥克斯",
+        },
+    )
+
+    assert result["issue_count"] == 1
+    assert result["issues"][0]["source"] == "Hudson Oaks"
+
+
 def test_proper_name_consistency_score_flags_divergent_long_names_without_shared_anchor():
     from app.evaluation.metrics import proper_name_consistency_score
 

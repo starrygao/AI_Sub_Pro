@@ -315,6 +315,14 @@ def _looks_like_sentence_prefix(prefix: str, min_name_prefix_length: int = 4) ->
     return any(hint in prefix for hint in _LONG_NAME_CONTEXT_PREFIX_HINTS)
 
 
+def _looks_like_name_prefix_chunk(prefix: str) -> bool:
+    if not prefix or len(prefix) > 3:
+        return False
+    if _contains_context_chars(prefix):
+        return False
+    return not any(hint in prefix for hint in _LONG_NAME_CONTEXT_PREFIX_HINTS)
+
+
 def _has_conflicting_name_prefixes(
     anchor: str, translations: list[str], min_name_prefix_length: int = 4
 ) -> bool:
@@ -328,6 +336,16 @@ def _has_conflicting_name_prefixes(
         not _looks_like_sentence_prefix(prefix, min_name_prefix_length)
         for prefix in nonempty
     )
+
+
+def _has_competing_name_prefix_chunks(anchor: str, translations: list[str]) -> bool:
+    prefixes = [_prefix_before_anchor(text, anchor) for text in translations]
+    nonempty = [prefix for prefix in prefixes if prefix]
+    if len(nonempty) != len(prefixes):
+        return False
+    if len(set(nonempty)) < 2:
+        return False
+    return all(_looks_like_name_prefix_chunk(prefix) for prefix in nonempty)
 
 
 def _estimated_cjk_name_length_floor(proper_name: str) -> int:
@@ -362,8 +380,10 @@ def _is_valid_long_name_anchor(
 ) -> bool:
     # Safe anchors are plausible full target-name cores that may appear with
     # different sentence context. Unsafe anchors are repeated context phrases
-    # or shared prefixes of competing longer transliterations.
+    # or shared subparts of competing prefix/suffix transliterations.
     if _is_context_anchor(anchor):
+        return False
+    if _has_competing_name_prefix_chunks(anchor, translations):
         return False
     if proper_name and _has_competing_name_suffixes(anchor, translations, proper_name):
         return False
