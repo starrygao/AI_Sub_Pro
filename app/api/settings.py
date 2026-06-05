@@ -147,6 +147,26 @@ def _require_non_blank_str(section_name: str, section: dict, field: str) -> None
         )
 
 
+def _validate_choice_field(
+    section_name: str,
+    section: dict,
+    field: str,
+    *,
+    allowed: set[str],
+) -> None:
+    if field not in section:
+        return
+    _require_non_blank_str(section_name, section, field)
+    normalized = section[field].strip().lower()
+    if normalized not in allowed:
+        allowed_text = ", ".join(sorted(allowed))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Settings value {section_name}.{field} must be one of: {allowed_text}",
+        )
+    section[field] = normalized
+
+
 def _reject_non_finite_numbers(value, path: str = "settings") -> None:
     if isinstance(value, float) and not math.isfinite(value):
         raise HTTPException(
@@ -358,7 +378,22 @@ def _validate_settings_update(data: dict) -> None:
         _require_non_blank_str("translation", translation, "target_language")
         _require_int("translation", translation, "batch_size", min_value=0, max_value=200)
         _require_int("translation", translation, "context_window", min_value=0, max_value=50)
+        _validate_choice_field(
+            "translation",
+            translation,
+            "memory_retrieval_backend",
+            allowed={"auto", "fts5", "ngram"},
+        )
+        _validate_choice_field(
+            "translation",
+            translation,
+            "phrase_retrieval_backend",
+            allowed={"auto", "fts5", "ngram"},
+        )
+        _require_int("translation", translation, "max_memory_examples", min_value=0, max_value=20)
+        _require_int("translation", translation, "max_phrase_examples", min_value=0, max_value=20)
         _require_int("translation", translation, "repetitive_threshold", min_value=1, max_value=100)
+        _require_int("translation", translation, "qa_auto_repair_rounds", min_value=0, max_value=2)
         _require_bool("translation", translation, "filter_repetitive")
         _require_bool("translation", translation, "filter_interjections")
         _require_bool("translation", translation, "full_doc_mode")

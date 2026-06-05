@@ -758,7 +758,7 @@ class SubtitleTranslator:
         memory_lines = []
         if self.use_translation_memory and self.max_memory_examples > 0:
             seen_memory = set()
-            per_item_limit = 2 if self.max_memory_examples > 1 else 1
+            per_item_limit = min(20, self.max_memory_examples)
             try:
                 store = TranslationMemoryStore()
                 for item in items:
@@ -798,7 +798,7 @@ class SubtitleTranslator:
         if self.use_phrase_library and self.max_phrase_examples > 0:
             seen_phrases = set()
             preferred_tags = _phrase_context_tags(meta_info)
-            per_item_limit = 2 if self.max_phrase_examples > 1 else 1
+            per_item_limit = min(20, self.max_phrase_examples)
             try:
                 library = PhraseLibrary()
                 for item in items:

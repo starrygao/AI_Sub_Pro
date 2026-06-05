@@ -434,6 +434,9 @@ def test_update_settings_rejects_invalid_numeric_values(monkeypatch):
     cases = [
         ({"trailer": {"max_video_height": "1080"}}, "max_video_height"),
         ({"translation": {"batch_size": -1}}, "batch_size"),
+        ({"translation": {"max_memory_examples": -1}}, "max_memory_examples"),
+        ({"translation": {"max_phrase_examples": 21}}, "max_phrase_examples"),
+        ({"translation": {"qa_auto_repair_rounds": 3}}, "qa_auto_repair_rounds"),
         ({"concurrency": {"translate": 0}}, "translate"),
         ({"providers": {"claude_cli": {"timeout_sec": 0}}}, "timeout_sec"),
     ]
@@ -473,6 +476,9 @@ def test_update_settings_rejects_invalid_boolean_values(monkeypatch):
     cases = [
         ({"translation": {"filter_repetitive": "false"}}, "filter_repetitive"),
         ({"translation": {"full_doc_mode": 1}}, "full_doc_mode"),
+        ({"translation": {"max_memory_examples": True}}, "max_memory_examples"),
+        ({"translation": {"max_phrase_examples": False}}, "max_phrase_examples"),
+        ({"translation": {"qa_auto_repair_rounds": True}}, "qa_auto_repair_rounds"),
         ({"asr": {"use_demucs": "yes"}}, "use_demucs"),
         ({"providers": {"claude_cli": {"enabled": "true"}}}, "enabled"),
     ]
@@ -495,6 +501,9 @@ def test_update_settings_rejects_invalid_string_values(monkeypatch):
         ({"api_keys": {"openai": 123}}, "api_keys.openai"),
         ({"tmdb": {"api_key": {"bad": "value"}}}, "tmdb.api_key"),
         ({"translation": {"primary_model": ["gpt-4o"]}}, "primary_model"),
+        ({"translation": {"memory_retrieval_backend": 7}}, "memory_retrieval_backend"),
+        ({"translation": {"phrase_retrieval_backend": ["ngram"]}}, "phrase_retrieval_backend"),
+        ({"translation": {"qa_auto_repair_rounds": "1"}}, "qa_auto_repair_rounds"),
         ({"asr": {"language": 7}}, "asr.language"),
     ]
 
@@ -524,6 +533,49 @@ def test_update_settings_rejects_blank_required_string_values(monkeypatch):
         r = client.post("/api/settings", json=payload)
         assert r.status_code == 400
         assert field in r.json()["detail"]
+
+
+def test_update_settings_rejects_invalid_translation_retrieval_backends(monkeypatch):
+    from app.main import app
+    client = TestClient(app)
+    monkeypatch.setattr(
+        "app.api.settings.Config.update",
+        lambda data: (_ for _ in ()).throw(AssertionError("Config.update should not be called")),
+    )
+
+    cases = [
+        ({"translation": {"memory_retrieval_backend": "bogus"}}, "memory_retrieval_backend"),
+        ({"translation": {"phrase_retrieval_backend": "elastic"}}, "phrase_retrieval_backend"),
+    ]
+
+    for payload, field in cases:
+        r = client.post("/api/settings", json=payload)
+        assert r.status_code == 400
+        assert field in r.json()["detail"]
+
+
+def test_update_settings_accepts_and_normalizes_translation_retrieval_fields():
+    from app.main import app
+    client = TestClient(app)
+
+    with patch("app.api.settings.Config.update", return_value=None) as update:
+        r = client.post("/api/settings", json={
+            "translation": {
+                "memory_retrieval_backend": " FTS5 ",
+                "phrase_retrieval_backend": " NGRAM ",
+                "max_memory_examples": 20,
+                "max_phrase_examples": 0,
+                "qa_auto_repair_rounds": 2,
+            }
+        })
+
+    assert r.status_code == 200
+    payload = update.call_args.args[0]
+    assert payload["translation"]["memory_retrieval_backend"] == "fts5"
+    assert payload["translation"]["phrase_retrieval_backend"] == "ngram"
+    assert payload["translation"]["max_memory_examples"] == 20
+    assert payload["translation"]["max_phrase_examples"] == 0
+    assert payload["translation"]["qa_auto_repair_rounds"] == 2
 
 
 def test_update_settings_rejects_invalid_asr_mode(monkeypatch):
