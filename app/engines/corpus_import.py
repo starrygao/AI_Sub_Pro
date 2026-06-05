@@ -125,8 +125,17 @@ def import_corpus(
 ) -> CorpusImportReport:
     """Import local corpus rows into PhraseLibrary.
 
+    ``max_rows`` must be a positive integer no greater than ``MAX_IMPORT_ROWS``
+    (currently 100000).
+
     Dry-run validates and samples file rows only; it does not compare against
     an existing phrase database unless the caller explicitly does that.
+
+    The importer also applies a bounded scan cap so duplicate-heavy or invalid
+    corpora cannot grow memory without bound. By default that scan cap is
+    ``max(max_rows * 20, max_rows + 100)``, capped at ``MAX_IMPORT_ROWS`` and
+    never allowed to fall below the validated ``max_rows``.
+
     ``limited`` means the importer hit either the accepted-row cap or the scan
     cap and intentionally stopped without probing whether more rows remained.
     """

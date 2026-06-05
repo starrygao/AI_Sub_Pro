@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from app.engines.corpus_import import CorpusImportError, import_corpus  # noqa: E402
+from app.engines.corpus_import import MAX_IMPORT_ROWS, CorpusImportError, import_corpus  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -36,7 +36,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-rows",
         default=5000,
-        help="maximum number of accepted rows to import",
+        help=(
+            f"maximum accepted rows to import (1-{MAX_IMPORT_ROWS}); "
+            "the importer may stop early on its local scan cap and report limited=true"
+        ),
     )
     parser.add_argument(
         "--tag",

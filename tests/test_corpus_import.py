@@ -322,6 +322,80 @@ def test_import_corpus_cli_dry_run_supports_quoted_csv_fields(tmp_path):
     assert not (data_dir / "phrase_library.sqlite3").exists()
 
 
+def test_import_corpus_dry_run_supports_quoted_tsv_fields(tmp_path):
+    corpus = tmp_path / "phrases.tsv"
+    corpus.write_text(
+        'source\ttarget\n"Hello\tworld"\t"你好\t世界"\n',
+        encoding="utf-8",
+    )
+
+    report = import_corpus(
+        corpus,
+        input_format="tsv",
+        source_name="unit-quoted-tsv",
+        license_name="local-test",
+        source_language="en",
+        target_language="zh-CN",
+        dry_run=True,
+    )
+
+    assert report.accepted == 1
+    assert report.rejected == 0
+    assert report.duplicates == 0
+    assert report.sampled_rows == [{
+        "row_number": 2,
+        "source_text": "Hello world",
+        "target_text": "你好 世界",
+    }]
+
+
+@pytest.mark.parametrize(
+    ("filename", "input_format", "body", "expected_source"),
+    [
+        (
+            "phrases.csv",
+            "csv",
+            'source,target\nHello bad"quote,你好\n',
+            'Hello bad"quote',
+        ),
+        (
+            "phrases.tsv",
+            "tsv",
+            'source\ttarget\nHello bad"quote\t你好\n',
+            'Hello bad"quote',
+        ),
+    ],
+)
+def test_import_corpus_accepts_bare_quote_in_unquoted_text(
+    tmp_path,
+    filename,
+    input_format,
+    body,
+    expected_source,
+):
+    corpus = tmp_path / filename
+    corpus.write_text(body, encoding="utf-8")
+
+    report = import_corpus(
+        corpus,
+        input_format=input_format,
+        source_name="unit-bare-quote",
+        license_name="local-test",
+        source_language="en",
+        target_language="zh-CN",
+        dry_run=True,
+    )
+
+    assert report.accepted == 1
+    assert report.rejected == 0
+    assert report.duplicates == 0
+    assert report.sampled_rows == [{
+        "row_number": 2,
+        "source_text": expected_source,
+        "target_text": "你好",
+    }]
+
+
 @pytest.mark.parametrize(
     ("filename", "input_format", "body", "message"),
     [
