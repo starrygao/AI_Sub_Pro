@@ -39,7 +39,7 @@ def ngram_similarity(query: str, candidate: str) -> float:
     return min(1.0, score)
 
 
-def clamp(value: float, *, low: float = 0.0, high: float = 1.0) -> float:
+def clamp(value: float, low: float = 0, high: float = 1) -> float:
     return max(low, min(high, value))
 
 

@@ -27,6 +27,13 @@ def test_bounded_score_includes_quality_tags_and_priority():
     assert boosted > base
 
 
+def test_clamp_allows_positional_bounds():
+    from app.engines.retrieval_scoring import clamp
+
+    assert clamp(2, 0, 1) == 1
+    assert clamp(-1, 0, 1) == 0
+
+
 def test_sqlite_fts5_capability_returns_bool(tmp_path):
     from app.engines.retrieval_scoring import sqlite_supports_fts5
 
