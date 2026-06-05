@@ -57,6 +57,15 @@ _SHORT_NAME_CONTEXT_CHARS = {
     "让",
     "把",
     "被",
+    "很",
+    "真",
+    "太",
+    "都",
+    "也",
+    "还",
+    "又",
+    "呢",
+    "吗",
 }
 
 
@@ -197,6 +206,10 @@ def _contains_context_chars(anchor: str) -> bool:
     return any(char in _SHORT_NAME_CONTEXT_CHARS for char in anchor)
 
 
+def _is_context_boundary(char: str) -> bool:
+    return not char or char in _SHORT_NAME_CONTEXT_CHARS
+
+
 def _shared_cjk_anchor(translations: list[str]) -> str:
     common = _common_cjk_substrings(translations, min_length=2)
     if not common:
@@ -237,6 +250,16 @@ def _target_signature(translation: str, shared_anchor: str = "") -> str:
     if cjk_text:
         return cjk_text
     return _compact_whitespace(translation)
+
+
+def _long_name_signature(translation: str, shared_anchor: str) -> str:
+    cjk_text = _cjk_compact_text(translation)
+    if not shared_anchor or shared_anchor not in cjk_text:
+        return cjk_text or _compact_whitespace(translation)
+    before, after = _anchor_neighbors(cjk_text, shared_anchor)
+    if _is_context_boundary(before) and _is_context_boundary(after):
+        return shared_anchor
+    return cjk_text or _compact_whitespace(translation)
 
 
 def terminology_score(case: CorpusCase, candidate_by_id: dict[str, str]) -> dict[str, Any]:
@@ -372,7 +395,10 @@ def proper_name_consistency_score(
 
         target_forms = []
         for item in observations:
-            signature = _target_signature(item["translation"], shared_anchor)
+            if _is_short_source_name(proper_name):
+                signature = _target_signature(item["translation"], shared_anchor)
+            else:
+                signature = _long_name_signature(item["translation"], shared_anchor)
             item["target_signature"] = signature
             item["target_anchor"] = shared_anchor
             if signature not in target_forms:

@@ -168,6 +168,24 @@ def test_proper_name_consistency_score_allows_same_long_cjk_name_in_different_co
     assert result["issues"] == []
 
 
+def test_proper_name_consistency_score_flags_longer_shared_prefix_extension():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Hudson Oaks is quiet tonight.",
+            "2": "I came from Hudson Oaks.",
+        },
+        {
+            "1": "哈德逊奥克斯",
+            "2": "哈德逊奥克斯镇",
+        },
+    )
+
+    assert result["issue_count"] == 1
+    assert result["issues"][0]["source"] == "Hudson Oaks"
+
+
 def test_proper_name_consistency_score_skips_blank_observations_but_keeps_nonblank_mismatch():
     from app.evaluation.metrics import proper_name_consistency_score
 
@@ -200,6 +218,42 @@ def test_proper_name_consistency_score_skips_blank_translations():
         {
             "1": "哈德逊奥克斯今晚很安静。",
             "2": " ",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
+def test_proper_name_consistency_score_does_not_flag_name_seen_once():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Hudson Oaks is quiet tonight.",
+            "2": "Nothing relevant happens here.",
+        },
+        {
+            "1": "哈德逊奥克斯今晚很安静。",
+            "2": "这里没什么相关内容。",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
+def test_proper_name_consistency_score_does_not_flag_whitespace_compacted_identical_forms():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Hudson Oaks is quiet tonight.",
+            "2": "I came from Hudson Oaks.",
+        },
+        {
+            "1": "哈德逊 奥克斯",
+            "2": "哈德逊奥克斯",
         },
     )
 
