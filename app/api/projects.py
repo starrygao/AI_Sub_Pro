@@ -389,9 +389,43 @@ def _load_project(pid: str) -> dict:
             raise HTTPException(400, "Invalid project id")
         raise HTTPException(400, "Project file is invalid")
     try:
-        return _apply_safe_defaults(project)
+        return _merge_runtime_progress(pid, _apply_safe_defaults(project))
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+def _merge_runtime_progress(pid: str, project: dict) -> dict:
+    """Overlay persisted scheduler progress while a project is actively running.
+
+    Project state is intentionally low-write during long model calls, while
+    progress.json is updated frequently for the websocket. GET /api/projects/*
+    also backs the frontend polling fallback, so merge the live progress there
+    instead of letting stale project.json progress overwrite the websocket view.
+    """
+    if not (
+        isinstance(project, dict)
+        and (project.get("status") == "processing" or project.get("pipeline_stage"))
+    ):
+        return project
+
+    try:
+        from app.engines.scheduler import get_progress as _get_runtime_progress
+
+        progress = _get_runtime_progress(pid)
+    except Exception:
+        return project
+    if not isinstance(progress, dict):
+        return project
+
+    stage = progress.get("stage")
+    if stage in {"download", "asr", "translate", "burn"}:
+        project["pipeline_stage"] = stage
+    if isinstance(progress.get("progress"), int) and not isinstance(progress.get("progress"), bool):
+        project["progress"] = max(0, min(100, progress["progress"]))
+    message = progress.get("message")
+    if isinstance(message, str):
+        project["progress_msg"] = message
+    return project
 
 
 def _save_project(pid: str, data: dict):
@@ -468,7 +502,7 @@ def list_projects(include_archived: bool = Query(False)):
         if pfile.exists():
             try:
                 with open(pfile, "r", encoding="utf-8") as f:
-                    project = _apply_safe_defaults(json.load(f))
+                    project = _merge_runtime_progress(pdir.name, _apply_safe_defaults(json.load(f)))
                     if project.get("archived") and not include_archived:
                         continue
                     projects.append(project)

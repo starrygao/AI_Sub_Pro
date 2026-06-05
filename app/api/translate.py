@@ -7,6 +7,7 @@ import json
 import asyncio
 import logging
 import math
+import re
 import tempfile
 import threading
 from pathlib import Path
@@ -54,6 +55,7 @@ router = APIRouter(prefix="/api/projects", tags=["pipeline"])
 # Active tasks tracker
 active_tasks: Dict[str, threading.Thread] = {}
 _tasks_lock = threading.Lock()
+_SOUND_DESCRIPTION_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
 
 
 def _safe_error_message(exc, limit: int = 200) -> str:
@@ -678,12 +680,22 @@ def _translation_failed_completely(blocks) -> Optional[str]:
     all-music clip) — those are not failures. Used so the pipeline reports a
     real error instead of a false 'completed' when e.g. the API key is wrong.
     """
-    active = [b for b in blocks if not b.filtered and (b.text or "").strip()]
+    active = [b for b in blocks if _is_translatable_block(b)]
     if not active:
         return None
     if any(b.translation for b in active):
         return None
     return next((b.translation_error for b in active if b.translation_error), None)
+
+
+def _is_translatable_block(block) -> bool:
+    """Return False for filtered/blank/sound-description rows that may stay empty."""
+    if getattr(block, "filtered", False):
+        return False
+    text = getattr(block, "text", "")
+    if not isinstance(text, str) or not text.strip():
+        return False
+    return not _SOUND_DESCRIPTION_RE.match(text)
 
 
 def _find_subtitle_source(pid: str) -> tuple[Optional[str], Optional[str]]:
@@ -927,16 +939,25 @@ def _run_translate_pipeline(pid: str, target_language: str, owns_registration: b
             except Exception as e:
                 log.warning("failed to persist KB usage trace for %s: %s", pid, e)
 
-            active_count = sum(1 for b in blocks if not b.filtered and (b.text or "").strip())
-            translated_count = sum(1 for b in blocks if b.translation and not b.filtered)
+            active_count = sum(1 for b in blocks if _is_translatable_block(b))
+            translated_count = sum(1 for b in blocks if _is_translatable_block(b) and b.translation)
             failed_count = active_count - translated_count
             done_msg = f"翻译完成: {translated_count} 条"
             if failed_count > 0:
                 done_msg += f"(失败 {failed_count} 条)"
             _emit_progress(pid, "translate", 100, done_msg)
 
-            mutate_project(pid, lambda p: p.update({"status": "translated", "error": None}),
-                           normalize=_apply_safe_defaults)
+            mutate_project(
+                pid,
+                lambda p: p.update({
+                    "status": "translated",
+                    "error": None,
+                    "progress": 100,
+                    "progress_msg": done_msg,
+                    "pipeline_stage": None,
+                }),
+                normalize=_apply_safe_defaults,
+            )
             _best_effort_finish_stage(
                 pid,
                 "translate",

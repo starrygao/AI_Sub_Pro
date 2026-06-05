@@ -74,6 +74,33 @@ def test_legacy_project_progress_fields_are_sanitized(patched_projects_dir):
     assert loaded["progress_msg"] == ""
 
 
+def test_processing_project_merges_runtime_progress(patched_projects_dir):
+    pid = "runtime1"
+    pdir = patched_projects_dir / pid
+    pdir.mkdir()
+    project = {
+        "id": pid,
+        "name": "runtime progress",
+        "video_path": "/old.mp4",
+        "status": "processing",
+        "progress": 100,
+        "progress_msg": "stale",
+        "pipeline_stage": None,
+    }
+    (pdir / "project.json").write_text(json.dumps(project), encoding="utf-8")
+    (pdir / "progress.json").write_text(json.dumps({
+        "progress": 57,
+        "stage": "translate",
+        "message": "翻译中: 批次 2/4",
+    }), encoding="utf-8")
+
+    loaded = _load_project(pid)
+
+    assert loaded["progress"] == 57
+    assert loaded["progress_msg"] == "翻译中: 批次 2/4"
+    assert loaded["pipeline_stage"] == "translate"
+
+
 def test_legacy_project_metadata_fields_are_sanitized(patched_projects_dir):
     pid = "badmeta1"
     pdir = patched_projects_dir / pid

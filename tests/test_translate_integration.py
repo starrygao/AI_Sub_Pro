@@ -531,6 +531,59 @@ def test_translate_pipeline_writes_quality_report(tmp_path, monkeypatch):
     assert (pdir / "translation_qa_report.md").exists()
 
 
+def test_translate_done_message_ignores_blank_sound_descriptions(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transsound"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n"
+        "2\n00:00:02,000 --> 00:00:03,000\n[ Dramatic music plays ]\n\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {"translation": {}})
+    progress_messages = []
+    monkeypatch.setattr(
+        api_translate,
+        "_emit_progress",
+        lambda pid, stage, pct, msg: progress_messages.append((stage, pct, msg)),
+    )
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            pass
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "你好"
+            return blocks
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    assert progress_messages[-1] == ("translate", 100, "翻译完成: 1 条")
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["status"] == "translated"
+    assert project["progress"] == 100
+    assert project["progress_msg"] == "翻译完成: 1 条"
+    assert project["pipeline_stage"] is None
+
+
 def test_translate_pipeline_can_auto_repair_quality_issues(tmp_path, monkeypatch):
     from app.api import translate as api_translate
     from app.utils import project_store
