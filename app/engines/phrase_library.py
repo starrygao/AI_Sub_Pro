@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,7 +18,6 @@ from app.engines.retrieval_scoring import (
 )
 from app.engines.translation_memory import _lang
 
-_TOKEN_RE = re.compile(r"[A-Za-z0-9\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]+")
 _VALID_BACKENDS = {"auto", "fts5", "ngram"}
 _FTS_SYNC_NAME = "phrase_examples_fts"
 
@@ -90,11 +90,56 @@ def _tag_set(value: str | Iterable[str] | None) -> set[str]:
     }
 
 
+def _is_latin_character(value: str) -> bool:
+    return unicodedata.name(value, "").startswith("LATIN")
+
+
+def _fold_fts_character(value: str) -> str:
+    if unicodedata.combining(value):
+        return ""
+    if not _is_latin_character(value):
+        return value.lower()
+    return "".join(
+        part.lower()
+        for part in unicodedata.normalize("NFKD", value)
+        if not unicodedata.combining(part) and part.isalnum()
+    )
+
+
+def _fold_fts_text(value: str) -> str:
+    return "".join(
+        _fold_fts_character(char)
+        for char in unicodedata.normalize("NFKC", normalize_text(value))
+    )
+
+
+def _fts_tokens(value: str) -> list[str]:
+    tokens: list[str] = []
+    current: list[str] = []
+    for char in _fold_fts_text(value):
+        if char.isalnum():
+            current.append(char)
+            continue
+        if current:
+            tokens.append("".join(current))
+            current = []
+    if current:
+        tokens.append("".join(current))
+    return tokens
+
+
 def _fts_match_query(value: str) -> str:
-    tokens = sorted(set(_TOKEN_RE.findall(normalize_text(value))))
+    tokens = sorted(set(_fts_tokens(value)))
     if tokens:
         return " OR ".join(f'"{token}"' for token in tokens)
     return ""
+
+
+def _lexical_similarity(query: str, candidate: str) -> float:
+    return max(
+        ngram_similarity(query, candidate),
+        ngram_similarity(_fold_fts_text(query), _fold_fts_text(candidate)),
+    )
 
 
 def _dedupe_rows(*row_groups) -> list:
@@ -240,10 +285,102 @@ class PhraseLibrary:
             (_FTS_SYNC_NAME, max(0, int(row_id))),
         )
 
+    def _reset_fts_sync_rowid(self, conn) -> None:
+        conn.execute(
+            """
+            INSERT INTO phrase_examples_fts_sync(name, last_rowid)
+            VALUES (?, 0)
+            ON CONFLICT(name) DO UPDATE SET last_rowid = 0
+            """,
+            (_FTS_SYNC_NAME,),
+        )
+
+    def _fts_index_doc_count(self, conn) -> int:
+        try:
+            row = conn.execute("SELECT COUNT(*) AS count FROM phrase_examples_fts_docsize").fetchone()
+        except sqlite3.Error:
+            return 0
+        try:
+            return max(0, int(row["count"] or 0))
+        except (TypeError, ValueError, OverflowError):
+            return 0
+
+    def _fts_index_contains_row(self, conn, *, row_id: int, source_text: str) -> bool:
+        match_query = _fts_match_query(source_text)
+        if not match_query:
+            return True
+        try:
+            row = conn.execute(
+                """
+                SELECT rowid
+                FROM phrase_examples_fts
+                WHERE phrase_examples_fts MATCH ?
+                  AND rowid = ?
+                LIMIT 1
+                """,
+                (match_query, row_id),
+            ).fetchone()
+        except sqlite3.Error:
+            return False
+        return row is not None
+
+    def _fts_sync_marker_valid(self, conn, last_rowid: int) -> bool:
+        if last_rowid <= 0:
+            return True
+        expected = conn.execute(
+            "SELECT COUNT(*) AS count FROM phrase_examples WHERE id <= ?",
+            (last_rowid,),
+        ).fetchone()
+        try:
+            expected_count = max(0, int(expected["count"] or 0))
+        except (TypeError, ValueError, OverflowError):
+            expected_count = 0
+        if expected_count <= 0:
+            return True
+        if self._fts_index_doc_count(conn) < expected_count:
+            return False
+
+        probe_rows = conn.execute(
+            """
+            SELECT id, source_text
+            FROM phrase_examples
+            WHERE id <= ?
+            ORDER BY id ASC
+            LIMIT 1
+            """,
+            (last_rowid,),
+        ).fetchall()
+        latest = conn.execute(
+            """
+            SELECT id, source_text
+            FROM phrase_examples
+            WHERE id <= ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (last_rowid,),
+        ).fetchall()
+        seen = set()
+        for row in [*probe_rows, *latest]:
+            row_id = int(row["id"])
+            if row_id in seen:
+                continue
+            seen.add(row_id)
+            if not self._fts_index_contains_row(
+                conn,
+                row_id=row_id,
+                source_text=row["source_text"] or "",
+            ):
+                return False
+        return True
+
     def _sync_fts_rows(self, conn) -> None:
         if not self._fts_available:
             return
         last_rowid = self._get_fts_sync_rowid(conn)
+        if not self._fts_sync_marker_valid(conn, last_rowid):
+            self._reset_fts_sync_rowid(conn)
+            last_rowid = 0
         rows = conn.execute(
             """
             SELECT id, source_text, target_text
@@ -553,7 +690,7 @@ class PhraseLibrary:
     ) -> list[PhraseExample]:
         examples = []
         for row in rows:
-            lexical_score = ngram_similarity(query, row["source_text"] or "")
+            lexical_score = _lexical_similarity(query, row["source_text"] or "")
             if lexical_score <= 0:
                 continue
             quality = _clean_quality(row["quality"])

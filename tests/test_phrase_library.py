@@ -5,10 +5,20 @@ import pytest
 
 
 class _ConnectionProxy:
-    def __init__(self, conn, *, statements=None, fail_phrase_fts_create=False):
+    def __init__(
+        self,
+        conn,
+        *,
+        statements=None,
+        calls=None,
+        fail_phrase_fts_create=False,
+        fail_phrase_fts_insert=False,
+    ):
         object.__setattr__(self, "_conn", conn)
         object.__setattr__(self, "_statements", statements)
+        object.__setattr__(self, "_calls", calls)
         object.__setattr__(self, "_fail_phrase_fts_create", fail_phrase_fts_create)
+        object.__setattr__(self, "_fail_phrase_fts_insert", fail_phrase_fts_insert)
 
     def __getattr__(self, name):
         return getattr(self._conn, name)
@@ -29,8 +39,12 @@ class _ConnectionProxy:
     def execute(self, sql, *args, **kwargs):
         if self._statements is not None:
             self._statements.append(sql)
+        if self._calls is not None:
+            self._calls.append((sql, args, kwargs))
         if self._fail_phrase_fts_create and "CREATE VIRTUAL TABLE" in sql and "phrase_examples_fts" in sql:
             raise sqlite3.OperationalError("simulated phrase FTS create failure")
+        if self._fail_phrase_fts_insert and "INSERT INTO phrase_examples_fts(rowid" in sql:
+            raise sqlite3.OperationalError("simulated phrase FTS insert failure")
         return self._conn.execute(sql, *args, **kwargs)
 
 
@@ -452,6 +466,51 @@ def test_phrase_library_fts_rows_stay_synced_after_insert_and_reopen(tmp_path):
     assert second.last_retrieval_backend == "fts5"
 
 
+def test_phrase_library_recovers_when_fts_table_is_recreated_with_stale_sync_marker(tmp_path):
+    _skip_without_fts5(tmp_path)
+
+    from app.engines.phrase_library import PhraseLibrary
+
+    db = tmp_path / "phrases.sqlite3"
+    first = PhraseLibrary(db)
+    first.add_phrase(
+        source_text="Recovered stale sync phrase",
+        target_text="恢复陈旧同步短语。",
+        source_language="en",
+        target_language="zh-CN",
+        source_name="unit",
+        license="local",
+        quality=0.9,
+    )
+
+    assert first.retrieve(
+        "Recovered stale sync",
+        source_language="en",
+        target_language="zh-CN",
+        limit=1,
+        backend="fts5",
+    )[0].target_text == "恢复陈旧同步短语。"
+
+    with sqlite3.connect(db) as conn:
+        assert conn.execute(
+            "SELECT last_rowid FROM phrase_examples_fts_sync WHERE name = ?",
+            ("phrase_examples_fts",),
+        ).fetchone()[0] > 0
+        conn.execute("DROP TABLE phrase_examples_fts")
+
+    second = PhraseLibrary(db)
+    results = second.retrieve(
+        "Recovered stale sync",
+        source_language="en",
+        target_language="zh-CN",
+        limit=1,
+        backend="fts5",
+    )
+
+    assert results[0].target_text == "恢复陈旧同步短语。"
+    assert second.last_retrieval_backend == "fts5"
+
+
 def test_phrase_library_fts_match_query_handles_quotes_punctuation_and_non_ascii(tmp_path):
     _skip_without_fts5(tmp_path)
 
@@ -477,6 +536,59 @@ def test_phrase_library_fts_match_query_handles_quotes_punctuation_and_non_ascii
     )
 
     assert results[0].target_text == "急ぎです、等一下。"
+    assert library.last_retrieval_backend == "fts5"
+
+
+def test_phrase_library_forced_fts5_retrieves_accented_latin_queries(tmp_path):
+    _skip_without_fts5(tmp_path)
+
+    from app.engines.phrase_library import PhraseLibrary
+
+    library = PhraseLibrary(tmp_path / "phrases.sqlite3")
+    library.add_phrase(
+        source_text="Café Müller",
+        target_text="穆勒咖啡馆。",
+        source_language="de",
+        target_language="zh-CN",
+        source_name="unit",
+        license="local",
+        quality=0.9,
+    )
+    library.add_phrase(
+        source_text="¿Dónde está el médico?",
+        target_text="医生在哪里？",
+        source_language="es",
+        target_language="zh-CN",
+        source_name="unit",
+        license="local",
+        quality=0.9,
+    )
+
+    exact_results = library.retrieve(
+        "Café Müller",
+        source_language="de",
+        target_language="zh-CN",
+        limit=1,
+        backend="fts5",
+    )
+    folded_results = library.retrieve(
+        "Cafe Muller",
+        source_language="de",
+        target_language="zh-CN",
+        limit=1,
+        backend="fts5",
+    )
+    spanish_results = library.retrieve(
+        "Donde esta el medico",
+        source_language="es",
+        target_language="zh-CN",
+        limit=1,
+        backend="fts5",
+    )
+
+    assert exact_results[0].target_text == "穆勒咖啡馆。"
+    assert folded_results[0].target_text == "穆勒咖啡馆。"
+    assert spanish_results[0].target_text == "医生在哪里？"
     assert library.last_retrieval_backend == "fts5"
 
 
@@ -587,16 +699,21 @@ def test_phrase_library_fts_create_failure_falls_back_to_ngram(tmp_path, monkeyp
     assert library.last_retrieval_backend == "ngram"
 
 
-def test_phrase_library_fts_schema_init_does_not_rebuild_on_reopen(tmp_path, monkeypatch):
-    _skip_without_fts5(tmp_path)
-
+def test_phrase_library_fts_insert_failure_preserves_base_phrase_row(tmp_path, monkeypatch):
     from app.engines import phrase_library as phrase_module
 
     db = tmp_path / "phrases.sqlite3"
-    first = phrase_module.PhraseLibrary(db)
-    first.add_phrase(
-        source_text="No rebuild marker",
-        target_text="不重建标记。",
+    real_connect = phrase_module.sqlite3.connect
+
+    def failing_connect(*args, **kwargs):
+        return _ConnectionProxy(real_connect(*args, **kwargs), fail_phrase_fts_insert=True)
+
+    monkeypatch.setattr(phrase_module.sqlite3, "connect", failing_connect)
+
+    library = phrase_module.PhraseLibrary(db)
+    entry_id = library.add_phrase(
+        source_text="Insert failure still stores phrase",
+        target_text="插入失败仍保存短语。",
         source_language="en",
         target_language="zh-CN",
         source_name="unit",
@@ -604,14 +721,66 @@ def test_phrase_library_fts_schema_init_does_not_rebuild_on_reopen(tmp_path, mon
         quality=0.9,
     )
 
+    assert entry_id is not None
+    with real_connect(db) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM phrase_examples WHERE source_text = ?",
+            ("Insert failure still stores phrase",),
+        ).fetchone()[0] == 1
+
+    results = library.retrieve(
+        "Insert failure still stores phrase",
+        source_language="en",
+        target_language="zh-CN",
+        limit=1,
+        backend="fts5",
+    )
+
+    assert results[0].target_text == "插入失败仍保存短语。"
+    assert library.last_retrieval_backend == "ngram"
+
+
+def test_phrase_library_fts_schema_init_does_not_rebuild_on_reopen(tmp_path, monkeypatch):
+    _skip_without_fts5(tmp_path)
+
+    from app.engines import phrase_library as phrase_module
+
+    db = tmp_path / "phrases.sqlite3"
+    first = phrase_module.PhraseLibrary(db)
+    for index in range(3):
+        first.add_phrase(
+            source_text=f"No rebuild marker {index}",
+            target_text=f"不重建标记 {index}。",
+            source_language="en",
+            target_language="zh-CN",
+            source_name="unit",
+            license="local",
+            quality=0.9,
+        )
+
+    with sqlite3.connect(db) as conn:
+        seeded_ids = {
+            row[0]
+            for row in conn.execute(
+                "SELECT id FROM phrase_examples WHERE source_text LIKE 'No rebuild marker %'"
+            )
+        }
+
     statements = []
+    calls = []
     real_connect = phrase_module.sqlite3.connect
 
     def tracing_connect(*args, **kwargs):
-        return _ConnectionProxy(real_connect(*args, **kwargs), statements=statements)
+        return _ConnectionProxy(real_connect(*args, **kwargs), statements=statements, calls=calls)
 
     monkeypatch.setattr(phrase_module.sqlite3, "connect", tracing_connect)
 
     phrase_module.PhraseLibrary(db)
 
+    reinserted_rowids = {
+        args[0][0]
+        for sql, args, _kwargs in calls
+        if "INSERT INTO phrase_examples_fts(rowid" in sql and args and args[0]
+    }
     assert not any("rebuild" in statement.lower() for statement in statements)
+    assert reinserted_rowids.isdisjoint(seeded_ids)
