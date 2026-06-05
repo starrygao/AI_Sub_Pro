@@ -189,6 +189,42 @@ python3 -m app.evaluation.cli \
 
 默认评测命令只使用仓库内 fixture，不调用付费或联网翻译 provider。
 
+## 翻译准确度评测
+
+AI Sub Pro 可以对比本地字幕输出，不需要把剧集字幕文件提交到仓库。评测时可以
+指定本地原文字幕、旧译文、新译文和可选参考译文：
+
+```bash
+python3 tools/quality/compare_translation_outputs.py \
+  --source /path/to/source.en.srt \
+  --old /path/to/old-output.zh.srt \
+  --new /path/to/new-output.zh.srt \
+  --reference /path/to/reference.zh.srt \
+  --term "Hudson Oaks=哈德逊奥克斯" \
+  --out-dir /tmp/ai-sub-pro-quality
+```
+
+命令会在输出目录写入 `translation_accuracy_report.json` 和
+`translation_accuracy_report.md`。本地剧集字幕和生成报告应留在 git 之外，除非
+这些内容由你拥有并且明确准备发布。
+
+可以将本地双语语料导入口语库：
+
+```bash
+python3 tools/phrase_packs/import_corpus.py /path/to/corpus.tsv \
+  --format tsv \
+  --source-name "local-opensubtitles-export" \
+  --license "source license name" \
+  --source-language en \
+  --target-language zh-CN \
+  --tag subtitle \
+  --max-rows 5000
+```
+
+口语库检索在可用时使用 SQLite FTS5；不可用时会回退到确定性的 n-gram scoring。
+应用默认不会下载或打包大型公开语料库；请只导入你在本地管理、并保留正确来源和
+license 元数据的语料。
+
 ## 数据位置
 
 开发模式下，运行数据保存在 `./data`。

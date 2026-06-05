@@ -209,6 +209,45 @@ python3 -m app.evaluation.cli \
 The default evaluation command uses stored fixture outputs and does not call a
 paid or network translation provider.
 
+## Translation Accuracy Evaluation
+
+AI Sub Pro can compare local subtitle outputs without committing episode
+subtitle files to the repo. Point the evaluator at local source, old output, new
+output, and optional reference subtitle files:
+
+```bash
+python3 tools/quality/compare_translation_outputs.py \
+  --source /path/to/source.en.srt \
+  --old /path/to/old-output.zh.srt \
+  --new /path/to/new-output.zh.srt \
+  --reference /path/to/reference.zh.srt \
+  --term "Hudson Oaks=哈德逊奥克斯" \
+  --out-dir /tmp/ai-sub-pro-quality
+```
+
+The command writes `translation_accuracy_report.json` and
+`translation_accuracy_report.md` in the output directory. Local episode
+subtitles and generated reports should stay out of git unless you own them and
+intentionally publish them.
+
+Import a local bilingual corpus into the phrase library with:
+
+```bash
+python3 tools/phrase_packs/import_corpus.py /path/to/corpus.tsv \
+  --format tsv \
+  --source-name "local-opensubtitles-export" \
+  --license "source license name" \
+  --source-language en \
+  --target-language zh-CN \
+  --tag subtitle \
+  --max-rows 5000
+```
+
+Phrase retrieval uses SQLite FTS5 when available and falls back to
+deterministic n-gram scoring when FTS5 is unavailable. The app does not
+download or bundle large public corpora by default; import only corpora you
+manage locally with the correct source and license metadata.
+
 ## Data Locations
 
 Development mode stores runtime data under `./data`.
