@@ -356,11 +356,13 @@ def _suffix_after_anchor(text: str, anchor: str) -> str:
 def _looks_like_sentence_prefix(prefix: str, min_name_prefix_length: int = 4) -> bool:
     if len(prefix) < min_name_prefix_length:
         return True
+    if not _anchor_adjacent_name_prefix(prefix):
+        return True
     return any(hint in prefix for hint in _LONG_NAME_CONTEXT_PREFIX_HINTS)
 
 
 def _anchor_adjacent_name_prefix(prefix: str) -> str:
-    chunk = prefix[-3:]
+    chunk = prefix
     while chunk:
         context = next(
             (item for item in _LONG_NAME_CONTEXT_PREFIX_TOKENS if chunk.startswith(item)),
@@ -369,7 +371,7 @@ def _anchor_adjacent_name_prefix(prefix: str) -> str:
         if not context:
             break
         chunk = chunk[len(context):]
-    return chunk
+    return chunk[-3:]
 
 
 def _looks_like_name_prefix_chunk(prefix: str) -> bool:

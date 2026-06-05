@@ -330,6 +330,24 @@ def test_proper_name_consistency_score_allows_adverbial_prefix_context():
     assert result["issues"] == []
 
 
+def test_proper_name_consistency_score_allows_stacked_prefix_context():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Hudson Oaks lost power.",
+            "2": "Hudson Oaks reopened.",
+        },
+        {
+            "1": "昨天突然哈德逊奥克斯停电了",
+            "2": "今天随后哈德逊奥克斯重新开放",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
 def test_proper_name_consistency_score_allows_normal_long_name_suffix_context():
     from app.evaluation.metrics import proper_name_consistency_score
 
