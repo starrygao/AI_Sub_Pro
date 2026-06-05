@@ -53,6 +53,9 @@ def main(argv: list[str] | None = None) -> int:
     except SubtitleCompareError as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    except OSError as exc:
+        print(f"failed to read input: {exc}", file=sys.stderr)
+        return 2
 
     try:
         save_report(

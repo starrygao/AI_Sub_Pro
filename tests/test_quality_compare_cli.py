@@ -128,3 +128,36 @@ def test_quality_compare_cli_reports_output_write_failure_without_traceback(tmp_
     assert result.returncode == 2
     assert "report" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+def test_quality_compare_cli_reports_input_read_failure_without_traceback(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    import tools.quality.compare_translation_outputs as cli
+
+    source = tmp_path / "source.srt"
+    old = tmp_path / "old.srt"
+    new = tmp_path / "new.srt"
+    source.write_text(_srt("Hello."), encoding="utf-8")
+    old.write_text(_srt("你好。"), encoding="utf-8")
+    new.write_text(_srt("你好。"), encoding="utf-8")
+
+    def raise_oserror(**_kwargs):
+        raise PermissionError("permission denied: old.srt")
+
+    monkeypatch.setattr(cli, "compare_subtitle_files", raise_oserror)
+
+    result = cli.main([
+        "--source", str(source),
+        "--old", str(old),
+        "--new", str(new),
+        "--out-dir", str(tmp_path / "out"),
+    ])
+    captured = capsys.readouterr()
+
+    assert result == 2
+    assert "failed to read input" in captured.err
+    assert "old.srt" in captured.err
+    assert "Traceback" not in captured.err
