@@ -2,6 +2,24 @@
 
 语言：[English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## Unreleased - 扩展内置口语库
+
+主要内容：
+
+- 内置合成 phrase pack 从 3 个包 / 60 条扩展到 12 个包 / 600+ 条。
+- 新增西语、法语、德语到简体中文 starter pack。
+- 新增英语医疗、犯罪/刑侦、职场题材包。
+- 短语检索现在支持 preferred tags，会根据项目 metadata 推断题材并对匹配例句做
+  轻量加权，再注入翻译 prompt。
+- 口语库 prompt 片段会显示 pack tags，trace 数据也会保留 pack id 和 tags。
+- 新增本地 phrase-pack 导入 CLI，默认要求 source、license 和语言对元数据，避免
+  导入公开语料时丢失来源/许可信息。
+
+质量验证：
+
+- 新增回归测试，覆盖生成器漂移、导入工具元数据校验、内置包规模、多语种检索、
+  题材标签加权，以及题材 prompt 注入。
+
 ## v1.2.1 - 内置口语包与翻译完成状态修复
 
 主要内容：

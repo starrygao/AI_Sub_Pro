@@ -173,14 +173,22 @@ workflow:
 - **Translation memory** learns from subtitle edits you save in the editor. The
   original source line, machine draft, and final user-approved translation stay
   in a local SQLite database and are retrieved before future translations.
-- **Bundled phrase library retrieval** automatically installs small synthetic
-  starter packs for English, Japanese, and Korean subtitle dialogue into the
-  local phrase library on app startup. These examples help common colloquial
-  lines such as party, encouragement, reaction, and conflict phrases sound more
-  natural in Simplified Chinese.
+- **Bundled phrase library retrieval** automatically installs synthetic phrase
+  packs into the local phrase library on app startup. The bundled set currently
+  includes 12 packs and 600+ examples across English, Japanese, Korean,
+  Spanish, French, and German to Simplified Chinese, plus English domain packs
+  for medical, crime/procedural, and workplace dialogue. Project metadata can
+  lightly boost matching domain tags before examples are injected into the
+  translation prompt.
 - **Local phrase library imports** can add larger phrase corpora that you manage
   yourself. Public corpora such as OpenSubtitles or Tatoeba should be imported
-  only when their license/source metadata is preserved.
+  only when their license/source metadata is preserved. Validate and import a
+  local pack with:
+
+  ```bash
+  python3 tools/phrase_packs/import_phrase_pack.py path/to/pack.json --dry-run
+  python3 tools/phrase_packs/import_phrase_pack.py path/to/pack.json
+  ```
 - **QA reports** are written after translation as
   `translation_qa_report.json` and `translation_qa_report.md` in the project
   directory. The deterministic checks cover missing translations, English

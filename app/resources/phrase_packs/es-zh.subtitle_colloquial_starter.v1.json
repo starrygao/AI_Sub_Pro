@@ -1,0 +1,517 @@
+{
+  "id": "ai-sub-pro.es-zh.subtitle_colloquial_starter",
+  "version": 1,
+  "source": "AI Sub Pro bundled synthetic subtitle phrase pack",
+  "license": "Project-local synthetic examples, MIT-compatible",
+  "source_language": "es",
+  "target_language": "zh-CN",
+  "tags": [
+    "subtitle",
+    "dialogue",
+    "colloquial",
+    "starter"
+  ],
+  "quality": 0.82,
+  "phrases": [
+    {
+      "source_text": "No puede ser.",
+      "target_text": "不会吧。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Dime la verdad.",
+      "target_text": "跟我说实话。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No te preocupes.",
+      "target_text": "别担心。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Estoy en ello.",
+      "target_text": "我正在处理。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No es asunto tuyo.",
+      "target_text": "这不关你的事。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Déjalo estar.",
+      "target_text": "算了吧。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Espera un momento.",
+      "target_text": "等一下。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "¿Estás bien?",
+      "target_text": "你没事吧？",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No lo hagas raro.",
+      "target_text": "别把气氛搞尴尬。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No me mires así.",
+      "target_text": "别那样看着我。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Te debo una.",
+      "target_text": "我欠你个人情。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No era mi intención.",
+      "target_text": "我不是故意的。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No tenemos tiempo.",
+      "target_text": "我们没时间了。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Baja la voz.",
+      "target_text": "小声点。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Confía en mí.",
+      "target_text": "相信我。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No me dejes aquí.",
+      "target_text": "别把我丢在这儿。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Eso explica mucho.",
+      "target_text": "这就解释得通了。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No tiene sentido.",
+      "target_text": "这说不通。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No te lo tomes personal.",
+      "target_text": "别往心里去。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Eso fue demasiado.",
+      "target_text": "那太过分了。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Voy contigo.",
+      "target_text": "我跟你一起去。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No puedo prometerlo.",
+      "target_text": "我不能保证。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Tienes razón.",
+      "target_text": "你说得对。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Me equivoqué.",
+      "target_text": "我错了。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No estoy de humor.",
+      "target_text": "我现在没心情。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Hablemos luego.",
+      "target_text": "我们之后再谈。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No quiero problemas.",
+      "target_text": "我不想惹麻烦。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Esto se queda entre nosotros.",
+      "target_text": "这事只有我们知道。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No lo vi venir.",
+      "target_text": "这我真没想到。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Dame un minuto.",
+      "target_text": "给我一分钟。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No puedo seguir así.",
+      "target_text": "我不能再这样下去了。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Eso suena a trampa.",
+      "target_text": "听起来像陷阱。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No empieces.",
+      "target_text": "别又来了。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No me hagas arrepentirme.",
+      "target_text": "别让我后悔。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Estoy intentando ayudar.",
+      "target_text": "我是在帮忙。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No estás escuchando.",
+      "target_text": "你根本没在听。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Vámonos de aquí.",
+      "target_text": "我们离开这里吧。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Quédate conmigo.",
+      "target_text": "陪着我。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No digas nada.",
+      "target_text": "什么都别说。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Lo tengo controlado.",
+      "target_text": "我能控制住。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Eso cambia todo.",
+      "target_text": "这下情况全变了。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No cuentes con eso.",
+      "target_text": "别指望这个。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No es tan sencillo.",
+      "target_text": "没那么简单。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Ya lo veremos.",
+      "target_text": "到时候再说。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No me queda otra.",
+      "target_text": "我别无选择。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No te culpes.",
+      "target_text": "别责怪自己。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Vamos paso a paso.",
+      "target_text": "一步一步来。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "No hay vuelta atrás.",
+      "target_text": "没有回头路了。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Esto no ha terminado.",
+      "target_text": "这事还没完。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Te lo explicaré después.",
+      "target_text": "我之后再解释。",
+      "quality": 0.82,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    }
+  ]
+}

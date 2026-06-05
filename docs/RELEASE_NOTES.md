@@ -2,6 +2,27 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## Unreleased - Expanded Phrase Library Packs
+
+Highlights:
+
+- Expanded bundled synthetic phrase packs from 3 packs / 60 examples to 12
+  packs / 600+ examples.
+- Added Spanish, French, and German starter packs to Simplified Chinese.
+- Added English medical, crime/procedural, and workplace domain packs.
+- Phrase retrieval now accepts preferred tags and lightly boosts matching
+  domain examples inferred from project metadata before prompt injection.
+- Phrase prompt snippets now include pack tags, and trace data preserves pack
+  id and tag metadata.
+- Added a local phrase-pack import CLI that requires source, license, and
+  language-pair metadata by default for safer public-corpus ingestion.
+
+Quality/Verification:
+
+- Added regression tests for generator drift, import-tool metadata validation,
+  bundled pack scale, multilingual retrieval, domain tag boosting, and domain
+  prompt injection.
+
 ## v1.2.1 - Bundled Colloquial Packs And Translation Completion Fixes
 
 Highlights:

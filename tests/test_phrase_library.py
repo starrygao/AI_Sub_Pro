@@ -190,6 +190,43 @@ def test_phrase_pack_newer_version_adds_only_new_examples(tmp_path):
     assert len(library.retrieve("Read the room.", source_language="en", target_language="zh-CN")) == 1
 
 
+def test_phrase_library_boosts_preferred_tags(tmp_path):
+    from app.engines.phrase_library import PhraseLibrary
+
+    library = PhraseLibrary(tmp_path / "phrases.sqlite3")
+    library.add_phrase(
+        source_text="We need to run the scan.",
+        target_text="我们需要跑起来。",
+        source_language="en",
+        target_language="zh-CN",
+        source_name="sports",
+        license="local",
+        quality=0.95,
+        tags=["sports"],
+    )
+    library.add_phrase(
+        source_text="We need to run the scan.",
+        target_text="我们需要做扫描。",
+        source_language="en",
+        target_language="zh-CN",
+        source_name="medical",
+        license="local",
+        quality=0.8,
+        tags=["medical"],
+    )
+
+    results = library.retrieve(
+        "We need to run the scan.",
+        source_language="en",
+        target_language="zh-CN",
+        preferred_tags={"medical"},
+        limit=1,
+    )
+
+    assert len(results) == 1
+    assert results[0].target_text == "我们需要做扫描。"
+
+
 def test_bundled_phrase_packs_import_and_retrieve(tmp_path):
     from app.engines.phrase_library import (
         PhraseLibrary,
@@ -201,11 +238,18 @@ def test_bundled_phrase_packs_import_and_retrieve(tmp_path):
     assert "en-zh.subtitle_colloquial_starter.v1.json" in pack_names
     assert "ja-zh.subtitle_colloquial_starter.v1.json" in pack_names
     assert "ko-zh.subtitle_colloquial_starter.v1.json" in pack_names
+    assert "en-zh.domain_medical.v1.json" in pack_names
+    assert "en-zh.domain_crime.v1.json" in pack_names
+    assert "en-zh.domain_workplace.v1.json" in pack_names
+    assert "es-zh.subtitle_colloquial_starter.v1.json" in pack_names
+    assert "fr-zh.subtitle_colloquial_starter.v1.json" in pack_names
+    assert "de-zh.subtitle_colloquial_starter.v1.json" in pack_names
+    assert len(pack_names) == 12
 
     library = PhraseLibrary(tmp_path / "phrases.sqlite3")
     imported = import_bundled_phrase_packs(library=library)
 
-    assert imported["imported"] >= 3
+    assert imported["imported"] >= 600
     assert any(pack["file"] == "en-zh.subtitle_colloquial_starter.v1.json" for pack in imported["packs"])
     assert any(
         result.target_text == "续摊在哪？"
@@ -222,4 +266,25 @@ def test_bundled_phrase_packs_import_and_retrieve(tmp_path):
     assert any(
         result.target_text == "等一下。"
         for result in library.retrieve("잠깐만요", source_language="ko", target_language="zh-CN")
+    )
+    assert any(
+        result.target_text == "等一下。"
+        for result in library.retrieve("Espera un momento.", source_language="es", target_language="zh-CN")
+    )
+    assert any(
+        result.target_text == "等一下。"
+        for result in library.retrieve("Attends une seconde.", source_language="fr", target_language="zh-CN")
+    )
+    assert any(
+        result.target_text == "等一下。"
+        for result in library.retrieve("Warte kurz.", source_language="de", target_language="zh-CN")
+    )
+    assert any(
+        result.target_text == "我们需要做 CT 扫描。"
+        for result in library.retrieve(
+            "We need to run a CT scan.",
+            source_language="en",
+            target_language="zh-CN",
+            preferred_tags={"medical"},
+        )
     )

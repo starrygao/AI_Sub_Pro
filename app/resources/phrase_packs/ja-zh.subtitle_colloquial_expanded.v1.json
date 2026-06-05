@@ -1,0 +1,717 @@
+{
+  "id": "ai-sub-pro.ja-zh.subtitle_colloquial_expanded",
+  "version": 1,
+  "source": "AI Sub Pro bundled synthetic subtitle phrase pack",
+  "license": "Project-local synthetic examples, MIT-compatible",
+  "source_language": "ja",
+  "target_language": "zh-CN",
+  "tags": [
+    "subtitle",
+    "dialogue",
+    "colloquial",
+    "expanded"
+  ],
+  "quality": 0.82,
+  "phrases": [
+    {
+      "source_text": "信じられない。",
+      "target_text": "真不敢相信。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "もう一度言って。",
+      "target_text": "再说一遍。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "聞いてないよ。",
+      "target_text": "我可没听说。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "そんなつもりじゃなかった。",
+      "target_text": "我不是那个意思。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "今は無理。",
+      "target_text": "现在不行。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "やめておこう。",
+      "target_text": "还是算了吧。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "話を聞いて。",
+      "target_text": "听我说。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "誤解しないで。",
+      "target_text": "别误会。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "冗談じゃない。",
+      "target_text": "开什么玩笑。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "放っておけない。",
+      "target_text": "我不能坐视不管。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "顔に出てるよ。",
+      "target_text": "你都写脸上了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "隠しても無駄だ。",
+      "target_text": "你藏也没用。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "時間がない。",
+      "target_text": "没时间了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "急いで。",
+      "target_text": "快点。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "後で説明する。",
+      "target_text": "我之后再解释。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "信じてくれ。",
+      "target_text": "相信我。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "本当に大丈夫？",
+      "target_text": "你真的没事吗？",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "無理しないで。",
+      "target_text": "别勉强。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "私のせいだ。",
+      "target_text": "是我的错。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "謝るよ。",
+      "target_text": "我道歉。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "それは違う。",
+      "target_text": "不是那样。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "黙ってて。",
+      "target_text": "别说话。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "冗談でしょ？",
+      "target_text": "你开玩笑吧？",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "助かったよ。",
+      "target_text": "帮大忙了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "約束しただろ。",
+      "target_text": "你答应过的吧。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "考え直して。",
+      "target_text": "再考虑一下。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "手遅れだ。",
+      "target_text": "已经太晚了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "まだ間に合う。",
+      "target_text": "还来得及。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "何かおかしい。",
+      "target_text": "有点不对劲。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "気づかなかった。",
+      "target_text": "我没注意到。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "ちゃんと説明して。",
+      "target_text": "好好解释一下。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "落ち着いて。",
+      "target_text": "冷静点。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "こっちを見て。",
+      "target_text": "看着我。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "一人にしないで。",
+      "target_text": "别丢下我一个人。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "任せられない。",
+      "target_text": "我不能交给你。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "任せてくれ。",
+      "target_text": "交给我。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "逃げるな。",
+      "target_text": "别逃。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "もう終わりだ。",
+      "target_text": "已经结束了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "始めよう。",
+      "target_text": "开始吧。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "やるしかない。",
+      "target_text": "只能这么做了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "言い過ぎた。",
+      "target_text": "我说得太过了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "悪気はなかった。",
+      "target_text": "我没有恶意。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "それでいい。",
+      "target_text": "这样就好。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "納得できない。",
+      "target_text": "我不能接受。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "忘れて。",
+      "target_text": "忘了吧。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "覚えてる？",
+      "target_text": "你还记得吗？",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "嘘をつかないで。",
+      "target_text": "别撒谎。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "本当のことを言って。",
+      "target_text": "说实话。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "ここにいて。",
+      "target_text": "待在这儿。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "先に行って。",
+      "target_text": "你先走。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "後悔するよ。",
+      "target_text": "你会后悔的。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "後悔してない。",
+      "target_text": "我不后悔。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "何とかする。",
+      "target_text": "我会想办法。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "何とかして。",
+      "target_text": "想想办法。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "見なかったことにする。",
+      "target_text": "我就当没看见。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "聞かなかったことにする。",
+      "target_text": "我就当没听见。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "空気を読んで。",
+      "target_text": "看点气氛。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "それはまずい。",
+      "target_text": "这下麻烦了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "間違いない。",
+      "target_text": "肯定没错。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "そうとは限らない。",
+      "target_text": "也不一定。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "連絡して。",
+      "target_text": "联系我。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "電話に出て。",
+      "target_text": "接电话。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "私を信じて。",
+      "target_text": "相信我。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "自分を責めないで。",
+      "target_text": "别责怪自己。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "今さら遅い。",
+      "target_text": "现在说太晚了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "話は終わってない。",
+      "target_text": "话还没说完。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "それは命令？",
+      "target_text": "这是命令吗？",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "質問に答えて。",
+      "target_text": "回答问题。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "笑えない。",
+      "target_text": "一点都不好笑。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "いい加減にして。",
+      "target_text": "够了吧。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    }
+  ]
+}

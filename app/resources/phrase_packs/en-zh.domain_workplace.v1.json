@@ -1,0 +1,512 @@
+{
+  "id": "ai-sub-pro.en-zh.domain_workplace",
+  "version": 1,
+  "source": "AI Sub Pro bundled synthetic subtitle phrase pack",
+  "license": "Project-local synthetic examples, MIT-compatible",
+  "source_language": "en",
+  "target_language": "zh-CN",
+  "tags": [
+    "subtitle",
+    "dialogue",
+    "workplace",
+    "office"
+  ],
+  "quality": 0.82,
+  "phrases": [
+    {
+      "source_text": "We need to circle back after the meeting.",
+      "target_text": "我们需要会后再跟进。",
+      "quality": 0.86,
+      "tags": [
+        "workplace",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you circle back after the meeting?",
+      "target_text": "你能会后再跟进吗？",
+      "quality": 0.83,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We need to loop in legal.",
+      "target_text": "我们需要把法务拉进来。",
+      "quality": 0.86,
+      "tags": [
+        "workplace",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you loop in legal?",
+      "target_text": "你能把法务拉进来吗？",
+      "quality": 0.83,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We need to send the deck.",
+      "target_text": "我们需要把演示文稿发过去。",
+      "quality": 0.86,
+      "tags": [
+        "workplace",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you send the deck?",
+      "target_text": "你能把演示文稿发过去吗？",
+      "quality": 0.83,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We need to move the deadline.",
+      "target_text": "我们需要调整截止日期。",
+      "quality": 0.86,
+      "tags": [
+        "workplace",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you move the deadline?",
+      "target_text": "你能调整截止日期吗？",
+      "quality": 0.83,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We need to talk to the client.",
+      "target_text": "我们需要和客户谈谈。",
+      "quality": 0.86,
+      "tags": [
+        "workplace",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you talk to the client?",
+      "target_text": "你能和客户谈谈吗？",
+      "quality": 0.83,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We need to get this approved.",
+      "target_text": "我们需要把这个批下来。",
+      "quality": 0.86,
+      "tags": [
+        "workplace",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you get this approved?",
+      "target_text": "你能把这个批下来吗？",
+      "quality": 0.83,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We need to clean up the numbers.",
+      "target_text": "我们需要把数据整理清楚。",
+      "quality": 0.86,
+      "tags": [
+        "workplace",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you clean up the numbers?",
+      "target_text": "你能把数据整理清楚吗？",
+      "quality": 0.83,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We need to prepare a fallback plan.",
+      "target_text": "我们需要准备一个备用方案。",
+      "quality": 0.86,
+      "tags": [
+        "workplace",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you prepare a fallback plan?",
+      "target_text": "你能准备一个备用方案吗？",
+      "quality": 0.83,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We need to escalate this.",
+      "target_text": "我们需要把这事升级处理。",
+      "quality": 0.86,
+      "tags": [
+        "workplace",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you escalate this?",
+      "target_text": "你能把这事升级处理吗？",
+      "quality": 0.83,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We need to keep this off email.",
+      "target_text": "我们需要这事别写进邮件。",
+      "quality": 0.86,
+      "tags": [
+        "workplace",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you keep this off email?",
+      "target_text": "你能这事别写进邮件吗？",
+      "quality": 0.83,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We need to book a room.",
+      "target_text": "我们需要订个会议室。",
+      "quality": 0.86,
+      "tags": [
+        "workplace",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you book a room?",
+      "target_text": "你能订个会议室吗？",
+      "quality": 0.83,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We need to cut the budget.",
+      "target_text": "我们需要削减预算。",
+      "quality": 0.86,
+      "tags": [
+        "workplace",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you cut the budget?",
+      "target_text": "你能削减预算吗？",
+      "quality": 0.83,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We need to protect the team.",
+      "target_text": "我们需要保护团队。",
+      "quality": 0.86,
+      "tags": [
+        "workplace",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you protect the team?",
+      "target_text": "你能保护团队吗？",
+      "quality": 0.83,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We need to ship by Friday.",
+      "target_text": "我们需要周五前交付。",
+      "quality": 0.86,
+      "tags": [
+        "workplace",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you ship by Friday?",
+      "target_text": "你能周五前交付吗？",
+      "quality": 0.83,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We need to own the mistake.",
+      "target_text": "我们需要承担这个错误。",
+      "quality": 0.86,
+      "tags": [
+        "workplace",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you own the mistake?",
+      "target_text": "你能承担这个错误吗？",
+      "quality": 0.83,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "The client is pushing back.",
+      "target_text": "客户在反对。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We are over budget.",
+      "target_text": "我们超预算了。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "The numbers do not work.",
+      "target_text": "这些数字说不通。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "This is above my pay grade.",
+      "target_text": "这事超出我的权限了。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "I need this by end of day.",
+      "target_text": "我今天下班前就要。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Let's take this offline.",
+      "target_text": "我们私下再谈这个。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "That is not in scope.",
+      "target_text": "这不在范围内。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We are aligned.",
+      "target_text": "我们意见一致。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "I need a straight answer.",
+      "target_text": "我要一个明确答复。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Do not bury the lead.",
+      "target_text": "别把重点藏起来。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "This meeting could have been an email.",
+      "target_text": "这个会完全可以发邮件解决。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "The board wants answers.",
+      "target_text": "董事会要一个交代。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We cannot miss this window.",
+      "target_text": "我们不能错过这个窗口期。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "This is a hard deadline.",
+      "target_text": "这是硬性截止日期。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "I will take first pass.",
+      "target_text": "我先过第一遍。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Send me the latest version.",
+      "target_text": "把最新版发我。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We need to manage expectations.",
+      "target_text": "我们得管理预期。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "That is a conflict of interest.",
+      "target_text": "那是利益冲突。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "The deal is not dead yet.",
+      "target_text": "这笔交易还没黄。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Do not put that in writing.",
+      "target_text": "别把那件事写下来。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "You are putting me in a bad spot.",
+      "target_text": "你让我很难办。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "This is not sustainable.",
+      "target_text": "这样撑不了多久。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We need buy-in.",
+      "target_text": "我们需要大家认可。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "The launch is at risk.",
+      "target_text": "上线有风险。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Let's not overpromise.",
+      "target_text": "别承诺过头。",
+      "quality": 0.85,
+      "tags": [
+        "workplace",
+        "dialogue"
+      ]
+    }
+  ]
+}

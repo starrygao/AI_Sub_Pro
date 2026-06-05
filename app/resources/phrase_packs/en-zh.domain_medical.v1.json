@@ -1,0 +1,621 @@
+{
+  "id": "ai-sub-pro.en-zh.domain_medical",
+  "version": 1,
+  "source": "AI Sub Pro bundled synthetic subtitle phrase pack",
+  "license": "Project-local synthetic examples, MIT-compatible",
+  "source_language": "en",
+  "target_language": "zh-CN",
+  "tags": [
+    "subtitle",
+    "dialogue",
+    "medical",
+    "hospital",
+    "doctor"
+  ],
+  "quality": 0.82,
+  "phrases": [
+    {
+      "source_text": "We need to run a CT scan.",
+      "target_text": "我们需要做 CT 扫描。",
+      "quality": 0.88,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you run a CT scan?",
+      "target_text": "你能做 CT 扫描吗？",
+      "quality": 0.84,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to order blood work.",
+      "target_text": "我们需要安排血检。",
+      "quality": 0.88,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you order blood work?",
+      "target_text": "你能安排血检吗？",
+      "quality": 0.84,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to call neurology.",
+      "target_text": "我们需要请神经科会诊。",
+      "quality": 0.88,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you call neurology?",
+      "target_text": "你能请神经科会诊吗？",
+      "quality": 0.84,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to start antibiotics.",
+      "target_text": "我们需要开始用抗生素。",
+      "quality": 0.88,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you start antibiotics?",
+      "target_text": "你能开始用抗生素吗？",
+      "quality": 0.84,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to monitor his vitals.",
+      "target_text": "我们需要监测他的生命体征。",
+      "quality": 0.88,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you monitor his vitals?",
+      "target_text": "你能监测他的生命体征吗？",
+      "quality": 0.84,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to check her pupils.",
+      "target_text": "我们需要检查她的瞳孔。",
+      "quality": 0.88,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you check her pupils?",
+      "target_text": "你能检查她的瞳孔吗？",
+      "quality": 0.84,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to review the chart.",
+      "target_text": "我们需要查看病历。",
+      "quality": 0.88,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you review the chart?",
+      "target_text": "你能查看病历吗？",
+      "quality": 0.84,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to prep the OR.",
+      "target_text": "我们需要准备手术室。",
+      "quality": 0.88,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you prep the OR?",
+      "target_text": "你能准备手术室吗？",
+      "quality": 0.84,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to page the attending.",
+      "target_text": "我们需要呼叫主治医生。",
+      "quality": 0.88,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you page the attending?",
+      "target_text": "你能呼叫主治医生吗？",
+      "quality": 0.84,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to update the family.",
+      "target_text": "我们需要通知家属。",
+      "quality": 0.88,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you update the family?",
+      "target_text": "你能通知家属吗？",
+      "quality": 0.84,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to repeat the labs.",
+      "target_text": "我们需要复查化验。",
+      "quality": 0.88,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you repeat the labs?",
+      "target_text": "你能复查化验吗？",
+      "quality": 0.84,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to get consent.",
+      "target_text": "我们需要取得同意。",
+      "quality": 0.88,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you get consent?",
+      "target_text": "你能取得同意吗？",
+      "quality": 0.84,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to rule out infection.",
+      "target_text": "我们需要排除感染。",
+      "quality": 0.88,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you rule out infection?",
+      "target_text": "你能排除感染吗？",
+      "quality": 0.84,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to stabilize the patient.",
+      "target_text": "我们需要稳定病人情况。",
+      "quality": 0.88,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you stabilize the patient?",
+      "target_text": "你能稳定病人情况吗？",
+      "quality": 0.84,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to keep the airway open.",
+      "target_text": "我们需要保持气道通畅。",
+      "quality": 0.88,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Can you keep the airway open?",
+      "target_text": "你能保持气道通畅吗？",
+      "quality": 0.84,
+      "tags": [
+        "medical",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Any chest pain?",
+      "target_text": "有没有胸痛？",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "symptom"
+      ]
+    },
+    {
+      "source_text": "Any shortness of breath?",
+      "target_text": "有没有呼吸困难？",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "symptom"
+      ]
+    },
+    {
+      "source_text": "Any dizziness?",
+      "target_text": "有没有头晕？",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "symptom"
+      ]
+    },
+    {
+      "source_text": "Any nausea?",
+      "target_text": "有没有恶心？",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "symptom"
+      ]
+    },
+    {
+      "source_text": "Any numbness?",
+      "target_text": "有没有麻木？",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "symptom"
+      ]
+    },
+    {
+      "source_text": "Any blurred vision?",
+      "target_text": "有没有视物模糊？",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "symptom"
+      ]
+    },
+    {
+      "source_text": "Any a headache?",
+      "target_text": "有没有头痛？",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "symptom"
+      ]
+    },
+    {
+      "source_text": "Any abdominal pain?",
+      "target_text": "有没有腹痛？",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "symptom"
+      ]
+    },
+    {
+      "source_text": "Any a fever?",
+      "target_text": "有没有发烧？",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "symptom"
+      ]
+    },
+    {
+      "source_text": "Any weakness?",
+      "target_text": "有没有无力？",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "symptom"
+      ]
+    },
+    {
+      "source_text": "Any memory loss?",
+      "target_text": "有没有记忆缺失？",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "symptom"
+      ]
+    },
+    {
+      "source_text": "Any a seizure?",
+      "target_text": "有没有癫痫发作？",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "symptom"
+      ]
+    },
+    {
+      "source_text": "His vitals are stable.",
+      "target_text": "他的生命体征稳定。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Her pressure is dropping.",
+      "target_text": "她的血压在下降。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "The scan came back clean.",
+      "target_text": "扫描结果没发现异常。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "The labs are back.",
+      "target_text": "化验结果出来了。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "He is crashing.",
+      "target_text": "他的情况急转直下。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "She is coding.",
+      "target_text": "她心跳骤停了。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Start compressions.",
+      "target_text": "开始胸外按压。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Push one milligram of epi.",
+      "target_text": "推一毫克肾上腺素。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We got a pulse.",
+      "target_text": "有脉搏了。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Tell me where it hurts.",
+      "target_text": "告诉我哪里疼。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Stay with me.",
+      "target_text": "坚持住，别睡。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Look at my finger.",
+      "target_text": "看着我的手指。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "This could be neurological.",
+      "target_text": "这可能是神经系统问题。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "It is too early to diagnose.",
+      "target_text": "现在诊断还太早。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "The differential is broad.",
+      "target_text": "鉴别诊断范围很广。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We are missing something.",
+      "target_text": "我们漏掉了什么。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "The symptoms do not add up.",
+      "target_text": "这些症状对不上。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "He needs surgery now.",
+      "target_text": "他现在就需要手术。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "She is refusing treatment.",
+      "target_text": "她拒绝治疗。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "I need a tox screen.",
+      "target_text": "我需要毒理筛查。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Keep him on observation.",
+      "target_text": "让他继续留观。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "The medication is not working.",
+      "target_text": "药物没有起效。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Increase the dosage.",
+      "target_text": "加大剂量。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Watch for side effects.",
+      "target_text": "注意副作用。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "This is not psychosomatic.",
+      "target_text": "这不是心理因素造成的。",
+      "quality": 0.86,
+      "tags": [
+        "medical",
+        "dialogue"
+      ]
+    }
+  ]
+}

@@ -7,7 +7,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 from app.engines.translation_memory import _lang
 
@@ -67,6 +67,20 @@ def _clean_tags(value) -> str:
     if isinstance(value, list):
         return ",".join(part for part in (_clean_text(item) for item in value) if part)
     return _clean_text(value)
+
+
+def _tag_set(value: str | Iterable[str] | None) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        raw_parts = re.split(r"[,;\s]+", value)
+    else:
+        raw_parts = list(value)
+    return {
+        cleaned.lower()
+        for cleaned in (_clean_text(part) for part in raw_parts)
+        if cleaned
+    }
 
 
 def _tokens(value: str) -> set[str]:
@@ -318,10 +332,12 @@ class PhraseLibrary:
         source_language: str,
         target_language: str,
         limit: int = 5,
+        preferred_tags: Optional[Iterable[str]] = None,
     ) -> list[PhraseExample]:
         query = _clean_text(source_text)
         if not query:
             return []
+        preferred = _tag_set(preferred_tags)
         try:
             max_results = max(1, min(20, int(limit)))
         except (TypeError, ValueError, OverflowError):
@@ -343,6 +359,9 @@ class PhraseLibrary:
             if similarity <= 0:
                 continue
             quality = _clean_quality(row["quality"])
+            tags = row["tags"] or ""
+            tag_matches = len(preferred & _tag_set(tags))
+            tag_boost = min(0.12, tag_matches * 0.04)
             examples.append(PhraseExample(
                 id=int(row["id"]),
                 source_text=row["source_text"] or "",
@@ -353,9 +372,9 @@ class PhraseLibrary:
                 license=row["license"] or "",
                 pack_id=row["pack_id"] or "",
                 pack_version=int(row["pack_version"] or 0),
-                tags=row["tags"] or "",
+                tags=tags,
                 quality=quality,
-                score=(similarity * 0.75) + (quality * 0.25),
+                score=(similarity * 0.75) + (quality * 0.25) + tag_boost,
             ))
         examples.sort(key=lambda item: (-item.score, -item.quality, -item.id))
         return examples[:max_results]

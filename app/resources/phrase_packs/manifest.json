@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Bundled synthetic subtitle colloquial starter phrase packs.",
+  "description": "Bundled synthetic subtitle phrase packs.",
   "packs": [
     {
       "id": "ai-sub-pro.en-zh.subtitle_colloquial_starter",
@@ -15,6 +15,51 @@
     {
       "id": "ai-sub-pro.ko-zh.subtitle_colloquial_starter",
       "file": "ko-zh.subtitle_colloquial_starter.v1.json",
+      "version": 1
+    },
+    {
+      "id": "ai-sub-pro.en-zh.subtitle_colloquial_expanded",
+      "file": "en-zh.subtitle_colloquial_expanded.v1.json",
+      "version": 1
+    },
+    {
+      "id": "ai-sub-pro.en-zh.domain_medical",
+      "file": "en-zh.domain_medical.v1.json",
+      "version": 1
+    },
+    {
+      "id": "ai-sub-pro.en-zh.domain_crime",
+      "file": "en-zh.domain_crime.v1.json",
+      "version": 1
+    },
+    {
+      "id": "ai-sub-pro.en-zh.domain_workplace",
+      "file": "en-zh.domain_workplace.v1.json",
+      "version": 1
+    },
+    {
+      "id": "ai-sub-pro.ja-zh.subtitle_colloquial_expanded",
+      "file": "ja-zh.subtitle_colloquial_expanded.v1.json",
+      "version": 1
+    },
+    {
+      "id": "ai-sub-pro.ko-zh.subtitle_colloquial_expanded",
+      "file": "ko-zh.subtitle_colloquial_expanded.v1.json",
+      "version": 1
+    },
+    {
+      "id": "ai-sub-pro.es-zh.subtitle_colloquial_starter",
+      "file": "es-zh.subtitle_colloquial_starter.v1.json",
+      "version": 1
+    },
+    {
+      "id": "ai-sub-pro.fr-zh.subtitle_colloquial_starter",
+      "file": "fr-zh.subtitle_colloquial_starter.v1.json",
+      "version": 1
+    },
+    {
+      "id": "ai-sub-pro.de-zh.subtitle_colloquial_starter",
+      "file": "de-zh.subtitle_colloquial_starter.v1.json",
       "version": 1
     }
   ]

@@ -1,0 +1,513 @@
+{
+  "id": "ai-sub-pro.en-zh.domain_crime",
+  "version": 1,
+  "source": "AI Sub Pro bundled synthetic subtitle phrase pack",
+  "license": "Project-local synthetic examples, MIT-compatible",
+  "source_language": "en",
+  "target_language": "zh-CN",
+  "tags": [
+    "subtitle",
+    "dialogue",
+    "crime",
+    "police",
+    "procedural"
+  ],
+  "quality": 0.82,
+  "phrases": [
+    {
+      "source_text": "We need to secure the scene.",
+      "target_text": "我们需要封锁现场。",
+      "quality": 0.87,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Did you secure the scene?",
+      "target_text": "你封锁现场了吗？",
+      "quality": 0.83,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to canvass the block.",
+      "target_text": "我们需要排查这一街区。",
+      "quality": 0.87,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Did you canvass the block?",
+      "target_text": "你排查这一街区了吗？",
+      "quality": 0.83,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to pull the security footage.",
+      "target_text": "我们需要调取监控录像。",
+      "quality": 0.87,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Did you pull the security footage?",
+      "target_text": "你调取监控录像了吗？",
+      "quality": 0.83,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to check his alibi.",
+      "target_text": "我们需要核实他的不在场证明。",
+      "quality": 0.87,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Did you check his alibi?",
+      "target_text": "你核实他的不在场证明了吗？",
+      "quality": 0.83,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to run the plates.",
+      "target_text": "我们需要查一下车牌。",
+      "quality": 0.87,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Did you run the plates?",
+      "target_text": "你查一下车牌了吗？",
+      "quality": 0.83,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to dust for prints.",
+      "target_text": "我们需要提取指纹。",
+      "quality": 0.87,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Did you dust for prints?",
+      "target_text": "你提取指纹了吗？",
+      "quality": 0.83,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to call for backup.",
+      "target_text": "我们需要请求支援。",
+      "quality": 0.87,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Did you call for backup?",
+      "target_text": "你请求支援了吗？",
+      "quality": 0.83,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to track the phone.",
+      "target_text": "我们需要追踪手机。",
+      "quality": 0.87,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Did you track the phone?",
+      "target_text": "你追踪手机了吗？",
+      "quality": 0.83,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to notify next of kin.",
+      "target_text": "我们需要通知近亲。",
+      "quality": 0.87,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Did you notify next of kin?",
+      "target_text": "你通知近亲了吗？",
+      "quality": 0.83,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to reopen the case.",
+      "target_text": "我们需要重启案件。",
+      "quality": 0.87,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Did you reopen the case?",
+      "target_text": "你重启案件了吗？",
+      "quality": 0.83,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to hold the perimeter.",
+      "target_text": "我们需要守住警戒线。",
+      "quality": 0.87,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Did you hold the perimeter?",
+      "target_text": "你守住警戒线了吗？",
+      "quality": 0.83,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to follow the money.",
+      "target_text": "我们需要追查资金流向。",
+      "quality": 0.87,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Did you follow the money?",
+      "target_text": "你追查资金流向了吗？",
+      "quality": 0.83,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to compare the DNA.",
+      "target_text": "我们需要比对 DNA。",
+      "quality": 0.87,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Did you compare the DNA?",
+      "target_text": "你比对 DNA了吗？",
+      "quality": 0.83,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to question the witness.",
+      "target_text": "我们需要询问证人。",
+      "quality": 0.87,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Did you question the witness?",
+      "target_text": "你询问证人了吗？",
+      "quality": 0.83,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "We need to bring him in.",
+      "target_text": "我们需要把他带回来问话。",
+      "quality": 0.87,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Did you bring him in?",
+      "target_text": "你把他带回来问话了吗？",
+      "quality": 0.83,
+      "tags": [
+        "crime",
+        "procedure"
+      ]
+    },
+    {
+      "source_text": "Where were you last night?",
+      "target_text": "你昨晚在哪？",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "That is not an alibi.",
+      "target_text": "那算不上不在场证明。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "The timeline does not fit.",
+      "target_text": "时间线对不上。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We found a match.",
+      "target_text": "我们找到匹配结果了。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "The evidence was planted.",
+      "target_text": "证据是被人栽赃的。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "He lawyered up.",
+      "target_text": "他请律师了。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "She is not talking.",
+      "target_text": "她什么都不肯说。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "This was personal.",
+      "target_text": "这是私人恩怨。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "The killer knew the victim.",
+      "target_text": "凶手认识受害者。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "No one leaves this room.",
+      "target_text": "谁都不许离开这个房间。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "You are obstructing an investigation.",
+      "target_text": "你在妨碍调查。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We have probable cause.",
+      "target_text": "我们有合理根据。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Get me a warrant.",
+      "target_text": "给我弄一张搜查令。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "That confession was coerced.",
+      "target_text": "那份供词是被逼出来的。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "The witness changed her story.",
+      "target_text": "证人改口了。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Something about this feels staged.",
+      "target_text": "这事感觉像被人布置过。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "The suspect is on the move.",
+      "target_text": "嫌疑人正在转移。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We are looking at the wrong guy.",
+      "target_text": "我们盯错人了。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "The case just went federal.",
+      "target_text": "这案子现在归联邦管了。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Do not contaminate the scene.",
+      "target_text": "别污染现场。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Bag it and tag it.",
+      "target_text": "装袋标记。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Chain of custody matters.",
+      "target_text": "证物保管链很重要。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "The motive is still unclear.",
+      "target_text": "动机还不清楚。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "This is an open investigation.",
+      "target_text": "这是一起正在调查的案件。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "He fits the profile.",
+      "target_text": "他符合侧写特征。",
+      "quality": 0.86,
+      "tags": [
+        "crime",
+        "dialogue"
+      ]
+    }
+  ]
+}

@@ -5,6 +5,7 @@ Provider construction is routed through the Phase 2 provider factory.
 """
 import json
 import logging
+import re
 from typing import List, Dict, Optional, Callable
 
 from app.utils.srt import SubtitleBlock
@@ -47,6 +48,26 @@ except Exception as _e:  # pragma: no cover — best-effort load
 # but we need to fall back to the batched path (e.g. document too large for
 # the primary provider's context window).
 _FULL_DOC_FALLBACK_BATCH_SIZE = 10
+
+_PHRASE_CONTEXT_KEYWORDS = {
+    "medical": {
+        "medical", "medicine", "doctor", "hospital", "clinic", "patient",
+        "surgery", "surgeon", "diagnosis", "neurology", "brilliant minds",
+    },
+    "crime": {
+        "crime", "police", "detective", "murder", "homicide", "investigation",
+        "case", "suspect", "witness", "fbi", "procedural",
+    },
+    "workplace": {
+        "workplace", "office", "company", "startup", "client", "meeting",
+        "deadline", "board", "budget", "presentation",
+    },
+    "school": {"school", "college", "campus", "student", "teacher", "class"},
+    "party": {"party", "bar", "club", "after party", "night out"},
+    "romance": {"romance", "date", "dating", "wedding", "love", "relationship"},
+    "sci-fi": {"sci-fi", "science fiction", "alien", "spaceship", "robot", "android"},
+    "fantasy": {"fantasy", "magic", "kingdom", "vampire", "witch", "dragon"},
+}
 
 
 def _provider_context_window(provider, default: int = 32_000) -> int:
@@ -99,6 +120,42 @@ def _coerce_provider_name(value, default: str = "openai", *, allow_empty: bool =
     if value not in list_providers():
         return default
     return value
+
+
+def _phrase_context_tags(meta_info: dict) -> set[str]:
+    if not isinstance(meta_info, dict):
+        return set()
+    parts = []
+    for key in (
+        "name",
+        "show_title",
+        "title",
+        "original_title",
+        "plot",
+        "overview",
+        "tmdb_type",
+    ):
+        value = meta_info.get(key)
+        if isinstance(value, str):
+            parts.append(value)
+    for key in ("genres", "genre", "tags"):
+        value = meta_info.get(key)
+        if isinstance(value, str):
+            parts.append(value)
+        elif isinstance(value, list):
+            parts.extend(item for item in value if isinstance(item, str))
+    text = " ".join(parts).lower()
+    if not text:
+        return set()
+
+    tags = set()
+    for tag, keywords in _PHRASE_CONTEXT_KEYWORDS.items():
+        for keyword in keywords:
+            pattern = r"(?<![a-z0-9])" + re.escape(keyword) + r"(?![a-z0-9])"
+            if re.search(pattern, text):
+                tags.add(tag)
+                break
+    return tags
 
 
 class SubtitleTranslator:
@@ -697,6 +754,7 @@ class SubtitleTranslator:
         phrase_lines = []
         if self.use_phrase_library:
             seen_phrases = set()
+            preferred_tags = _phrase_context_tags(meta_info)
             try:
                 library = PhraseLibrary()
                 for item in items:
@@ -708,6 +766,7 @@ class SubtitleTranslator:
                         source_language=source_lang,
                         target_language=target_code,
                         limit=2,
+                        preferred_tags=preferred_tags,
                     ):
                         key = (hit.source_text, hit.target_text)
                         if key in seen_phrases:
@@ -718,11 +777,15 @@ class SubtitleTranslator:
                             "target_text": hit.target_text,
                             "source_name": hit.source_name,
                             "license": hit.license,
+                            "pack_id": hit.pack_id,
+                            "tags": hit.tags,
                             "score": hit.score,
                         })
+                        tag_text = f", tags: {hit.tags}" if hit.tags else ""
                         phrase_lines.append(
                             f"  - {hit.source_text} -> {hit.target_text}"
-                            f"  (source: {hit.source_name or 'local'}, license: {hit.license or 'unspecified'})"
+                            f"  (source: {hit.source_name or 'local'}, "
+                            f"license: {hit.license or 'unspecified'}{tag_text})"
                         )
                         if len(phrase_lines) >= 6:
                             break

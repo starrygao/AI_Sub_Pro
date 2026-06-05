@@ -160,11 +160,18 @@ AI Sub Pro 可以围绕字幕编辑流程自动提升译名一致性和口语自
   等待你接受或拒绝。
 - **翻译记忆** 会学习你在编辑器中保存的字幕修改。本地 SQLite 数据库会记录原文、
   机器初译和最终确认译文，后续翻译前优先检索相似案例。
-- **内置口语库检索** 会在应用启动时自动把小型合成 starter pack 导入本地
-  口语库。目前覆盖英语、日语、韩语到简体中文，主要帮助聚会、鼓励、反应、
-  冲突等常见字幕口语表达更自然。
+- **内置口语库检索** 会在应用启动时自动把合成 phrase pack 导入本地口语库。
+  目前内置 12 个包、600+ 条例句，覆盖英语、日语、韩语、西语、法语、德语到
+  简体中文，并新增英语医疗、犯罪/刑侦、职场题材包。项目 metadata 会对匹配的
+  题材标签做轻量加权，再把例句注入翻译 prompt。
 - **本地口语库导入** 仍然可以接入你自行管理的更大语料。OpenSubtitles、
   Tatoeba 等公开语料需要保留来源和 license 元数据后再导入，不会默认联网下载。
+  可以先校验再导入本地包：
+
+  ```bash
+  python3 tools/phrase_packs/import_phrase_pack.py path/to/pack.json --dry-run
+  python3 tools/phrase_packs/import_phrase_pack.py path/to/pack.json
+  ```
 - **QA 报告** 会在翻译后写入项目目录：
   `translation_qa_report.json` 和 `translation_qa_report.md`。确定性检查包括
   漏译、英文残留、重复 ID、知识库术语缺失、字幕过长和环境音处理。

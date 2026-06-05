@@ -1,0 +1,718 @@
+{
+  "id": "ai-sub-pro.en-zh.subtitle_colloquial_expanded",
+  "version": 1,
+  "source": "AI Sub Pro bundled synthetic subtitle phrase pack",
+  "license": "Project-local synthetic examples, MIT-compatible",
+  "source_language": "en",
+  "target_language": "zh-CN",
+  "tags": [
+    "subtitle",
+    "dialogue",
+    "colloquial",
+    "expanded"
+  ],
+  "quality": 0.82,
+  "phrases": [
+    {
+      "source_text": "Give me a break.",
+      "target_text": "饶了我吧。",
+      "quality": 0.84,
+      "tags": [
+        "colloquial",
+        "reaction"
+      ]
+    },
+    {
+      "source_text": "You lost me.",
+      "target_text": "我没听懂。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "That explains a lot.",
+      "target_text": "这就解释得通了。",
+      "quality": 0.84,
+      "tags": [
+        "reaction"
+      ]
+    },
+    {
+      "source_text": "That is not the point.",
+      "target_text": "重点不是这个。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Let's not get ahead of ourselves.",
+      "target_text": "先别想太远。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We are not doing this right now.",
+      "target_text": "我们现在不谈这个。",
+      "quality": 0.84,
+      "tags": [
+        "conflict"
+      ]
+    },
+    {
+      "source_text": "I don't buy it.",
+      "target_text": "我不信。",
+      "quality": 0.84,
+      "tags": [
+        "reaction"
+      ]
+    },
+    {
+      "source_text": "You don't get to say that.",
+      "target_text": "你没资格这么说。",
+      "quality": 0.84,
+      "tags": [
+        "conflict"
+      ]
+    },
+    {
+      "source_text": "This stays between us.",
+      "target_text": "这事别让别人知道。",
+      "quality": 0.84,
+      "tags": [
+        "secret"
+      ]
+    },
+    {
+      "source_text": "I can live with that.",
+      "target_text": "这样我能接受。",
+      "quality": 0.84,
+      "tags": [
+        "agreement"
+      ]
+    },
+    {
+      "source_text": "That was uncalled for.",
+      "target_text": "你刚才那话太过了。",
+      "quality": 0.84,
+      "tags": [
+        "conflict"
+      ]
+    },
+    {
+      "source_text": "Take it down a notch.",
+      "target_text": "冷静点。",
+      "quality": 0.84,
+      "tags": [
+        "conflict"
+      ]
+    },
+    {
+      "source_text": "I said what I said.",
+      "target_text": "我话就放这儿了。",
+      "quality": 0.84,
+      "tags": [
+        "conflict"
+      ]
+    },
+    {
+      "source_text": "Don't make this weird.",
+      "target_text": "别把气氛搞尴尬。",
+      "quality": 0.84,
+      "tags": [
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "You're overthinking it.",
+      "target_text": "你想太多了。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "I have a bad feeling about this.",
+      "target_text": "我有种不好的预感。",
+      "quality": 0.84,
+      "tags": [
+        "suspense"
+      ]
+    },
+    {
+      "source_text": "This is getting out of hand.",
+      "target_text": "事情快失控了。",
+      "quality": 0.84,
+      "tags": [
+        "conflict"
+      ]
+    },
+    {
+      "source_text": "I am not in the mood.",
+      "target_text": "我现在没心情。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "I'm not proud of it.",
+      "target_text": "这事我也不光彩。",
+      "quality": 0.84,
+      "tags": [
+        "confession"
+      ]
+    },
+    {
+      "source_text": "It slipped out.",
+      "target_text": "我一不小心说漏嘴了。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "You made your point.",
+      "target_text": "你的意思我明白了。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Let's call it a night.",
+      "target_text": "今晚就到这吧。",
+      "quality": 0.84,
+      "tags": [
+        "party"
+      ]
+    },
+    {
+      "source_text": "I'm all ears.",
+      "target_text": "我洗耳恭听。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Don't leave me hanging.",
+      "target_text": "别吊我胃口。",
+      "quality": 0.84,
+      "tags": [
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "I walked right into that.",
+      "target_text": "我这是自己撞上去了。",
+      "quality": 0.84,
+      "tags": [
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "That's on me.",
+      "target_text": "这事怪我。",
+      "quality": 0.84,
+      "tags": [
+        "apology"
+      ]
+    },
+    {
+      "source_text": "I'll take the blame.",
+      "target_text": "责任我来担。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "You had one job.",
+      "target_text": "这么简单你都能搞砸。",
+      "quality": 0.84,
+      "tags": [
+        "sarcasm"
+      ]
+    },
+    {
+      "source_text": "Now is not the time.",
+      "target_text": "现在不是时候。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "We're running out of time.",
+      "target_text": "我们没时间了。",
+      "quality": 0.84,
+      "tags": [
+        "urgency"
+      ]
+    },
+    {
+      "source_text": "Keep your voice down.",
+      "target_text": "小声点。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Don't look at me like that.",
+      "target_text": "别那样看着我。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "I didn't sign up for this.",
+      "target_text": "我可没说要干这个。",
+      "quality": 0.84,
+      "tags": [
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "You are missing the point.",
+      "target_text": "你没抓住重点。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "I need a minute.",
+      "target_text": "给我一点时间。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "That was close.",
+      "target_text": "刚才好险。",
+      "quality": 0.84,
+      "tags": [
+        "reaction"
+      ]
+    },
+    {
+      "source_text": "Not helping.",
+      "target_text": "你这话一点忙都帮不上。",
+      "quality": 0.84,
+      "tags": [
+        "sarcasm"
+      ]
+    },
+    {
+      "source_text": "Good to know.",
+      "target_text": "知道了。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Point taken.",
+      "target_text": "我明白你的意思。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "I'm working on it.",
+      "target_text": "我正在处理。",
+      "quality": 0.84,
+      "tags": [
+        "workplace"
+      ]
+    },
+    {
+      "source_text": "We have a situation.",
+      "target_text": "出事了。",
+      "quality": 0.84,
+      "tags": [
+        "urgency"
+      ]
+    },
+    {
+      "source_text": "This changes everything.",
+      "target_text": "这下情况全变了。",
+      "quality": 0.84,
+      "tags": [
+        "suspense"
+      ]
+    },
+    {
+      "source_text": "I'm not going anywhere.",
+      "target_text": "我哪儿也不去。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "You can't be serious.",
+      "target_text": "你不是认真的吧。",
+      "quality": 0.84,
+      "tags": [
+        "reaction"
+      ]
+    },
+    {
+      "source_text": "Let's hear him out.",
+      "target_text": "先听他说完。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "Don't start.",
+      "target_text": "别又来了。",
+      "quality": 0.84,
+      "tags": [
+        "conflict"
+      ]
+    },
+    {
+      "source_text": "I know that look.",
+      "target_text": "我知道你这个表情是什么意思。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "You look like hell.",
+      "target_text": "你看起来糟透了。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "I'll pretend I didn't hear that.",
+      "target_text": "我就当没听见。",
+      "quality": 0.84,
+      "tags": [
+        "sarcasm"
+      ]
+    },
+    {
+      "source_text": "Let's keep it moving.",
+      "target_text": "别耽误了，继续吧。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "I was getting to that.",
+      "target_text": "我正要说到这点。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "That is beside the point.",
+      "target_text": "这不是重点。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "This is not up for debate.",
+      "target_text": "这事没得商量。",
+      "quality": 0.84,
+      "tags": [
+        "conflict"
+      ]
+    },
+    {
+      "source_text": "You owe me an explanation.",
+      "target_text": "你得给我个解释。",
+      "quality": 0.84,
+      "tags": [
+        "conflict"
+      ]
+    },
+    {
+      "source_text": "Don't make me regret this.",
+      "target_text": "别让我后悔帮你。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "I need you to trust me.",
+      "target_text": "我需要你相信我。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "You have no idea.",
+      "target_text": "你根本不知道。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "I wouldn't count on it.",
+      "target_text": "我劝你别指望这个。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "It is what it is.",
+      "target_text": "事已至此。",
+      "quality": 0.84,
+      "tags": [
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "I'll deal with it.",
+      "target_text": "我会处理。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "You did the right thing.",
+      "target_text": "你做得对。",
+      "quality": 0.84,
+      "tags": [
+        "encouragement"
+      ]
+    },
+    {
+      "source_text": "Don't beat yourself up.",
+      "target_text": "别太责怪自己。",
+      "quality": 0.84,
+      "tags": [
+        "encouragement"
+      ]
+    },
+    {
+      "source_text": "I'm trying to help.",
+      "target_text": "我是在帮你。",
+      "quality": 0.84,
+      "tags": [
+        "dialogue"
+      ]
+    },
+    {
+      "source_text": "You're not making sense.",
+      "target_text": "你说不通。",
+      "quality": 0.84,
+      "tags": [
+        "conflict"
+      ]
+    },
+    {
+      "source_text": "I didn't see that coming.",
+      "target_text": "这我真没想到。",
+      "quality": 0.84,
+      "tags": [
+        "reaction"
+      ]
+    },
+    {
+      "source_text": "I am so done with this.",
+      "target_text": "我真的受够了。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "I am way out of my depth.",
+      "target_text": "这事已经超出我的能力范围了。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "I am barely holding it together.",
+      "target_text": "我已经快撑不住了。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "I am not falling for that again.",
+      "target_text": "我不会再上这个当了。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "I am trying to be reasonable.",
+      "target_text": "我已经在尽量讲道理了。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "You are not listening.",
+      "target_text": "你根本没在听。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "You are making this worse.",
+      "target_text": "你只会把事情弄得更糟。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "You are better than this.",
+      "target_text": "你不该这样。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "We are past that now.",
+      "target_text": "现在说这个已经晚了。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "We are in this together.",
+      "target_text": "我们是一条船上的人。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "This is between you and me.",
+      "target_text": "这是你我之间的事。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "This is bigger than us.",
+      "target_text": "这事不是我们能左右的。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "That sounds like a trap.",
+      "target_text": "听起来像个陷阱。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "That sounds about right.",
+      "target_text": "听起来差不多。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "That sounds personal.",
+      "target_text": "听起来像私人恩怨。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "It feels different this time.",
+      "target_text": "这次感觉不一样。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "It feels too easy.",
+      "target_text": "这也太顺利了。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "It feels like a setup.",
+      "target_text": "感觉像有人设了局。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Let's not make a scene.",
+      "target_text": "别当众闹起来。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "Let's not push our luck.",
+      "target_text": "别再碰运气了。",
+      "quality": 0.84,
+      "tags": [
+        "subtitle",
+        "colloquial"
+      ]
+    }
+  ]
+}

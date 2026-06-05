@@ -1,0 +1,717 @@
+{
+  "id": "ai-sub-pro.ko-zh.subtitle_colloquial_expanded",
+  "version": 1,
+  "source": "AI Sub Pro bundled synthetic subtitle phrase pack",
+  "license": "Project-local synthetic examples, MIT-compatible",
+  "source_language": "ko",
+  "target_language": "zh-CN",
+  "tags": [
+    "subtitle",
+    "dialogue",
+    "colloquial",
+    "expanded"
+  ],
+  "quality": 0.82,
+  "phrases": [
+    {
+      "source_text": "믿을 수가 없어.",
+      "target_text": "真不敢相信。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "다시 말해 봐.",
+      "target_text": "再说一遍。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "난 들은 적 없어.",
+      "target_text": "我可没听说过。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "그런 뜻이 아니었어.",
+      "target_text": "我不是那个意思。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "지금은 안 돼.",
+      "target_text": "现在不行。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "그만두자.",
+      "target_text": "还是算了吧。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "내 말 좀 들어.",
+      "target_text": "听我说。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "오해하지 마.",
+      "target_text": "别误会。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "장난해?",
+      "target_text": "开什么玩笑？",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "그냥 둘 수 없어.",
+      "target_text": "我不能坐视不管。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "얼굴에 다 써 있어.",
+      "target_text": "你都写脸上了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "숨겨도 소용없어.",
+      "target_text": "你藏也没用。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "시간이 없어.",
+      "target_text": "没时间了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "서둘러.",
+      "target_text": "快点。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "나중에 설명할게.",
+      "target_text": "我之后再解释。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "날 믿어.",
+      "target_text": "相信我。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "정말 괜찮아?",
+      "target_text": "你真的没事吗？",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "무리하지 마.",
+      "target_text": "别勉强。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "내 잘못이야.",
+      "target_text": "是我的错。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "사과할게.",
+      "target_text": "我道歉。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "그건 아니야.",
+      "target_text": "不是那样。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "조용히 해.",
+      "target_text": "别说话。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "농담이지?",
+      "target_text": "你开玩笑吧？",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "덕분에 살았어.",
+      "target_text": "帮大忙了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "약속했잖아.",
+      "target_text": "你答应过的吧。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "다시 생각해 봐.",
+      "target_text": "再考虑一下。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "이미 늦었어.",
+      "target_text": "已经太晚了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "아직 늦지 않았어.",
+      "target_text": "还来得及。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "뭔가 이상해.",
+      "target_text": "有点不对劲。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "눈치 못 챘어.",
+      "target_text": "我没注意到。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "제대로 설명해.",
+      "target_text": "好好解释一下。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "진정해.",
+      "target_text": "冷静点。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "나를 봐.",
+      "target_text": "看着我。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "혼자 두지 마.",
+      "target_text": "别丢下我一个人。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "너한테 맡길 수 없어.",
+      "target_text": "我不能交给你。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "나한테 맡겨.",
+      "target_text": "交给我。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "도망치지 마.",
+      "target_text": "别逃。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "이제 끝이야.",
+      "target_text": "已经结束了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "시작하자.",
+      "target_text": "开始吧。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "할 수밖에 없어.",
+      "target_text": "只能这么做了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "말이 심했어.",
+      "target_text": "我说得太过了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "악의는 없었어.",
+      "target_text": "我没有恶意。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "그거면 됐어.",
+      "target_text": "这样就好。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "납득할 수 없어.",
+      "target_text": "我不能接受。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "잊어버려.",
+      "target_text": "忘了吧。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "기억나?",
+      "target_text": "你还记得吗？",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "거짓말하지 마.",
+      "target_text": "别撒谎。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "사실대로 말해.",
+      "target_text": "说实话。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "여기 있어.",
+      "target_text": "待在这儿。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "먼저 가.",
+      "target_text": "你先走。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "후회할 거야.",
+      "target_text": "你会后悔的。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "후회 안 해.",
+      "target_text": "我不后悔。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "내가 어떻게든 할게.",
+      "target_text": "我会想办法。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "어떻게든 해 봐.",
+      "target_text": "想想办法。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "못 본 걸로 할게.",
+      "target_text": "我就当没看见。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "못 들은 걸로 할게.",
+      "target_text": "我就当没听见。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "분위기 좀 읽어.",
+      "target_text": "看点气氛。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "이건 곤란한데.",
+      "target_text": "这下麻烦了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "틀림없어.",
+      "target_text": "肯定没错。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "꼭 그런 건 아니야.",
+      "target_text": "也不一定。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "연락해.",
+      "target_text": "联系我。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "전화 받아.",
+      "target_text": "接电话。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "나를 믿어 줘.",
+      "target_text": "相信我。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "자책하지 마.",
+      "target_text": "别责怪自己。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "이제 와서 늦었어.",
+      "target_text": "现在说太晚了。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "얘기 아직 안 끝났어.",
+      "target_text": "话还没说完。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "그거 명령이야?",
+      "target_text": "这是命令吗？",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "질문에 대답해.",
+      "target_text": "回答问题。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "웃을 일이 아니야.",
+      "target_text": "一点都不好笑。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    },
+    {
+      "source_text": "그만 좀 해.",
+      "target_text": "够了吧。",
+      "quality": 0.83,
+      "tags": [
+        "subtitle",
+        "dialogue",
+        "colloquial"
+      ]
+    }
+  ]
+}

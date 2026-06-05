@@ -122,4 +122,42 @@ def test_build_prompt_uses_bundled_phrase_pack_examples(monkeypatch, tmp_path):
 
     assert "Subtitle phrase examples" in prompt
     assert "续摊在哪" in prompt
+    assert "tags:" in prompt
     assert translator.last_quality_trace.phrase_hits
+    assert translator.last_quality_trace.phrase_hits[0]["pack_id"].startswith("ai-sub-pro.")
+
+
+def test_build_prompt_prefers_domain_phrase_pack_from_metadata(monkeypatch, tmp_path):
+    from app.engines import translator as tmod
+    from app.engines.knowledge import KnowledgeBase
+    from app.engines.phrase_library import PhraseLibrary, import_bundled_phrase_packs
+
+    phrases = PhraseLibrary(tmp_path / "phrases.sqlite3")
+    imported = import_bundled_phrase_packs(library=phrases)
+    assert imported["imported"] >= 600
+
+    monkeypatch.setattr(tmod, "PhraseLibrary", lambda: phrases)
+    monkeypatch.setattr(tmod, "_shared_kb", KnowledgeBase(), raising=False)
+    config = _translator_config()
+    config["translation"]["use_translation_memory"] = False
+
+    translator = tmod.SubtitleTranslator(config)
+    prompt = translator._build_prompt(
+        "简体中文",
+        {
+            "name": "Hospital Case S01E01",
+            "original_language": "en",
+            "plot": "A doctor and her team treat a patient in a hospital.",
+        },
+        None,
+        [],
+        [],
+        items=[
+            {"id": 1, "original": "We need to run a CT scan."},
+        ],
+    )
+
+    assert "我们需要做 CT 扫描" in prompt
+    assert "tags: medical" in prompt
+    assert translator.last_quality_trace.phrase_hits
+    assert translator.last_quality_trace.phrase_hits[0]["pack_id"] == "ai-sub-pro.en-zh.domain_medical"
