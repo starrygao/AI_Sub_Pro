@@ -477,6 +477,24 @@ def test_proper_name_consistency_score_flags_inconsistent_short_name_with_shared
     assert result["issues"][0]["source"] == "Li Na"
 
 
+def test_proper_name_consistency_score_flags_inconsistent_short_name_with_shared_predicate_anchor():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Li Na smiled.",
+            "2": "Li Na smiled again.",
+        },
+        {
+            "1": "李娜微笑。",
+            "2": "丽娜微笑。",
+        },
+    )
+
+    assert result["issue_count"] == 1
+    assert result["issues"][0]["source"] == "Li Na"
+
+
 def test_proper_name_consistency_score_ignores_common_sentence_initial_phrases():
     from app.evaluation.metrics import proper_name_consistency_score
 

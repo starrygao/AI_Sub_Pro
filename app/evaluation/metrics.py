@@ -290,26 +290,39 @@ def _prefix_before_anchor(text: str, anchor: str) -> str:
     return text[:index] if index > 0 else ""
 
 
-def _looks_like_sentence_prefix(prefix: str) -> bool:
-    if len(prefix) < 4:
+def _looks_like_sentence_prefix(prefix: str, min_name_prefix_length: int = 4) -> bool:
+    if len(prefix) < min_name_prefix_length:
         return True
     return any(hint in prefix for hint in _LONG_NAME_CONTEXT_PREFIX_HINTS)
 
 
-def _has_conflicting_name_prefixes(anchor: str, translations: list[str]) -> bool:
+def _has_conflicting_name_prefixes(
+    anchor: str, translations: list[str], min_name_prefix_length: int = 4
+) -> bool:
     prefixes = [_prefix_before_anchor(text, anchor) for text in translations]
     nonempty = [prefix for prefix in prefixes if prefix]
     if len(nonempty) != len(prefixes):
         return False
     if len(set(nonempty)) < 2:
         return False
-    return all(not _looks_like_sentence_prefix(prefix) for prefix in nonempty)
+    return all(
+        not _looks_like_sentence_prefix(prefix, min_name_prefix_length)
+        for prefix in nonempty
+    )
 
 
 def _is_valid_long_name_anchor(anchor: str, translations: list[str]) -> bool:
     if _is_context_anchor(anchor):
         return False
     return not _has_conflicting_name_prefixes(anchor, translations)
+
+
+def _is_valid_short_name_anchor(anchor: str, translations: list[str]) -> bool:
+    if _contains_context_chars(anchor):
+        return False
+    return not _has_conflicting_name_prefixes(
+        anchor, translations, min_name_prefix_length=1
+    )
 
 
 def _shared_cjk_anchor(translations: list[str]) -> str:
@@ -348,7 +361,7 @@ def _fallback_long_name_anchor(translations: list[str]) -> str:
 def _short_name_cjk_anchor(translations: list[str]) -> str:
     common = _common_cjk_substrings(translations, min_length=2)
     for anchor in common:
-        if len(anchor) <= 3 and not _contains_context_chars(anchor):
+        if len(anchor) <= 3 and _is_valid_short_name_anchor(anchor, translations):
             return anchor
     return ""
 
