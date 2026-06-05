@@ -1,0 +1,4 @@
+# Optional ASR backend dependencies used for release packages.
+# mlx-whisper is intentionally not listed here because it is Apple Silicon
+# specific; build scripts bundle it when it is already installed locally.
+faster-whisper>=1.1,<2

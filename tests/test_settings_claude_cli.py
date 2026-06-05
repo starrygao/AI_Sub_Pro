@@ -76,6 +76,7 @@ def test_codex_cli_status_endpoint_tolerates_probe_errors():
 
 def test_get_settings_includes_read_only_app_version():
     from app.main import app
+    from app.version import APP_VERSION
     client = TestClient(app)
 
     r = client.get("/api/settings")
@@ -83,7 +84,7 @@ def test_get_settings_includes_read_only_app_version():
     assert r.status_code == 200
     app_info = r.json()["app_info"]
     assert app_info["name"] == "AI Sub Pro"
-    assert app_info["version"] == "1.3.1"
+    assert app_info["version"] == APP_VERSION
 
 
 def test_update_settings_does_not_persist_read_only_app_info():

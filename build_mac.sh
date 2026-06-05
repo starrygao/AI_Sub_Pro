@@ -38,9 +38,15 @@ echo "  ffmpeg:  $FFMPEG_PATH"
 echo "  ffprobe: $FFPROBE_PATH"
 
 BUNDLE_LOCAL_ASR="${AISUBPRO_BUNDLE_LOCAL_ASR:-0}"
+BUNDLE_ASR_BACKENDS="${AISUBPRO_BUNDLE_ASR_BACKENDS:-1}"
+REQUIRE_ASR_BACKEND="${AISUBPRO_REQUIRE_ASR_BACKEND:-1}"
+if [ "$BUNDLE_LOCAL_ASR" = "1" ]; then
+    BUNDLE_ASR_BACKENDS="1"
+fi
 ASR_MODEL_DATA_ARGS=()
 ASR_BACKEND_ARGS=()
 LOCAL_ASR_EXCLUDE_ARGS=()
+ASR_BACKEND_FOUND=0
 if [ "$BUNDLE_LOCAL_ASR" = "1" ]; then
     if [ -d "$ROOT_DIR/models/asr" ]; then
         ASR_MODEL_DATA_ARGS+=(--add-data "${ROOT_DIR}/models/asr:models/asr")
@@ -48,24 +54,43 @@ if [ "$BUNDLE_LOCAL_ASR" = "1" ]; then
     else
         echo "  bundled ASR models: none found under models/asr"
     fi
+else
+    echo "  bundled ASR models: disabled (set AISUBPRO_BUNDLE_LOCAL_ASR=1 to include models/asr)"
+fi
 
+if [ "$BUNDLE_ASR_BACKENDS" = "1" ]; then
+    echo "  Local ASR backends: enabled (set AISUBPRO_BUNDLE_ASR_BACKENDS=0 to build without ASR backends)"
     if python3 -c "import faster_whisper" 2>/dev/null; then
         ASR_BACKEND_ARGS+=(--hidden-import faster_whisper --collect-all faster_whisper)
+        ASR_BACKEND_FOUND=1
         echo "  faster-whisper: available (will be bundled)"
     else
         echo "  faster-whisper: not installed (optional backend skipped)"
     fi
     if python3 -c "import mlx_whisper" 2>/dev/null; then
         ASR_BACKEND_ARGS+=(--hidden-import mlx_whisper --collect-all mlx --collect-all mlx_whisper)
+        ASR_BACKEND_FOUND=1
         echo "  mlx-whisper: available (will be bundled)"
     else
         echo "  mlx-whisper: not installed (optional backend skipped)"
     fi
     if python3 -c "import whisper" 2>/dev/null; then
         ASR_BACKEND_ARGS+=(--hidden-import whisper)
+        ASR_BACKEND_FOUND=1
         echo "  openai-whisper: available (will be bundled)"
     else
         echo "  openai-whisper: not installed (optional backend skipped)"
+    fi
+
+    if [ "$ASR_BACKEND_FOUND" = "0" ]; then
+        if [ "$REQUIRE_ASR_BACKEND" = "1" ]; then
+            echo "ERROR: no local ASR backend installed to bundle"
+            echo "Install one first, for example: python3 -m pip install -r requirements-asr.txt"
+            echo "Or set AISUBPRO_BUNDLE_ASR_BACKENDS=0 to intentionally build without ASR."
+            exit 1
+        else
+            echo "  Local ASR backends: none installed (continuing because AISUBPRO_REQUIRE_ASR_BACKEND=0)"
+        fi
     fi
 else
     LOCAL_ASR_EXCLUDE_ARGS=(
@@ -78,7 +103,7 @@ else
         --exclude-module mlx_whisper
         --exclude-module ctranslate2
     )
-    echo "  Local ASR packaging: disabled (set AISUBPRO_BUNDLE_LOCAL_ASR=1 to bundle models and optional ASR backends)"
+    echo "  Local ASR backends: disabled (set AISUBPRO_BUNDLE_ASR_BACKENDS=1 to bundle installed ASR backends)"
 fi
 
 # Step 2: Frontend assets
@@ -194,5 +219,6 @@ APP_SIZE=$(du -sh "dist/AI Sub Pro.app" | awk '{print $1}')
 echo "  Output: dist/AI Sub Pro.app ($APP_SIZE)"
 echo "  Run:    open 'dist/AI Sub Pro.app'"
 echo ""
-echo "  Note: set AISUBPRO_BUNDLE_LOCAL_ASR=1 to bundle local ASR models/backends."
+echo "  Note: ASR backends are bundled by default when installed."
+echo "        Set AISUBPRO_BUNDLE_LOCAL_ASR=1 to bundle local ASR models."
 echo "  Data is stored at: ~/AI_Sub_Pro_Data/"

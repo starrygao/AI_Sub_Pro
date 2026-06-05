@@ -9,19 +9,22 @@ and knowledge-base data on the user's machine.
 
 Prebuilt packages are attached to GitHub Releases when available.
 
-- macOS users can download `AI_Sub_Pro_v1.3.1.dmg` and
-  `AI_Sub_Pro_v1.3.1.dmg.sha256` from the `v1.3.1` release, verify the
-  checksum with `shasum -a 256 -c AI_Sub_Pro_v1.3.1.dmg.sha256`, open the
+- macOS users can download `AI_Sub_Pro_v1.3.2.dmg` and
+  `AI_Sub_Pro_v1.3.2.dmg.sha256` from the `v1.3.2` release, verify the
+  checksum with `shasum -a 256 -c AI_Sub_Pro_v1.3.2.dmg.sha256`, open the
   DMG, drag **AI Sub Pro** into **Applications**, then right-click and choose
   **Open** on first launch if Gatekeeper blocks an unsigned build.
 - Windows users can run a published Windows package when available. The current
   release does not include a prebuilt Windows installer yet; build from source
   on a Windows machine with `build_win.bat`.
 
-Default packages are base-app builds. They do not include local Whisper model
-files or optional ASR backend packages. Offline-oriented packages must be built
-explicitly with `AISUBPRO_BUNDLE_LOCAL_ASR=1` and should be labeled as optional
-ASR packages in the release notes.
+Default packages include an installed ASR backend package when one is available
+in the build environment, but they do not include local Whisper model files.
+Offline-oriented packages must be built explicitly with
+`AISUBPRO_BUNDLE_LOCAL_ASR=1` and should be labeled as optional ASR model
+packages in the release notes. Maintainers can set
+`AISUBPRO_BUNDLE_ASR_BACKENDS=0` only when intentionally producing a no-ASR
+base package.
 
 ## Install
 
@@ -102,9 +105,9 @@ current backend/model recommendation. Tests simulate these checks without
 downloading models.
 
 For source builds, optional ASR backends can be installed in the local Python
-environment. For packaged builds, those optional local ASR packages and
-`models/asr` are bundled only when the package maintainer sets
-`AISUBPRO_BUNDLE_LOCAL_ASR=1`; otherwise models may download on first use or be
+environment. For packaged builds, installed ASR backend packages are bundled by
+default; `models/asr` is bundled only when the package maintainer sets
+`AISUBPRO_BUNDLE_LOCAL_ASR=1`. Otherwise models may download on first use or be
 read from the normal local cache.
 
 ## Process a Local Video

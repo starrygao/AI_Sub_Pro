@@ -14,12 +14,15 @@
 
 ## 打包策略
 
-- 默认安装包是 base app package：包含应用、前端资源和 ffmpeg 二进制，但不会
-  打包本地 Whisper 模型，也不会收集 optional ASR / 可选 ASR 后端包。
-- 只有在明确要制作更大的离线包时，才设置 `AISUBPRO_BUNDLE_LOCAL_ASR=1`。该选项
-  会打包 `models/asr`，并收集已安装的可选本地 ASR 后端，例如
-  `faster-whisper`、`mlx-whisper` 或 `openai-whisper`。
-- Release notes 中要说明每个资产是基础包，还是 optional local ASR package。
+- 默认安装包包含应用、前端资源、ffmpeg 二进制，以及至少一个已安装的 ASR 后端包；
+  但不会打包本地 Whisper 模型。
+- 如果构建环境没有 `mlx-whisper`、`faster-whisper` 或 `openai-whisper`，发布打包前
+  先运行 `python3 -m pip install -r requirements-asr.txt` 安装 release ASR 依赖。
+- 只有在明确要制作更大的离线模型包时，才设置 `AISUBPRO_BUNDLE_LOCAL_ASR=1`。该选项
+  会打包 `models/asr`。
+- 只有在明确要制作无 ASR 小包时，才设置 `AISUBPRO_BUNDLE_ASR_BACKENDS=0`，并在
+  release notes 中明确标注这个限制。
+- Release notes 中要说明每个资产是默认 ASR 后端包、离线 ASR 模型包，还是无 ASR 包。
 
 ## 验证
 

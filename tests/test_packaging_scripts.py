@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASE_VERSION = "1.3.1"
+RELEASE_VERSION = "1.3.2"
 
 
 def test_release_workflow_supports_pr_dry_run_tag_release_and_uploads():
@@ -21,6 +21,7 @@ def test_release_workflow_supports_pr_dry_run_tag_release_and_uploads():
     assert "dry-run" in workflow
     assert "--allow-empty" in workflow
     assert "tools/release/prepare_release.py" in workflow
+    assert "requirements-asr.txt" in workflow
     assert "sha256" in workflow.lower()
     assert "release-size-report.json" in workflow
     assert "python3 -m pytest -q" in workflow
@@ -124,6 +125,15 @@ def test_package_json_exposes_release_prepare_script():
     )
 
 
+def test_optional_asr_requirements_define_release_backend():
+    requirements = (ROOT / "requirements-asr.txt").read_text(encoding="utf-8")
+
+    assert "faster-whisper" in requirements
+    assert "mlx-whisper" not in "\n".join(
+        line for line in requirements.splitlines() if not line.lstrip().startswith("#")
+    )
+
+
 def test_release_version_is_consistent_across_packaging_and_docs():
     root_package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
     package_lock = json.loads((ROOT / "package-lock.json").read_text(encoding="utf-8"))
@@ -164,18 +174,26 @@ def test_build_mac_preserves_tracked_pyinstaller_spec():
     assert '--add-data "${ROOT_DIR}/app:app"' in script
 
 
-def test_build_mac_optional_asr_packaging_is_opt_in_by_default():
+def test_build_mac_bundles_asr_backends_by_default_and_models_are_opt_in():
     script = (ROOT / "build_mac.sh").read_text(encoding="utf-8")
 
     assert 'BUNDLE_LOCAL_ASR="${AISUBPRO_BUNDLE_LOCAL_ASR:-0}"' in script
+    assert 'BUNDLE_ASR_BACKENDS="${AISUBPRO_BUNDLE_ASR_BACKENDS:-1}"' in script
+    assert 'REQUIRE_ASR_BACKEND="${AISUBPRO_REQUIRE_ASR_BACKEND:-1}"' in script
+    assert 'BUNDLE_ASR_BACKENDS="1"' in script
     assert 'if [ "$BUNDLE_LOCAL_ASR" = "1" ]; then' in script
-    assert "Local ASR packaging: disabled" in script
+    assert "bundled ASR models: disabled" in script
     assert "ASR_MODEL_DATA_ARGS" in script
     assert '[ -d "$ROOT_DIR/models/asr" ]' in script
     assert '--add-data "${ROOT_DIR}/models/asr:models/asr"' in script
     assert '"${ASR_MODEL_DATA_ARGS[@]}"' in script
     assert "ASR_BACKEND_ARGS" in script
     assert "LOCAL_ASR_EXCLUDE_ARGS" in script
+    assert "ASR_BACKEND_FOUND=0" in script
+    assert "ASR_BACKEND_FOUND=1" in script
+    assert 'if [ "$BUNDLE_ASR_BACKENDS" = "1" ]; then' in script
+    assert "ERROR: no local ASR backend installed to bundle" in script
+    assert "requirements-asr.txt" in script
     assert 'python3 -c "import faster_whisper"' in script
     assert "--collect-all faster_whisper" in script
     assert "--exclude-module torch" in script
@@ -185,20 +203,29 @@ def test_build_mac_optional_asr_packaging_is_opt_in_by_default():
     assert '"${ASR_BACKEND_ARGS[@]}"' in script
     assert '"${LOCAL_ASR_EXCLUDE_ARGS[@]}"' in script
     assert script.index('BUNDLE_LOCAL_ASR="${AISUBPRO_BUNDLE_LOCAL_ASR:-0}"') < script.index('[ -d "$ROOT_DIR/models/asr" ]')
-    assert script.index('if [ "$BUNDLE_LOCAL_ASR" = "1" ]; then') < script.index('python3 -c "import faster_whisper"')
+    assert script.index('if [ "$BUNDLE_ASR_BACKENDS" = "1" ]; then') < script.index('python3 -c "import faster_whisper"')
     assert script.index('"${LOCAL_ASR_EXCLUDE_ARGS[@]}"') < script.index("app/main.py")
 
 
-def test_build_win_optional_asr_packaging_mirrors_mac_opt_in_variable():
+def test_build_win_bundles_asr_backends_by_default_and_models_are_opt_in():
     script = (ROOT / "build_win.bat").read_text(encoding="utf-8")
 
     assert 'if "%AISUBPRO_BUNDLE_LOCAL_ASR%"=="" set "AISUBPRO_BUNDLE_LOCAL_ASR=0"' in script
+    assert 'if "%AISUBPRO_BUNDLE_ASR_BACKENDS%"=="" set "AISUBPRO_BUNDLE_ASR_BACKENDS=1"' in script
+    assert 'if "%AISUBPRO_REQUIRE_ASR_BACKEND%"=="" set "AISUBPRO_REQUIRE_ASR_BACKEND=1"' in script
+    assert 'if "%AISUBPRO_BUNDLE_LOCAL_ASR%"=="1" set "AISUBPRO_BUNDLE_ASR_BACKENDS=1"' in script
     assert 'if "%AISUBPRO_BUNDLE_LOCAL_ASR%"=="1" (' in script
-    assert "Local ASR packaging: disabled" in script
+    assert "bundled ASR models: disabled" in script
     assert "ASR_MODEL_DATA_ARGS" in script
-    assert 'if exist "models\\asr" set "ASR_MODEL_DATA_ARGS=--add-data models\\asr;models\\asr"' in script
+    assert 'if exist "models\\asr" (' in script
+    assert 'set "ASR_MODEL_DATA_ARGS=--add-data models\\asr;models\\asr"' in script
     assert "ASR_BACKEND_ARGS" in script
     assert "LOCAL_ASR_EXCLUDE_ARGS" in script
+    assert 'set "ASR_BACKEND_FOUND=0"' in script
+    assert 'set "ASR_BACKEND_FOUND=1"' in script
+    assert 'if "%AISUBPRO_BUNDLE_ASR_BACKENDS%"=="1" (' in script
+    assert "ERROR: no local ASR backend installed to bundle" in script
+    assert "requirements-asr.txt" in script
     assert 'python -c "import faster_whisper"' in script
     assert "--collect-all faster_whisper" in script
     assert "--exclude-module torch" in script
@@ -208,7 +235,7 @@ def test_build_win_optional_asr_packaging_mirrors_mac_opt_in_variable():
     assert "%ASR_MODEL_DATA_ARGS%" in script
     assert "%ASR_BACKEND_ARGS%" in script
     assert "%LOCAL_ASR_EXCLUDE_ARGS%" in script
-    assert script.index('if "%AISUBPRO_BUNDLE_LOCAL_ASR%"=="" set "AISUBPRO_BUNDLE_LOCAL_ASR=0"') < script.index('python -c "import faster_whisper"')
+    assert script.index('if "%AISUBPRO_BUNDLE_ASR_BACKENDS%"=="1" (') < script.index('python -c "import faster_whisper"')
 
 
 def test_build_mac_requires_subtitle_capable_ffmpeg():
@@ -347,7 +374,7 @@ def test_make_dmg_checksum_hook_runs_release_prepare_after_dmg_when_python_avail
     assert script.index("prepare_release_metadata") < script.index("[5/5] 构建完成!")
 
 
-def test_release_checklist_docs_cover_trigger_dry_run_checksum_and_optional_asr_strategy():
+def test_release_checklist_docs_cover_trigger_dry_run_checksum_and_asr_packaging_strategy():
     english = (ROOT / "docs" / "RELEASE_CHECKLIST.md").read_text(encoding="utf-8").lower()
     chinese = (ROOT / "docs" / "RELEASE_CHECKLIST.zh-CN.md").read_text(encoding="utf-8").lower()
 
@@ -356,7 +383,10 @@ def test_release_checklist_docs_cover_trigger_dry_run_checksum_and_optional_asr_
         assert "dry run" in doc or "dry-run" in doc or "dry run" in doc.replace(" ", "")
         assert "checksum" in doc or "sha-256" in doc or "sha256" in doc or "校验" in doc
         assert "aisubpro_bundle_local_asr" in doc
-        assert "optional asr" in doc or "optional local asr" in doc or "可选 asr" in doc
+        assert "aisubpro_bundle_asr_backends" in doc
+        assert "requirements-asr.txt" in doc
+        assert "asr backend" in doc or "asr 后端" in doc
+        assert "no-asr" in doc or "无 asr" in doc
 
 
 def test_make_dmg_cleans_failed_create_dmg_temp_mounts_before_fallback():

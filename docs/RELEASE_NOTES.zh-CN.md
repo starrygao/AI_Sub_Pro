@@ -2,6 +2,42 @@
 
 语言：[English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.2 - 打包版 ASR 后端修复
+
+主要内容：
+
+- 修复 macOS 打包版可能在听写时失败并提示 `No working ASR backend found`
+  的问题；根因是默认安装包排除了所有本地 Whisper 后端模块。
+- macOS 和 Windows 打包现在会默认打包已安装的 ASR 后端包；大型 Whisper 模型文件
+  仍通过 `AISUBPRO_BUNDLE_LOCAL_ASR=1` 显式打包。
+- 启用 ASR 后端打包但构建环境没有任何本地后端时，打包脚本会直接失败，避免发布
+  会在识别阶段崩溃的安装包。
+- 新增 `requirements-asr.txt`，并让 release workflow 安装它，确保 release 构建
+  至少有一个兜底 ASR 后端可打包。
+
+质量验证：
+
+- 完整测试套件已通过：`1053 passed in 60.24s`。
+- 设置/打包 focused suite 已通过：`33 passed in 1.04s`。
+- 打包单独 suite 已通过：`32 passed in 0.24s`。
+- 本地 DMG 校验已通过：`hdiutil verify dist/AI_Sub_Pro_v1.3.2.dmg`
+  报告 checksum 有效，并且在 `dist/` 下运行
+  `shasum -a 256 -c AI_Sub_Pro_v1.3.2.dmg.sha256` 通过。
+- 本机安装版验证已通过：`/api/settings` 报告 app 版本 `1.3.2`，
+  `/api/system-check` 报告 `mlx_whisper: true`、
+  `asr_recommendation.ready: true`，后端为 `mlx_whisper`，模型来源为
+  `cache`。
+
+安装包：
+
+- 已为 macOS 用户附加 `AI_Sub_Pro_v1.3.2.dmg`，并提供对应的
+  `AI_Sub_Pro_v1.3.2.dmg.sha256` 校验文件和 `release-size-report.json`。
+- 附带的 macOS 安装包包含一个已安装的 ASR 后端包；不包含本地 Whisper 模型文件，
+  模型会在首次使用时下载，或从常规本地缓存读取。本地资产大小：328 MB DMG /
+  816 MB app。
+- Windows 安装包需要在 Windows 机器上运行 `build_win.bat` 生成；当前 release
+  暂未附带预编译 Windows 安装包，请先使用源码安装。
+
 ## v1.3.1 - 设置页版本号显示补丁
 
 主要内容：

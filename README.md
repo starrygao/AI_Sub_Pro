@@ -19,8 +19,8 @@ for your platform is not published yet, use the source install below.
 
 Current packaging support:
 
-- macOS: download `AI_Sub_Pro_v1.3.1.dmg` from the latest release, optionally
-  verify it with `AI_Sub_Pro_v1.3.1.dmg.sha256`, then open the DMG.
+- macOS: download `AI_Sub_Pro_v1.3.2.dmg` from the latest release, optionally
+  verify it with `AI_Sub_Pro_v1.3.2.dmg.sha256`, then open the DMG.
 - Windows: no prebuilt installer is attached to the current release yet; build
   from source with `build_win.bat` on a Windows machine.
 
@@ -69,6 +69,9 @@ Optional ASR backends:
 - Apple Silicon: `mlx-whisper`.
 - Cross-platform VAD and beam search: `faster-whisper`.
 - Fallback: `openai-whisper`.
+
+macOS release packages include an installed ASR backend by default, while large
+Whisper model files still download on first use or load from the local cache.
 
 ## Quick Start
 

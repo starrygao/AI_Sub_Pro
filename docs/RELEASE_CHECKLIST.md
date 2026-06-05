@@ -15,14 +15,18 @@ Use this checklist before publishing a GitHub Release.
 
 ## Build Strategy
 
-- Default packages are base-app builds. They include the app, frontend assets,
-  and ffmpeg binaries, but do not bundle local Whisper models or optional local
-  ASR packages.
+- Default packages include the app, frontend assets, ffmpeg binaries, and at
+  least one installed ASR backend package. They do not bundle local Whisper
+  models.
+- Install release ASR dependencies with `python3 -m pip install -r
+  requirements-asr.txt` before packaging when the build environment does not
+  already provide `mlx-whisper`, `faster-whisper`, or `openai-whisper`.
 - Set `AISUBPRO_BUNDLE_LOCAL_ASR=1` only when intentionally producing a larger
-  offline-oriented package that includes `models/asr` and installed optional
-  ASR backends such as `faster-whisper`, `mlx-whisper`, or `openai-whisper`.
-- Record whether a release asset is a base package or an optional ASR package
-  in the release notes.
+  offline-oriented package that includes `models/asr`.
+- Set `AISUBPRO_BUNDLE_ASR_BACKENDS=0` only when intentionally producing a
+  no-ASR package, and label that limitation clearly in the release notes.
+- Record whether a release asset is the default ASR-backend package, an offline
+  ASR model package, or a no-ASR package in the release notes.
 
 ## Verification
 

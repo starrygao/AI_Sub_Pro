@@ -30,18 +30,53 @@ echo   ffmpeg: %FFMPEG_PATH%
 echo   ffprobe: %FFPROBE_PATH%
 
 if "%AISUBPRO_BUNDLE_LOCAL_ASR%"=="" set "AISUBPRO_BUNDLE_LOCAL_ASR=0"
+if "%AISUBPRO_BUNDLE_ASR_BACKENDS%"=="" set "AISUBPRO_BUNDLE_ASR_BACKENDS=1"
+if "%AISUBPRO_REQUIRE_ASR_BACKEND%"=="" set "AISUBPRO_REQUIRE_ASR_BACKEND=1"
+if "%AISUBPRO_BUNDLE_LOCAL_ASR%"=="1" set "AISUBPRO_BUNDLE_ASR_BACKENDS=1"
 set "ASR_MODEL_DATA_ARGS="
 set "ASR_BACKEND_ARGS="
 set "LOCAL_ASR_EXCLUDE_ARGS="
+set "ASR_BACKEND_FOUND=0"
 if "%AISUBPRO_BUNDLE_LOCAL_ASR%"=="1" (
-    if exist "models\asr" set "ASR_MODEL_DATA_ARGS=--add-data models\asr;models\asr"
-    python -c "import faster_whisper" 2>nul && set "ASR_BACKEND_ARGS=!ASR_BACKEND_ARGS! --hidden-import faster_whisper --collect-all faster_whisper"
-    python -c "import mlx_whisper" 2>nul && set "ASR_BACKEND_ARGS=!ASR_BACKEND_ARGS! --hidden-import mlx_whisper --collect-all mlx --collect-all mlx_whisper"
-    python -c "import whisper" 2>nul && set "ASR_BACKEND_ARGS=!ASR_BACKEND_ARGS! --hidden-import whisper"
-    echo   Local ASR packaging: enabled
+    if exist "models\asr" (
+        set "ASR_MODEL_DATA_ARGS=--add-data models\asr;models\asr"
+        echo   bundled ASR models: models\asr
+    ) else (
+        echo   bundled ASR models: none found under models\asr
+    )
+) else (
+    echo   bundled ASR models: disabled
+)
+
+if "%AISUBPRO_BUNDLE_ASR_BACKENDS%"=="1" (
+    python -c "import faster_whisper" 2>nul && (
+        set "ASR_BACKEND_ARGS=!ASR_BACKEND_ARGS! --hidden-import faster_whisper --collect-all faster_whisper"
+        set "ASR_BACKEND_FOUND=1"
+        echo   faster-whisper: available ^(will be bundled^)
+    )
+    python -c "import mlx_whisper" 2>nul && (
+        set "ASR_BACKEND_ARGS=!ASR_BACKEND_ARGS! --hidden-import mlx_whisper --collect-all mlx --collect-all mlx_whisper"
+        set "ASR_BACKEND_FOUND=1"
+        echo   mlx-whisper: available ^(will be bundled^)
+    )
+    python -c "import whisper" 2>nul && (
+        set "ASR_BACKEND_ARGS=!ASR_BACKEND_ARGS! --hidden-import whisper"
+        set "ASR_BACKEND_FOUND=1"
+        echo   openai-whisper: available ^(will be bundled^)
+    )
+    if "!ASR_BACKEND_FOUND!"=="0" (
+        if "%AISUBPRO_REQUIRE_ASR_BACKEND%"=="1" (
+            echo ERROR: no local ASR backend installed to bundle
+            echo Install one first, for example: python -m pip install -r requirements-asr.txt
+            echo Or set AISUBPRO_BUNDLE_ASR_BACKENDS=0 to intentionally build without ASR.
+            exit /b 1
+        ) else (
+            echo   Local ASR backends: none installed
+        )
+    )
 ) else (
     set "LOCAL_ASR_EXCLUDE_ARGS=--exclude-module torch --exclude-module torchaudio --exclude-module torchvision --exclude-module whisper --exclude-module faster_whisper --exclude-module mlx --exclude-module mlx_whisper --exclude-module ctranslate2"
-    echo   Local ASR packaging: disabled
+    echo   Local ASR backends: disabled
 )
 
 echo.

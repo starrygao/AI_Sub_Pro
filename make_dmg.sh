@@ -1,11 +1,11 @@
 #!/bin/bash
 # 构建 AI Sub Pro macOS DMG 安装包
-# 产出: dist/AI_Sub_Pro_v1.3.1.dmg
+# 产出: dist/AI_Sub_Pro_v1.3.2.dmg
 set -e
 cd "$(dirname "$0")"
 
 APP_NAME="AI Sub Pro"
-VERSION="1.3.1"
+VERSION="1.3.2"
 DMG_NAME="AI_Sub_Pro_v${VERSION}"
 APP_PATH="dist/${APP_NAME}.app"
 DMG_STAGING=""
@@ -136,5 +136,5 @@ echo "  安装方式:"
 echo "    1. 双击 DMG 打开"
 echo "    2. 将 AI Sub Pro 拖入 Applications"
 echo "    3. 首次打开: 右键 → 打开 (绕过 Gatekeeper)"
-echo "    4. 若未随 app 打包 ASR 模型，首次识别会自动下载 Whisper 模型"
+echo "    4. 安装包默认包含可用 ASR 后端；若未打包模型，首次识别会下载 Whisper 模型"
 echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
