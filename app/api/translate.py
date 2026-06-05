@@ -719,6 +719,16 @@ def _project_kb_terms(project_kb) -> dict:
     return terms
 
 
+def _repair_round_limit(cfg: dict) -> int:
+    trans_cfg = cfg.get("translation", {}) if isinstance(cfg, dict) else {}
+    raw = trans_cfg.get("qa_auto_repair_rounds", 1) if isinstance(trans_cfg, dict) else 1
+    try:
+        value = int(raw)
+    except (TypeError, ValueError, OverflowError):
+        value = 1
+    return max(1, min(value, 2))
+
+
 def _auto_repair_quality_issues(
     cfg: dict,
     translator,
@@ -802,21 +812,33 @@ def _persist_translation_quality_report(
             target_language=target_language,
             trace=trace,
         )
-        repaired = _auto_repair_quality_issues(
-            cfg,
-            translator,
-            blocks,
-            report,
-            target_language,
-            project_kb,
-        )
-        if repaired:
+        repaired = []
+        previous_hard_errors = sum(1 for issue in report.issues if issue.severity == "error")
+        for _ in range(_repair_round_limit(cfg)):
+            round_repaired = _auto_repair_quality_issues(
+                cfg,
+                translator,
+                blocks,
+                report,
+                target_language,
+                project_kb,
+            )
+            if not round_repaired:
+                break
+            repaired.extend(round_repaired)
             report = run_quality_checks(
                 blocks,
                 project_kb=project_kb,
                 target_language=target_language,
                 trace=trace,
             )
+            current_hard_errors = sum(1 for issue in report.issues if issue.severity == "error")
+            if current_hard_errors >= previous_hard_errors:
+                break
+            previous_hard_errors = current_hard_errors
+            if current_hard_errors == 0:
+                break
+        if repaired:
             report.repaired_blocks = repaired
 
         root = Path(pdir)

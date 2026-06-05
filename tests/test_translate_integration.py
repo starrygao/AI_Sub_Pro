@@ -643,6 +643,14 @@ def test_translate_pipeline_can_auto_repair_quality_issues(tmp_path, monkeypatch
     assert report["repaired_blocks"] == [{"id": 1, "translation": "你还好吗？"}]
 
 
+def test_translate_pipeline_limits_auto_repair_rounds(tmp_path, monkeypatch):
+    from app.api import translate as translate_api
+
+    assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 0}}) == 1
+    assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 2}}) == 2
+    assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 99}}) == 2
+
+
 def test_translate_pipeline_redacts_exception_details_in_project_error(tmp_path, monkeypatch):
     from app.api import translate as api_translate
     from app.utils import project_store
