@@ -186,6 +186,24 @@ def test_proper_name_consistency_score_allows_same_long_name_in_natural_contexts
     assert result["issues"] == []
 
 
+def test_proper_name_consistency_score_allows_normal_long_name_suffix_context():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "I live near Hudson Oaks.",
+            "2": "I arrived at Hudson Oaks.",
+        },
+        {
+            "1": "我住在哈德逊奥克斯附近",
+            "2": "我到了哈德逊奥克斯",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
 def test_proper_name_consistency_score_flags_longer_shared_prefix_extension():
     from app.evaluation.metrics import proper_name_consistency_score
 
@@ -197,6 +215,24 @@ def test_proper_name_consistency_score_flags_longer_shared_prefix_extension():
         {
             "1": "哈德逊奥克斯",
             "2": "哈德逊奥克斯镇",
+        },
+    )
+
+    assert result["issue_count"] == 1
+    assert result["issues"][0]["source"] == "Hudson Oaks"
+
+
+def test_proper_name_consistency_score_flags_source_initial_long_name_extensions():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Hudson Oaks is quiet.",
+            "2": "Hudson Oaks looks empty.",
+        },
+        {
+            "1": "哈德逊奥克斯镇很安静",
+            "2": "哈德逊奥克斯市看起来空荡",
         },
     )
 

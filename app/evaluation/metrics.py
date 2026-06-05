@@ -67,6 +67,60 @@ _SHORT_NAME_CONTEXT_CHARS = {
     "呢",
     "吗",
 }
+_LONG_NAME_IDENTITY_SUFFIXES = (
+    "医院",
+    "大学",
+    "学院",
+    "中学",
+    "小学",
+    "车站",
+    "机场",
+    "公园",
+    "广场",
+    "中心",
+    "酒店",
+    "饭店",
+    "公司",
+    "集团",
+    "社区",
+    "小区",
+    "大厦",
+    "城",
+    "镇",
+    "市",
+    "县",
+    "区",
+    "乡",
+    "村",
+    "庄",
+    "街",
+    "路",
+    "桥",
+)
+_LONG_NAME_CONTEXT_SUFFIXES = (
+    "附近",
+    "里面",
+    "居民",
+    "的人",
+    "那里",
+    "这里",
+    "很",
+    "真",
+    "太",
+    "都",
+    "也",
+    "还",
+    "又",
+    "呢",
+    "吗",
+    "看起来",
+    "空荡",
+    "安静",
+    "喜欢",
+    "讨厌",
+    "到了",
+    "住在",
+)
 
 
 def _by_id(blocks: list[dict[str, str]], text_key: str) -> dict[str, str]:
@@ -206,21 +260,6 @@ def _contains_context_chars(anchor: str) -> bool:
     return any(char in _SHORT_NAME_CONTEXT_CHARS for char in anchor)
 
 
-def _is_context_boundary(char: str) -> bool:
-    return not char or char in _SHORT_NAME_CONTEXT_CHARS
-
-
-def _source_name_boundaries(source_text: str, proper_name: str) -> tuple[bool, bool]:
-    match = re.search(rf"\b{re.escape(proper_name)}\b", _clean_text(source_text))
-    if not match:
-        return False, False
-    before = source_text[:match.start()].strip()
-    after = source_text[match.end():].strip()
-    start_boundary = not before or not re.search(r"[A-Za-z0-9]", before)
-    end_boundary = not after or not re.search(r"[A-Za-z0-9]", after)
-    return start_boundary, end_boundary
-
-
 def _shared_cjk_anchor(translations: list[str]) -> str:
     common = _common_cjk_substrings(translations, min_length=2)
     if not common:
@@ -246,6 +285,14 @@ def _long_name_cjk_anchor(translations: list[str]) -> str:
     return ""
 
 
+def _fallback_long_name_anchor(translations: list[str]) -> str:
+    common = _common_cjk_substrings(translations, min_length=2)
+    for anchor in common:
+        if not _contains_context_chars(anchor):
+            return anchor
+    return ""
+
+
 def _short_name_cjk_anchor(translations: list[str]) -> str:
     common = _common_cjk_substrings(translations, min_length=2)
     for anchor in common:
@@ -263,19 +310,56 @@ def _target_signature(translation: str, shared_anchor: str = "") -> str:
     return _compact_whitespace(translation)
 
 
-def _long_name_signature(source_text: str, proper_name: str, translation: str, shared_anchor: str) -> str:
+def _consume_identity_suffixes(text: str, start: int) -> int:
+    end = start
+    while True:
+        tail = text[end:]
+        marker = next(
+            (item for item in _LONG_NAME_IDENTITY_SUFFIXES if tail.startswith(item)),
+            "",
+        )
+        if not marker:
+            return end
+        end += len(marker)
+
+
+def _starts_with_context_suffix(text: str, start: int) -> bool:
+    tail = text[start:]
+    return any(tail.startswith(item) for item in _LONG_NAME_CONTEXT_SUFFIXES)
+
+
+def _extend_name_core(text: str, start: int) -> int:
+    end = start
+    while end < len(text):
+        if _starts_with_context_suffix(text, end):
+            break
+        next_end = _consume_identity_suffixes(text, end)
+        if next_end != end:
+            end = next_end
+            continue
+        char = text[end]
+        if char in _SHORT_NAME_CONTEXT_CHARS:
+            break
+        end += 1
+    return end
+
+
+def _long_name_signature(translation: str, shared_anchor: str) -> str:
+    """Return a plausible translated-name chunk for long CJK names.
+
+    Examples:
+    - `我去哈德逊奥克斯` and `她讨厌哈德逊奥克斯` -> `哈德逊奥克斯` (no issue)
+    - `哈德逊奥克斯镇很安静` and `哈德逊奥克斯市看起来空荡` -> different chunks (issue)
+    - `哈德逊奥克斯` and `哈德逊橡树` -> different chunks (issue)
+    """
     cjk_text = _cjk_compact_text(translation)
     if not shared_anchor or shared_anchor not in cjk_text:
-        return cjk_text or _compact_whitespace(translation)
-    before, after = _anchor_neighbors(cjk_text, shared_anchor)
-    source_starts_with_name, source_ends_with_name = _source_name_boundaries(source_text, proper_name)
-    if source_ends_with_name and not after:
-        return shared_anchor
-    if source_starts_with_name and not before:
-        return shared_anchor
-    if _is_context_boundary(before) and _is_context_boundary(after):
-        return shared_anchor
-    return cjk_text or _compact_whitespace(translation)
+        return ""
+    start = cjk_text.find(shared_anchor)
+    end = start + len(shared_anchor)
+    end = _consume_identity_suffixes(cjk_text, end)
+    end = _extend_name_core(cjk_text, end)
+    return cjk_text[start:end] or shared_anchor
 
 
 def terminology_score(case: CorpusCase, candidate_by_id: dict[str, str]) -> dict[str, Any]:
@@ -407,19 +491,14 @@ def proper_name_consistency_score(
         else:
             shared_anchor = _long_name_cjk_anchor(cjk_translations)
         if not shared_anchor and not _is_short_source_name(proper_name):
-            shared_anchor = _shared_cjk_anchor(cjk_translations)
+            shared_anchor = _fallback_long_name_anchor(cjk_translations)
 
         target_forms = []
         for item in observations:
             if _is_short_source_name(proper_name):
                 signature = _target_signature(item["translation"], shared_anchor)
             else:
-                signature = _long_name_signature(
-                    item["source_text"],
-                    proper_name,
-                    item["translation"],
-                    shared_anchor,
-                )
+                signature = _long_name_signature(item["translation"], shared_anchor)
             item["target_signature"] = signature
             item["target_anchor"] = shared_anchor
             if signature not in target_forms:
