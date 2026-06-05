@@ -109,34 +109,6 @@ _LONG_NAME_IDENTITY_PREFIXES = (
     "北",
     "中",
 )
-_LONG_NAME_CONTEXT_SUFFIXES = (
-    "附近",
-    "旁边",
-    "边上",
-    "周围",
-    "外面",
-    "里面",
-    "居民",
-    "的人",
-    "那里",
-    "这里",
-    "很",
-    "真",
-    "太",
-    "都",
-    "也",
-    "还",
-    "又",
-    "呢",
-    "吗",
-    "看起来",
-    "空荡",
-    "安静",
-    "喜欢",
-    "讨厌",
-    "到了",
-    "住在",
-)
 
 
 def _by_id(blocks: list[dict[str, str]], text_key: str) -> dict[str, str]:
@@ -352,27 +324,6 @@ def _consume_identity_prefixes(text: str, start: int) -> int:
         begin -= len(marker)
 
 
-def _starts_with_context_suffix(text: str, start: int) -> bool:
-    tail = text[start:]
-    return any(tail.startswith(item) for item in _LONG_NAME_CONTEXT_SUFFIXES)
-
-
-def _extend_name_core(text: str, start: int) -> int:
-    end = start
-    while end < len(text):
-        if _starts_with_context_suffix(text, end):
-            break
-        next_end = _consume_identity_suffixes(text, end)
-        if next_end != end:
-            end = next_end
-            continue
-        char = text[end]
-        if char in _SHORT_NAME_CONTEXT_CHARS:
-            break
-        end += 1
-    return end
-
-
 def _long_name_signature(translation: str, shared_anchor: str) -> str:
     """Return a plausible translated-name chunk for long CJK names.
 
@@ -392,7 +343,8 @@ def _long_name_signature(translation: str, shared_anchor: str) -> str:
     start = _consume_identity_prefixes(cjk_text, anchor_start)
     end = anchor_start + len(shared_anchor)
     end = _consume_identity_suffixes(cjk_text, end)
-    end = _extend_name_core(cjk_text, end)
+    if len(shared_anchor) < 4:
+        return cjk_text or _compact_whitespace(translation)
     return cjk_text[start:end] or shared_anchor
 
 

@@ -240,6 +240,42 @@ def test_proper_name_consistency_score_allows_ordinary_adjacent_suffix_context()
     assert result["issues"] == []
 
 
+def test_proper_name_consistency_score_allows_ordinary_predicate_suffix_context():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Hudson Oaks is beautiful.",
+            "2": "Hudson Oaks is quiet.",
+        },
+        {
+            "1": "哈德逊奥克斯美极了",
+            "2": "哈德逊奥克斯很安静",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
+def test_proper_name_consistency_score_allows_descriptive_suffix_context():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Hudson Oaks is bright tonight.",
+            "2": "Hudson Oaks is quiet.",
+        },
+        {
+            "1": "哈德逊奥克斯灯火通明",
+            "2": "哈德逊奥克斯很安静",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
 def test_proper_name_consistency_score_flags_longer_shared_prefix_extension():
     from app.evaluation.metrics import proper_name_consistency_score
 
