@@ -66,7 +66,12 @@ DEFAULT_CONFIG = {
         "full_doc_mode": False,
         "use_translation_memory": True,
         "use_phrase_library": True,
+        "memory_retrieval_backend": "auto",
+        "phrase_retrieval_backend": "auto",
+        "max_memory_examples": 6,
+        "max_phrase_examples": 6,
         "qa_auto_repair": False,
+        "qa_auto_repair_rounds": 1,
     },
     "providers": {
         "claude_cli": {

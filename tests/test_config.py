@@ -34,6 +34,16 @@ def test_default_config_translation_has_full_doc_mode():
     assert DEFAULT_CONFIG["translation"]["full_doc_mode"] is False
 
 
+def test_default_config_translation_has_retrieval_settings():
+    translation = DEFAULT_CONFIG["translation"]
+
+    assert translation["memory_retrieval_backend"] == "auto"
+    assert translation["phrase_retrieval_backend"] == "auto"
+    assert translation["max_memory_examples"] == 6
+    assert translation["max_phrase_examples"] == 6
+    assert translation["qa_auto_repair_rounds"] == 1
+
+
 def test_default_config_uses_packaging_friendly_asr_model():
     assert DEFAULT_CONFIG["asr"]["model_size"] == "large-v3-turbo"
 
@@ -67,6 +77,11 @@ def test_config_loads_and_merges_partial_saved_config(tmp_path, monkeypatch):
     assert loaded["providers"]["claude_cli"]["enabled"] is True
     assert loaded["providers"]["codex_cli"]["enabled"] is True
     assert loaded["translation"]["full_doc_mode"] is False
+    assert loaded["translation"]["memory_retrieval_backend"] == "auto"
+    assert loaded["translation"]["phrase_retrieval_backend"] == "auto"
+    assert loaded["translation"]["max_memory_examples"] == 6
+    assert loaded["translation"]["max_phrase_examples"] == 6
+    assert loaded["translation"]["qa_auto_repair_rounds"] == 1
 
 
 def test_config_load_ignores_non_object_saved_sections(tmp_path, monkeypatch):

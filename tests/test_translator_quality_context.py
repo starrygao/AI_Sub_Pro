@@ -94,6 +94,141 @@ def test_build_prompt_skips_quality_context_when_disabled(monkeypatch, tmp_path)
     assert "Subtitle phrase examples" not in prompt
 
 
+def test_build_prompt_respects_retrieval_example_limits_and_backends(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.engines import translator as tmod
+    from app.engines.knowledge import KnowledgeBase
+
+    class DummyMemoryStore:
+        def __init__(self):
+            self.calls = []
+
+        def retrieve(
+            self,
+            source_text,
+            *,
+            source_language,
+            target_language,
+            limit,
+            backend,
+        ):
+            self.calls.append({
+                "source_text": source_text,
+                "source_language": source_language,
+                "target_language": target_language,
+                "limit": limit,
+                "backend": backend,
+            })
+            return [
+                SimpleNamespace(
+                    source_text="Need backup now.",
+                    machine_translation="现在需要备份。",
+                    final_translation="现在立刻支援。",
+                    project_name="Dummy",
+                    score=0.98,
+                ),
+                SimpleNamespace(
+                    source_text="Need backup now.",
+                    machine_translation="现在需要备份。",
+                    final_translation="赶紧来支援。",
+                    project_name="Dummy",
+                    score=0.95,
+                ),
+            ]
+
+    class DummyPhraseLibrary:
+        def __init__(self):
+            self.calls = []
+
+        def retrieve(
+            self,
+            source_text,
+            *,
+            source_language,
+            target_language,
+            limit,
+            preferred_tags,
+            backend,
+        ):
+            self.calls.append({
+                "source_text": source_text,
+                "source_language": source_language,
+                "target_language": target_language,
+                "limit": limit,
+                "preferred_tags": preferred_tags,
+                "backend": backend,
+            })
+            return [
+                SimpleNamespace(
+                    source_text="Need backup now.",
+                    target_text="马上叫增援。",
+                    source_name="dummy-pack",
+                    license="local",
+                    pack_id="dummy-pack.v1",
+                    tags="crime",
+                    score=0.91,
+                ),
+                SimpleNamespace(
+                    source_text="Need backup now.",
+                    target_text="快点呼叫支援。",
+                    source_name="dummy-pack",
+                    license="local",
+                    pack_id="dummy-pack.v1",
+                    tags="crime",
+                    score=0.89,
+                ),
+            ]
+
+    memory = DummyMemoryStore()
+    phrases = DummyPhraseLibrary()
+    monkeypatch.setattr(tmod, "TranslationMemoryStore", lambda: memory)
+    monkeypatch.setattr(tmod, "PhraseLibrary", lambda: phrases)
+    monkeypatch.setattr(tmod, "_shared_kb", KnowledgeBase(), raising=False)
+
+    config = _translator_config()
+    config["translation"]["memory_retrieval_backend"] = "ngram"
+    config["translation"]["max_memory_examples"] = 1
+    config["translation"]["max_phrase_examples"] = 1
+
+    translator = tmod.SubtitleTranslator(config)
+    prompt = translator._build_prompt(
+        "简体中文",
+        {
+            "name": "Police Case",
+            "original_language": "en",
+            "plot": "A detective works a crime scene.",
+        },
+        None,
+        [],
+        [],
+        items=[
+            {"id": 1, "original": "Need backup now."},
+            {"id": 2, "original": "Make it count."},
+        ],
+    )
+
+    assert memory.calls == [{
+        "source_text": "Need backup now.",
+        "source_language": "en",
+        "target_language": "zh-CN",
+        "limit": 1,
+        "backend": "ngram",
+    }]
+    assert phrases.calls == [{
+        "source_text": "Need backup now.",
+        "source_language": "en",
+        "target_language": "zh-CN",
+        "limit": 1,
+        "preferred_tags": {"crime"},
+        "backend": "auto",
+    }]
+    assert "现在立刻支援。" in prompt
+    assert "赶紧来支援。" not in prompt
+    assert "马上叫增援。" in prompt
+    assert "快点呼叫支援。" not in prompt
+
+
 def test_build_prompt_uses_bundled_phrase_pack_examples(monkeypatch, tmp_path):
     from app.engines import translator as tmod
     from app.engines.knowledge import KnowledgeBase
