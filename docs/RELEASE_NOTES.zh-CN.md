@@ -2,6 +2,41 @@
 
 语言：[English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.0 - 翻译准确度评测与检索升级
+
+主要内容：
+
+- 新增本地字幕 A/B 评测 CLI，可对原文、旧译文、新译文和可选参考字幕生成
+  JSON 与 Markdown 准确度报告。
+- 新增更安全的本地双语语料导入流程，支持 JSONL、TSV、CSV，要求 source、
+  license、语言对元数据，并提供行数限制、重复处理和导入摘要。
+- 升级口语库和翻译记忆检索：可用时使用 SQLite FTS5，不可用时回退到确定性
+  n-gram 评分，并加入有界评分、backend trace 和检索例句数量限制。
+- 新增确定性专名一致性检查，针对重复出现的源语言名称检测译名不一致，并写入
+  翻译 QA 报告。
+- 新增保守 QA 自动修复轮次，最多两轮；当修复 provider 只返回部分行时，会保留
+  未返回行的原译文，避免数据丢失。
+- 已补充英文和简体中文使用说明，覆盖本地评测和语料导入工作流。
+
+质量验证：
+
+- 完整测试套件已通过：`1050 passed in 64.46s`。
+- 翻译准确度 focused suite 已通过：`158 passed in 4.19s`。
+- 本地 `Brilliant Minds` 评测报告生成已通过，并在
+  `/tmp/ai-sub-pro-brilliant-minds-quality` 写入
+  `translation_accuracy_report.json` 和 `translation_accuracy_report.md`。
+
+安装包：
+
+- 已为 macOS 用户附加 `AI_Sub_Pro_v1.3.0.dmg`，并提供对应的
+  `AI_Sub_Pro_v1.3.0.dmg.sha256` 校验文件和 `release-size-report.json`。
+- 附带的 `.sha256` 文件和 `release-size-report.json` 与 DMG 来自同一次本地
+  macOS 构建。
+- 附带的 macOS 安装包是 base app build，不包含本地 Whisper 模型文件，也不包含
+  optional ASR backend packages / 可选 ASR 后端包。
+- Windows 安装包需要在 Windows 机器上运行 `build_win.bat` 生成；当前 release
+  暂未附带预编译 Windows 安装包，请先使用源码安装。
+
 ## v1.2.2 - 扩展内置口语库
 
 主要内容：

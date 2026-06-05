@@ -57,7 +57,7 @@ async def lifespan(_: FastAPI):
 
 
 # Create FastAPI app
-app = FastAPI(title="AI Sub Pro", version="1.2.2", lifespan=lifespan)
+app = FastAPI(title="AI Sub Pro", version="1.3.0", lifespan=lifespan)
 
 
 def _cors_origins() -> list[str]:

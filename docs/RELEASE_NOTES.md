@@ -2,6 +2,47 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.0 - Translation Accuracy Evaluation And Retrieval Upgrade
+
+Highlights:
+
+- Added a local subtitle A/B comparison CLI that writes JSON and Markdown
+  accuracy reports for source, old output, new output, and optional reference
+  subtitles.
+- Added safer local bilingual corpus import for JSONL, TSV, and CSV files with
+  required source, license, language-pair metadata, row limits, duplicate
+  handling, and import summaries.
+- Upgraded phrase library and translation memory retrieval with SQLite FTS5
+  when available plus deterministic n-gram fallback, bounded scoring, backend
+  trace metadata, and retrieval example limits.
+- Added deterministic proper-name consistency checks for recurring source names
+  and surfaced inferred inconsistencies in translation QA reports.
+- Added conservative QA auto-repair rounds, capped at two attempts, with a
+  guard that preserves existing translations when repair providers return
+  partial responses.
+- Documented the new local evaluation and corpus-import workflows in English
+  and Simplified Chinese.
+
+Quality/Verification:
+
+- Full test suite passed: `1050 passed in 64.46s`.
+- Focused translation-accuracy suite passed: `158 passed in 4.19s`.
+- Local `Brilliant Minds` evaluation report generation passed and wrote
+  `translation_accuracy_report.json` plus `translation_accuracy_report.md`
+  under `/tmp/ai-sub-pro-brilliant-minds-quality`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.0.dmg` is attached for macOS users, with a matching
+  `AI_Sub_Pro_v1.3.0.dmg.sha256` checksum file and
+  `release-size-report.json`.
+- The attached `.sha256` file and `release-size-report.json` are generated
+  from the same local macOS build as the attached DMG.
+- The attached macOS package is the base app build. It does not bundle local
+  Whisper model files or optional ASR backend packages.
+- Windows packaging currently requires a Windows machine and `build_win.bat`;
+  no prebuilt Windows installer is attached to this release.
+
 ## v1.2.2 - Expanded Phrase Library Packs
 
 Highlights:
