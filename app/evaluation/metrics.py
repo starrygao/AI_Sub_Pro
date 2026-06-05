@@ -38,6 +38,26 @@ _COMMON_TITLE_WORDS = {
     "hi",
     "welcome",
 }
+_SHORT_NAME_CONTEXT_CHARS = {
+    "了",
+    "到",
+    "看",
+    "见",
+    "来",
+    "跑",
+    "走",
+    "说",
+    "在",
+    "去",
+    "是",
+    "有",
+    "会",
+    "想",
+    "要",
+    "让",
+    "把",
+    "被",
+}
 
 
 def _by_id(blocks: list[dict[str, str]], text_key: str) -> dict[str, str]:
@@ -193,7 +213,7 @@ def _shared_cjk_anchor(translations: list[str]) -> str:
 def _short_name_cjk_anchor(translations: list[str]) -> str:
     common = _common_cjk_substrings(translations, min_length=2)
     for anchor in common:
-        if len(anchor) <= 3:
+        if len(anchor) <= 3 and not any(char in _SHORT_NAME_CONTEXT_CHARS for char in anchor):
             return anchor
     return ""
 

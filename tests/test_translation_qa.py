@@ -123,3 +123,16 @@ def test_quality_checks_do_not_flag_short_consistent_cjk_names():
     report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)
 
     assert "proper_name_inconsistent" not in report.summary["by_type"]
+
+
+def test_quality_checks_flag_inconsistent_short_cjk_names_with_shared_context():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Li Na arrived.", "李娜到了。"),
+        _block(2, "Li Na arrived too.", "丽娜到了。"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)
+
+    assert report.summary["by_type"]["proper_name_inconsistent"] == 1

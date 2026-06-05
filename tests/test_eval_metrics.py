@@ -207,6 +207,24 @@ def test_proper_name_consistency_score_allows_short_shared_cjk_names_in_differen
     assert result["issues"] == []
 
 
+def test_proper_name_consistency_score_flags_inconsistent_short_name_with_shared_context():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Li Na arrived.",
+            "2": "Li Na arrived too.",
+        },
+        {
+            "1": "李娜到了。",
+            "2": "丽娜到了。",
+        },
+    )
+
+    assert result["issue_count"] == 1
+    assert result["issues"][0]["source"] == "Li Na"
+
+
 def test_proper_name_consistency_score_ignores_common_sentence_initial_phrases():
     from app.evaluation.metrics import proper_name_consistency_score
 
