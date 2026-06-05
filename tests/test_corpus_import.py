@@ -355,6 +355,53 @@ def test_import_delimited_corpus_rejects_malformed_quoted_rows(
         )
 
 
+@pytest.mark.parametrize(
+    ("filename", "input_format", "body"),
+    [
+        (
+            "phrases.csv",
+            "csv",
+            'source,target\nHello,你好\nBroken,"unterminated\n',
+        ),
+        (
+            "phrases.tsv",
+            "tsv",
+            'source\ttarget\nHello\t你好\nBroken\t"unterminated\n',
+        ),
+    ],
+)
+def test_import_delimited_corpus_stops_at_cap_before_malformed_quoted_row(
+    tmp_path,
+    filename,
+    input_format,
+    body,
+):
+    corpus = tmp_path / filename
+    corpus.write_text(body, encoding="utf-8")
+
+    report = import_corpus(
+        corpus,
+        input_format=input_format,
+        source_name="unit-cap",
+        license_name="local-test",
+        source_language="en",
+        target_language="zh-CN",
+        max_rows=1,
+        dry_run=True,
+    )
+
+    assert report.accepted == 1
+    assert report.rejected == 0
+    assert report.duplicates == 0
+    assert report.limited is True
+    assert report.errors == []
+    assert report.sampled_rows == [{
+        "row_number": 2,
+        "source_text": "Hello",
+        "target_text": "你好",
+    }]
+
+
 def test_import_corpus_cli_rejects_malformed_quoted_csv(tmp_path):
     corpus = tmp_path / "phrases.csv"
     corpus.write_text(

@@ -84,8 +84,8 @@ def import_corpus(
 
     Dry-run validates and samples file rows only; it does not compare against
     an existing phrase database unless the caller explicitly does that.
-    ``limited`` means processing stopped as soon as ``max_rows`` accepted rows
-    were reached, before scanning the rest of the file.
+    ``limited`` means the importer hit the accepted-row cap and stopped without
+    checking whether more rows remained in the file.
     """
     metadata = _validate_metadata(
         input_format=input_format,
@@ -106,9 +106,11 @@ def import_corpus(
     report = CorpusImportReport()
     seen: set[tuple[str, str, str, str, str]] = set()
 
-    for row_number, row, parser_error in _iter_rows(corpus_path, metadata):
-        if report.accepted >= metadata.max_rows:
-            report.limited = True
+    rows = iter(_iter_rows(corpus_path, metadata))
+    while report.accepted < metadata.max_rows:
+        try:
+            row_number, row, parser_error = next(rows)
+        except StopIteration:
             break
         if parser_error is not None:
             report.rejected += 1
@@ -160,6 +162,9 @@ def import_corpus(
             source_text=source_text,
             target_text=target_text,
         )
+
+    if report.accepted >= metadata.max_rows:
+        report.limited = True
 
     return report
 
