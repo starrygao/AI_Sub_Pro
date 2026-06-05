@@ -33,9 +33,8 @@ Packages:
 - `AI_Sub_Pro_v1.2.1.dmg` is attached for macOS users, with a matching
   `AI_Sub_Pro_v1.2.1.dmg.sha256` checksum file and
   `release-size-report.json`.
-- Local release artifact verification recorded SHA256
-  `ec2809c0663359dbe6d55f24e87f75648454a9995b147c4a443409f683094efc` and
-  size `88,498,628` bytes before tagging.
+- The attached `.sha256` file and `release-size-report.json` are generated
+  from the same GitHub Actions build as the attached DMG.
 - The attached macOS package is the base app build. It does not bundle local
   Whisper model files or optional ASR backend packages.
 - Windows packaging currently requires a Windows machine and `build_win.bat`;

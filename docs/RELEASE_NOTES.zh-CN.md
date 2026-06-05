@@ -27,9 +27,8 @@
 
 - 已为 macOS 用户附加 `AI_Sub_Pro_v1.2.1.dmg`，并提供对应的
   `AI_Sub_Pro_v1.2.1.dmg.sha256` 校验文件和 `release-size-report.json`。
-- tag 前本地 release artifact 校验记录 SHA256
-  `ec2809c0663359dbe6d55f24e87f75648454a9995b147c4a443409f683094efc`，大小
-  `88,498,628` bytes。
+- 附带的 `.sha256` 文件和 `release-size-report.json` 与 DMG 来自同一次
+  GitHub Actions 构建。
 - 附带的 macOS 安装包是 base app build，不包含本地 Whisper 模型文件，也不包含
   optional ASR backend packages / 可选 ASR 后端包。
 - Windows 安装包需要在 Windows 机器上运行 `build_win.bat` 生成；当前 release
