@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASE_VERSION = "1.3.0"
+RELEASE_VERSION = "1.3.1"
 
 
 def test_release_workflow_supports_pr_dry_run_tag_release_and_uploads():
@@ -130,6 +130,7 @@ def test_release_version_is_consistent_across_packaging_and_docs():
     electron_package = json.loads((ROOT / "electron" / "package.json").read_text(encoding="utf-8"))
     make_dmg = (ROOT / "make_dmg.sh").read_text(encoding="utf-8")
     app_main = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
+    app_version = (ROOT / "app" / "version.py").read_text(encoding="utf-8")
     usage_en = (ROOT / "docs" / "USAGE.md").read_text(encoding="utf-8")
     usage_zh = (ROOT / "docs" / "USAGE.zh-CN.md").read_text(encoding="utf-8")
     release_notes_en = (ROOT / "docs" / "RELEASE_NOTES.md").read_text(encoding="utf-8")
@@ -141,7 +142,8 @@ def test_release_version_is_consistent_across_packaging_and_docs():
     assert electron_package["version"] == RELEASE_VERSION
     assert f'VERSION="{RELEASE_VERSION}"' in make_dmg
     assert f"AI_Sub_Pro_v{RELEASE_VERSION}.dmg" in make_dmg
-    assert f'version="{RELEASE_VERSION}"' in app_main
+    assert "version=APP_VERSION" in app_main
+    assert f'APP_VERSION = "{RELEASE_VERSION}"' in app_version
 
     for doc in (usage_en, usage_zh, release_notes_en, release_notes_zh):
         assert f"v{RELEASE_VERSION}" in doc

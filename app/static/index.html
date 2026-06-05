@@ -1344,6 +1344,10 @@
 
         <div id="settings-storage-release" class="glass rounded-2xl p-5">
           <h3 class="text-[13px] font-semibold mb-2">存储 / 发布</h3>
+          <div class="mb-3 flex items-center justify-between gap-3 rounded-xl border border-surface-200 px-3 py-2">
+            <span class="text-[12px] text-surface-500">当前版本</span>
+            <strong class="text-[13px] text-surface-700" x-text="settingsVersionLabel()"></strong>
+          </div>
           <p class="text-[12px] text-surface-500 leading-relaxed">
             项目数据保存在本机用户数据目录。发布包默认是基础 app；离线 ASR 模型和重型依赖通过可选包或本机下载补齐。
           </p>

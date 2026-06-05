@@ -2,6 +2,32 @@
 
 语言：[English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.1 - 设置页版本号显示补丁
+
+主要内容：
+
+- 在设置页“存储 / 发布”区域新增当前 app 版本号，方便确认本机正在运行的安装版。
+- `GET /api/settings` 新增只读 `app_info` 元数据，包含 app 名称和版本号。
+- 保存设置时会剥离只读 app 元数据，避免把版本号写入用户 `config.json`。
+- 后端 FastAPI 版本改为统一读取 `app/version.py`，后续发版时 UI 和 API 使用同一个
+  版本来源。
+
+质量验证：
+
+- 完整测试套件已通过：`1052 passed in 72.45s`。
+- 设置/打包 focused suite 已通过：`164 passed in 12.50s`。
+- 本机安装版验证已通过：`/api/settings` 的 `app_info` 返回
+  `{"name": "AI Sub Pro", "version": "1.3.1"}`。
+
+安装包：
+
+- 已为 macOS 用户附加 `AI_Sub_Pro_v1.3.1.dmg`，并提供对应的
+  `AI_Sub_Pro_v1.3.1.dmg.sha256` 校验文件和 `release-size-report.json`。
+- 附带的 macOS 安装包是 base app build，不包含本地 Whisper 模型文件，也不包含
+  optional ASR backend packages / 可选 ASR 后端包。
+- Windows 安装包需要在 Windows 机器上运行 `build_win.bat` 生成；当前 release
+  暂未附带预编译 Windows 安装包，请先使用源码安装。
+
 ## v1.3.0 - 翻译准确度评测与检索升级
 
 主要内容：

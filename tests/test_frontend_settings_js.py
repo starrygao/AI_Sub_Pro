@@ -43,6 +43,7 @@ def test_load_settings_applies_workflow_language_defaults_to_project_actions():
                 target_language: 'Japanese',
               },
               providers: { claude_cli: { enabled: true, model: 'claude-sonnet-4-6' } },
+              app_info: { name: 'AI Sub Pro', version: '1.3.1' },
             };
           };
 
@@ -53,6 +54,9 @@ def test_load_settings_applies_workflow_language_defaults_to_project_actions():
           }
           if (state.targetLang !== 'Japanese') {
             throw new Error(`expected target selector to follow settings, got ${state.targetLang}`);
+          }
+          if (state.settingsVersionLabel() !== 'v1.3.1') {
+            throw new Error(`expected version label from settings response, got ${state.settingsVersionLabel()}`);
           }
         })().catch((err) => {
           console.error(err.message);
@@ -147,9 +151,13 @@ def test_save_settings_applies_workflow_language_defaults_to_project_actions():
             primary_provider: 'openai',
             target_language: 'English',
           };
-          state.api = async (url, method) => {
+          state.settings.app_info = { name: 'AI Sub Pro', version: '1.3.1' };
+          state.api = async (url, method, body) => {
             if (url !== '/api/settings' || method !== 'POST') {
               throw new Error(`unexpected save URL ${method} ${url}`);
+            }
+            if (body.app_info) {
+              throw new Error(`app_info should not be saved: ${JSON.stringify(body.app_info)}`);
             }
             return {status: 'ok'};
           };
@@ -1693,10 +1701,17 @@ def test_frontend_save_settings_blocks_duplicate_submits_while_pending():
           state.toast = (msg, type) => toasts.push({msg, type});
           state.refreshSystemCheck = async () => { refreshed += 1; };
           state.settings.translation.primary_provider = 'openai';
+          state.settings.app_info = { name: 'AI Sub Pro', version: '1.3.1' };
           state.api = async (url, method, body) => {
             calls += 1;
-            if (url !== '/api/settings' || method !== 'POST' || body !== state.settings) {
+            if (url !== '/api/settings' || method !== 'POST') {
               throw new Error(`unexpected save call ${method} ${url}`);
+            }
+            if (body === state.settings || body.app_info) {
+              throw new Error(`save payload should be a sanitized copy, got ${JSON.stringify(body)}`);
+            }
+            if (body.translation?.primary_provider !== 'openai') {
+              throw new Error(`expected translation settings to be saved, got ${JSON.stringify(body)}`);
             }
             await new Promise((resolve) => { releaseApi = resolve; });
             return {ok: true};

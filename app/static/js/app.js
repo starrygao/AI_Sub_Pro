@@ -25,6 +25,7 @@ function app() {
         claude_cli: { enabled: true, model: 'claude-opus-4-7', timeout_sec: 180 },
         codex_cli: { enabled: true, model: 'gpt-5.5', timeout_sec: 180 },
       },
+      app_info: { name: 'AI Sub Pro', version: '' },
     },
     // Knowledge-base editor state
     kbProjects: [],            // list from GET /api/knowledge/projects
@@ -615,6 +616,7 @@ function app() {
         trailer: mergeSection('trailer'),
         asr: mergeSection('asr'),
         translation: mergeSection('translation'),
+        app_info: mergeSection('app_info'),
         providers: {
           ...mergeSection('providers'),
           claude_cli: {
@@ -645,7 +647,27 @@ function app() {
         ? normalized.asr.mode.trim()
         : '';
       normalized.asr.mode = allowedAsrModes.includes(asrMode) ? asrMode : 'speed';
+      const appVersion = typeof normalized.app_info.version === 'string'
+        ? normalized.app_info.version.trim()
+        : '';
+      normalized.app_info.version = appVersion;
+      normalized.app_info.name = typeof normalized.app_info.name === 'string' && normalized.app_info.name.trim()
+        ? normalized.app_info.name.trim()
+        : 'AI Sub Pro';
       return normalized;
+    },
+
+    settingsVersionLabel() {
+      const version = typeof this.settings?.app_info?.version === 'string'
+        ? this.settings.app_info.version.trim()
+        : '';
+      return version ? `v${version}` : '未知';
+    },
+
+    settingsPayload() {
+      const payload = JSON.parse(JSON.stringify(this.settings || {}));
+      if (payload && typeof payload === 'object') delete payload.app_info;
+      return payload;
     },
 
     applyWorkflowDefaultsFromSettings() {
@@ -2457,7 +2479,7 @@ function app() {
       if (this.settingsSaving) return;
       this.settingsSaving = true;
       try {
-        await this.api('/api/settings', 'POST', this.settings);
+        await this.api('/api/settings', 'POST', this.settingsPayload());
         this.applyWorkflowDefaultsFromSettings();
         this.toast('设置已保存');
         await this.refreshSystemCheck({ force: true });

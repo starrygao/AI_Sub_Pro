@@ -74,6 +74,39 @@ def test_codex_cli_status_endpoint_tolerates_probe_errors():
     assert data["logged_in"] is False
 
 
+def test_get_settings_includes_read_only_app_version():
+    from app.main import app
+    client = TestClient(app)
+
+    r = client.get("/api/settings")
+
+    assert r.status_code == 200
+    app_info = r.json()["app_info"]
+    assert app_info["name"] == "AI Sub Pro"
+    assert app_info["version"] == "1.3.1"
+
+
+def test_update_settings_does_not_persist_read_only_app_info():
+    from app.main import app
+    client = TestClient(app)
+
+    with patch("app.api.settings.Config.update", return_value=None) as update:
+        r = client.post("/api/settings", json={
+            "app_info": {
+                "name": "AI Sub Pro",
+                "version": "999.0.0",
+            },
+            "translation": {
+                "target_language": "English",
+            },
+        })
+
+    assert r.status_code == 200
+    payload = update.call_args.args[0]
+    assert "app_info" not in payload
+    assert payload["translation"]["target_language"] == "English"
+
+
 def test_test_key_supports_claude_cli():
     """POST /api/settings/test-key should accept provider=claude_cli (no api_key needed)."""
     from app.main import app

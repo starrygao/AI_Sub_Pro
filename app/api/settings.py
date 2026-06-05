@@ -1,6 +1,7 @@
 """
 Settings and knowledge base API routes.
 """
+import copy
 import logging
 import math
 
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from app.config import Config
+from app.version import APP_VERSION
 import app.engines.providers  # noqa: F401  (load provider modules before concurrent requests)
 from app.engines.asr_capabilities import ASR_MODES, detect_asr_capabilities, recommend_asr_settings
 from app.engines.knowledge import _get_singleton as _kb_singleton, invalidate_translator_kb
@@ -338,7 +340,12 @@ def require_translation_ready() -> dict:
 @router.get("/settings")
 def get_settings():
     """Get current configuration."""
-    return Config.to_dict()
+    settings = Config.to_dict()
+    settings["app_info"] = {
+        "name": "AI Sub Pro",
+        "version": APP_VERSION,
+    }
+    return settings
 
 
 def _validate_settings_update(data: dict) -> None:
@@ -460,8 +467,11 @@ def _validate_settings_update(data: dict) -> None:
 @router.post("/settings")
 def update_settings(data: dict):
     """Update configuration (partial update)."""
-    _validate_settings_update(data)
-    Config.update(data)
+    payload = copy.deepcopy(data) if isinstance(data, dict) else data
+    if isinstance(payload, dict):
+        payload.pop("app_info", None)
+    _validate_settings_update(payload)
+    Config.update(payload)
     return {"status": "ok"}
 
 

@@ -40,6 +40,7 @@ log = logging.getLogger(__name__)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.config import Config
+from app.version import APP_VERSION
 from app.utils.media import check_ffmpeg
 from app.utils.project_store import PID_PATTERN, project_dir
 from app.engines.scheduler import get_progress as get_scheduler_progress
@@ -57,7 +58,7 @@ async def lifespan(_: FastAPI):
 
 
 # Create FastAPI app
-app = FastAPI(title="AI Sub Pro", version="1.3.0", lifespan=lifespan)
+app = FastAPI(title="AI Sub Pro", version=APP_VERSION, lifespan=lifespan)
 
 
 def _cors_origins() -> list[str]:

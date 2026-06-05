@@ -2,6 +2,36 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.1 - Settings Version Display Patch
+
+Highlights:
+
+- Added the current app version to the Settings > Storage / Release section so
+  users can confirm which installed build is running.
+- Added read-only `app_info` metadata to `GET /api/settings`, including app
+  name and version.
+- Prevented read-only app metadata from being persisted when saving settings,
+  keeping user `config.json` focused on editable preferences.
+- Centralized the backend FastAPI version on `app/version.py` so future release
+  bumps update the UI and API from the same source.
+
+Quality/Verification:
+
+- Full test suite passed: `1052 passed in 72.45s`.
+- Focused settings/package suite passed: `164 passed in 12.50s`.
+- Local installed app verification passed: `/api/settings` returns
+  `{"name": "AI Sub Pro", "version": "1.3.1"}` under `app_info`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.1.dmg` is attached for macOS users, with a matching
+  `AI_Sub_Pro_v1.3.1.dmg.sha256` checksum file and
+  `release-size-report.json`.
+- The attached macOS package is the base app build. It does not bundle local
+  Whisper model files or optional ASR backend packages.
+- Windows packaging currently requires a Windows machine and `build_win.bat`;
+  no prebuilt Windows installer is attached to this release.
+
 ## v1.3.0 - Translation Accuracy Evaluation And Retrieval Upgrade
 
 Highlights:
