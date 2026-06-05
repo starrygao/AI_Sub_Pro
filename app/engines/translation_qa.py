@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional
 
+from app.evaluation.metrics import proper_name_consistency_score
 from app.engines.kb_models import ProjectKb
 from app.utils.project_store import atomic_write_json
 
@@ -111,6 +112,8 @@ def run_quality_checks(
     seen_ids = set()
     kb_terms = _kb_terms(project_kb)
     chinese_target = _is_chinese_target(target_language)
+    source_by_id: dict[str, str] = {}
+    translation_by_id: dict[str, str] = {}
 
     for block in blocks or []:
         if getattr(block, "filtered", False):
@@ -118,6 +121,11 @@ def run_quality_checks(
         block_id = getattr(block, "index", None)
         source = _clean_text(getattr(block, "text", ""))
         translation = _clean_text(getattr(block, "translation", ""))
+
+        if isinstance(block_id, int):
+            block_key = str(block_id)
+            source_by_id.setdefault(block_key, source)
+            translation_by_id.setdefault(block_key, translation)
 
         if isinstance(block_id, int):
             if block_id in seen_ids:
@@ -186,6 +194,27 @@ def run_quality_checks(
                     translation=translation,
                     expected=term_target,
                 ))
+
+    proper_name_issues = proper_name_consistency_score(source_by_id, translation_by_id)
+    for item in proper_name_issues["issues"]:
+        observations = item.get("observations", [])
+        if not observations:
+            continue
+        first_observation = observations[0]
+        first_block_id = first_observation.get("block_id")
+        block_id = int(first_block_id) if str(first_block_id).isdigit() else None
+        target_forms = [form for form in item.get("target_forms", []) if form]
+        message = f"inferred proper name {item['source']} uses inconsistent target forms"
+        if target_forms:
+            message = f"{message}: {', '.join(target_forms)}"
+        issues.append(QualityIssue(
+            type="proper_name_inconsistent",
+            severity="warning",
+            block_id=block_id,
+            message=message,
+            source_text=item["source"],
+            translation=" / ".join(target_forms),
+        ))
 
     status = "ok" if not issues else "needs_review"
     report = TranslationQaReport(

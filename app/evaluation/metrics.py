@@ -8,6 +8,11 @@ from app.evaluation.corpus import CorpusCase
 
 
 _TAG_RE = re.compile(r"</?[a-zA-Z][^>]*>")
+_PROPER_NAME_RE = re.compile(
+    r"\b(?:[A-Z][a-z]+(?:['-][A-Za-z]+)*)(?:\s+(?:[A-Z][a-z]+(?:['-][A-Za-z]+)*)){1,}\b"
+)
+_CJK_RE = re.compile(r"[\u3400-\u9fff]+")
+_LEADING_NAME_STOPWORDS = {"A", "An", "The", "This", "That", "These", "Those"}
 
 
 def _by_id(blocks: list[dict[str, str]], text_key: str) -> dict[str, str]:
@@ -26,6 +31,84 @@ def _tags(text: str) -> list[str]:
 
 def _round(value: float) -> float:
     return round(value, 4)
+
+
+def _clean_text(value: Any) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _compact_whitespace(text: str) -> str:
+    return re.sub(r"\s+", "", _clean_text(text))
+
+
+def _is_supported_proper_name(name: str) -> bool:
+    tokens = name.split()
+    if len(tokens) < 2:
+        return False
+    if any(len(token) < 2 for token in tokens):
+        return False
+    if tokens[0] in _LEADING_NAME_STOPWORDS and len(tokens) < 3:
+        return False
+    return True
+
+
+def _extract_proper_names(source_text: str) -> list[str]:
+    return [
+        match.group(0)
+        for match in _PROPER_NAME_RE.finditer(_clean_text(source_text))
+        if _is_supported_proper_name(match.group(0))
+    ]
+
+
+def _repeated_proper_names(source_by_id: dict[str, str]) -> list[str]:
+    counts: dict[str, int] = {}
+    for source_text in source_by_id.values():
+        for name in _extract_proper_names(source_text):
+            counts[name] = counts.get(name, 0) + 1
+    return sorted(name for name, count in counts.items() if count > 1)
+
+
+def _source_context_signature(source_text: str, proper_name: str) -> str:
+    replaced = re.sub(rf"\b{re.escape(proper_name)}\b", "__name__", _clean_text(source_text))
+    lowered = replaced.lower()
+    lowered = re.sub(r"[^a-z_]+", " ", lowered)
+    return " ".join(lowered.split())
+
+
+def _cjk_compact_text(text: str) -> str:
+    return "".join(_CJK_RE.findall(_compact_whitespace(text)))
+
+
+def _cjk_substrings(text: str) -> set[str]:
+    if len(text) < 3:
+        return set()
+    limit = min(len(text), 12)
+    substrings = set()
+    for start in range(len(text)):
+        max_end = min(len(text), start + limit)
+        for end in range(start + 3, max_end + 1):
+            substrings.add(text[start:end])
+    return substrings
+
+
+def _shared_cjk_anchor(translations: list[str]) -> str:
+    counts: dict[str, int] = {}
+    for translation in translations:
+        for substring in _cjk_substrings(translation):
+            counts[substring] = counts.get(substring, 0) + 1
+    shared = [substring for substring, count in counts.items() if count > 1]
+    if not shared:
+        return ""
+    return sorted(shared, key=lambda item: (-len(item), item))[0]
+
+
+def _target_signature(translation: str, shared_anchor: str = "") -> str:
+    cjk_text = _cjk_compact_text(translation)
+    if shared_anchor and shared_anchor in cjk_text:
+        return shared_anchor
+    if cjk_text:
+        return cjk_text
+    return _compact_whitespace(translation)
 
 
 def terminology_score(case: CorpusCase, candidate_by_id: dict[str, str]) -> dict[str, Any]:
@@ -109,6 +192,74 @@ def format_score(case: CorpusCase, candidate_by_id: dict[str, str]) -> dict[str,
         "broken_ids": broken,
         "tagged_count": total_tagged,
         "breakage_rate": _round(len(broken) / total_tagged) if total_tagged else 0.0,
+    }
+
+
+def proper_name_consistency_score(
+    source_by_id: dict[str, str], candidate_by_id: dict[str, str]
+) -> dict[str, Any]:
+    normalized_source_by_id = {
+        str(block_id).strip(): _clean_text(source_text)
+        for block_id, source_text in source_by_id.items()
+        if str(block_id).strip()
+    }
+    normalized_candidate_by_id = {
+        str(block_id).strip(): _clean_text(translation)
+        for block_id, translation in candidate_by_id.items()
+        if str(block_id).strip()
+    }
+
+    issues = []
+    for proper_name in _repeated_proper_names(normalized_source_by_id):
+        matcher = re.compile(rf"\b{re.escape(proper_name)}\b")
+        observations = []
+        source_contexts = set()
+        skip_name = False
+
+        for block_id, source_text in normalized_source_by_id.items():
+            if not matcher.search(source_text):
+                continue
+            translation = normalized_candidate_by_id.get(block_id, "")
+            if not translation.strip():
+                skip_name = True
+                break
+            observations.append({
+                "block_id": block_id,
+                "source_text": source_text,
+                "translation": translation,
+            })
+            source_contexts.add(_source_context_signature(source_text, proper_name))
+
+        if skip_name or len(observations) < 2:
+            continue
+
+        shared_anchor = ""
+        if len(source_contexts) > 1:
+            shared_anchor = _shared_cjk_anchor(
+                [
+                    cjk_text
+                    for cjk_text in (_cjk_compact_text(item["translation"]) for item in observations)
+                    if cjk_text
+                ]
+            )
+
+        target_forms = []
+        for item in observations:
+            signature = _target_signature(item["translation"], shared_anchor)
+            item["target_signature"] = signature
+            if signature not in target_forms:
+                target_forms.append(signature)
+
+        if len(target_forms) > 1:
+            issues.append({
+                "source": proper_name,
+                "target_forms": target_forms,
+                "observations": observations,
+            })
+
+    return {
+        "issue_count": len(issues),
+        "issues": issues,
     }
 
 

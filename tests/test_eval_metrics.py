@@ -109,3 +109,42 @@ def test_format_score_counts_added_tags_on_untagged_source_rows():
     assert result["format"]["broken_ids"] == ["2"]
     assert result["format"]["tagged_count"] == 2
     assert result["format"]["breakage_rate"] == 0.5
+
+
+def test_proper_name_consistency_score_detects_inconsistent_target_forms():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Hudson Oaks is quiet tonight.",
+            "2": "I still remember Hudson Oaks.",
+            "3": "This subtitle does not matter.",
+        },
+        {
+            "1": "哈德逊奥克斯今晚很安静。",
+            "2": "我还记得哈德森橡树。",
+            "3": "这条字幕不重要。",
+        },
+    )
+
+    assert result["issue_count"] == 1
+    assert result["issues"][0]["source"] == "Hudson Oaks"
+    assert [item["block_id"] for item in result["issues"][0]["observations"]] == ["1", "2"]
+
+
+def test_proper_name_consistency_score_skips_blank_translations():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Hudson Oaks is quiet tonight.",
+            "2": "I still remember Hudson Oaks.",
+        },
+        {
+            "1": "哈德逊奥克斯今晚很安静。",
+            "2": " ",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []

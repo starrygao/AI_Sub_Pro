@@ -92,3 +92,21 @@ def test_repair_prompt_contains_only_failing_blocks():
     assert "Good" not in prompt
     assert "Hudson Oaks" in prompt
     assert "哈德逊奥克斯" in prompt
+
+
+def test_quality_checks_flag_inferred_proper_name_inconsistency():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Hudson Oaks is quiet tonight.", "哈德逊奥克斯今晚很安静。"),
+        _block(2, "I still remember Hudson Oaks.", "我还记得哈德森橡树。"),
+        _block(3, "Hudson Oaks is closed now.", "哈德森橡树现在关门了。", filtered=True),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)
+
+    assert report.summary["by_type"]["proper_name_inconsistent"] == 1
+    issue = next(issue for issue in report.issues if issue.type == "proper_name_inconsistent")
+    assert issue.severity == "warning"
+    assert issue.block_id == 1
+    assert issue.source_text == "Hudson Oaks"
