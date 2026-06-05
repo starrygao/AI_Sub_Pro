@@ -288,3 +288,59 @@ def test_bundled_phrase_packs_import_and_retrieve(tmp_path):
             preferred_tags={"medical"},
         )
     )
+
+
+def test_phrase_library_reports_retrieval_backend(tmp_path):
+    from app.engines.phrase_library import PhraseLibrary
+
+    library = PhraseLibrary(tmp_path / "phrases.sqlite3")
+    library.add_phrase(
+        source_text="Hudson Oaks is quiet.",
+        target_text="哈德逊奥克斯很安静。",
+        source_language="en",
+        target_language="zh-CN",
+        source_name="unit",
+        license="local",
+        quality=0.9,
+    )
+
+    results = library.retrieve(
+        "I need to go to Hudson Oaks.",
+        source_language="en",
+        target_language="zh-CN",
+        limit=1,
+        backend="ngram",
+    )
+
+    assert results
+    assert library.last_retrieval_backend == "ngram"
+
+
+def test_phrase_library_auto_backend_preserves_existing_rows(tmp_path):
+    from app.engines.phrase_library import PhraseLibrary
+
+    db = tmp_path / "phrases.sqlite3"
+    first = PhraseLibrary(db)
+    first.add_phrase(
+        source_text="We need to run the scan.",
+        target_text="我们需要做扫描。",
+        source_language="en",
+        target_language="zh-CN",
+        source_name="medical",
+        license="local",
+        quality=0.88,
+        tags=["medical"],
+    )
+
+    second = PhraseLibrary(db)
+    results = second.retrieve(
+        "Can we run a scan?",
+        source_language="en",
+        target_language="zh-CN",
+        limit=1,
+        preferred_tags={"medical"},
+        backend="auto",
+    )
+
+    assert results[0].target_text == "我们需要做扫描。"
+    assert second.last_retrieval_backend in {"fts5", "ngram"}
