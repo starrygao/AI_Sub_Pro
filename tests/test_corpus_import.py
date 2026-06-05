@@ -224,6 +224,99 @@ def test_import_delimited_corpus_rejects_missing_custom_columns(tmp_path):
         )
 
 
+@pytest.mark.parametrize(
+    ("filename", "input_format", "body", "message"),
+    [
+        (
+            "phrases.csv",
+            "csv",
+            "source,source,target\noriginal,shifted,译文\n",
+            "duplicate header name\\(s\\): source",
+        ),
+        (
+            "phrases.tsv",
+            "tsv",
+            "source\tsource\ttarget\noriginal\tshifted\t译文\n",
+            "duplicate header name\\(s\\): source",
+        ),
+        (
+            "phrases.csv",
+            "csv",
+            "source,target,note,note\nhello,你好,a,b\n",
+            "duplicate header name\\(s\\): note",
+        ),
+    ],
+)
+def test_import_delimited_corpus_rejects_duplicate_headers(
+    tmp_path,
+    filename,
+    input_format,
+    body,
+    message,
+):
+    corpus = tmp_path / filename
+    corpus.write_text(body, encoding="utf-8")
+
+    with pytest.raises(CorpusImportError, match=message):
+        import_corpus(
+            corpus,
+            input_format=input_format,
+            source_name="unit-headers",
+            license_name="local-test",
+            source_language="en",
+            target_language="zh-CN",
+        )
+
+
+def test_import_corpus_cli_dry_run_supports_quoted_csv_fields(tmp_path):
+    corpus = tmp_path / "phrases.csv"
+    corpus.write_text(
+        '\n'.join([
+            "source,target",
+            '"Hello, world","你好，世界"',
+        ]),
+        encoding="utf-8",
+    )
+    data_dir = tmp_path / "quoted-csv-data"
+    env = os.environ.copy()
+    env["AI_SUB_PRO_DATA_DIR"] = str(data_dir)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "tools/phrase_packs/import_corpus.py",
+            str(corpus),
+            "--format",
+            "csv",
+            "--source-name",
+            "unit-quoted",
+            "--license",
+            "CC0",
+            "--source-language",
+            "en",
+            "--target-language",
+            "zh-CN",
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["accepted"] == 1
+    assert report["rejected"] == 0
+    assert report["sampled_rows"] == [{
+        "row_number": 2,
+        "source_text": "Hello, world",
+        "target_text": "你好，世界",
+    }]
+    assert not (data_dir / "phrase_library.sqlite3").exists()
+
+
 def test_import_corpus_cli_dry_run(tmp_path):
     corpus = tmp_path / "phrases.csv"
     corpus.write_text(

@@ -5,6 +5,7 @@ import csv
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from collections import Counter
 from typing import Iterable, Iterator
 
 from app.engines.phrase_library import PhraseLibrary
@@ -292,6 +293,15 @@ def _iter_delimited_rows(
         reader = csv.DictReader(handle, delimiter=delimiter)
         if not reader.fieldnames:
             raise CorpusImportError("corpus file is missing a header row")
+        duplicate_headers = sorted(
+            header
+            for header, count in Counter(reader.fieldnames).items()
+            if count > 1
+        )
+        if duplicate_headers:
+            raise CorpusImportError(
+                "duplicate header name(s): " + ", ".join(duplicate_headers)
+            )
         missing = [
             column
             for column in (metadata.source_column, metadata.target_column)
