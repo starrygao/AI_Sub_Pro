@@ -186,6 +186,24 @@ def test_proper_name_consistency_score_rejects_shared_context_as_long_name_ancho
     assert result["issues"][0]["source"] == "Hudson Oaks"
 
 
+def test_proper_name_consistency_score_rejects_unlisted_shared_context_anchor():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Hudson Oaks is bright tonight.",
+            "2": "Hudson Oaks is bright again.",
+        },
+        {
+            "1": "哈德逊奥克斯灯火辉煌",
+            "2": "赫德森橡树灯火辉煌",
+        },
+    )
+
+    assert result["issue_count"] == 1
+    assert result["issues"][0]["source"] == "Hudson Oaks"
+
+
 def test_proper_name_consistency_score_allows_same_long_cjk_name_in_different_contexts():
     from app.evaluation.metrics import proper_name_consistency_score
 

@@ -118,6 +118,28 @@ _LONG_NAME_CONTEXT_ANCHORS = (
     "空荡",
     "正常",
 )
+_LONG_NAME_CONTEXT_PREFIX_HINTS = (
+    "我",
+    "你",
+    "他",
+    "她",
+    "它",
+    "们",
+    "在",
+    "从",
+    "到",
+    "去",
+    "来",
+    "住",
+    "看",
+    "见",
+    "喜欢",
+    "讨厌",
+    "非常",
+    "特别",
+    "真的",
+    "了",
+)
 
 
 def _by_id(blocks: list[dict[str, str]], text_key: str) -> dict[str, str]:
@@ -263,6 +285,33 @@ def _is_context_anchor(anchor: str) -> bool:
     return any(anchor in phrase or phrase in anchor for phrase in _LONG_NAME_CONTEXT_ANCHORS)
 
 
+def _prefix_before_anchor(text: str, anchor: str) -> str:
+    index = text.find(anchor)
+    return text[:index] if index > 0 else ""
+
+
+def _looks_like_sentence_prefix(prefix: str) -> bool:
+    if len(prefix) < 4:
+        return True
+    return any(hint in prefix for hint in _LONG_NAME_CONTEXT_PREFIX_HINTS)
+
+
+def _has_conflicting_name_prefixes(anchor: str, translations: list[str]) -> bool:
+    prefixes = [_prefix_before_anchor(text, anchor) for text in translations]
+    nonempty = [prefix for prefix in prefixes if prefix]
+    if len(nonempty) != len(prefixes):
+        return False
+    if len(set(nonempty)) < 2:
+        return False
+    return all(not _looks_like_sentence_prefix(prefix) for prefix in nonempty)
+
+
+def _is_valid_long_name_anchor(anchor: str, translations: list[str]) -> bool:
+    if _is_context_anchor(anchor):
+        return False
+    return not _has_conflicting_name_prefixes(anchor, translations)
+
+
 def _shared_cjk_anchor(translations: list[str]) -> str:
     common = _common_cjk_substrings(translations, min_length=2)
     if not common:
@@ -283,7 +332,7 @@ def _shared_cjk_anchor(translations: list[str]) -> str:
 def _long_name_cjk_anchor(translations: list[str]) -> str:
     common = _common_cjk_substrings(translations, min_length=4)
     for anchor in common:
-        if not _is_context_anchor(anchor):
+        if _is_valid_long_name_anchor(anchor, translations):
             return anchor
     return ""
 
@@ -291,7 +340,7 @@ def _long_name_cjk_anchor(translations: list[str]) -> str:
 def _fallback_long_name_anchor(translations: list[str]) -> str:
     common = _common_cjk_substrings(translations, min_length=2)
     for anchor in common:
-        if not _is_context_anchor(anchor):
+        if _is_valid_long_name_anchor(anchor, translations):
             return anchor
     return ""
 
