@@ -143,6 +143,22 @@ def test_quality_checks_run_proper_name_metric_for_traditional_chinese_targets()
     assert {issue.block_id for issue in flagged} == {1, 2}
 
 
+def test_quality_checks_run_proper_name_metric_for_common_chinese_aliases():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Hudson Oaks is quiet tonight.", "哈德逊奥克斯"),
+        _block(2, "I came from Hudson Oaks.", "赫德森橡树"),
+    ]
+
+    for target_language in ("Simplified Chinese", "zh-Hant-TW"):
+        report = run_quality_checks(blocks, target_language=target_language, max_chars=18)
+
+        assert report.summary["by_type"]["proper_name_inconsistent"] == 2
+        flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
+        assert {issue.block_id for issue in flagged} == {1, 2}
+
+
 def test_quality_checks_do_not_flag_same_long_cjk_name_in_different_contexts():
     from app.engines.translation_qa import run_quality_checks
 

@@ -97,8 +97,24 @@ _LONG_NAME_IDENTITY_SUFFIXES = (
     "路",
     "桥",
 )
+_LONG_NAME_IDENTITY_PREFIXES = (
+    "老",
+    "小",
+    "新",
+    "旧",
+    "大",
+    "东",
+    "西",
+    "南",
+    "北",
+    "中",
+)
 _LONG_NAME_CONTEXT_SUFFIXES = (
     "附近",
+    "旁边",
+    "边上",
+    "周围",
+    "外面",
     "里面",
     "居民",
     "的人",
@@ -323,6 +339,19 @@ def _consume_identity_suffixes(text: str, start: int) -> int:
         end += len(marker)
 
 
+def _consume_identity_prefixes(text: str, start: int) -> int:
+    begin = start
+    while True:
+        head = text[:begin]
+        marker = next(
+            (item for item in _LONG_NAME_IDENTITY_PREFIXES if head.endswith(item)),
+            "",
+        )
+        if not marker:
+            return begin
+        begin -= len(marker)
+
+
 def _starts_with_context_suffix(text: str, start: int) -> bool:
     tail = text[start:]
     return any(tail.startswith(item) for item in _LONG_NAME_CONTEXT_SUFFIXES)
@@ -359,8 +388,9 @@ def _long_name_signature(translation: str, shared_anchor: str) -> str:
         # separate, while same-rendering context cases continue to rely on the
         # shared-anchor path above.
         return cjk_text or _compact_whitespace(translation)
-    start = cjk_text.find(shared_anchor)
-    end = start + len(shared_anchor)
+    anchor_start = cjk_text.find(shared_anchor)
+    start = _consume_identity_prefixes(cjk_text, anchor_start)
+    end = anchor_start + len(shared_anchor)
     end = _consume_identity_suffixes(cjk_text, end)
     end = _extend_name_core(cjk_text, end)
     return cjk_text[start:end] or shared_anchor
