@@ -77,7 +77,20 @@ _SOUND_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
 
 def _is_chinese_target(target_language: str) -> bool:
     text = _clean_text(target_language).lower()
-    return text in {"简体中文", "中文", "zh", "zh-cn", "chs", "zho", "cmn"}
+    return text in {
+        "简体中文",
+        "繁体中文",
+        "繁體中文",
+        "中文",
+        "zh",
+        "zh-cn",
+        "zh-tw",
+        "zh-hant",
+        "chs",
+        "cht",
+        "zho",
+        "cmn",
+    }
 
 
 def _kb_terms(project_kb: Optional[ProjectKb]) -> list[tuple[str, str]]:

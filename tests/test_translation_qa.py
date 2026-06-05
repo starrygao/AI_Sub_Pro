@@ -128,6 +128,21 @@ def test_quality_checks_flag_divergent_long_names_without_shared_anchor():
     assert {issue.block_id for issue in flagged} == {1, 2}
 
 
+def test_quality_checks_run_proper_name_metric_for_traditional_chinese_targets():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Hudson Oaks is quiet tonight.", "哈德遜奧克斯"),
+        _block(2, "I came from Hudson Oaks.", "赫德森橡樹"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="繁體中文", max_chars=18)
+
+    assert report.summary["by_type"]["proper_name_inconsistent"] == 2
+    flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
+    assert {issue.block_id for issue in flagged} == {1, 2}
+
+
 def test_quality_checks_do_not_flag_same_long_cjk_name_in_different_contexts():
     from app.engines.translation_qa import run_quality_checks
 
