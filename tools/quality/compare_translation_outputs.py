@@ -50,13 +50,18 @@ def main(argv: list[str] | None = None) -> int:
             expected_terms=args.term,
             max_chars=args.max_chars,
         )
+    except SubtitleCompareError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    try:
         save_report(
             report,
             json_path=args.out_dir / "translation_accuracy_report.json",
             markdown_path=args.out_dir / "translation_accuracy_report.md",
         )
-    except SubtitleCompareError as exc:
-        print(str(exc), file=sys.stderr)
+    except OSError as exc:
+        print(f"failed to write report: {exc}", file=sys.stderr)
         return 2
 
     print(f"Wrote {args.out_dir / 'translation_accuracy_report.json'}")
