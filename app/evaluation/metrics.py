@@ -117,32 +117,73 @@ def _cjk_compact_text(text: str) -> str:
     return "".join(_CJK_RE.findall(_compact_whitespace(text)))
 
 
-def _cjk_substrings(text: str) -> set[str]:
-    if len(text) < 3:
+def _cjk_substrings(text: str, min_length: int = 2) -> set[str]:
+    if len(text) < min_length:
         return set()
     limit = min(len(text), 12)
     substrings = set()
     for start in range(len(text)):
         max_end = min(len(text), start + limit)
-        for end in range(start + 3, max_end + 1):
+        for end in range(start + min_length, max_end + 1):
             substrings.add(text[start:end])
     return substrings
 
 
-def _shared_cjk_anchor(translations: list[str]) -> str:
-    counts: dict[str, int] = {}
+def _common_cjk_substrings(translations: list[str], min_length: int = 2) -> list[str]:
+    if not translations:
+        return []
+    shared = _cjk_substrings(translations[0], min_length=min_length)
+    for translation in translations[1:]:
+        shared &= _cjk_substrings(translation, min_length=min_length)
+        if not shared:
+            return []
+    return sorted(shared, key=lambda item: (-len(item), item))
+
+
+def _anchor_neighbors(text: str, anchor: str) -> tuple[str, str]:
+    index = text.find(anchor)
+    if index < 0:
+        return "", ""
+    before = text[index - 1] if index > 0 else ""
+    after_index = index + len(anchor)
+    after = text[after_index] if after_index < len(text) else ""
+    return before, after
+
+
+def _has_conflicting_neighbor(chars: list[str]) -> bool:
+    return len({char for char in chars if char}) > 1
+
+
+def _is_unsafe_shared_anchor(anchor: str, translations: list[str]) -> bool:
+    before_chars = []
+    after_chars = []
     for translation in translations:
-        for substring in _cjk_substrings(translation):
-            counts[substring] = counts.get(substring, 0) + 1
-    shared = [substring for substring, count in counts.items() if count > 1]
-    if not shared:
+        before, after = _anchor_neighbors(translation, anchor)
+        before_chars.append(before)
+        after_chars.append(after)
+    return _has_conflicting_neighbor(before_chars) or _has_conflicting_neighbor(after_chars)
+
+
+def _shared_cjk_anchor(translations: list[str]) -> str:
+    common = _common_cjk_substrings(translations, min_length=2)
+    if not common:
         return ""
-    return sorted(shared, key=lambda item: (-len(item), item))[0]
+
+    unsafe = {
+        anchor for anchor in common if _is_unsafe_shared_anchor(anchor, translations)
+    }
+    for anchor in common:
+        if anchor in unsafe:
+            continue
+        if any(anchor != other and anchor in other for other in unsafe):
+            continue
+        return anchor
+    return ""
 
 
 def _target_signature(translation: str, shared_anchor: str = "") -> str:
     cjk_text = _cjk_compact_text(translation)
-    if shared_anchor and len(shared_anchor) >= 4 and shared_anchor in cjk_text:
+    if shared_anchor and shared_anchor in cjk_text:
         return shared_anchor
     if cjk_text:
         return cjk_text
@@ -251,22 +292,20 @@ def proper_name_consistency_score(
     for proper_name in _repeated_proper_names(normalized_source_by_id):
         matcher = re.compile(rf"\b{re.escape(proper_name)}\b")
         observations = []
-        skip_name = False
 
         for block_id, source_text in normalized_source_by_id.items():
             if not matcher.search(source_text):
                 continue
             translation = normalized_candidate_by_id.get(block_id, "")
             if not translation.strip():
-                skip_name = True
-                break
+                continue
             observations.append({
                 "block_id": block_id,
                 "source_text": source_text,
                 "translation": translation,
             })
 
-        if skip_name or len(observations) < 2:
+        if len(observations) < 2:
             continue
 
         shared_anchor = _shared_cjk_anchor(

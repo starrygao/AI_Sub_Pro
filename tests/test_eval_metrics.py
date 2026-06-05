@@ -150,6 +150,27 @@ def test_proper_name_consistency_score_detects_partial_different_cjk_target_form
     assert result["issues"][0]["source"] == "Hudson Oaks"
 
 
+def test_proper_name_consistency_score_skips_blank_observations_but_keeps_nonblank_mismatch():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Hudson Oaks is quiet tonight.",
+            "2": "I came from Hudson Oaks.",
+            "3": "Hudson Oaks is closed now.",
+        },
+        {
+            "1": "哈德逊奥克斯很安静。",
+            "2": " ",
+            "3": "哈德逊橡树现在关门了。",
+        },
+    )
+
+    assert result["issue_count"] == 1
+    assert result["issues"][0]["source"] == "Hudson Oaks"
+    assert [item["block_id"] for item in result["issues"][0]["observations"]] == ["1", "3"]
+
+
 def test_proper_name_consistency_score_skips_blank_translations():
     from app.evaluation.metrics import proper_name_consistency_score
 
@@ -161,6 +182,24 @@ def test_proper_name_consistency_score_skips_blank_translations():
         {
             "1": "哈德逊奥克斯今晚很安静。",
             "2": " ",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
+def test_proper_name_consistency_score_allows_short_shared_cjk_names_in_different_sentences():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Li Na arrived.",
+            "2": "I saw Li Na.",
+        },
+        {
+            "1": "李娜到了。",
+            "2": "我看见李娜。",
         },
     )
 

@@ -110,3 +110,16 @@ def test_quality_checks_flag_inferred_proper_name_inconsistency():
     assert issue.severity == "warning"
     assert issue.block_id == 1
     assert issue.source_text == "Hudson Oaks"
+
+
+def test_quality_checks_do_not_flag_short_consistent_cjk_names():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Li Na arrived.", "李娜到了。"),
+        _block(2, "I saw Li Na.", "我看见李娜。"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)
+
+    assert "proper_name_inconsistent" not in report.summary["by_type"]
