@@ -763,17 +763,23 @@ def _auto_repair_quality_issues(
             raw_results if isinstance(raw_results, list) else [],
             repair_items,
         )
+        applied_results = [
+            result for result in results
+            if isinstance(result, dict) and result.get("translation")
+        ]
+        if not applied_results:
+            return []
         if hasattr(translator, "_apply_results"):
+            repaired_ids = {str(result.get("id", "")) for result in applied_results}
             target_blocks = [
                 block for block in blocks
-                if any(str(item.get("id")) == str(getattr(block, "index", "")) for item in repair_items)
+                if str(getattr(block, "index", "")) in repaired_ids
             ]
-            translator._apply_results(target_blocks, results)
+            translator._apply_results(target_blocks, applied_results)
         else:
             by_id = {
                 str(result.get("id")): result.get("translation", "")
-                for result in results
-                if isinstance(result, dict) and isinstance(result.get("translation"), str)
+                for result in applied_results
             }
             for block in blocks:
                 translation = by_id.get(str(getattr(block, "index", "")))
@@ -781,8 +787,7 @@ def _auto_repair_quality_issues(
                     block.translation = translation
         return [
             {"id": result.get("id"), "translation": result.get("translation", "")}
-            for result in results
-            if isinstance(result, dict) and result.get("translation")
+            for result in applied_results
         ]
     except Exception as e:
         log.warning("translation QA auto-repair failed: %s", e)
