@@ -232,7 +232,7 @@ def _candidate_metrics(
         "length": _length_violations(candidate_by_id, max_chars),
         "terminology": terminology_score(case, candidate_by_id),
         "reference_similarity": (
-            _reference_similarity(candidate_by_id, reference_by_id)
+            _reference_similarity(source_by_id, candidate_by_id, reference_by_id)
             if reference_by_id
             else _empty_reference_similarity()
         ),
@@ -313,15 +313,27 @@ def _length_violations(candidate_by_id: dict[str, str], max_chars: int) -> dict[
 
 
 def _reference_similarity(
+    source_by_id: dict[str, str],
     candidate_by_id: dict[str, str],
     reference_by_id: dict[str, str],
 ) -> dict[str, Any]:
-    shared = _sorted_ids(set(candidate_by_id) & set(reference_by_id))
+    source_ids = set(source_by_id)
+    candidate_ids = set(candidate_by_id)
+    reference_ids = set(reference_by_id)
+    if source_ids:
+        denominator = "source"
+        denominator_ids = _sorted_ids(source_ids)
+    else:
+        denominator = "reference"
+        denominator_ids = _sorted_ids(reference_ids)
+    shared = _sorted_ids(candidate_ids & reference_ids)
     exact = [
         block_id
-        for block_id in shared
+        for block_id in denominator_ids
         if candidate_by_id.get(block_id, "").strip()
         == reference_by_id.get(block_id, "").strip()
+        and block_id in candidate_ids
+        and block_id in reference_ids
     ]
     changed = [
         {
@@ -329,22 +341,40 @@ def _reference_similarity(
             "candidate": candidate_by_id.get(block_id, ""),
             "reference": reference_by_id.get(block_id, ""),
         }
-        for block_id in shared
-        if block_id not in exact
+        for block_id in denominator_ids
+        if block_id in candidate_ids
+        and block_id in reference_ids
+        and block_id not in exact
     ]
     return {
+        "denominator": denominator,
+        "denominator_count": len(denominator_ids),
+        "denominator_ids": denominator_ids,
         "shared_count": len(shared),
         "exact_match_count": len(exact),
-        "exact_match_rate": _rate(len(exact), len(shared)),
+        "exact_match_rate": _rate(len(exact), len(denominator_ids)),
+        "exact_match_ids": exact[:50],
+        "candidate_missing_ids": _sorted_ids(set(denominator_ids) - candidate_ids),
+        "reference_missing_ids": _sorted_ids(set(denominator_ids) - reference_ids),
+        "candidate_extra_ids": _sorted_ids(candidate_ids - set(denominator_ids)),
+        "reference_extra_ids": _sorted_ids(reference_ids - set(denominator_ids)),
         "changed": changed[:50],
     }
 
 
 def _empty_reference_similarity() -> dict[str, Any]:
     return {
+        "denominator": "none",
+        "denominator_count": 0,
+        "denominator_ids": [],
         "shared_count": 0,
         "exact_match_count": 0,
         "exact_match_rate": 0.0,
+        "exact_match_ids": [],
+        "candidate_missing_ids": [],
+        "reference_missing_ids": [],
+        "candidate_extra_ids": [],
+        "reference_extra_ids": [],
         "changed": [],
     }
 
@@ -394,6 +424,9 @@ def _candidate_markdown(label: str, metrics: dict[str, Any]) -> list[str]:
     length = metrics.get("length", {})
     terminology = metrics.get("terminology", {})
     reference = metrics.get("reference_similarity", {})
+    reference_exact = reference.get("exact_match_count", 0)
+    reference_denominator = reference.get("denominator_count", 0)
+    reference_basis = reference.get("denominator", "none")
     return [
         f"### {label}",
         "",
@@ -402,7 +435,8 @@ def _candidate_markdown(label: str, metrics: dict[str, Any]) -> list[str]:
         f"- Length violations: {length.get('count', 0)}",
         f"- Terminology hit rate: {_format_signed_rate(terminology.get('hit_rate', 0.0))[1:]}",
         "- Reference exact-match rate: "
-        f"{_format_signed_rate(reference.get('exact_match_rate', 0.0))[1:]}",
+        f"{_format_signed_rate(reference.get('exact_match_rate', 0.0))[1:]}"
+        f" ({reference_exact}/{reference_denominator} {reference_basis} IDs)",
         "",
     ]
 

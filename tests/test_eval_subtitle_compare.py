@@ -142,3 +142,67 @@ def test_compare_subtitle_files_accepts_ass_reference(tmp_path):
     assert "{" not in cleaned_reference
     assert "\\" not in cleaned_reference
     assert report["new"]["reference_similarity"]["exact_match_rate"] == 1.0
+
+
+def test_reference_similarity_penalizes_missing_candidate_reference_rows(tmp_path):
+    from app.evaluation.subtitle_compare import compare_subtitle_files, report_to_markdown
+
+    source = tmp_path / "source.srt"
+    old = tmp_path / "old.srt"
+    new = tmp_path / "new.srt"
+    reference = tmp_path / "reference.srt"
+    source.write_text(_srt((1, "Come in."), (2, "Sit down.")), encoding="utf-8")
+    old.write_text(_srt((1, "进来。"), (2, "坐下。")), encoding="utf-8")
+    new.write_text(_srt((1, "进来。")), encoding="utf-8")
+    reference.write_text(_srt((1, "进来。"), (2, "坐下。")), encoding="utf-8")
+
+    report = compare_subtitle_files(
+        source_path=source,
+        old_path=old,
+        new_path=new,
+        reference_path=reference,
+    )
+
+    similarity = report["new"]["reference_similarity"]
+    assert similarity["denominator"] == "source"
+    assert similarity["denominator_count"] == 2
+    assert similarity["exact_match_count"] == 1
+    assert similarity["exact_match_rate"] == 0.5
+    assert similarity["candidate_missing_ids"] == ["2"]
+    assert similarity["reference_missing_ids"] == []
+    assert similarity["candidate_extra_ids"] == []
+    assert similarity["reference_extra_ids"] == []
+    assert report["delta"]["reference_exact_match_rate"] == -0.5
+    assert "- Reference exact-match rate: 0.5000 (1/2 source IDs)" in report_to_markdown(report)
+
+
+def test_report_to_markdown_and_save_report_write_summary_and_delta(tmp_path):
+    from app.evaluation.subtitle_compare import (
+        compare_subtitle_files,
+        report_to_markdown,
+        save_report,
+    )
+
+    source = tmp_path / "source.srt"
+    old = tmp_path / "old.srt"
+    new = tmp_path / "new.srt"
+    source.write_text(_srt((1, "Hello.")), encoding="utf-8")
+    old.write_text(_srt((1, "Hello.")), encoding="utf-8")
+    new.write_text(_srt((1, "你好。")), encoding="utf-8")
+
+    report = compare_subtitle_files(source_path=source, old_path=old, new_path=new)
+    markdown = report_to_markdown(report)
+    assert "## Summary" in markdown
+    assert "- Source blocks: 1" in markdown
+    assert "## Delta" in markdown
+    assert "- English residue: -1" in markdown
+
+    json_path = tmp_path / "reports" / "comparison.json"
+    markdown_path = tmp_path / "reports" / "comparison.md"
+    save_report(report, json_path=json_path, markdown_path=markdown_path)
+
+    saved_report = json.loads(json_path.read_text(encoding="utf-8"))
+    saved_markdown = markdown_path.read_text(encoding="utf-8")
+    assert saved_report["summary"]["source_count"] == 1
+    assert saved_report["delta"]["english_residue_count"] == -1
+    assert saved_markdown == markdown
