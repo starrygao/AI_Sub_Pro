@@ -14,6 +14,8 @@ SUPPORTED_INPUT_FORMATS = {"jsonl", "tsv", "csv"}
 DEFAULT_MAX_ROWS = 5000
 MAX_TEXT_LENGTH = 240
 MAX_SAMPLED_ROWS = 5
+MAX_ERROR_SAMPLES = 50
+DEFAULT_MAX_SCANNED_ROWS_HARD_CAP = 100000
 
 
 class CorpusImportError(ValueError):
@@ -39,6 +41,8 @@ class CorpusImportReport:
         })
 
     def add_error(self, *, row_number: int, error: str) -> None:
+        if len(self.errors) >= MAX_ERROR_SAMPLES:
+            return
         self.errors.append({"row_number": row_number, "error": error})
 
     def to_dict(self) -> dict[str, object]:
@@ -79,13 +83,14 @@ def import_corpus(
     tags: Iterable[str] | None = None,
     dry_run: bool = False,
     library: PhraseLibrary | None = None,
+    _max_scanned_rows: int | None = None,
 ) -> CorpusImportReport:
     """Import local corpus rows into PhraseLibrary.
 
     Dry-run validates and samples file rows only; it does not compare against
     an existing phrase database unless the caller explicitly does that.
-    ``limited`` means the importer hit the accepted-row cap and stopped without
-    checking whether more rows remained in the file.
+    ``limited`` means the importer hit either the accepted-row cap or the scan
+    cap and stopped before scanning the rest of the file.
     """
     metadata = _validate_metadata(
         input_format=input_format,
@@ -105,13 +110,19 @@ def import_corpus(
 
     report = CorpusImportReport()
     seen: set[tuple[str, str, str, str, str]] = set()
+    scanned_rows = 0
+    max_scanned_rows = _coerce_max_scanned_rows(
+        _max_scanned_rows,
+        max_rows=metadata.max_rows,
+    )
 
     rows = iter(_iter_rows(corpus_path, metadata))
-    while report.accepted < metadata.max_rows:
+    while report.accepted < metadata.max_rows and scanned_rows < max_scanned_rows:
         try:
             row_number, row, parser_error = next(rows)
         except StopIteration:
             break
+        scanned_rows += 1
         if parser_error is not None:
             report.rejected += 1
             report.add_error(row_number=row_number, error=parser_error)
@@ -163,7 +174,7 @@ def import_corpus(
             target_text=target_text,
         )
 
-    if report.accepted >= metadata.max_rows:
+    if report.accepted >= metadata.max_rows or scanned_rows >= max_scanned_rows:
         report.limited = True
 
     return report
@@ -228,6 +239,23 @@ def _coerce_max_rows(value) -> int:
     if parsed <= 0:
         raise CorpusImportError("max_rows must be a positive integer")
     return parsed
+
+
+def _coerce_max_scanned_rows(value, *, max_rows: int) -> int:
+    if value is None:
+        return min(
+            DEFAULT_MAX_SCANNED_ROWS_HARD_CAP,
+            max(max_rows * 20, max_rows + 100),
+        )
+    if isinstance(value, bool):
+        raise CorpusImportError("_max_scanned_rows must be a positive integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise CorpusImportError("_max_scanned_rows must be a positive integer") from exc
+    if parsed <= 0:
+        raise CorpusImportError("_max_scanned_rows must be a positive integer")
+    return min(parsed, DEFAULT_MAX_SCANNED_ROWS_HARD_CAP)
 
 
 def _require_metadata(name: str, value) -> str:

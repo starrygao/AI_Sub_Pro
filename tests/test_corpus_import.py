@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from app.engines.corpus_import import CorpusImportError, import_corpus
+from app.engines.corpus_import import (
+    MAX_ERROR_SAMPLES,
+    CorpusImportError,
+    import_corpus,
+)
 from app.engines.phrase_library import PhraseLibrary
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -400,6 +404,77 @@ def test_import_delimited_corpus_stops_at_cap_before_malformed_quoted_row(
         "source_text": "Hello",
         "target_text": "你好",
     }]
+
+
+def test_import_corpus_caps_retained_error_samples(tmp_path):
+    corpus = tmp_path / "invalid.jsonl"
+    corpus.write_text(
+        "\n".join(
+            json.dumps({"source": "", "target": f"target-{index}"})
+            for index in range(MAX_ERROR_SAMPLES + 10)
+        ),
+        encoding="utf-8",
+    )
+
+    report = import_corpus(
+        corpus,
+        input_format="jsonl",
+        source_name="unit-errors-cap",
+        license_name="local-test",
+        source_language="en",
+        target_language="zh-CN",
+        dry_run=True,
+    )
+
+    assert report.accepted == 0
+    assert report.rejected == MAX_ERROR_SAMPLES + 10
+    assert len(report.errors) == MAX_ERROR_SAMPLES
+    assert report.errors[0] == {"row_number": 1, "error": "source text is empty"}
+    assert report.errors[-1]["row_number"] == MAX_ERROR_SAMPLES
+
+
+def test_import_corpus_limits_duplicate_scan_window(tmp_path):
+    corpus = tmp_path / "duplicates.jsonl"
+    db = tmp_path / "phrases.sqlite3"
+    library = PhraseLibrary(db)
+    total_rows = 8
+    for index in range(total_rows):
+        source_text = f"Duplicate line {index}"
+        target_text = f"重复行{index}"
+        library.add_phrase(
+            source_text=source_text,
+            target_text=target_text,
+            source_language="en",
+            target_language="zh-CN",
+            source_name="unit-duplicates",
+            license="local-test",
+        )
+    corpus.write_text(
+        "\n".join(
+            json.dumps({"source": f"Duplicate line {index}", "target": f"重复行{index}"}, ensure_ascii=False)
+            for index in range(total_rows)
+        ),
+        encoding="utf-8",
+    )
+
+    report = import_corpus(
+        corpus,
+        input_format="jsonl",
+        source_name="unit-duplicates",
+        license_name="local-test",
+        source_language="en",
+        target_language="zh-CN",
+        max_rows=2,
+        library=library,
+        _max_scanned_rows=5,
+    )
+
+    assert report.accepted == 0
+    assert report.rejected == 0
+    assert report.duplicates == 5
+    assert report.limited is True
+    assert report.errors == []
+    assert report.sampled_rows == []
 
 
 def test_import_corpus_cli_rejects_malformed_quoted_csv(tmp_path):
