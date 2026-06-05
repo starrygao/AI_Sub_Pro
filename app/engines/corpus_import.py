@@ -12,10 +12,10 @@ from app.engines.phrase_library import PhraseLibrary
 
 SUPPORTED_INPUT_FORMATS = {"jsonl", "tsv", "csv"}
 DEFAULT_MAX_ROWS = 5000
+MAX_IMPORT_ROWS = 100000
 MAX_TEXT_LENGTH = 240
 MAX_SAMPLED_ROWS = 5
 MAX_ERROR_SAMPLES = 50
-DEFAULT_MAX_SCANNED_ROWS_HARD_CAP = 100000
 
 
 class CorpusImportError(ValueError):
@@ -90,7 +90,7 @@ def import_corpus(
     Dry-run validates and samples file rows only; it does not compare against
     an existing phrase database unless the caller explicitly does that.
     ``limited`` means the importer hit either the accepted-row cap or the scan
-    cap and stopped before scanning the rest of the file.
+    cap and intentionally stopped without probing whether more rows remained.
     """
     metadata = _validate_metadata(
         input_format=input_format,
@@ -238,13 +238,15 @@ def _coerce_max_rows(value) -> int:
         raise CorpusImportError("max_rows must be a positive integer") from exc
     if parsed <= 0:
         raise CorpusImportError("max_rows must be a positive integer")
+    if parsed > MAX_IMPORT_ROWS:
+        raise CorpusImportError(f"max_rows must be <= {MAX_IMPORT_ROWS}")
     return parsed
 
 
 def _coerce_max_scanned_rows(value, *, max_rows: int) -> int:
     if value is None:
         return min(
-            DEFAULT_MAX_SCANNED_ROWS_HARD_CAP,
+            MAX_IMPORT_ROWS,
             max(max_rows * 20, max_rows + 100),
         )
     if isinstance(value, bool):
@@ -255,7 +257,7 @@ def _coerce_max_scanned_rows(value, *, max_rows: int) -> int:
         raise CorpusImportError("_max_scanned_rows must be a positive integer") from exc
     if parsed <= 0:
         raise CorpusImportError("_max_scanned_rows must be a positive integer")
-    return min(parsed, DEFAULT_MAX_SCANNED_ROWS_HARD_CAP)
+    return max(max_rows, min(parsed, MAX_IMPORT_ROWS))
 
 
 def _require_metadata(name: str, value) -> str:

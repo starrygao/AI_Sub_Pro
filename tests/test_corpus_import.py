@@ -8,6 +8,7 @@ import pytest
 
 from app.engines.corpus_import import (
     MAX_ERROR_SAMPLES,
+    MAX_IMPORT_ROWS,
     CorpusImportError,
     import_corpus,
 )
@@ -477,6 +478,76 @@ def test_import_corpus_limits_duplicate_scan_window(tmp_path):
     assert report.sampled_rows == []
 
 
+def test_import_corpus_rejects_max_rows_above_hard_cap(tmp_path):
+    corpus = tmp_path / "phrases.jsonl"
+    corpus.write_text(
+        json.dumps({"source": "Hello", "target": "你好"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CorpusImportError, match=rf"max_rows must be <= {MAX_IMPORT_ROWS}"):
+        import_corpus(
+            corpus,
+            input_format="jsonl",
+            source_name="unit-cap-limit",
+            license_name="local-test",
+            source_language="en",
+            target_language="zh-CN",
+            max_rows=MAX_IMPORT_ROWS + 1,
+            dry_run=True,
+        )
+
+
+def test_import_corpus_accepts_max_rows_at_hard_cap(tmp_path):
+    corpus = tmp_path / "phrases.jsonl"
+    corpus.write_text("", encoding="utf-8")
+
+    report = import_corpus(
+        corpus,
+        input_format="jsonl",
+        source_name="unit-cap-limit",
+        license_name="local-test",
+        source_language="en",
+        target_language="zh-CN",
+        max_rows=MAX_IMPORT_ROWS,
+        dry_run=True,
+    )
+
+    assert report.accepted == 0
+    assert report.rejected == 0
+    assert report.duplicates == 0
+    assert report.limited is False
+
+
+def test_import_corpus_scan_cap_override_never_undercuts_max_rows(tmp_path):
+    corpus = tmp_path / "phrases.jsonl"
+    corpus.write_text(
+        "\n".join([
+            json.dumps({"source": "One", "target": "一"}, ensure_ascii=False),
+            json.dumps({"source": "Two", "target": "二"}, ensure_ascii=False),
+            json.dumps({"source": "Three", "target": "三"}, ensure_ascii=False),
+        ]),
+        encoding="utf-8",
+    )
+
+    report = import_corpus(
+        corpus,
+        input_format="jsonl",
+        source_name="unit-scan-cap",
+        license_name="local-test",
+        source_language="en",
+        target_language="zh-CN",
+        max_rows=3,
+        dry_run=True,
+        _max_scanned_rows=1,
+    )
+
+    assert report.accepted == 3
+    assert report.rejected == 0
+    assert report.duplicates == 0
+    assert report.limited is True
+
+
 def test_import_corpus_cli_rejects_malformed_quoted_csv(tmp_path):
     corpus = tmp_path / "phrases.csv"
     corpus.write_text(
@@ -514,6 +585,45 @@ def test_import_corpus_cli_rejects_malformed_quoted_csv(tmp_path):
     assert result.returncode == 2
     assert "invalid csv file" in result.stderr
     assert not (data_dir / "phrase_library.sqlite3").exists()
+
+
+def test_import_corpus_cli_rejects_max_rows_above_hard_cap(tmp_path):
+    corpus = tmp_path / "phrases.csv"
+    corpus.write_text(
+        "\n".join([
+            "source,target",
+            "Hello,你好",
+        ]),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "tools/phrase_packs/import_corpus.py",
+            str(corpus),
+            "--format",
+            "csv",
+            "--source-name",
+            "unit-cap-limit",
+            "--license",
+            "CC0",
+            "--source-language",
+            "en",
+            "--target-language",
+            "zh-CN",
+            "--max-rows",
+            str(MAX_IMPORT_ROWS + 1),
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert f"max_rows must be <= {MAX_IMPORT_ROWS}" in result.stderr
 
 
 def test_import_corpus_cli_dry_run(tmp_path):
