@@ -200,10 +200,11 @@ workflow:
 Run the deterministic evaluation corpus locally:
 
 ```bash
+mkdir -p build/evaluation
 python3 -m app.evaluation.cli \
-  --corpus tests/fixtures/golden_corpus/translation_quality_loop.json \
-  --json-out build/evaluation/translation_quality_loop.json \
-  --markdown-out build/evaluation/translation_quality_loop.md
+  --corpus tests/fixtures/golden_corpus/milestone1.json \
+  --json-out build/evaluation/milestone1.json \
+  --markdown-out build/evaluation/milestone1.md
 ```
 
 The default evaluation command uses stored fixture outputs and does not call a

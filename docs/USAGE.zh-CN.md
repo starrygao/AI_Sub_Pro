@@ -181,10 +181,11 @@ AI Sub Pro 可以围绕字幕编辑流程自动提升译名一致性和口语自
 本地运行确定性评测语料：
 
 ```bash
+mkdir -p build/evaluation
 python3 -m app.evaluation.cli \
-  --corpus tests/fixtures/golden_corpus/translation_quality_loop.json \
-  --json-out build/evaluation/translation_quality_loop.json \
-  --markdown-out build/evaluation/translation_quality_loop.md
+  --corpus tests/fixtures/golden_corpus/milestone1.json \
+  --json-out build/evaluation/milestone1.json \
+  --markdown-out build/evaluation/milestone1.md
 ```
 
 默认评测命令只使用仓库内 fixture，不调用付费或联网翻译 provider。
