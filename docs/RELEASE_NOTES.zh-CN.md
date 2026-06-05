@@ -2,7 +2,7 @@
 
 语言：[English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
-## Unreleased - 扩展内置口语库
+## v1.2.2 - 扩展内置口语库
 
 主要内容：
 
@@ -17,8 +17,20 @@
 
 质量验证：
 
+- 完整测试套件已通过：`931 passed in 68.49s`。
 - 新增回归测试，覆盖生成器漂移、导入工具元数据校验、内置包规模、多语种检索、
   题材标签加权，以及题材 prompt 注入。
+
+安装包：
+
+- 已为 macOS 用户附加 `AI_Sub_Pro_v1.2.2.dmg`，并提供对应的
+  `AI_Sub_Pro_v1.2.2.dmg.sha256` 校验文件和 `release-size-report.json`。
+- 附带的 `.sha256` 文件和 `release-size-report.json` 与 DMG 来自同一次
+  GitHub Actions 构建。
+- 附带的 macOS 安装包是 base app build，不包含本地 Whisper 模型文件，也不包含
+  optional ASR backend packages / 可选 ASR 后端包。
+- Windows 安装包需要在 Windows 机器上运行 `build_win.bat` 生成；当前 release
+  暂未附带预编译 Windows 安装包，请先使用源码安装。
 
 ## v1.2.1 - 内置口语包与翻译完成状态修复
 

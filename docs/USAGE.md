@@ -9,9 +9,9 @@ and knowledge-base data on the user's machine.
 
 Prebuilt packages are attached to GitHub Releases when available.
 
-- macOS users can download `AI_Sub_Pro_v1.2.1.dmg` and
-  `AI_Sub_Pro_v1.2.1.dmg.sha256` from the `v1.2.1` release, verify the
-  checksum with `shasum -a 256 -c AI_Sub_Pro_v1.2.1.dmg.sha256`, open the
+- macOS users can download `AI_Sub_Pro_v1.2.2.dmg` and
+  `AI_Sub_Pro_v1.2.2.dmg.sha256` from the `v1.2.2` release, verify the
+  checksum with `shasum -a 256 -c AI_Sub_Pro_v1.2.2.dmg.sha256`, open the
   DMG, drag **AI Sub Pro** into **Applications**, then right-click and choose
   **Open** on first launch if Gatekeeper blocks an unsigned build.
 - Windows users can run a published Windows package when available. The current

@@ -2,7 +2,7 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
-## Unreleased - Expanded Phrase Library Packs
+## v1.2.2 - Expanded Phrase Library Packs
 
 Highlights:
 
@@ -19,9 +19,22 @@ Highlights:
 
 Quality/Verification:
 
+- Full test suite passed: `931 passed in 68.49s`.
 - Added regression tests for generator drift, import-tool metadata validation,
   bundled pack scale, multilingual retrieval, domain tag boosting, and domain
   prompt injection.
+
+Packages:
+
+- `AI_Sub_Pro_v1.2.2.dmg` is attached for macOS users, with a matching
+  `AI_Sub_Pro_v1.2.2.dmg.sha256` checksum file and
+  `release-size-report.json`.
+- The attached `.sha256` file and `release-size-report.json` are generated
+  from the same GitHub Actions build as the attached DMG.
+- The attached macOS package is the base app build. It does not bundle local
+  Whisper model files or optional ASR backend packages.
+- Windows packaging currently requires a Windows machine and `build_win.bat`;
+  no prebuilt Windows installer is attached to this release.
 
 ## v1.2.1 - Bundled Colloquial Packs And Translation Completion Fixes
 
