@@ -317,6 +317,83 @@ def test_import_corpus_cli_dry_run_supports_quoted_csv_fields(tmp_path):
     assert not (data_dir / "phrase_library.sqlite3").exists()
 
 
+@pytest.mark.parametrize(
+    ("filename", "input_format", "body", "message"),
+    [
+        (
+            "phrases.csv",
+            "csv",
+            'source,target\nHello,"world\nnext,valid\n',
+            "invalid csv file",
+        ),
+        (
+            "phrases.tsv",
+            "tsv",
+            'source\ttarget\nHello\t"world\nnext\tvalid\n',
+            "invalid tsv file",
+        ),
+    ],
+)
+def test_import_delimited_corpus_rejects_malformed_quoted_rows(
+    tmp_path,
+    filename,
+    input_format,
+    body,
+    message,
+):
+    corpus = tmp_path / filename
+    corpus.write_text(body, encoding="utf-8")
+
+    with pytest.raises(CorpusImportError, match=message):
+        import_corpus(
+            corpus,
+            input_format=input_format,
+            source_name="unit-quoted-error",
+            license_name="local-test",
+            source_language="en",
+            target_language="zh-CN",
+        )
+
+
+def test_import_corpus_cli_rejects_malformed_quoted_csv(tmp_path):
+    corpus = tmp_path / "phrases.csv"
+    corpus.write_text(
+        'source,target\nHello,"world\nnext,valid\n',
+        encoding="utf-8",
+    )
+    data_dir = tmp_path / "quoted-error-data"
+    env = os.environ.copy()
+    env["AI_SUB_PRO_DATA_DIR"] = str(data_dir)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "tools/phrase_packs/import_corpus.py",
+            str(corpus),
+            "--format",
+            "csv",
+            "--source-name",
+            "unit-quoted-error",
+            "--license",
+            "CC0",
+            "--source-language",
+            "en",
+            "--target-language",
+            "zh-CN",
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "invalid csv file" in result.stderr
+    assert not (data_dir / "phrase_library.sqlite3").exists()
+
+
 def test_import_corpus_cli_dry_run(tmp_path):
     corpus = tmp_path / "phrases.csv"
     corpus.write_text(

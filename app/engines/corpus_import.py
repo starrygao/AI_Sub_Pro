@@ -84,6 +84,8 @@ def import_corpus(
 
     Dry-run validates and samples file rows only; it does not compare against
     an existing phrase database unless the caller explicitly does that.
+    ``limited`` means processing stopped as soon as ``max_rows`` accepted rows
+    were reached, before scanning the rest of the file.
     """
     metadata = _validate_metadata(
         input_format=input_format,
@@ -290,29 +292,32 @@ def _iter_delimited_rows(
 ) -> Iterator[tuple[int, dict[str, object], str | None]]:
     delimiter = "\t" if metadata.input_format == "tsv" else ","
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle, delimiter=delimiter)
-        if not reader.fieldnames:
-            raise CorpusImportError("corpus file is missing a header row")
-        duplicate_headers = sorted(
-            header
-            for header, count in Counter(reader.fieldnames).items()
-            if count > 1
-        )
-        if duplicate_headers:
-            raise CorpusImportError(
-                "duplicate header name(s): " + ", ".join(duplicate_headers)
+        try:
+            reader = csv.DictReader(handle, delimiter=delimiter, strict=True)
+            if not reader.fieldnames:
+                raise CorpusImportError("corpus file is missing a header row")
+            duplicate_headers = sorted(
+                header
+                for header, count in Counter(reader.fieldnames).items()
+                if count > 1
             )
-        missing = [
-            column
-            for column in (metadata.source_column, metadata.target_column)
-            if column not in reader.fieldnames
-        ]
-        if missing:
-            raise CorpusImportError(
-                "missing required column(s): " + ", ".join(missing)
-            )
-        for row_number, row in enumerate(reader, start=2):
-            if None in row:
-                yield row_number, {}, f"line {row_number}: row has extra fields"
-                continue
-            yield row_number, row, None
+            if duplicate_headers:
+                raise CorpusImportError(
+                    "duplicate header name(s): " + ", ".join(duplicate_headers)
+                )
+            missing = [
+                column
+                for column in (metadata.source_column, metadata.target_column)
+                if column not in reader.fieldnames
+            ]
+            if missing:
+                raise CorpusImportError(
+                    "missing required column(s): " + ", ".join(missing)
+                )
+            for row_number, row in enumerate(reader, start=2):
+                if None in row:
+                    yield row_number, {}, f"line {row_number}: row has extra fields"
+                    continue
+                yield row_number, row, None
+        except csv.Error as exc:
+            raise CorpusImportError(f"invalid {metadata.input_format} file: {exc}") from exc
