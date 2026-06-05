@@ -17,10 +17,37 @@ def test_compare_subtitle_files_reports_core_metrics(tmp_path):
     old = tmp_path / "old.srt"
     new = tmp_path / "new.srt"
     reference = tmp_path / "reference.srt"
-    source.write_text(_srt((1, "Hudson Oaks is quiet."), (2, "Are you okay?")), encoding="utf-8")
-    old.write_text(_srt((1, "哈德森橡树很安静。"), (2, "Are you okay?")), encoding="utf-8")
-    new.write_text(_srt((1, "哈德逊奥克斯很安静。"), (2, "你还好吗？")), encoding="utf-8")
-    reference.write_text(_srt((1, "哈德逊奥克斯很安静。"), (2, "你还好吗？")), encoding="utf-8")
+    source.write_text(
+        _srt(
+            (1, "Hudson Oaks is quiet."),
+            (2, "Are you okay?"),
+            (3, "Please wait outside."),
+        ),
+        encoding="utf-8",
+    )
+    old.write_text(
+        _srt(
+            (1, "哈德森橡树很安静。"),
+            (2, "Are you okay? Please answer now."),
+        ),
+        encoding="utf-8",
+    )
+    new.write_text(
+        _srt(
+            (1, "哈德逊奥克斯很安静。"),
+            (2, "你还好吗？"),
+            (3, "请在外面等。"),
+        ),
+        encoding="utf-8",
+    )
+    reference.write_text(
+        _srt(
+            (1, "哈德逊奥克斯很安静。"),
+            (2, "你还好吗？"),
+            (3, "请在外面等。"),
+        ),
+        encoding="utf-8",
+    )
 
     report = compare_subtitle_files(
         source_path=source,
@@ -32,13 +59,21 @@ def test_compare_subtitle_files_reports_core_metrics(tmp_path):
         max_chars=18,
     )
 
-    assert report["summary"]["source_count"] == 2
+    assert report["summary"]["source_count"] == 3
+    assert report["old"]["missing_translation"]["missing_count"] == 1
+    assert report["old"]["missing_translation"]["source_missing_ids"] == ["3"]
+    assert report["new"]["missing_translation"]["missing_count"] == 0
     assert report["old"]["english_residue"]["count"] == 1
     assert report["new"]["english_residue"]["count"] == 0
+    assert report["old"]["length"]["count"] == 1
+    assert report["old"]["length"]["ids"] == ["2"]
+    assert report["new"]["length"]["count"] == 0
     assert report["old"]["terminology"]["hit_rate"] == 0.0
     assert report["new"]["terminology"]["hit_rate"] == 1.0
     assert report["new"]["reference_similarity"]["exact_match_rate"] == 1.0
+    assert report["delta"]["missing_translation_count"] == -1
     assert report["delta"]["english_residue_count"] == -1
+    assert report["delta"]["length_violation_count"] == -1
     json.dumps(report, ensure_ascii=False)
 
 
