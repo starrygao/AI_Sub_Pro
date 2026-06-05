@@ -295,84 +295,37 @@ class PhraseLibrary:
             (_FTS_SYNC_NAME,),
         )
 
-    def _fts_index_doc_count(self, conn) -> int:
-        try:
-            row = conn.execute("SELECT COUNT(*) AS count FROM phrase_examples_fts_docsize").fetchone()
-        except sqlite3.Error:
-            return 0
-        try:
-            return max(0, int(row["count"] or 0))
-        except (TypeError, ValueError, OverflowError):
-            return 0
-
-    def _fts_index_contains_row(self, conn, *, row_id: int, source_text: str) -> bool:
-        match_query = _fts_match_query(source_text)
-        if not match_query:
-            return True
-        try:
-            row = conn.execute(
-                """
-                SELECT rowid
-                FROM phrase_examples_fts
-                WHERE phrase_examples_fts MATCH ?
-                  AND rowid = ?
-                LIMIT 1
-                """,
-                (match_query, row_id),
-            ).fetchone()
-        except sqlite3.Error:
-            return False
-        return row is not None
-
     def _fts_sync_marker_valid(self, conn, last_rowid: int) -> bool:
         if last_rowid <= 0:
             return True
-        expected = conn.execute(
-            "SELECT COUNT(*) AS count FROM phrase_examples WHERE id <= ?",
-            (last_rowid,),
-        ).fetchone()
         try:
-            expected_count = max(0, int(expected["count"] or 0))
-        except (TypeError, ValueError, OverflowError):
-            expected_count = 0
-        if expected_count <= 0:
-            return True
-        if self._fts_index_doc_count(conn) < expected_count:
+            expected_ids = [
+                int(row["id"])
+                for row in conn.execute(
+                    """
+                    SELECT id
+                    FROM phrase_examples
+                    WHERE id <= ?
+                    ORDER BY id
+                    """,
+                    (last_rowid,),
+                ).fetchall()
+            ]
+            indexed_ids = [
+                int(row["id"])
+                for row in conn.execute(
+                    """
+                    SELECT id
+                    FROM phrase_examples_fts_docsize
+                    WHERE id <= ?
+                    ORDER BY id
+                    """,
+                    (last_rowid,),
+                ).fetchall()
+            ]
+        except (sqlite3.Error, TypeError, ValueError, OverflowError):
             return False
-
-        probe_rows = conn.execute(
-            """
-            SELECT id, source_text
-            FROM phrase_examples
-            WHERE id <= ?
-            ORDER BY id ASC
-            LIMIT 1
-            """,
-            (last_rowid,),
-        ).fetchall()
-        latest = conn.execute(
-            """
-            SELECT id, source_text
-            FROM phrase_examples
-            WHERE id <= ?
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (last_rowid,),
-        ).fetchall()
-        seen = set()
-        for row in [*probe_rows, *latest]:
-            row_id = int(row["id"])
-            if row_id in seen:
-                continue
-            seen.add(row_id)
-            if not self._fts_index_contains_row(
-                conn,
-                row_id=row_id,
-                source_text=row["source_text"] or "",
-            ):
-                return False
-        return True
+        return expected_ids == indexed_ids
 
     def _sync_fts_rows(self, conn) -> None:
         if not self._fts_available:

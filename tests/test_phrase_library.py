@@ -400,6 +400,32 @@ def test_phrase_library_auto_backend_preserves_existing_rows(tmp_path):
     assert second.last_retrieval_backend in {"fts5", "ngram"}
 
 
+def test_phrase_library_invalid_backend_uses_auto_retrieval(tmp_path):
+    from app.engines.phrase_library import PhraseLibrary
+
+    library = PhraseLibrary(tmp_path / "phrases.sqlite3")
+    library.add_phrase(
+        source_text="Invalid backend still retrieves.",
+        target_text="无效后端仍可检索。",
+        source_language="en",
+        target_language="zh-CN",
+        source_name="unit",
+        license="local",
+        quality=0.9,
+    )
+
+    results = library.retrieve(
+        "Invalid backend still retrieves.",
+        source_language="en",
+        target_language="zh-CN",
+        limit=1,
+        backend="not-a-backend",
+    )
+
+    assert results[0].target_text == "无效后端仍可检索。"
+    assert library.last_retrieval_backend in {"fts5", "ngram"}
+
+
 def test_phrase_library_forced_fts5_retrieves_when_available(tmp_path):
     _skip_without_fts5(tmp_path)
 
@@ -508,6 +534,66 @@ def test_phrase_library_recovers_when_fts_table_is_recreated_with_stale_sync_mar
     )
 
     assert results[0].target_text == "恢复陈旧同步短语。"
+    assert second.last_retrieval_backend == "fts5"
+
+
+def test_phrase_library_recovers_when_fts_rowid_coverage_is_inconsistent(tmp_path):
+    _skip_without_fts5(tmp_path)
+
+    from app.engines.phrase_library import PhraseLibrary
+
+    db = tmp_path / "phrases.sqlite3"
+    first = PhraseLibrary(db)
+    rows = [
+        ("Coverage first phrase", "覆盖第一条。"),
+        ("Coverage middle phrase", "覆盖中间条。"),
+        ("Coverage final phrase", "覆盖最后条。"),
+    ]
+    inserted_ids = []
+    for source_text, target_text in rows:
+        inserted_ids.append(
+            first.add_phrase(
+                source_text=source_text,
+                target_text=target_text,
+                source_language="en",
+                target_language="zh-CN",
+                source_name="unit",
+                license="local",
+                quality=0.9,
+            )
+        )
+
+    middle_id = inserted_ids[1]
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            INSERT INTO phrase_examples_fts(phrase_examples_fts, rowid, source_text, target_text)
+            VALUES('delete', ?, ?, ?)
+            """,
+            (middle_id, "Coverage middle phrase", "覆盖中间条。"),
+        )
+        conn.execute(
+            "INSERT INTO phrase_examples_fts(rowid, source_text, target_text) VALUES (?, ?, ?)",
+            (999, "Coverage orphan phrase", "覆盖孤立条。"),
+        )
+        assert conn.execute(
+            "SELECT COUNT(*) FROM phrase_examples WHERE id <= ?",
+            (inserted_ids[-1],),
+        ).fetchone()[0] == 3
+        assert conn.execute(
+            "SELECT COUNT(*) FROM phrase_examples_fts_docsize"
+        ).fetchone()[0] == 3
+
+    second = PhraseLibrary(db)
+    results = second.retrieve(
+        "Coverage middle phrase",
+        source_language="en",
+        target_language="zh-CN",
+        limit=1,
+        backend="fts5",
+    )
+
+    assert results[0].target_text == "覆盖中间条。"
     assert second.last_retrieval_backend == "fts5"
 
 
