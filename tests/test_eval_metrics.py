@@ -168,6 +168,24 @@ def test_proper_name_consistency_score_flags_divergent_long_names_without_shared
     assert result["issues"][0]["source"] == "Hudson Oaks"
 
 
+def test_proper_name_consistency_score_rejects_shared_context_as_long_name_anchor():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Hudson Oaks is okay.",
+            "2": "Hudson Oaks is okay too.",
+        },
+        {
+            "1": "哈德逊奥克斯一切正常",
+            "2": "赫德森橡树一切正常",
+        },
+    )
+
+    assert result["issue_count"] == 1
+    assert result["issues"][0]["source"] == "Hudson Oaks"
+
+
 def test_proper_name_consistency_score_allows_same_long_cjk_name_in_different_contexts():
     from app.evaluation.metrics import proper_name_consistency_score
 

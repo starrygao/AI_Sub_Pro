@@ -109,6 +109,15 @@ _LONG_NAME_IDENTITY_PREFIXES = (
     "北",
     "中",
 )
+_LONG_NAME_CONTEXT_ANCHORS = (
+    "一切正常",
+    "很安静",
+    "看起来",
+    "灯火通明",
+    "美极了",
+    "空荡",
+    "正常",
+)
 
 
 def _by_id(blocks: list[dict[str, str]], text_key: str) -> dict[str, str]:
@@ -248,6 +257,12 @@ def _contains_context_chars(anchor: str) -> bool:
     return any(char in _SHORT_NAME_CONTEXT_CHARS for char in anchor)
 
 
+def _is_context_anchor(anchor: str) -> bool:
+    if _contains_context_chars(anchor):
+        return True
+    return any(anchor in phrase or phrase in anchor for phrase in _LONG_NAME_CONTEXT_ANCHORS)
+
+
 def _shared_cjk_anchor(translations: list[str]) -> str:
     common = _common_cjk_substrings(translations, min_length=2)
     if not common:
@@ -268,7 +283,7 @@ def _shared_cjk_anchor(translations: list[str]) -> str:
 def _long_name_cjk_anchor(translations: list[str]) -> str:
     common = _common_cjk_substrings(translations, min_length=4)
     for anchor in common:
-        if not _contains_context_chars(anchor):
+        if not _is_context_anchor(anchor):
             return anchor
     return ""
 
@@ -276,7 +291,7 @@ def _long_name_cjk_anchor(translations: list[str]) -> str:
 def _fallback_long_name_anchor(translations: list[str]) -> str:
     common = _common_cjk_substrings(translations, min_length=2)
     for anchor in common:
-        if not _contains_context_chars(anchor):
+        if not _is_context_anchor(anchor):
             return anchor
     return ""
 
