@@ -354,7 +354,11 @@ def _long_name_signature(translation: str, shared_anchor: str) -> str:
     """
     cjk_text = _cjk_compact_text(translation)
     if not shared_anchor or shared_anchor not in cjk_text:
-        return ""
+        # No reliable shared anchor means we cannot isolate a common name core.
+        # In that case keep the compact CJK text so distinct renderings still
+        # separate, while same-rendering context cases continue to rely on the
+        # shared-anchor path above.
+        return cjk_text or _compact_whitespace(translation)
     start = cjk_text.find(shared_anchor)
     end = start + len(shared_anchor)
     end = _consume_identity_suffixes(cjk_text, end)

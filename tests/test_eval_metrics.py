@@ -150,6 +150,24 @@ def test_proper_name_consistency_score_detects_partial_different_cjk_target_form
     assert result["issues"][0]["source"] == "Hudson Oaks"
 
 
+def test_proper_name_consistency_score_flags_divergent_long_names_without_shared_anchor():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Hudson Oaks is quiet tonight.",
+            "2": "I came from Hudson Oaks.",
+        },
+        {
+            "1": "哈德逊奥克斯",
+            "2": "赫德森橡树",
+        },
+    )
+
+    assert result["issue_count"] == 1
+    assert result["issues"][0]["source"] == "Hudson Oaks"
+
+
 def test_proper_name_consistency_score_allows_same_long_cjk_name_in_different_contexts():
     from app.evaluation.metrics import proper_name_consistency_score
 
