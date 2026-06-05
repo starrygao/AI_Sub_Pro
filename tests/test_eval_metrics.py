@@ -186,6 +186,24 @@ def test_proper_name_consistency_score_flags_competing_prefix_transliteration():
     assert result["issues"][0]["source"] == "Hudson Oaks"
 
 
+def test_proper_name_consistency_score_flags_competing_prefix_after_sentence_context():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Hudson Oaks is quiet.",
+            "2": "Hudson Oaks is closed.",
+        },
+        {
+            "1": "我去哈德森奥克斯",
+            "2": "我去赫德森奥克斯",
+        },
+    )
+
+    assert result["issue_count"] == 1
+    assert result["issues"][0]["source"] == "Hudson Oaks"
+
+
 def test_proper_name_consistency_score_flags_divergent_long_names_without_shared_anchor():
     from app.evaluation.metrics import proper_name_consistency_score
 
@@ -269,6 +287,24 @@ def test_proper_name_consistency_score_allows_same_long_name_in_natural_contexts
         {
             "1": "我喜欢哈德逊奥克斯。",
             "2": "她讨厌哈德逊奥克斯。",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
+def test_proper_name_consistency_score_allows_temporal_prefix_context():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Hudson Oaks is quiet.",
+            "2": "Hudson Oaks is closed.",
+        },
+        {
+            "1": "昨天哈德逊奥克斯",
+            "2": "今天哈德逊奥克斯",
         },
     )
 

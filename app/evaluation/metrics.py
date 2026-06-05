@@ -152,6 +152,39 @@ _LONG_NAME_CONTEXT_PREFIX_HINTS = (
     "真的",
     "了",
 )
+_LONG_NAME_CONTEXT_PREFIX_TOKENS = (
+    "喜欢",
+    "讨厌",
+    "昨天",
+    "今天",
+    "明天",
+    "刚才",
+    "刚刚",
+    "现在",
+    "今晚",
+    "昨晚",
+    "明晚",
+    "我们",
+    "你们",
+    "他们",
+    "她们",
+    "它们",
+    "我",
+    "你",
+    "他",
+    "她",
+    "它",
+    "们",
+    "在",
+    "从",
+    "到",
+    "去",
+    "来",
+    "住",
+    "看",
+    "见",
+    "了",
+)
 
 
 def _by_id(blocks: list[dict[str, str]], text_key: str) -> dict[str, str]:
@@ -315,12 +348,26 @@ def _looks_like_sentence_prefix(prefix: str, min_name_prefix_length: int = 4) ->
     return any(hint in prefix for hint in _LONG_NAME_CONTEXT_PREFIX_HINTS)
 
 
+def _anchor_adjacent_name_prefix(prefix: str) -> str:
+    chunk = prefix[-3:]
+    while chunk:
+        context = next(
+            (item for item in _LONG_NAME_CONTEXT_PREFIX_TOKENS if chunk.startswith(item)),
+            "",
+        )
+        if not context:
+            break
+        chunk = chunk[len(context):]
+    return chunk
+
+
 def _looks_like_name_prefix_chunk(prefix: str) -> bool:
-    if not prefix or len(prefix) > 3:
+    chunk = _anchor_adjacent_name_prefix(prefix)
+    if not chunk or len(chunk) > 3:
         return False
-    if _contains_context_chars(prefix):
+    if _contains_context_chars(chunk):
         return False
-    return not any(hint in prefix for hint in _LONG_NAME_CONTEXT_PREFIX_HINTS)
+    return not any(hint in chunk for hint in _LONG_NAME_CONTEXT_PREFIX_HINTS)
 
 
 def _has_conflicting_name_prefixes(
@@ -340,12 +387,13 @@ def _has_conflicting_name_prefixes(
 
 def _has_competing_name_prefix_chunks(anchor: str, translations: list[str]) -> bool:
     prefixes = [_prefix_before_anchor(text, anchor) for text in translations]
-    nonempty = [prefix for prefix in prefixes if prefix]
-    if len(nonempty) != len(prefixes):
+    chunks = [_anchor_adjacent_name_prefix(prefix) for prefix in prefixes]
+    nonempty = [chunk for chunk in chunks if chunk]
+    if len(nonempty) != len(chunks):
         return False
     if len(set(nonempty)) < 2:
         return False
-    return all(_looks_like_name_prefix_chunk(prefix) for prefix in nonempty)
+    return all(_looks_like_name_prefix_chunk(chunk) for chunk in nonempty)
 
 
 def _estimated_cjk_name_length_floor(proper_name: str) -> int:
