@@ -92,3 +92,34 @@ def test_build_prompt_skips_quality_context_when_disabled(monkeypatch, tmp_path)
 
     assert "User correction memory" not in prompt
     assert "Subtitle phrase examples" not in prompt
+
+
+def test_build_prompt_uses_bundled_phrase_pack_examples(monkeypatch, tmp_path):
+    from app.engines import translator as tmod
+    from app.engines.knowledge import KnowledgeBase
+    from app.engines.phrase_library import PhraseLibrary, import_bundled_phrase_packs
+
+    phrases = PhraseLibrary(tmp_path / "phrases.sqlite3")
+    imported = import_bundled_phrase_packs(library=phrases)
+    assert imported["imported"] >= 1
+
+    monkeypatch.setattr(tmod, "PhraseLibrary", lambda: phrases)
+    monkeypatch.setattr(tmod, "_shared_kb", KnowledgeBase(), raising=False)
+    config = _translator_config()
+    config["translation"]["use_translation_memory"] = False
+
+    translator = tmod.SubtitleTranslator(config)
+    prompt = translator._build_prompt(
+        "简体中文",
+        {"name": "Party Scene", "original_language": "en"},
+        None,
+        [],
+        [],
+        items=[
+            {"id": 1, "original": "Where's the after party?"},
+        ],
+    )
+
+    assert "Subtitle phrase examples" in prompt
+    assert "续摊在哪" in prompt
+    assert translator.last_quality_trace.phrase_hits

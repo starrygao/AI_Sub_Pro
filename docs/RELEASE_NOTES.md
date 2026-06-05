@@ -2,6 +2,23 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## Unreleased - Bundled Colloquial Starter Packs
+
+Highlights:
+
+- Added bundled synthetic subtitle phrase starter packs for English, Japanese,
+  and Korean to Simplified Chinese.
+- App startup now imports bundled phrase packs into the local SQLite phrase
+  library once per pack version, so packaged builds get the examples without a
+  manual setup step.
+- Phrase pack imports now preserve pack id, version, tags, source, and license
+  metadata while avoiding duplicate rows across repeated startups.
+
+Quality/Verification:
+
+- Added regression tests for pack idempotency, newer-version imports, bundled
+  pack discovery, Japanese/Korean retrieval tokenization, and prompt injection.
+
 ## v1.2.0 - Quality, Workflow, Editor, And Release Pipeline
 
 This release publishes the v2 upgrade work as a packaged macOS build. It adds

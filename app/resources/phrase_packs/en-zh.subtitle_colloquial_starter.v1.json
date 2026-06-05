@@ -1,0 +1,192 @@
+{
+  "id": "ai-sub-pro.en-zh.subtitle_colloquial_starter",
+  "version": 1,
+  "source": "AI Sub Pro bundled synthetic subtitle colloquial starter pack",
+  "license": "Project-local synthetic examples, MIT-compatible",
+  "source_language": "en",
+  "target_language": "zh-CN",
+  "tags": ["subtitle", "dialogue", "colloquial"],
+  "quality": 0.82,
+  "phrases": [
+    {
+      "source_text": "Shoot your shot.",
+      "target_text": "主动出击。",
+      "quality": 0.92,
+      "tags": ["slang", "encouragement"]
+    },
+    {
+      "source_text": "That's how they lure you in.",
+      "target_text": "他们就是这样引你上钩的。",
+      "quality": 0.9,
+      "tags": ["idiom"]
+    },
+    {
+      "source_text": "What are you doing here?",
+      "target_text": "你怎么来了？",
+      "quality": 0.88,
+      "tags": ["dialogue"]
+    },
+    {
+      "source_text": "I'm here to save you.",
+      "target_text": "我是来救你的。",
+      "quality": 0.86,
+      "tags": ["dialogue"]
+    },
+    {
+      "source_text": "Keep the night going.",
+      "target_text": "继续玩下去。",
+      "quality": 0.86,
+      "tags": ["party"]
+    },
+    {
+      "source_text": "Where's the after party?",
+      "target_text": "续摊在哪？",
+      "quality": 0.9,
+      "tags": ["party", "colloquial"]
+    },
+    {
+      "source_text": "Come on.",
+      "target_text": "别这样嘛。",
+      "quality": 0.72,
+      "tags": ["context-sensitive"]
+    },
+    {
+      "source_text": "Something to write home about.",
+      "target_text": "值得回去炫耀的经历。",
+      "quality": 0.86,
+      "tags": ["idiom"]
+    },
+    {
+      "source_text": "Are you okay?",
+      "target_text": "你没事吧？",
+      "quality": 0.9,
+      "tags": ["dialogue"]
+    },
+    {
+      "source_text": "You got this.",
+      "target_text": "你可以的。",
+      "quality": 0.9,
+      "tags": ["encouragement"]
+    },
+    {
+      "source_text": "Off the books.",
+      "target_text": "私下处理。",
+      "quality": 0.84,
+      "tags": ["idiom"]
+    },
+    {
+      "source_text": "Resort vibes.",
+      "target_text": "度假村的感觉。",
+      "quality": 0.82,
+      "tags": ["tone"]
+    },
+    {
+      "source_text": "Wait.",
+      "target_text": "等等。",
+      "quality": 0.78,
+      "tags": ["short-line"]
+    },
+    {
+      "source_text": "No way.",
+      "target_text": "不会吧。",
+      "quality": 0.82,
+      "tags": ["reaction"]
+    },
+    {
+      "source_text": "You've got to be kidding me.",
+      "target_text": "你不是在开玩笑吧。",
+      "quality": 0.84,
+      "tags": ["reaction"]
+    },
+    {
+      "source_text": "I mean it.",
+      "target_text": "我是认真的。",
+      "quality": 0.84,
+      "tags": ["dialogue"]
+    },
+    {
+      "source_text": "Drop it.",
+      "target_text": "别再说了。",
+      "quality": 0.82,
+      "tags": ["conflict"]
+    },
+    {
+      "source_text": "Let it go.",
+      "target_text": "算了吧。",
+      "quality": 0.84,
+      "tags": ["dialogue"]
+    },
+    {
+      "source_text": "I'm on it.",
+      "target_text": "我来处理。",
+      "quality": 0.86,
+      "tags": ["workplace"]
+    },
+    {
+      "source_text": "I owe you one.",
+      "target_text": "我欠你个人情。",
+      "quality": 0.86,
+      "tags": ["idiom"]
+    },
+    {
+      "source_text": "This isn't about you.",
+      "target_text": "这事不是冲着你来的。",
+      "quality": 0.84,
+      "tags": ["dialogue"]
+    },
+    {
+      "source_text": "Don't take it personally.",
+      "target_text": "别往心里去。",
+      "quality": 0.88,
+      "tags": ["dialogue"]
+    },
+    {
+      "source_text": "Read the room.",
+      "target_text": "看点气氛行不行。",
+      "quality": 0.88,
+      "tags": ["slang"]
+    },
+    {
+      "source_text": "That tracks.",
+      "target_text": "这倒说得通。",
+      "quality": 0.84,
+      "tags": ["colloquial"]
+    },
+    {
+      "source_text": "We're good.",
+      "target_text": "我们没事了。",
+      "quality": 0.78,
+      "tags": ["context-sensitive"]
+    },
+    {
+      "source_text": "It's not a big deal.",
+      "target_text": "没什么大不了的。",
+      "quality": 0.86,
+      "tags": ["dialogue"]
+    },
+    {
+      "source_text": "For what it's worth.",
+      "target_text": "不管有没有用，我还是想说。",
+      "quality": 0.82,
+      "tags": ["discourse"]
+    },
+    {
+      "source_text": "I'll make it up to you.",
+      "target_text": "我会补偿你的。",
+      "quality": 0.86,
+      "tags": ["dialogue"]
+    },
+    {
+      "source_text": "Don't push it.",
+      "target_text": "别得寸进尺。",
+      "quality": 0.88,
+      "tags": ["idiom"]
+    },
+    {
+      "source_text": "That came out wrong.",
+      "target_text": "我刚才说得不太对。",
+      "quality": 0.84,
+      "tags": ["repair"]
+    }
+  ]
+}

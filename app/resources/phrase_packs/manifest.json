@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "description": "Bundled synthetic subtitle colloquial starter phrase packs.",
+  "packs": [
+    {
+      "id": "ai-sub-pro.en-zh.subtitle_colloquial_starter",
+      "file": "en-zh.subtitle_colloquial_starter.v1.json",
+      "version": 1
+    },
+    {
+      "id": "ai-sub-pro.ja-zh.subtitle_colloquial_starter",
+      "file": "ja-zh.subtitle_colloquial_starter.v1.json",
+      "version": 1
+    },
+    {
+      "id": "ai-sub-pro.ko-zh.subtitle_colloquial_starter",
+      "file": "ko-zh.subtitle_colloquial_starter.v1.json",
+      "version": 1
+    }
+  ]
+}

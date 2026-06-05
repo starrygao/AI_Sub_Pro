@@ -5,10 +5,14 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from app.engines.translation_memory import _lang
+
+_TOKEN_RE = re.compile(r"[A-Za-z0-9\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]+")
+_CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
 
 
 def default_phrase_library_path() -> Path:
@@ -26,6 +30,9 @@ class PhraseExample:
     target_language: str
     source_name: str
     license: str
+    pack_id: str = ""
+    pack_version: int = 0
+    tags: str = ""
     quality: float = 0.5
     score: float = 0.0
 
@@ -46,8 +53,35 @@ def _clean_quality(value) -> float:
     return parsed
 
 
+def _clean_pack_version(value) -> int:
+    if isinstance(value, bool):
+        return 1
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return 1
+    return max(1, parsed)
+
+
+def _clean_tags(value) -> str:
+    if isinstance(value, list):
+        return ",".join(part for part in (_clean_text(item) for item in value) if part)
+    return _clean_text(value)
+
+
 def _tokens(value: str) -> set[str]:
-    return {part for part in re.findall(r"[A-Za-z0-9\u4e00-\u9fff]+", value.lower()) if part}
+    tokens: set[str] = set()
+    for part in _TOKEN_RE.findall(value.lower()):
+        if not part:
+            continue
+        tokens.add(part)
+        if not _CJK_RE.search(part):
+            continue
+        for size in (2, 3):
+            if len(part) < size:
+                continue
+            tokens.update(part[index:index + size] for index in range(len(part) - size + 1))
+    return tokens
 
 
 def _similarity(query: str, candidate: str) -> float:
@@ -88,9 +122,35 @@ class PhraseLibrary:
                 )
                 """
             )
+            existing_columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(phrase_examples)").fetchall()
+            }
+            migrations = {
+                "pack_id": "ALTER TABLE phrase_examples ADD COLUMN pack_id TEXT NOT NULL DEFAULT ''",
+                "pack_version": "ALTER TABLE phrase_examples ADD COLUMN pack_version INTEGER NOT NULL DEFAULT 0",
+                "tags": "ALTER TABLE phrase_examples ADD COLUMN tags TEXT NOT NULL DEFAULT ''",
+            }
+            for column, statement in migrations.items():
+                if column not in existing_columns:
+                    conn.execute(statement)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_phrase_examples_lang "
                 "ON phrase_examples(source_language, target_language)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_phrase_examples_pack "
+                "ON phrase_examples(pack_id, pack_version)"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS phrase_pack_imports (
+                    pack_id TEXT PRIMARY KEY,
+                    version INTEGER NOT NULL,
+                    imported_at TEXT NOT NULL,
+                    imported_count INTEGER NOT NULL
+                )
+                """
             )
 
     def add_phrase(
@@ -103,27 +163,57 @@ class PhraseLibrary:
         source_name: str = "",
         license: str = "",
         quality: float = 0.5,
+        pack_id: str = "",
+        pack_version: int = 0,
+        tags: str | list[str] = "",
     ) -> Optional[int]:
         source = _clean_text(source_text)
         target = _clean_text(target_text)
         if not source or not target:
             return None
+        normalized_source_language = _lang(source_language, "auto")
+        normalized_target_language = _lang(target_language, "zh-CN")
+        normalized_source_name = _clean_text(source_name)
+        normalized_license = _clean_text(license)
         with self._connect() as conn:
-            cur = conn.execute(
+            duplicate = conn.execute(
                 """
-                INSERT INTO phrase_examples (
-                    source_text, target_text, source_language, target_language,
-                    source_name, license, quality
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                SELECT id FROM phrase_examples
+                WHERE source_text = ?
+                  AND target_text = ?
+                  AND source_language = ?
+                  AND target_language = ?
+                  AND source_name = ?
+                LIMIT 1
                 """,
                 (
                     source,
                     target,
-                    _lang(source_language, "auto"),
-                    _lang(target_language, "zh-CN"),
-                    _clean_text(source_name),
-                    _clean_text(license),
+                    normalized_source_language,
+                    normalized_target_language,
+                    normalized_source_name,
+                ),
+            ).fetchone()
+            if duplicate is not None:
+                return None
+            cur = conn.execute(
+                """
+                INSERT INTO phrase_examples (
+                    source_text, target_text, source_language, target_language,
+                    source_name, license, quality, pack_id, pack_version, tags
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    source,
+                    target,
+                    normalized_source_language,
+                    normalized_target_language,
+                    normalized_source_name,
+                    normalized_license,
                     _clean_quality(quality),
+                    _clean_text(pack_id),
+                    int(pack_version or 0),
+                    _clean_tags(tags),
                 ),
             )
             return int(cur.lastrowid)
@@ -133,10 +223,71 @@ class PhraseLibrary:
             raw = json.loads(Path(path).read_text(encoding="utf-8"))
         except Exception:
             return 0
+        return self._import_payload(raw) if isinstance(raw, dict) else 0
+
+    def import_pack(self, path: Path) -> int:
+        try:
+            raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        except Exception:
+            return 0
         if not isinstance(raw, dict):
             return 0
+        pack_id = _clean_text(raw.get("id")) or _clean_text(raw.get("pack_id"))
+        if not pack_id:
+            return self._import_payload(raw)
+        pack_version = _clean_pack_version(raw.get("version") or raw.get("pack_version"))
+        with self._connect() as conn:
+            current = conn.execute(
+                "SELECT version FROM phrase_pack_imports WHERE pack_id = ?",
+                (pack_id,),
+            ).fetchone()
+            if current is not None and int(current["version"] or 0) >= pack_version:
+                return 0
+
+        imported = self._import_payload(
+            raw,
+            pack_id=pack_id,
+            pack_version=pack_version,
+        )
+        imported_at = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT pack_id FROM phrase_pack_imports WHERE pack_id = ?",
+                (pack_id,),
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    """
+                    INSERT INTO phrase_pack_imports (
+                        pack_id, version, imported_at, imported_count
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (pack_id, pack_version, imported_at, imported),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE phrase_pack_imports
+                    SET version = ?, imported_at = ?, imported_count = ?
+                    WHERE pack_id = ?
+                    """,
+                    (pack_version, imported_at, imported, pack_id),
+                )
+        return imported
+
+    def _import_payload(
+        self,
+        raw: dict,
+        *,
+        pack_id: str = "",
+        pack_version: int = 0,
+    ) -> int:
         source_name = _clean_text(raw.get("source"))
         license_text = _clean_text(raw.get("license"))
+        default_source_language = raw.get("source_language", "")
+        default_target_language = raw.get("target_language", "")
+        default_quality = raw.get("quality", 0.5)
+        default_tags = raw.get("tags", "")
         rows = raw.get("phrases")
         if not isinstance(rows, list):
             return 0
@@ -147,11 +298,14 @@ class PhraseLibrary:
             entry_id = self.add_phrase(
                 source_text=row.get("source_text", ""),
                 target_text=row.get("target_text", ""),
-                source_language=row.get("source_language", ""),
-                target_language=row.get("target_language", ""),
+                source_language=row.get("source_language", default_source_language),
+                target_language=row.get("target_language", default_target_language),
                 source_name=_clean_text(row.get("source_name")) or source_name,
                 license=_clean_text(row.get("license")) or license_text,
-                quality=row.get("quality", 0.5),
+                quality=row.get("quality", default_quality),
+                pack_id=pack_id,
+                pack_version=pack_version,
+                tags=row.get("tags", default_tags),
             )
             if entry_id is not None:
                 imported += 1
@@ -197,8 +351,71 @@ class PhraseLibrary:
                 target_language=row["target_language"] or "",
                 source_name=row["source_name"] or "",
                 license=row["license"] or "",
+                pack_id=row["pack_id"] or "",
+                pack_version=int(row["pack_version"] or 0),
+                tags=row["tags"] or "",
                 quality=quality,
                 score=(similarity * 0.75) + (quality * 0.25),
             ))
         examples.sort(key=lambda item: (-item.score, -item.quality, -item.id))
         return examples[:max_results]
+
+
+def bundled_phrase_pack_dir() -> Path:
+    return Path(__file__).resolve().parents[1] / "resources" / "phrase_packs"
+
+
+def bundled_phrase_pack_paths(root: Optional[Path] = None) -> list[Path]:
+    base = Path(root) if root is not None else bundled_phrase_pack_dir()
+    if not base.exists() or not base.is_dir():
+        return []
+
+    manifest = base / "manifest.json"
+    paths: list[Path] = []
+    if manifest.exists():
+        try:
+            raw = json.loads(manifest.read_text(encoding="utf-8"))
+        except Exception:
+            raw = {}
+        packs = raw.get("packs") if isinstance(raw, dict) else None
+        if isinstance(packs, list):
+            base_resolved = base.resolve()
+            for item in packs:
+                rel = item.get("file") if isinstance(item, dict) else item
+                rel_text = _clean_text(rel)
+                if not rel_text:
+                    continue
+                candidate = (base / rel_text).resolve()
+                try:
+                    candidate.relative_to(base_resolved)
+                except ValueError:
+                    continue
+                if candidate.exists() and candidate.is_file():
+                    paths.append(candidate)
+
+    if not paths:
+        paths = sorted(path for path in base.glob("*.json") if path.name != "manifest.json")
+
+    seen = set()
+    unique_paths = []
+    for path in paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_paths.append(path)
+    return unique_paths
+
+
+def import_bundled_phrase_packs(
+    library: Optional[PhraseLibrary] = None,
+    root: Optional[Path] = None,
+) -> dict:
+    phrase_library = library or PhraseLibrary()
+    packs = []
+    total = 0
+    for path in bundled_phrase_pack_paths(root):
+        imported = phrase_library.import_pack(path)
+        total += imported
+        packs.append({"file": path.name, "imported": imported})
+    return {"imported": total, "packs": packs}

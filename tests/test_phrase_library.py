@@ -94,3 +94,132 @@ def test_phrase_library_rejects_malformed_rows(tmp_path):
 
     assert library.import_json(source) == 1
     assert len(library.retrieve("Hello", source_language="en", target_language="zh-CN")) == 1
+
+
+def test_phrase_pack_import_is_idempotent(tmp_path):
+    from app.engines.phrase_library import PhraseLibrary
+
+    source = tmp_path / "pack.json"
+    source.write_text(json.dumps({
+        "id": "unit.en-zh.pack",
+        "version": 1,
+        "source": "unit-pack",
+        "license": "local",
+        "source_language": "en",
+        "target_language": "zh-CN",
+        "tags": ["subtitle", "slang"],
+        "phrases": [
+            {
+                "source_text": "Where's the after party?",
+                "target_text": "续摊在哪？",
+                "quality": 0.9,
+            },
+            {
+                "source_text": "You got this.",
+                "target_text": "你可以的。",
+                "quality": 0.9,
+            },
+        ],
+    }), encoding="utf-8")
+
+    library = PhraseLibrary(tmp_path / "phrases.sqlite3")
+
+    assert library.import_pack(source) == 2
+    assert library.import_pack(source) == 0
+
+    results = library.retrieve(
+        "Where is the after party?",
+        source_language="en",
+        target_language="zh-CN",
+        limit=5,
+    )
+    assert len(results) == 1
+    assert results[0].target_text == "续摊在哪？"
+    assert results[0].pack_id == "unit.en-zh.pack"
+    assert results[0].pack_version == 1
+    assert results[0].tags == "subtitle,slang"
+
+
+def test_phrase_pack_newer_version_adds_only_new_examples(tmp_path):
+    from app.engines.phrase_library import PhraseLibrary
+
+    source = tmp_path / "pack.json"
+    source.write_text(json.dumps({
+        "id": "unit.en-zh.pack",
+        "version": 1,
+        "source": "unit-pack",
+        "license": "local",
+        "source_language": "en",
+        "target_language": "zh-CN",
+        "phrases": [
+            {
+                "source_text": "Drop it.",
+                "target_text": "别再说了。",
+                "quality": 0.8,
+            },
+        ],
+    }), encoding="utf-8")
+
+    library = PhraseLibrary(tmp_path / "phrases.sqlite3")
+    assert library.import_pack(source) == 1
+
+    source.write_text(json.dumps({
+        "id": "unit.en-zh.pack",
+        "version": 2,
+        "source": "unit-pack",
+        "license": "local",
+        "source_language": "en",
+        "target_language": "zh-CN",
+        "phrases": [
+            {
+                "source_text": "Drop it.",
+                "target_text": "别再说了。",
+                "quality": 0.8,
+            },
+            {
+                "source_text": "Read the room.",
+                "target_text": "看点气氛行不行。",
+                "quality": 0.9,
+            },
+        ],
+    }), encoding="utf-8")
+
+    assert library.import_pack(source) == 1
+    assert library.import_pack(source) == 0
+    assert len(library.retrieve("Drop it.", source_language="en", target_language="zh-CN")) == 1
+    assert len(library.retrieve("Read the room.", source_language="en", target_language="zh-CN")) == 1
+
+
+def test_bundled_phrase_packs_import_and_retrieve(tmp_path):
+    from app.engines.phrase_library import (
+        PhraseLibrary,
+        bundled_phrase_pack_paths,
+        import_bundled_phrase_packs,
+    )
+
+    pack_names = {path.name for path in bundled_phrase_pack_paths()}
+    assert "en-zh.subtitle_colloquial_starter.v1.json" in pack_names
+    assert "ja-zh.subtitle_colloquial_starter.v1.json" in pack_names
+    assert "ko-zh.subtitle_colloquial_starter.v1.json" in pack_names
+
+    library = PhraseLibrary(tmp_path / "phrases.sqlite3")
+    imported = import_bundled_phrase_packs(library=library)
+
+    assert imported["imported"] >= 3
+    assert any(pack["file"] == "en-zh.subtitle_colloquial_starter.v1.json" for pack in imported["packs"])
+    assert any(
+        result.target_text == "续摊在哪？"
+        for result in library.retrieve(
+            "Where's the after party?",
+            source_language="en",
+            target_language="zh-CN",
+        )
+    )
+    assert any(
+        result.target_text == "等一下。"
+        for result in library.retrieve("ちょっと待ってよ", source_language="ja", target_language="zh-CN")
+    )
+    assert any(
+        result.target_text == "等一下。"
+        for result in library.retrieve("잠깐만요", source_language="ko", target_language="zh-CN")
+    )

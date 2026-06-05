@@ -137,6 +137,17 @@ def _run_startup():
         log.info("Added to PATH: %s", ffmpeg_dir)
     if not check_ffmpeg():
         log.warning("ffmpeg/ffprobe not found! Media features will not work.")
+    try:
+        from app.engines.phrase_library import import_bundled_phrase_packs
+        phrase_pack_result = import_bundled_phrase_packs()
+        imported = int(phrase_pack_result.get("imported", 0))
+        pack_count = len(phrase_pack_result.get("packs", []))
+        if imported:
+            log.info("Imported %d bundled phrase examples from %d pack(s)", imported, pack_count)
+        else:
+            log.info("Bundled phrase packs checked: %d pack(s), no new examples", pack_count)
+    except Exception as e:
+        log.warning("bundled phrase pack import failed: %s", e)
     log.info("AI Sub Pro started on http://127.0.0.1:18090")
     from app.engines.scheduler import load_progress_store_from_disk
     restored = load_progress_store_from_disk()

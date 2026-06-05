@@ -1,0 +1,87 @@
+{
+  "id": "ai-sub-pro.ja-zh.subtitle_colloquial_starter",
+  "version": 1,
+  "source": "AI Sub Pro bundled synthetic subtitle colloquial starter pack",
+  "license": "Project-local synthetic examples, MIT-compatible",
+  "source_language": "ja",
+  "target_language": "zh-CN",
+  "tags": ["subtitle", "dialogue", "colloquial"],
+  "quality": 0.8,
+  "phrases": [
+    {
+      "source_text": "どうしたの？",
+      "target_text": "怎么了？",
+      "quality": 0.86
+    },
+    {
+      "source_text": "何してるの？",
+      "target_text": "你在干什么？",
+      "quality": 0.86
+    },
+    {
+      "source_text": "ちょっと待って。",
+      "target_text": "等一下。",
+      "quality": 0.86
+    },
+    {
+      "source_text": "まさか。",
+      "target_text": "不会吧。",
+      "quality": 0.84
+    },
+    {
+      "source_text": "大丈夫？",
+      "target_text": "你没事吧？",
+      "quality": 0.86
+    },
+    {
+      "source_text": "任せて。",
+      "target_text": "交给我吧。",
+      "quality": 0.84
+    },
+    {
+      "source_text": "もういい。",
+      "target_text": "够了。",
+      "quality": 0.82
+    },
+    {
+      "source_text": "そういうことじゃない。",
+      "target_text": "我不是这个意思。",
+      "quality": 0.84
+    },
+    {
+      "source_text": "気にしないで。",
+      "target_text": "别放在心上。",
+      "quality": 0.86
+    },
+    {
+      "source_text": "なんとかなる。",
+      "target_text": "总会有办法的。",
+      "quality": 0.84
+    },
+    {
+      "source_text": "ほっといて。",
+      "target_text": "别管我。",
+      "quality": 0.82
+    },
+    {
+      "source_text": "本気で言ってる？",
+      "target_text": "你是认真的吗？",
+      "quality": 0.86
+    },
+    {
+      "source_text": "早く。",
+      "target_text": "快点。",
+      "quality": 0.82
+    },
+    {
+      "source_text": "ありえない。",
+      "target_text": "太离谱了。",
+      "quality": 0.84
+    },
+    {
+      "source_text": "どういう意味？",
+      "target_text": "这是什么意思？",
+      "quality": 0.84
+    }
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "id": "ai-sub-pro.ko-zh.subtitle_colloquial_starter",
+  "version": 1,
+  "source": "AI Sub Pro bundled synthetic subtitle colloquial starter pack",
+  "license": "Project-local synthetic examples, MIT-compatible",
+  "source_language": "ko",
+  "target_language": "zh-CN",
+  "tags": ["subtitle", "dialogue", "colloquial"],
+  "quality": 0.8,
+  "phrases": [
+    {
+      "source_text": "뭐 하는 거야?",
+      "target_text": "你在干什么？",
+      "quality": 0.86
+    },
+    {
+      "source_text": "잠깐만.",
+      "target_text": "等一下。",
+      "quality": 0.86
+    },
+    {
+      "source_text": "괜찮아?",
+      "target_text": "你没事吧？",
+      "quality": 0.86
+    },
+    {
+      "source_text": "말도 안 돼.",
+      "target_text": "不可能吧。",
+      "quality": 0.84
+    },
+    {
+      "source_text": "내가 알아서 할게.",
+      "target_text": "我来处理。",
+      "quality": 0.84
+    },
+    {
+      "source_text": "신경 쓰지 마.",
+      "target_text": "别放在心上。",
+      "quality": 0.84
+    },
+    {
+      "source_text": "그게 아니야.",
+      "target_text": "不是那样的。",
+      "quality": 0.84
+    },
+    {
+      "source_text": "됐어.",
+      "target_text": "算了。",
+      "quality": 0.82
+    },
+    {
+      "source_text": "진심이야?",
+      "target_text": "你是认真的吗？",
+      "quality": 0.86
+    },
+    {
+      "source_text": "빨리.",
+      "target_text": "快点。",
+      "quality": 0.82
+    },
+    {
+      "source_text": "걱정하지 마.",
+      "target_text": "别担心。",
+      "quality": 0.86
+    },
+    {
+      "source_text": "나한테 맡겨.",
+      "target_text": "交给我吧。",
+      "quality": 0.84
+    },
+    {
+      "source_text": "어떻게 된 거야?",
+      "target_text": "怎么回事？",
+      "quality": 0.84
+    },
+    {
+      "source_text": "그냥 넘어가자.",
+      "target_text": "算了，别追究了。",
+      "quality": 0.84
+    },
+    {
+      "source_text": "말해 봐.",
+      "target_text": "说说看。",
+      "quality": 0.82
+    }
+  ]
+}
