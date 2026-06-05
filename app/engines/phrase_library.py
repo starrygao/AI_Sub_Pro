@@ -19,6 +19,7 @@ from app.engines.translation_memory import _lang
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]+")
 _VALID_BACKENDS = {"auto", "fts5", "ngram"}
+_FTS_SYNC_NAME = "phrase_examples_fts"
 
 
 def default_phrase_library_path() -> Path:
@@ -93,8 +94,17 @@ def _fts_match_query(value: str) -> str:
     tokens = sorted(set(_TOKEN_RE.findall(normalize_text(value))))
     if tokens:
         return " OR ".join(f'"{token}"' for token in tokens)
-    normalized = normalize_text(value)
-    return f'"{normalized}"' if normalized else ""
+    return ""
+
+
+def _dedupe_rows(*row_groups) -> list:
+    rows_by_id = {}
+    for rows in row_groups:
+        for row in rows:
+            row_id = int(row["id"])
+            if row_id not in rows_by_id:
+                rows_by_id[row_id] = row
+    return list(rows_by_id.values())
 
 
 class PhraseLibrary:
@@ -169,8 +179,16 @@ class PhraseLibrary:
                 USING fts5(source_text, target_text, content='phrase_examples', content_rowid='id')
                 """
             )
-            conn.execute("INSERT INTO phrase_examples_fts(phrase_examples_fts) VALUES('rebuild')")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS phrase_examples_fts_sync (
+                    name TEXT PRIMARY KEY,
+                    last_rowid INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
             self._fts_available = True
+            self._sync_fts_rows(conn)
         except sqlite3.Error:
             self._fts_available = False
 
@@ -191,9 +209,60 @@ class PhraseLibrary:
                 "INSERT INTO phrase_examples_fts(rowid, source_text, target_text) VALUES (?, ?, ?)",
                 (row_id, source, target),
             )
+            self._set_fts_sync_rowid(conn, row_id)
             self._fts_available = True
         except sqlite3.Error:
             self._fts_available = False
+
+    def _get_fts_sync_rowid(self, conn) -> int:
+        row = conn.execute(
+            "SELECT last_rowid FROM phrase_examples_fts_sync WHERE name = ?",
+            (_FTS_SYNC_NAME,),
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO phrase_examples_fts_sync(name, last_rowid) VALUES (?, 0)",
+                (_FTS_SYNC_NAME,),
+            )
+            return 0
+        try:
+            return max(0, int(row["last_rowid"] or 0))
+        except (TypeError, ValueError, OverflowError):
+            return 0
+
+    def _set_fts_sync_rowid(self, conn, row_id: int) -> None:
+        conn.execute(
+            """
+            INSERT INTO phrase_examples_fts_sync(name, last_rowid)
+            VALUES (?, ?)
+            ON CONFLICT(name) DO UPDATE SET last_rowid = MAX(last_rowid, excluded.last_rowid)
+            """,
+            (_FTS_SYNC_NAME, max(0, int(row_id))),
+        )
+
+    def _sync_fts_rows(self, conn) -> None:
+        if not self._fts_available:
+            return
+        last_rowid = self._get_fts_sync_rowid(conn)
+        rows = conn.execute(
+            """
+            SELECT id, source_text, target_text
+            FROM phrase_examples
+            WHERE id > ?
+            ORDER BY id
+            """,
+            (last_rowid,),
+        ).fetchall()
+        synced_rowid = last_rowid
+        for row in rows:
+            row_id = int(row["id"])
+            conn.execute(
+                "INSERT INTO phrase_examples_fts(rowid, source_text, target_text) VALUES (?, ?, ?)",
+                (row_id, row["source_text"] or "", row["target_text"] or ""),
+            )
+            synced_rowid = row_id
+        if synced_rowid != last_rowid:
+            self._set_fts_sync_rowid(conn, synced_rowid)
 
     def add_phrase(
         self,
@@ -427,20 +496,20 @@ class PhraseLibrary:
             ), "ngram"
 
         try:
-            rows = conn.execute(
-                """
-                SELECT pe.*, bm25(phrase_examples_fts) AS rank
-                FROM phrase_examples_fts
-                JOIN phrase_examples pe ON pe.id = phrase_examples_fts.rowid
-                WHERE phrase_examples_fts MATCH ?
-                  AND pe.source_language = ?
-                  AND pe.target_language = ?
-                ORDER BY rank, pe.quality DESC, pe.id DESC
-                LIMIT 500
-                """,
-                (fts_query, source_language, target_language),
-            ).fetchall()
-            return rows, "fts5"
+            fts_rows = self._select_fts_rows(
+                conn,
+                fts_query=fts_query,
+                source_language=source_language,
+                target_language=target_language,
+            )
+            if requested_backend == "auto":
+                ngram_rows = self._select_ngram_rows(
+                    conn,
+                    source_language=source_language,
+                    target_language=target_language,
+                )
+                return _dedupe_rows(fts_rows, ngram_rows), "fts5"
+            return fts_rows, "fts5"
         except sqlite3.Error:
             self._fts_available = False
             return self._select_ngram_rows(
@@ -448,6 +517,21 @@ class PhraseLibrary:
                 source_language=source_language,
                 target_language=target_language,
             ), "ngram"
+
+    def _select_fts_rows(self, conn, *, fts_query: str, source_language: str, target_language: str):
+        return conn.execute(
+            """
+            SELECT pe.*, bm25(phrase_examples_fts) AS rank
+            FROM phrase_examples_fts
+            JOIN phrase_examples pe ON pe.id = phrase_examples_fts.rowid
+            WHERE phrase_examples_fts MATCH ?
+              AND pe.source_language = ?
+              AND pe.target_language = ?
+            ORDER BY rank, pe.quality DESC, pe.id DESC
+            LIMIT 500
+            """,
+            (fts_query, source_language, target_language),
+        ).fetchall()
 
     def _select_ngram_rows(self, conn, *, source_language: str, target_language: str):
         return conn.execute(

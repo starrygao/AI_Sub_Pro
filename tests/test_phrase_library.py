@@ -1,4 +1,44 @@
 import json
+import sqlite3
+
+import pytest
+
+
+class _ConnectionProxy:
+    def __init__(self, conn, *, statements=None, fail_phrase_fts_create=False):
+        object.__setattr__(self, "_conn", conn)
+        object.__setattr__(self, "_statements", statements)
+        object.__setattr__(self, "_fail_phrase_fts_create", fail_phrase_fts_create)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def __setattr__(self, name, value):
+        if name == "row_factory":
+            setattr(self._conn, name, value)
+            return
+        object.__setattr__(self, name, value)
+
+    def __enter__(self):
+        self._conn.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return self._conn.__exit__(exc_type, exc, traceback)
+
+    def execute(self, sql, *args, **kwargs):
+        if self._statements is not None:
+            self._statements.append(sql)
+        if self._fail_phrase_fts_create and "CREATE VIRTUAL TABLE" in sql and "phrase_examples_fts" in sql:
+            raise sqlite3.OperationalError("simulated phrase FTS create failure")
+        return self._conn.execute(sql, *args, **kwargs)
+
+
+def _skip_without_fts5(tmp_path):
+    from app.engines.retrieval_scoring import sqlite_supports_fts5
+
+    if not sqlite_supports_fts5(tmp_path / "fts-probe.sqlite3"):
+        pytest.skip("SQLite FTS5 is unavailable in this Python build")
 
 
 def test_phrase_library_imports_and_retrieves_by_language_pair(tmp_path):
@@ -344,3 +384,234 @@ def test_phrase_library_auto_backend_preserves_existing_rows(tmp_path):
 
     assert results[0].target_text == "我们需要做扫描。"
     assert second.last_retrieval_backend in {"fts5", "ngram"}
+
+
+def test_phrase_library_forced_fts5_retrieves_when_available(tmp_path):
+    _skip_without_fts5(tmp_path)
+
+    from app.engines.phrase_library import PhraseLibrary
+
+    library = PhraseLibrary(tmp_path / "phrases.sqlite3")
+    library.add_phrase(
+        source_text="Hudson Oaks is quiet.",
+        target_text="哈德逊奥克斯很安静。",
+        source_language="en",
+        target_language="zh-CN",
+        source_name="unit",
+        license="local",
+        quality=0.9,
+    )
+
+    results = library.retrieve(
+        "Hudson Oaks",
+        source_language="en",
+        target_language="zh-CN",
+        limit=1,
+        backend="fts5",
+    )
+
+    assert results[0].target_text == "哈德逊奥克斯很安静。"
+    assert library.last_retrieval_backend == "fts5"
+
+
+def test_phrase_library_fts_rows_stay_synced_after_insert_and_reopen(tmp_path):
+    _skip_without_fts5(tmp_path)
+
+    from app.engines.phrase_library import PhraseLibrary
+
+    db = tmp_path / "phrases.sqlite3"
+    first = PhraseLibrary(db)
+    first.add_phrase(
+        source_text="Fresh sync marker",
+        target_text="新的同步标记。",
+        source_language="en",
+        target_language="zh-CN",
+        source_name="unit",
+        license="local",
+        quality=0.9,
+    )
+
+    assert first.retrieve(
+        "Fresh sync",
+        source_language="en",
+        target_language="zh-CN",
+        limit=1,
+        backend="fts5",
+    )[0].target_text == "新的同步标记。"
+
+    second = PhraseLibrary(db)
+    results = second.retrieve(
+        "Fresh sync",
+        source_language="en",
+        target_language="zh-CN",
+        limit=1,
+        backend="fts5",
+    )
+
+    assert results[0].target_text == "新的同步标记。"
+    assert second.last_retrieval_backend == "fts5"
+
+
+def test_phrase_library_fts_match_query_handles_quotes_punctuation_and_non_ascii(tmp_path):
+    _skip_without_fts5(tmp_path)
+
+    from app.engines.phrase_library import PhraseLibrary
+
+    library = PhraseLibrary(tmp_path / "phrases.sqlite3")
+    library.add_phrase(
+        source_text='urgent: ちょっと待って "now"',
+        target_text="急ぎです、等一下。",
+        source_language="en",
+        target_language="zh-CN",
+        source_name="unit",
+        license="local",
+        quality=0.9,
+    )
+
+    results = library.retrieve(
+        'urgent!!! "quoted" ちょっと待って？',
+        source_language="en",
+        target_language="zh-CN",
+        limit=1,
+        backend="fts5",
+    )
+
+    assert results[0].target_text == "急ぎです、等一下。"
+    assert library.last_retrieval_backend == "fts5"
+
+
+def test_phrase_library_auto_unions_fts_with_legacy_ngram_candidates(tmp_path):
+    _skip_without_fts5(tmp_path)
+
+    from app.engines.phrase_library import PhraseLibrary
+
+    library = PhraseLibrary(tmp_path / "phrases.sqlite3")
+    library.add_phrase(
+        source_text="urgent now",
+        target_text="现在很紧急。",
+        source_language="en",
+        target_language="zh-CN",
+        source_name="unit",
+        license="local",
+        quality=0.2,
+    )
+    library.add_phrase(
+        source_text="ちょっと待って",
+        target_text="等一下。",
+        source_language="en",
+        target_language="zh-CN",
+        source_name="unit",
+        license="local",
+        quality=0.95,
+    )
+
+    ngram_results = library.retrieve(
+        "urgent ちょっと待ってよ",
+        source_language="en",
+        target_language="zh-CN",
+        limit=1,
+        backend="ngram",
+    )
+    auto_results = library.retrieve(
+        "urgent ちょっと待ってよ",
+        source_language="en",
+        target_language="zh-CN",
+        limit=1,
+        backend="auto",
+    )
+
+    assert ngram_results[0].target_text == "等一下。"
+    assert auto_results[0].target_text == "等一下。"
+    assert library.last_retrieval_backend == "fts5"
+
+
+def test_phrase_library_fts_query_failure_falls_back_to_ngram(tmp_path, monkeypatch):
+    _skip_without_fts5(tmp_path)
+
+    from app.engines import phrase_library as phrase_module
+
+    library = phrase_module.PhraseLibrary(tmp_path / "phrases.sqlite3")
+    library.add_phrase(
+        source_text="Fallback scan phrase",
+        target_text="回退扫描短语。",
+        source_language="en",
+        target_language="zh-CN",
+        source_name="unit",
+        license="local",
+        quality=0.9,
+    )
+    monkeypatch.setattr(phrase_module, "_fts_match_query", lambda value: '"unterminated')
+
+    results = library.retrieve(
+        "Fallback scan phrase",
+        source_language="en",
+        target_language="zh-CN",
+        limit=1,
+        backend="auto",
+    )
+
+    assert results[0].target_text == "回退扫描短语。"
+    assert library.last_retrieval_backend == "ngram"
+
+
+def test_phrase_library_fts_create_failure_falls_back_to_ngram(tmp_path, monkeypatch):
+    from app.engines import phrase_library as phrase_module
+
+    real_connect = phrase_module.sqlite3.connect
+
+    def failing_connect(*args, **kwargs):
+        return _ConnectionProxy(real_connect(*args, **kwargs), fail_phrase_fts_create=True)
+
+    monkeypatch.setattr(phrase_module.sqlite3, "connect", failing_connect)
+
+    library = phrase_module.PhraseLibrary(tmp_path / "phrases.sqlite3")
+    library.add_phrase(
+        source_text="Create failure fallback",
+        target_text="创建失败回退。",
+        source_language="en",
+        target_language="zh-CN",
+        source_name="unit",
+        license="local",
+        quality=0.9,
+    )
+
+    results = library.retrieve(
+        "Create failure fallback",
+        source_language="en",
+        target_language="zh-CN",
+        limit=1,
+        backend="fts5",
+    )
+
+    assert results[0].target_text == "创建失败回退。"
+    assert library.last_retrieval_backend == "ngram"
+
+
+def test_phrase_library_fts_schema_init_does_not_rebuild_on_reopen(tmp_path, monkeypatch):
+    _skip_without_fts5(tmp_path)
+
+    from app.engines import phrase_library as phrase_module
+
+    db = tmp_path / "phrases.sqlite3"
+    first = phrase_module.PhraseLibrary(db)
+    first.add_phrase(
+        source_text="No rebuild marker",
+        target_text="不重建标记。",
+        source_language="en",
+        target_language="zh-CN",
+        source_name="unit",
+        license="local",
+        quality=0.9,
+    )
+
+    statements = []
+    real_connect = phrase_module.sqlite3.connect
+
+    def tracing_connect(*args, **kwargs):
+        return _ConnectionProxy(real_connect(*args, **kwargs), statements=statements)
+
+    monkeypatch.setattr(phrase_module.sqlite3, "connect", tracing_connect)
+
+    phrase_module.PhraseLibrary(db)
+
+    assert not any("rebuild" in statement.lower() for statement in statements)
