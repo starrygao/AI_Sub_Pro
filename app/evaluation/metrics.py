@@ -14,20 +14,32 @@ _PROPER_NAME_RE = re.compile(
 _CJK_RE = re.compile(r"[\u3400-\u9fff]+")
 _LEADING_NAME_STOPWORDS = {"A", "An", "The", "This", "That", "These", "Those"}
 _COMMON_TITLE_PHRASES = {
+    "Are You",
     "Good Morning",
     "Good Afternoon",
     "Good Evening",
     "Good Night",
+    "How Are You",
+    "Where Are You",
+    "What Are You",
+    "Who Are You",
+    "Why Are You",
     "Thank You",
     "Excuse Me",
     "I Love You",
 }
 _COMMON_TITLE_WORDS = {
+    "are",
     "good",
+    "how",
     "morning",
     "afternoon",
     "evening",
     "night",
+    "where",
+    "what",
+    "who",
+    "why",
     "thank",
     "you",
     "excuse",
@@ -290,6 +302,13 @@ def _prefix_before_anchor(text: str, anchor: str) -> str:
     return text[:index] if index > 0 else ""
 
 
+def _suffix_after_anchor(text: str, anchor: str) -> str:
+    index = text.find(anchor)
+    if index < 0:
+        return ""
+    return text[index + len(anchor):]
+
+
 def _looks_like_sentence_prefix(prefix: str, min_name_prefix_length: int = 4) -> bool:
     if len(prefix) < min_name_prefix_length:
         return True
@@ -311,8 +330,42 @@ def _has_conflicting_name_prefixes(
     )
 
 
-def _is_valid_long_name_anchor(anchor: str, translations: list[str]) -> bool:
+def _estimated_cjk_name_length_floor(proper_name: str) -> int:
+    letter_count = sum(len(re.sub(r"[^A-Za-z]", "", token)) for token in proper_name.split())
+    return max(4, (letter_count + 2) // 3)
+
+
+def _looks_like_ordinary_context_suffix(suffix: str) -> bool:
+    if len(suffix) < 3:
+        return True
+    if _contains_context_chars(suffix[:3]):
+        return True
+    return any(suffix.startswith(anchor) for anchor in _LONG_NAME_CONTEXT_ANCHORS)
+
+
+def _has_competing_name_suffixes(
+    anchor: str, translations: list[str], proper_name: str
+) -> bool:
+    if len(anchor) >= _estimated_cjk_name_length_floor(proper_name):
+        return False
+    suffixes = [_suffix_after_anchor(text, anchor) for text in translations]
+    if len(set(suffixes)) < 2:
+        return False
+    substantive = [
+        suffix for suffix in suffixes if suffix and not _looks_like_ordinary_context_suffix(suffix)
+    ]
+    return len(substantive) >= 2 or (bool(substantive) and "" in suffixes)
+
+
+def _is_valid_long_name_anchor(
+    anchor: str, translations: list[str], proper_name: str = ""
+) -> bool:
+    # Safe anchors are plausible full target-name cores that may appear with
+    # different sentence context. Unsafe anchors are repeated context phrases
+    # or shared prefixes of competing longer transliterations.
     if _is_context_anchor(anchor):
+        return False
+    if proper_name and _has_competing_name_suffixes(anchor, translations, proper_name):
         return False
     return not _has_conflicting_name_prefixes(anchor, translations)
 
@@ -342,18 +395,18 @@ def _shared_cjk_anchor(translations: list[str]) -> str:
     return ""
 
 
-def _long_name_cjk_anchor(translations: list[str]) -> str:
+def _long_name_cjk_anchor(translations: list[str], proper_name: str = "") -> str:
     common = _common_cjk_substrings(translations, min_length=4)
     for anchor in common:
-        if _is_valid_long_name_anchor(anchor, translations):
+        if _is_valid_long_name_anchor(anchor, translations, proper_name):
             return anchor
     return ""
 
 
-def _fallback_long_name_anchor(translations: list[str]) -> str:
+def _fallback_long_name_anchor(translations: list[str], proper_name: str = "") -> str:
     common = _common_cjk_substrings(translations, min_length=2)
     for anchor in common:
-        if _is_valid_long_name_anchor(anchor, translations):
+        if _is_valid_long_name_anchor(anchor, translations, proper_name):
             return anchor
     return ""
 
@@ -552,9 +605,9 @@ def proper_name_consistency_score(
         if _is_short_source_name(proper_name):
             shared_anchor = _short_name_cjk_anchor(cjk_translations)
         else:
-            shared_anchor = _long_name_cjk_anchor(cjk_translations)
+            shared_anchor = _long_name_cjk_anchor(cjk_translations, proper_name)
         if not shared_anchor and not _is_short_source_name(proper_name):
-            shared_anchor = _fallback_long_name_anchor(cjk_translations)
+            shared_anchor = _fallback_long_name_anchor(cjk_translations, proper_name)
 
         target_forms = []
         for item in observations:

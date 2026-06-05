@@ -150,6 +150,24 @@ def test_proper_name_consistency_score_detects_partial_different_cjk_target_form
     assert result["issues"][0]["source"] == "Hudson Oaks"
 
 
+def test_proper_name_consistency_score_flags_shared_prefix_long_transliteration():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Alexander Hamilton arrived.",
+            "2": "Alexander Hamilton spoke.",
+        },
+        {
+            "1": "亚历山大汉密尔顿",
+            "2": "亚历山大哈密顿",
+        },
+    )
+
+    assert result["issue_count"] == 1
+    assert result["issues"][0]["source"] == "Alexander Hamilton"
+
+
 def test_proper_name_consistency_score_flags_divergent_long_names_without_shared_anchor():
     from app.evaluation.metrics import proper_name_consistency_score
 
@@ -506,6 +524,24 @@ def test_proper_name_consistency_score_ignores_common_sentence_initial_phrases()
         {
             "1": "早上好，各位。",
             "2": "早安，警官。",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
+def test_proper_name_consistency_score_ignores_common_title_question_phrases():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "How Are You, John?",
+            "2": "How Are You, officer?",
+        },
+        {
+            "1": "约翰，你好吗？",
+            "2": "长官，近来可好？",
         },
     )
 
