@@ -124,6 +124,14 @@ def _fts_tokens(value: str) -> list[str]:
     return tokens
 
 
+def _table_columns(conn, table_name: str) -> set[str]:
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    except sqlite3.Error:
+        return set()
+    return {str(row["name"]) for row in rows}
+
+
 def _fts_match_query(value: str) -> str:
     tokens = sorted(set(_fts_tokens(value)))
     if tokens:
@@ -216,7 +224,15 @@ class TranslationMemoryStore:
                 "CREATE INDEX IF NOT EXISTS idx_translation_memory_lang "
                 "ON translation_memory(source_language, target_language)"
             )
+            self._migrate_translation_memory_columns(conn)
             self._ensure_fts_schema(conn)
+
+    def _migrate_translation_memory_columns(self, conn) -> None:
+        columns = _table_columns(conn, "translation_memory")
+        if "usage_count" not in columns:
+            conn.execute(
+                "ALTER TABLE translation_memory ADD COLUMN usage_count INTEGER NOT NULL DEFAULT 0"
+            )
 
     def _ensure_fts_schema(self, conn) -> None:
         self._fts_available = False

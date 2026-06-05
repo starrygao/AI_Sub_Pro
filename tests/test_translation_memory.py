@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -164,6 +165,76 @@ def test_translation_memory_reports_ngram_backend_and_increments_usage_count(tmp
     assert store.last_retrieval_backend == "ngram"
 
 
+def test_translation_memory_migrates_legacy_db_missing_usage_count(tmp_path):
+    from app.engines.translation_memory import TranslationMemoryStore
+
+    db = tmp_path / "legacy-memory.sqlite3"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE translation_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_text TEXT NOT NULL,
+                machine_translation TEXT NOT NULL DEFAULT '',
+                final_translation TEXT NOT NULL,
+                source_language TEXT NOT NULL,
+                target_language TEXT NOT NULL,
+                project_name TEXT NOT NULL DEFAULT '',
+                tmdb_id INTEGER,
+                genre TEXT NOT NULL DEFAULT '',
+                speaker TEXT NOT NULL DEFAULT '',
+                context_before TEXT NOT NULL DEFAULT '',
+                context_after TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO translation_memory (
+                source_text,
+                machine_translation,
+                final_translation,
+                source_language,
+                target_language,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "Legacy Hudson Oaks memory",
+                "旧版哈德森奥克斯记忆。",
+                "新版哈德逊奥克斯记忆。",
+                "en",
+                "zh-CN",
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+    store = TranslationMemoryStore(db)
+    first = store.retrieve(
+        "Legacy Hudson Oaks memory",
+        source_language="en",
+        target_language="zh-CN",
+        limit=1,
+    )
+    second = store.retrieve(
+        "Legacy Hudson Oaks memory",
+        source_language="en",
+        target_language="zh-CN",
+        limit=1,
+    )
+
+    assert first[0].usage_count == 0
+    assert second[0].usage_count >= 1
+    with sqlite3.connect(db) as conn:
+        columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(translation_memory)").fetchall()
+        }
+        assert "usage_count" in columns
+        assert conn.execute("SELECT COUNT(*) FROM translation_memory").fetchone()[0] == 1
+
+
 def test_translation_memory_invalid_backend_falls_back_to_auto(tmp_path, monkeypatch):
     from app.engines import translation_memory as memory_module
 
@@ -260,6 +331,48 @@ def test_translation_memory_forced_fts5_retrieves_when_available(tmp_path):
     )
 
     assert results[0].final_translation == "急一点，等一下。"
+    assert store.last_retrieval_backend == "fts5"
+
+
+def test_translation_memory_auto_retrieves_partial_kana_queries(tmp_path):
+    _skip_without_fts5(tmp_path)
+
+    from app.engines.translation_memory import TranslationMemoryStore
+
+    store = TranslationMemoryStore(tmp_path / "memory.sqlite3")
+    store.record_edit(
+        source_text="ちょっと待って",
+        machine_translation="先等等。",
+        final_translation="等一下。",
+        source_language="ja",
+        target_language="zh-CN",
+    )
+
+    leading_results = store.retrieve(
+        "ちょっと",
+        source_language="ja",
+        target_language="zh-CN",
+        limit=1,
+        backend="auto",
+    )
+    trailing_results = store.retrieve(
+        "待って",
+        source_language="ja",
+        target_language="zh-CN",
+        limit=1,
+        backend="auto",
+    )
+    exact_fts_results = store.retrieve(
+        "ちょっと待って",
+        source_language="ja",
+        target_language="zh-CN",
+        limit=1,
+        backend="fts5",
+    )
+
+    assert leading_results[0].final_translation == "等一下。"
+    assert trailing_results[0].final_translation == "等一下。"
+    assert exact_fts_results[0].final_translation == "等一下。"
     assert store.last_retrieval_backend == "fts5"
 
 
