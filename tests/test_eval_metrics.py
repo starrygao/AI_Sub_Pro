@@ -132,6 +132,24 @@ def test_proper_name_consistency_score_detects_inconsistent_target_forms():
     assert [item["block_id"] for item in result["issues"][0]["observations"]] == ["1", "2"]
 
 
+def test_proper_name_consistency_score_detects_partial_different_cjk_target_forms():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Hudson Oaks is quiet tonight.",
+            "2": "I came from Hudson Oaks.",
+        },
+        {
+            "1": "哈德逊奥克斯很安静。",
+            "2": "我从哈德逊橡树来。",
+        },
+    )
+
+    assert result["issue_count"] == 1
+    assert result["issues"][0]["source"] == "Hudson Oaks"
+
+
 def test_proper_name_consistency_score_skips_blank_translations():
     from app.evaluation.metrics import proper_name_consistency_score
 
@@ -143,6 +161,24 @@ def test_proper_name_consistency_score_skips_blank_translations():
         {
             "1": "哈德逊奥克斯今晚很安静。",
             "2": " ",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
+def test_proper_name_consistency_score_ignores_common_sentence_initial_phrases():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Good Morning, everyone.",
+            "2": "Good Morning, officer.",
+        },
+        {
+            "1": "早上好，各位。",
+            "2": "早安，警官。",
         },
     )
 

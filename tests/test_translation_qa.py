@@ -99,8 +99,8 @@ def test_quality_checks_flag_inferred_proper_name_inconsistency():
 
     blocks = [
         _block(1, "Hudson Oaks is quiet tonight.", "哈德逊奥克斯今晚很安静。"),
-        _block(2, "I still remember Hudson Oaks.", "我还记得哈德森橡树。"),
-        _block(3, "Hudson Oaks is closed now.", "哈德森橡树现在关门了。", filtered=True),
+        _block(2, "I came from Hudson Oaks.", "我从哈德逊橡树来。"),
+        _block(3, "Hudson Oaks is closed now.", "哈德逊橡树现在关门了。", filtered=True),
     ]
 
     report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)
