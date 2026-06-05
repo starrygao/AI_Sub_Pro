@@ -105,11 +105,25 @@ def test_quality_checks_flag_inferred_proper_name_inconsistency():
 
     report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)
 
-    assert report.summary["by_type"]["proper_name_inconsistent"] == 1
-    issue = next(issue for issue in report.issues if issue.type == "proper_name_inconsistent")
-    assert issue.severity == "warning"
-    assert issue.block_id == 1
-    assert issue.source_text == "Hudson Oaks"
+    assert report.summary["by_type"]["proper_name_inconsistent"] == 2
+    flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
+    assert {issue.block_id for issue in flagged} == {1, 2}
+    assert report.unresolved_blocks == [1, 2]
+    assert all(issue.severity == "warning" for issue in flagged)
+    assert all(issue.source_text == "Hudson Oaks" for issue in flagged)
+
+
+def test_quality_checks_do_not_flag_same_long_cjk_name_in_different_contexts():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "I am going to Hudson Oaks.", "我去哈德逊奥克斯。"),
+        _block(2, "She is going to Hudson Oaks.", "她去哈德逊奥克斯。"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)
+
+    assert "proper_name_inconsistent" not in report.summary["by_type"]
 
 
 def test_quality_checks_do_not_flag_short_consistent_cjk_names():
@@ -135,4 +149,19 @@ def test_quality_checks_flag_inconsistent_short_cjk_names_with_shared_context():
 
     report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)
 
-    assert report.summary["by_type"]["proper_name_inconsistent"] == 1
+    assert report.summary["by_type"]["proper_name_inconsistent"] == 2
+    flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
+    assert {issue.block_id for issue in flagged} == {1, 2}
+
+
+def test_quality_checks_skip_proper_name_metric_for_non_chinese_targets():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Hudson Oaks is quiet tonight.", "Hudson Oaks is quiet tonight."),
+        _block(2, "I came from Hudson Oaks.", "I came from Hudson Oaks yesterday."),
+    ]
+
+    report = run_quality_checks(blocks, target_language="English", max_chars=40)
+
+    assert "proper_name_inconsistent" not in report.summary["by_type"]

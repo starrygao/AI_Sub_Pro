@@ -193,6 +193,10 @@ def _is_unsafe_shared_anchor(anchor: str, translations: list[str]) -> bool:
     return _has_conflicting_neighbor(before_chars) or _has_conflicting_neighbor(after_chars)
 
 
+def _contains_context_chars(anchor: str) -> bool:
+    return any(char in _SHORT_NAME_CONTEXT_CHARS for char in anchor)
+
+
 def _shared_cjk_anchor(translations: list[str]) -> str:
     common = _common_cjk_substrings(translations, min_length=2)
     if not common:
@@ -210,10 +214,18 @@ def _shared_cjk_anchor(translations: list[str]) -> str:
     return ""
 
 
+def _long_name_cjk_anchor(translations: list[str]) -> str:
+    common = _common_cjk_substrings(translations, min_length=4)
+    for anchor in common:
+        if not _contains_context_chars(anchor):
+            return anchor
+    return ""
+
+
 def _short_name_cjk_anchor(translations: list[str]) -> str:
     common = _common_cjk_substrings(translations, min_length=2)
     for anchor in common:
-        if len(anchor) <= 3 and not any(char in _SHORT_NAME_CONTEXT_CHARS for char in anchor):
+        if len(anchor) <= 3 and not _contains_context_chars(anchor):
             return anchor
     return ""
 
@@ -353,7 +365,9 @@ def proper_name_consistency_score(
         shared_anchor = ""
         if _is_short_source_name(proper_name):
             shared_anchor = _short_name_cjk_anchor(cjk_translations)
-        if not shared_anchor:
+        else:
+            shared_anchor = _long_name_cjk_anchor(cjk_translations)
+        if not shared_anchor and not _is_short_source_name(proper_name):
             shared_anchor = _shared_cjk_anchor(cjk_translations)
 
         target_forms = []

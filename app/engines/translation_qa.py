@@ -195,26 +195,24 @@ def run_quality_checks(
                     expected=term_target,
                 ))
 
-    proper_name_issues = proper_name_consistency_score(source_by_id, translation_by_id)
-    for item in proper_name_issues["issues"]:
-        observations = item.get("observations", [])
-        if not observations:
-            continue
-        first_observation = observations[0]
-        first_block_id = first_observation.get("block_id")
-        block_id = int(first_block_id) if str(first_block_id).isdigit() else None
-        target_forms = [form for form in item.get("target_forms", []) if form]
-        message = f"inferred proper name {item['source']} uses inconsistent target forms"
-        if target_forms:
-            message = f"{message}: {', '.join(target_forms)}"
-        issues.append(QualityIssue(
-            type="proper_name_inconsistent",
-            severity="warning",
-            block_id=block_id,
-            message=message,
-            source_text=item["source"],
-            translation=" / ".join(target_forms),
-        ))
+    if chinese_target:
+        proper_name_issues = proper_name_consistency_score(source_by_id, translation_by_id)
+        for item in proper_name_issues["issues"]:
+            target_forms = [form for form in item.get("target_forms", []) if form]
+            message = f"inferred proper name {item['source']} uses inconsistent target forms"
+            if target_forms:
+                message = f"{message}: {', '.join(target_forms)}"
+            for observation in item.get("observations", []):
+                block_value = observation.get("block_id")
+                block_id = int(block_value) if str(block_value).isdigit() else None
+                issues.append(QualityIssue(
+                    type="proper_name_inconsistent",
+                    severity="warning",
+                    block_id=block_id,
+                    message=message,
+                    source_text=item["source"],
+                    translation=_clean_text(observation.get("translation", "")),
+                ))
 
     status = "ok" if not issues else "needs_review"
     report = TranslationQaReport(
