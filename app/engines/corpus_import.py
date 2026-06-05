@@ -1,0 +1,478 @@
+"""Local bilingual corpus import helpers for PhraseLibrary."""
+from __future__ import annotations
+
+import csv
+import json
+import sqlite3
+from dataclasses import dataclass, field
+from pathlib import Path
+from collections import Counter
+from typing import Iterable, Iterator
+
+from app.engines.phrase_library import PhraseLibrary, default_phrase_library_path
+
+SUPPORTED_INPUT_FORMATS = {"jsonl", "tsv", "csv"}
+DEFAULT_MAX_ROWS = 5000
+MAX_IMPORT_ROWS = 100000
+MAX_TEXT_LENGTH = 240
+MAX_SAMPLED_ROWS = 5
+MAX_ERROR_SAMPLES = 50
+
+
+class CorpusImportError(ValueError):
+    """Raised when corpus import arguments or inputs are invalid."""
+
+
+@dataclass(frozen=True)
+class _CandidateRow:
+    row_number: int
+    source_text: str
+    target_text: str
+
+
+class _ExistingDuplicateChecker:
+    def __init__(self, connection) -> None:
+        self._connection = connection
+
+    def __call__(self, dedupe_key: tuple[str, str, str, str, str]) -> bool:
+        source_text, target_text, source_language, target_language, source_name = dedupe_key
+        row = self._connection.execute(
+            """
+            SELECT 1 FROM phrase_examples
+            WHERE source_text = ?
+              AND target_text = ?
+              AND source_language = ?
+              AND target_language = ?
+              AND source_name = ?
+            LIMIT 1
+            """,
+            (
+                source_text,
+                target_text,
+                source_language,
+                target_language,
+                source_name,
+            ),
+        ).fetchone()
+        return row is not None
+
+    def close(self) -> None:
+        self._connection.close()
+
+
+@dataclass
+class CorpusImportReport:
+    accepted: int = 0
+    rejected: int = 0
+    duplicates: int = 0
+    limited: bool = False
+    sampled_rows: list[dict[str, object]] = field(default_factory=list)
+    errors: list[dict[str, object]] = field(default_factory=list)
+
+    def add_sample(self, *, row_number: int, source_text: str, target_text: str) -> None:
+        if len(self.sampled_rows) >= MAX_SAMPLED_ROWS:
+            return
+        self.sampled_rows.append({
+            "row_number": row_number,
+            "source_text": source_text,
+            "target_text": target_text,
+        })
+
+    def add_error(self, *, row_number: int, error: str) -> None:
+        if len(self.errors) >= MAX_ERROR_SAMPLES:
+            return
+        self.errors.append({"row_number": row_number, "error": error})
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "accepted": self.accepted,
+            "rejected": self.rejected,
+            "duplicates": self.duplicates,
+            "limited": self.limited,
+            "sampled_rows": list(self.sampled_rows),
+            "errors": list(self.errors),
+        }
+
+
+@dataclass(frozen=True)
+class _ValidatedMetadata:
+    source_name: str
+    license_name: str
+    source_language: str
+    target_language: str
+    source_column: str
+    target_column: str
+    max_rows: int
+    tags: tuple[str, ...]
+    input_format: str
+
+
+def import_corpus(
+    path: str | Path,
+    *,
+    input_format: str,
+    source_name: str,
+    license_name: str,
+    source_language: str,
+    target_language: str,
+    source_column: str = "source",
+    target_column: str = "target",
+    max_rows: int = DEFAULT_MAX_ROWS,
+    tags: Iterable[str] | None = None,
+    dry_run: bool = False,
+    library: PhraseLibrary | None = None,
+    _max_scanned_rows: int | None = None,
+) -> CorpusImportReport:
+    """Import local corpus rows into PhraseLibrary.
+
+    ``max_rows`` must be a positive integer no greater than ``MAX_IMPORT_ROWS``
+    (currently 100000).
+
+    Dry-run validates and samples file rows only; it does not compare against
+    an existing phrase database unless the caller explicitly does that.
+
+    The importer also applies a bounded scan cap so duplicate-heavy or invalid
+    corpora cannot grow memory without bound. By default that scan cap is
+    ``max(max_rows * 20, max_rows + 100)``, capped at ``MAX_IMPORT_ROWS`` and
+    never allowed to fall below the validated ``max_rows``.
+
+    ``limited`` means the importer hit either the accepted-row cap or the scan
+    cap and intentionally stopped without probing whether more rows remained.
+    """
+    metadata = _validate_metadata(
+        input_format=input_format,
+        source_name=source_name,
+        license_name=license_name,
+        source_language=source_language,
+        target_language=target_language,
+        source_column=source_column,
+        target_column=target_column,
+        max_rows=max_rows,
+        tags=tags,
+    )
+    corpus_path = _validate_path(path)
+    report = CorpusImportReport()
+    candidates = _collect_candidate_rows(
+        corpus_path,
+        metadata=metadata,
+        report=report,
+        dry_run=dry_run,
+        library=library,
+        max_scanned_rows=_max_scanned_rows,
+    )
+
+    if dry_run:
+        report.accepted = len(candidates)
+        for candidate in candidates:
+            report.add_sample(
+                row_number=candidate.row_number,
+                source_text=candidate.source_text,
+                target_text=candidate.target_text,
+            )
+        return report
+
+    active_library = library or PhraseLibrary()
+    for candidate in candidates:
+        entry_id = active_library.add_phrase(
+            source_text=candidate.source_text,
+            target_text=candidate.target_text,
+            source_language=metadata.source_language,
+            target_language=metadata.target_language,
+            source_name=metadata.source_name,
+            license=metadata.license_name,
+            tags=list(metadata.tags),
+        )
+        if entry_id is None:
+            report.duplicates += 1
+            continue
+        report.accepted += 1
+        report.add_sample(
+            row_number=candidate.row_number,
+            source_text=candidate.source_text,
+            target_text=candidate.target_text,
+        )
+
+    return report
+
+
+def _validate_metadata(
+    *,
+    input_format: str,
+    source_name,
+    license_name,
+    source_language,
+    target_language,
+    source_column,
+    target_column,
+    max_rows,
+    tags: Iterable[str] | None,
+) -> _ValidatedMetadata:
+    normalized_format = _normalize_input_format(input_format)
+    normalized_source_name = _require_metadata("source_name", source_name)
+    normalized_license_name = _require_metadata("license_name", license_name)
+    normalized_source_language = _require_metadata("source_language", source_language)
+    normalized_target_language = _require_metadata("target_language", target_language)
+    normalized_source_column = _require_metadata("source_column", source_column)
+    normalized_target_column = _require_metadata("target_column", target_column)
+    if isinstance(tags, str):
+        raw_tags: Iterable[str] = [tags]
+    else:
+        raw_tags = tags or ()
+    normalized_tags = tuple(
+        value
+        for value in (_normalize_text(tag) for tag in raw_tags)
+        if value
+    )
+    return _ValidatedMetadata(
+        source_name=normalized_source_name,
+        license_name=normalized_license_name,
+        source_language=normalized_source_language,
+        target_language=normalized_target_language,
+        source_column=normalized_source_column,
+        target_column=normalized_target_column,
+        max_rows=_coerce_max_rows(max_rows),
+        tags=normalized_tags,
+        input_format=normalized_format,
+    )
+
+
+def _normalize_input_format(value) -> str:
+    normalized = _normalize_text(value).lower()
+    if normalized not in SUPPORTED_INPUT_FORMATS:
+        supported = ", ".join(sorted(SUPPORTED_INPUT_FORMATS))
+        raise CorpusImportError(f"unsupported input_format {value!r}; expected one of: {supported}")
+    return normalized
+
+
+def _coerce_max_rows(value) -> int:
+    if isinstance(value, bool):
+        raise CorpusImportError("max_rows must be a positive integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise CorpusImportError("max_rows must be a positive integer") from exc
+    if parsed <= 0:
+        raise CorpusImportError("max_rows must be a positive integer")
+    if parsed > MAX_IMPORT_ROWS:
+        raise CorpusImportError(f"max_rows must be <= {MAX_IMPORT_ROWS}")
+    return parsed
+
+
+def _coerce_max_scanned_rows(value, *, max_rows: int) -> int:
+    if value is None:
+        return min(
+            MAX_IMPORT_ROWS,
+            max(max_rows * 20, max_rows + 100),
+        )
+    if isinstance(value, bool):
+        raise CorpusImportError("_max_scanned_rows must be a positive integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise CorpusImportError("_max_scanned_rows must be a positive integer") from exc
+    if parsed <= 0:
+        raise CorpusImportError("_max_scanned_rows must be a positive integer")
+    return max(max_rows, min(parsed, MAX_IMPORT_ROWS))
+
+
+def _collect_candidate_rows(
+    corpus_path: Path,
+    *,
+    metadata: _ValidatedMetadata,
+    report: CorpusImportReport,
+    dry_run: bool,
+    library: PhraseLibrary | None,
+    max_scanned_rows: int | None,
+) -> list[_CandidateRow]:
+    candidates: list[_CandidateRow] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    scanned_rows = 0
+    scan_limit = _coerce_max_scanned_rows(
+        max_scanned_rows,
+        max_rows=metadata.max_rows,
+    )
+    duplicate_checker = None if dry_run else _build_existing_duplicate_checker(
+        library=library,
+        metadata=metadata,
+    )
+
+    try:
+        rows = iter(_iter_rows(corpus_path, metadata))
+        while len(candidates) < metadata.max_rows and scanned_rows < scan_limit:
+            try:
+                row_number, row, parser_error = next(rows)
+            except StopIteration:
+                break
+            scanned_rows += 1
+            if parser_error is not None:
+                report.rejected += 1
+                report.add_error(row_number=row_number, error=parser_error)
+                continue
+            source_text = _normalize_text(row.get(metadata.source_column))
+            target_text = _normalize_text(row.get(metadata.target_column))
+            row_error = _validate_row(source_text=source_text, target_text=target_text)
+            if row_error is not None:
+                report.rejected += 1
+                report.add_error(row_number=row_number, error=row_error)
+                continue
+            dedupe_key = (
+                source_text,
+                target_text,
+                metadata.source_language,
+                metadata.target_language,
+                metadata.source_name,
+            )
+            if dedupe_key in seen:
+                report.duplicates += 1
+                continue
+            seen.add(dedupe_key)
+            if duplicate_checker is not None and duplicate_checker(dedupe_key):
+                report.duplicates += 1
+                continue
+            candidates.append(_CandidateRow(
+                row_number=row_number,
+                source_text=source_text,
+                target_text=target_text,
+            ))
+    finally:
+        if duplicate_checker is not None:
+            duplicate_checker.close()
+
+    if len(candidates) >= metadata.max_rows or scanned_rows >= scan_limit:
+        report.limited = True
+    return candidates
+
+
+def _build_existing_duplicate_checker(
+    *,
+    library: PhraseLibrary | None,
+    metadata: _ValidatedMetadata,
+):
+    if library is not None:
+        database_path = library.path
+    else:
+        database_path = default_phrase_library_path()
+    database_path = Path(database_path)
+    if not database_path.exists() or not database_path.is_file():
+        return None
+
+    connection = sqlite3.connect(str(database_path))
+
+    try:
+        has_phrase_examples = connection.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'phrase_examples'
+            LIMIT 1
+            """
+        ).fetchone()
+        if has_phrase_examples is None:
+            connection.close()
+            return None
+    except sqlite3.Error:
+        connection.close()
+        return None
+
+    return _ExistingDuplicateChecker(connection)
+
+
+def _require_metadata(name: str, value) -> str:
+    normalized = _normalize_text(value)
+    if not normalized:
+        raise CorpusImportError(f"{name} is required")
+    return normalized
+
+
+def _validate_path(path: str | Path) -> Path:
+    candidate = Path(path).expanduser()
+    if not candidate.exists():
+        raise CorpusImportError(f"corpus file does not exist: {candidate}")
+    if not candidate.is_file():
+        raise CorpusImportError(f"corpus path is not a file: {candidate}")
+    return candidate
+
+
+def _normalize_text(value) -> str:
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.split())
+
+
+def _validate_row(*, source_text: str, target_text: str) -> str | None:
+    if not source_text:
+        return "source text is empty"
+    if not target_text:
+        return "target text is empty"
+    if len(source_text) > MAX_TEXT_LENGTH:
+        return f"source text exceeds {MAX_TEXT_LENGTH} characters"
+    if len(target_text) > MAX_TEXT_LENGTH:
+        return f"target text exceeds {MAX_TEXT_LENGTH} characters"
+    return None
+
+
+def _iter_rows(
+    path: Path,
+    metadata: _ValidatedMetadata,
+) -> Iterator[tuple[int, dict[str, object], str | None]]:
+    if metadata.input_format == "jsonl":
+        yield from _iter_jsonl_rows(path)
+        return
+    yield from _iter_delimited_rows(path, metadata)
+
+
+def _iter_jsonl_rows(path: Path) -> Iterator[tuple[int, dict[str, object], str | None]]:
+    with path.open("r", encoding="utf-8-sig") as handle:
+        for row_number, raw_line in enumerate(handle, start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                yield row_number, {}, f"invalid JSON: {exc.msg}"
+                continue
+            if not isinstance(row, dict):
+                yield row_number, {}, "row must be a JSON object"
+                continue
+            yield row_number, row, None
+
+
+def _iter_delimited_rows(
+    path: Path,
+    metadata: _ValidatedMetadata,
+) -> Iterator[tuple[int, dict[str, object], str | None]]:
+    delimiter = "\t" if metadata.input_format == "tsv" else ","
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        try:
+            # Python's csv dialect still treats bare quote characters inside
+            # unquoted text as literal content; strict mode catches structural
+            # quote errors such as unterminated quoted fields.
+            reader = csv.DictReader(handle, delimiter=delimiter, strict=True)
+            if not reader.fieldnames:
+                raise CorpusImportError("corpus file is missing a header row")
+            duplicate_headers = sorted(
+                header
+                for header, count in Counter(reader.fieldnames).items()
+                if count > 1
+            )
+            if duplicate_headers:
+                raise CorpusImportError(
+                    "duplicate header name(s): " + ", ".join(duplicate_headers)
+                )
+            missing = [
+                column
+                for column in (metadata.source_column, metadata.target_column)
+                if column not in reader.fieldnames
+            ]
+            if missing:
+                raise CorpusImportError(
+                    "missing required column(s): " + ", ".join(missing)
+                )
+            for row_number, row in enumerate(reader, start=2):
+                if None in row:
+                    yield row_number, {}, f"line {row_number}: row has extra fields"
+                    continue
+                yield row_number, row, None
+        except csv.Error as exc:
+            raise CorpusImportError(f"invalid {metadata.input_format} file: {exc}") from exc

@@ -9,9 +9,9 @@ and knowledge-base data on the user's machine.
 
 Prebuilt packages are attached to GitHub Releases when available.
 
-- macOS users can download `AI_Sub_Pro_v1.2.2.dmg` and
-  `AI_Sub_Pro_v1.2.2.dmg.sha256` from the `v1.2.2` release, verify the
-  checksum with `shasum -a 256 -c AI_Sub_Pro_v1.2.2.dmg.sha256`, open the
+- macOS users can download `AI_Sub_Pro_v1.3.0.dmg` and
+  `AI_Sub_Pro_v1.3.0.dmg.sha256` from the `v1.3.0` release, verify the
+  checksum with `shasum -a 256 -c AI_Sub_Pro_v1.3.0.dmg.sha256`, open the
   DMG, drag **AI Sub Pro** into **Applications**, then right-click and choose
   **Open** on first launch if Gatekeeper blocks an unsigned build.
 - Windows users can run a published Windows package when available. The current
@@ -200,14 +200,54 @@ workflow:
 Run the deterministic evaluation corpus locally:
 
 ```bash
+mkdir -p build/evaluation
 python3 -m app.evaluation.cli \
-  --corpus tests/fixtures/golden_corpus/translation_quality_loop.json \
-  --json-out build/evaluation/translation_quality_loop.json \
-  --markdown-out build/evaluation/translation_quality_loop.md
+  --corpus tests/fixtures/golden_corpus/milestone1.json \
+  --json-out build/evaluation/milestone1.json \
+  --markdown-out build/evaluation/milestone1.md
 ```
 
 The default evaluation command uses stored fixture outputs and does not call a
 paid or network translation provider.
+
+## Translation Accuracy Evaluation
+
+AI Sub Pro can compare local subtitle outputs without committing episode
+subtitle files to the repo. Point the evaluator at local source, old output, new
+output, and optional reference subtitle files:
+
+```bash
+python3 tools/quality/compare_translation_outputs.py \
+  --source /path/to/source.en.srt \
+  --old /path/to/old-output.zh.srt \
+  --new /path/to/new-output.zh.srt \
+  --reference /path/to/reference.zh.srt \
+  --term "Hudson Oaks=哈德逊奥克斯" \
+  --out-dir /tmp/ai-sub-pro-quality
+```
+
+The command writes `translation_accuracy_report.json` and
+`translation_accuracy_report.md` in the output directory. Local episode
+subtitles and generated reports should stay out of git unless you own them and
+intentionally publish them.
+
+Import a local bilingual corpus into the phrase library with:
+
+```bash
+python3 tools/phrase_packs/import_corpus.py /path/to/corpus.tsv \
+  --format tsv \
+  --source-name "local-opensubtitles-export" \
+  --license "source license name" \
+  --source-language en \
+  --target-language zh-CN \
+  --tag subtitle \
+  --max-rows 5000
+```
+
+Phrase retrieval uses SQLite FTS5 when available and falls back to
+deterministic n-gram scoring when FTS5 is unavailable. The app does not
+download or bundle large public corpora by default; import only corpora you
+manage locally with the correct source and license metadata.
 
 ## Data Locations
 

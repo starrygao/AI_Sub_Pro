@@ -97,6 +97,25 @@ def _coerce_bool_setting(value, default: bool = False) -> bool:
     return value if isinstance(value, bool) else default
 
 
+def _coerce_choice_setting(value, valid_choices: set[str], default: str) -> str:
+    if not isinstance(value, str):
+        return default
+    normalized = value.strip().lower()
+    if normalized not in valid_choices:
+        return default
+    return normalized
+
+
+def _coerce_bounded_int_setting(value, default: int, *, min_value: int, max_value: int) -> int:
+    if isinstance(value, bool):
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return max(min_value, min(max_value, parsed))
+
+
 def _dict_section(config: dict, key: str) -> dict:
     value = config.get(key, {}) if isinstance(config, dict) else {}
     return value if isinstance(value, dict) else {}
@@ -194,6 +213,28 @@ class SubtitleTranslator:
         self.use_phrase_library = _coerce_bool_setting(
             trans_cfg.get("use_phrase_library", True),
             True,
+        )
+        self.memory_retrieval_backend = _coerce_choice_setting(
+            trans_cfg.get("memory_retrieval_backend", "auto"),
+            {"auto", "fts5", "ngram"},
+            "auto",
+        )
+        self.phrase_retrieval_backend = _coerce_choice_setting(
+            trans_cfg.get("phrase_retrieval_backend", "auto"),
+            {"auto", "fts5", "ngram"},
+            "auto",
+        )
+        self.max_memory_examples = _coerce_bounded_int_setting(
+            trans_cfg.get("max_memory_examples", 6),
+            6,
+            min_value=0,
+            max_value=20,
+        )
+        self.max_phrase_examples = _coerce_bounded_int_setting(
+            trans_cfg.get("max_phrase_examples", 6),
+            6,
+            min_value=0,
+            max_value=20,
         )
         self.last_quality_trace = TranslationContextTrace()
 
@@ -715,8 +756,9 @@ class SubtitleTranslator:
         target_code = _memory_lang(target_lang, "zh-CN")
 
         memory_lines = []
-        if self.use_translation_memory:
+        if self.use_translation_memory and self.max_memory_examples > 0:
             seen_memory = set()
+            per_item_limit = min(20, self.max_memory_examples)
             try:
                 store = TranslationMemoryStore()
                 for item in items:
@@ -727,7 +769,8 @@ class SubtitleTranslator:
                         original,
                         source_language=source_lang,
                         target_language=target_code,
-                        limit=2,
+                        limit=per_item_limit,
+                        backend=self.memory_retrieval_backend,
                     ):
                         key = (hit.source_text, hit.final_translation)
                         if key in seen_memory:
@@ -744,17 +787,18 @@ class SubtitleTranslator:
                             f"    Previous machine translation: {hit.machine_translation}\n"
                             f"    User-approved translation: {hit.final_translation}"
                         )
-                        if len(memory_lines) >= 6:
+                        if len(memory_lines) >= self.max_memory_examples:
                             break
-                    if len(memory_lines) >= 6:
+                    if len(memory_lines) >= self.max_memory_examples:
                         break
             except Exception as e:
                 log.warning("translation memory retrieval failed: %s", e)
 
         phrase_lines = []
-        if self.use_phrase_library:
+        if self.use_phrase_library and self.max_phrase_examples > 0:
             seen_phrases = set()
             preferred_tags = _phrase_context_tags(meta_info)
+            per_item_limit = min(20, self.max_phrase_examples)
             try:
                 library = PhraseLibrary()
                 for item in items:
@@ -765,8 +809,9 @@ class SubtitleTranslator:
                         original,
                         source_language=source_lang,
                         target_language=target_code,
-                        limit=2,
+                        limit=per_item_limit,
                         preferred_tags=preferred_tags,
+                        backend=self.phrase_retrieval_backend,
                     ):
                         key = (hit.source_text, hit.target_text)
                         if key in seen_phrases:
@@ -787,9 +832,9 @@ class SubtitleTranslator:
                             f"  (source: {hit.source_name or 'local'}, "
                             f"license: {hit.license or 'unspecified'}{tag_text})"
                         )
-                        if len(phrase_lines) >= 6:
+                        if len(phrase_lines) >= self.max_phrase_examples:
                             break
-                    if len(phrase_lines) >= 6:
+                    if len(phrase_lines) >= self.max_phrase_examples:
                         break
             except Exception as e:
                 log.warning("phrase library retrieval failed: %s", e)

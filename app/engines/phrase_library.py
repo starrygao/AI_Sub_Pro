@@ -4,15 +4,22 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
+from app.engines.retrieval_scoring import (
+    bounded_retrieval_score,
+    ngram_similarity,
+    normalize_text,
+    sqlite_supports_fts5,
+)
 from app.engines.translation_memory import _lang
 
-_TOKEN_RE = re.compile(r"[A-Za-z0-9\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]+")
-_CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
+_VALID_BACKENDS = {"auto", "fts5", "ngram"}
+_FTS_SYNC_NAME = "phrase_examples_fts"
 
 
 def default_phrase_library_path() -> Path:
@@ -83,36 +90,74 @@ def _tag_set(value: str | Iterable[str] | None) -> set[str]:
     }
 
 
-def _tokens(value: str) -> set[str]:
-    tokens: set[str] = set()
-    for part in _TOKEN_RE.findall(value.lower()):
-        if not part:
+def _is_latin_character(value: str) -> bool:
+    return unicodedata.name(value, "").startswith("LATIN")
+
+
+def _fold_fts_character(value: str) -> str:
+    if unicodedata.combining(value):
+        return ""
+    if not _is_latin_character(value):
+        return value.lower()
+    return "".join(
+        part.lower()
+        for part in unicodedata.normalize("NFKD", value)
+        if not unicodedata.combining(part) and part.isalnum()
+    )
+
+
+def _fold_fts_text(value: str) -> str:
+    return "".join(
+        _fold_fts_character(char)
+        for char in unicodedata.normalize("NFKC", normalize_text(value))
+    )
+
+
+def _fts_tokens(value: str) -> list[str]:
+    tokens: list[str] = []
+    current: list[str] = []
+    for char in _fold_fts_text(value):
+        if char.isalnum():
+            current.append(char)
             continue
-        tokens.add(part)
-        if not _CJK_RE.search(part):
-            continue
-        for size in (2, 3):
-            if len(part) < size:
-                continue
-            tokens.update(part[index:index + size] for index in range(len(part) - size + 1))
+        if current:
+            tokens.append("".join(current))
+            current = []
+    if current:
+        tokens.append("".join(current))
     return tokens
 
 
-def _similarity(query: str, candidate: str) -> float:
-    q = _tokens(query)
-    c = _tokens(candidate)
-    if not q or not c:
-        return 0.0
-    score = len(q & c) / max(len(q), len(c))
-    if candidate.lower() in query.lower() or query.lower() in candidate.lower():
-        score += 0.35
-    return min(1.0, score)
+def _fts_match_query(value: str) -> str:
+    tokens = sorted(set(_fts_tokens(value)))
+    if tokens:
+        return " OR ".join(f'"{token}"' for token in tokens)
+    return ""
+
+
+def _lexical_similarity(query: str, candidate: str) -> float:
+    return max(
+        ngram_similarity(query, candidate),
+        ngram_similarity(_fold_fts_text(query), _fold_fts_text(candidate)),
+    )
+
+
+def _dedupe_rows(*row_groups) -> list:
+    rows_by_id = {}
+    for rows in row_groups:
+        for row in rows:
+            row_id = int(row["id"])
+            if row_id not in rows_by_id:
+                rows_by_id[row_id] = row
+    return list(rows_by_id.values())
 
 
 class PhraseLibrary:
     def __init__(self, path: Optional[Path] = None) -> None:
         self.path = Path(path) if path is not None else default_phrase_library_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.last_retrieval_backend = "ngram"
+        self._fts_available = False
         self._ensure_schema()
 
     def _connect(self):
@@ -166,6 +211,148 @@ class PhraseLibrary:
                 )
                 """
             )
+            self._ensure_fts_schema(conn)
+
+    def _ensure_fts_schema(self, conn) -> None:
+        self._fts_available = False
+        if not sqlite_supports_fts5(self.path):
+            return
+        try:
+            conn.execute(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS phrase_examples_fts
+                USING fts5(source_text, target_text, content='phrase_examples', content_rowid='id')
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS phrase_examples_fts_sync (
+                    name TEXT PRIMARY KEY,
+                    last_rowid INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            self._fts_available = True
+            self._sync_fts_rows(conn)
+        except sqlite3.Error:
+            self._fts_available = False
+
+    def _fts_table_available(self, conn) -> bool:
+        if not self._fts_available:
+            return False
+        try:
+            conn.execute("SELECT rowid FROM phrase_examples_fts LIMIT 1").fetchone()
+            return True
+        except sqlite3.Error:
+            return False
+
+    def _insert_fts_row(self, conn, row_id: int, source: str, target: str) -> None:
+        if not self._fts_table_available(conn):
+            return
+        try:
+            conn.execute(
+                "INSERT INTO phrase_examples_fts(rowid, source_text, target_text) VALUES (?, ?, ?)",
+                (row_id, source, target),
+            )
+            self._set_fts_sync_rowid(conn, row_id)
+            self._fts_available = True
+        except sqlite3.Error:
+            self._fts_available = False
+
+    def _get_fts_sync_rowid(self, conn) -> int:
+        row = conn.execute(
+            "SELECT last_rowid FROM phrase_examples_fts_sync WHERE name = ?",
+            (_FTS_SYNC_NAME,),
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO phrase_examples_fts_sync(name, last_rowid) VALUES (?, 0)",
+                (_FTS_SYNC_NAME,),
+            )
+            return 0
+        try:
+            return max(0, int(row["last_rowid"] or 0))
+        except (TypeError, ValueError, OverflowError):
+            return 0
+
+    def _set_fts_sync_rowid(self, conn, row_id: int) -> None:
+        conn.execute(
+            """
+            INSERT INTO phrase_examples_fts_sync(name, last_rowid)
+            VALUES (?, ?)
+            ON CONFLICT(name) DO UPDATE SET last_rowid = MAX(last_rowid, excluded.last_rowid)
+            """,
+            (_FTS_SYNC_NAME, max(0, int(row_id))),
+        )
+
+    def _reset_fts_sync_rowid(self, conn) -> None:
+        conn.execute(
+            """
+            INSERT INTO phrase_examples_fts_sync(name, last_rowid)
+            VALUES (?, 0)
+            ON CONFLICT(name) DO UPDATE SET last_rowid = 0
+            """,
+            (_FTS_SYNC_NAME,),
+        )
+
+    def _fts_sync_marker_valid(self, conn, last_rowid: int) -> bool:
+        if last_rowid <= 0:
+            return True
+        try:
+            expected_ids = [
+                int(row["id"])
+                for row in conn.execute(
+                    """
+                    SELECT id
+                    FROM phrase_examples
+                    WHERE id <= ?
+                    ORDER BY id
+                    """,
+                    (last_rowid,),
+                ).fetchall()
+            ]
+            indexed_ids = [
+                int(row["id"])
+                for row in conn.execute(
+                    """
+                    SELECT id
+                    FROM phrase_examples_fts_docsize
+                    WHERE id <= ?
+                    ORDER BY id
+                    """,
+                    (last_rowid,),
+                ).fetchall()
+            ]
+        except (sqlite3.Error, TypeError, ValueError, OverflowError):
+            return False
+        return expected_ids == indexed_ids
+
+    def _sync_fts_rows(self, conn) -> None:
+        if not self._fts_available:
+            return
+        last_rowid = self._get_fts_sync_rowid(conn)
+        if not self._fts_sync_marker_valid(conn, last_rowid):
+            self._reset_fts_sync_rowid(conn)
+            last_rowid = 0
+        rows = conn.execute(
+            """
+            SELECT id, source_text, target_text
+            FROM phrase_examples
+            WHERE id > ?
+            ORDER BY id
+            """,
+            (last_rowid,),
+        ).fetchall()
+        synced_rowid = last_rowid
+        for row in rows:
+            row_id = int(row["id"])
+            conn.execute(
+                "INSERT INTO phrase_examples_fts(rowid, source_text, target_text) VALUES (?, ?, ?)",
+                (row_id, row["source_text"] or "", row["target_text"] or ""),
+            )
+            synced_rowid = row_id
+        if synced_rowid != last_rowid:
+            self._set_fts_sync_rowid(conn, synced_rowid)
 
     def add_phrase(
         self,
@@ -230,7 +417,9 @@ class PhraseLibrary:
                     _clean_tags(tags),
                 ),
             )
-            return int(cur.lastrowid)
+            entry_id = int(cur.lastrowid)
+            self._insert_fts_row(conn, entry_id, source, target)
+            return entry_id
 
     def import_json(self, path: Path) -> int:
         try:
@@ -333,6 +522,7 @@ class PhraseLibrary:
         target_language: str,
         limit: int = 5,
         preferred_tags: Optional[Iterable[str]] = None,
+        backend: str = "auto",
     ) -> list[PhraseExample]:
         query = _clean_text(source_text)
         if not query:
@@ -342,26 +532,123 @@ class PhraseLibrary:
             max_results = max(1, min(20, int(limit)))
         except (TypeError, ValueError, OverflowError):
             max_results = 5
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM phrase_examples
-                WHERE source_language = ? AND target_language = ?
-                ORDER BY quality DESC, id DESC
-                LIMIT 500
-                """,
-                (_lang(source_language, "auto"), _lang(target_language, "zh-CN")),
-            ).fetchall()
+        normalized_source_language = _lang(source_language, "auto")
+        normalized_target_language = _lang(target_language, "zh-CN")
+        requested_backend = _clean_text(backend).lower()
+        if requested_backend not in _VALID_BACKENDS:
+            requested_backend = "auto"
 
+        with self._connect() as conn:
+            rows, backend_used = self._select_candidate_rows(
+                conn,
+                query=query,
+                source_language=normalized_source_language,
+                target_language=normalized_target_language,
+                requested_backend=requested_backend,
+            )
+            examples = self._score_rows(rows, query=query, preferred_tags=preferred)
+            if not examples and backend_used == "fts5" and requested_backend == "auto":
+                rows = self._select_ngram_rows(
+                    conn,
+                    source_language=normalized_source_language,
+                    target_language=normalized_target_language,
+                )
+                backend_used = "ngram"
+                examples = self._score_rows(rows, query=query, preferred_tags=preferred)
+
+        self.last_retrieval_backend = backend_used
+        examples.sort(key=lambda item: (-item.score, -item.quality, -item.id))
+        return examples[:max_results]
+
+    def _select_candidate_rows(
+        self,
+        conn,
+        *,
+        query: str,
+        source_language: str,
+        target_language: str,
+        requested_backend: str,
+    ):
+        use_fts = requested_backend in {"auto", "fts5"} and self._fts_table_available(conn)
+        if not use_fts:
+            return self._select_ngram_rows(
+                conn,
+                source_language=source_language,
+                target_language=target_language,
+            ), "ngram"
+
+        fts_query = _fts_match_query(query)
+        if not fts_query:
+            return self._select_ngram_rows(
+                conn,
+                source_language=source_language,
+                target_language=target_language,
+            ), "ngram"
+
+        try:
+            fts_rows = self._select_fts_rows(
+                conn,
+                fts_query=fts_query,
+                source_language=source_language,
+                target_language=target_language,
+            )
+            if requested_backend == "auto":
+                ngram_rows = self._select_ngram_rows(
+                    conn,
+                    source_language=source_language,
+                    target_language=target_language,
+                )
+                return _dedupe_rows(fts_rows, ngram_rows), "fts5"
+            return fts_rows, "fts5"
+        except sqlite3.Error:
+            self._fts_available = False
+            return self._select_ngram_rows(
+                conn,
+                source_language=source_language,
+                target_language=target_language,
+            ), "ngram"
+
+    def _select_fts_rows(self, conn, *, fts_query: str, source_language: str, target_language: str):
+        return conn.execute(
+            """
+            SELECT pe.*, bm25(phrase_examples_fts) AS rank
+            FROM phrase_examples_fts
+            JOIN phrase_examples pe ON pe.id = phrase_examples_fts.rowid
+            WHERE phrase_examples_fts MATCH ?
+              AND pe.source_language = ?
+              AND pe.target_language = ?
+            ORDER BY rank, pe.quality DESC, pe.id DESC
+            LIMIT 500
+            """,
+            (fts_query, source_language, target_language),
+        ).fetchall()
+
+    def _select_ngram_rows(self, conn, *, source_language: str, target_language: str):
+        return conn.execute(
+            """
+            SELECT * FROM phrase_examples
+            WHERE source_language = ? AND target_language = ?
+            ORDER BY quality DESC, id DESC
+            LIMIT 500
+            """,
+            (source_language, target_language),
+        ).fetchall()
+
+    def _score_rows(
+        self,
+        rows,
+        *,
+        query: str,
+        preferred_tags: set[str],
+    ) -> list[PhraseExample]:
         examples = []
         for row in rows:
-            similarity = _similarity(query, row["source_text"] or "")
-            if similarity <= 0:
+            lexical_score = _lexical_similarity(query, row["source_text"] or "")
+            if lexical_score <= 0:
                 continue
             quality = _clean_quality(row["quality"])
             tags = row["tags"] or ""
-            tag_matches = len(preferred & _tag_set(tags))
-            tag_boost = min(0.12, tag_matches * 0.04)
+            tag_matches = len(preferred_tags & _tag_set(tags))
             examples.append(PhraseExample(
                 id=int(row["id"]),
                 source_text=row["source_text"] or "",
@@ -374,10 +661,14 @@ class PhraseLibrary:
                 pack_version=int(row["pack_version"] or 0),
                 tags=tags,
                 quality=quality,
-                score=(similarity * 0.75) + (quality * 0.25) + tag_boost,
+                score=bounded_retrieval_score(
+                    lexical_score=lexical_score,
+                    quality=quality,
+                    tag_matches=tag_matches,
+                    priority=0,
+                ),
             ))
-        examples.sort(key=lambda item: (-item.score, -item.quality, -item.id))
-        return examples[:max_results]
+        return examples
 
 
 def bundled_phrase_pack_dir() -> Path:

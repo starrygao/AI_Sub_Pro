@@ -92,3 +92,122 @@ def test_repair_prompt_contains_only_failing_blocks():
     assert "Good" not in prompt
     assert "Hudson Oaks" in prompt
     assert "哈德逊奥克斯" in prompt
+
+
+def test_quality_checks_flag_inferred_proper_name_inconsistency():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Hudson Oaks is quiet tonight.", "哈德逊奥克斯今晚很安静。"),
+        _block(2, "I came from Hudson Oaks.", "我从哈德逊橡树来。"),
+        _block(3, "Hudson Oaks is closed now.", "哈德逊橡树现在关门了。", filtered=True),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)
+
+    assert report.summary["by_type"]["proper_name_inconsistent"] == 2
+    flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
+    assert {issue.block_id for issue in flagged} == {1, 2}
+    assert report.unresolved_blocks == [1, 2]
+    assert all(issue.severity == "warning" for issue in flagged)
+    assert all(issue.source_text == "Hudson Oaks" for issue in flagged)
+
+
+def test_quality_checks_flag_divergent_long_names_without_shared_anchor():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Hudson Oaks is quiet tonight.", "哈德逊奥克斯"),
+        _block(2, "I came from Hudson Oaks.", "赫德森橡树"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)
+
+    assert report.summary["by_type"]["proper_name_inconsistent"] == 2
+    flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
+    assert {issue.block_id for issue in flagged} == {1, 2}
+
+
+def test_quality_checks_run_proper_name_metric_for_traditional_chinese_targets():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Hudson Oaks is quiet tonight.", "哈德遜奧克斯"),
+        _block(2, "I came from Hudson Oaks.", "赫德森橡樹"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="繁體中文", max_chars=18)
+
+    assert report.summary["by_type"]["proper_name_inconsistent"] == 2
+    flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
+    assert {issue.block_id for issue in flagged} == {1, 2}
+
+
+def test_quality_checks_run_proper_name_metric_for_common_chinese_aliases():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Hudson Oaks is quiet tonight.", "哈德逊奥克斯"),
+        _block(2, "I came from Hudson Oaks.", "赫德森橡树"),
+    ]
+
+    for target_language in ("Simplified Chinese", "zh-Hant-TW"):
+        report = run_quality_checks(blocks, target_language=target_language, max_chars=18)
+
+        assert report.summary["by_type"]["proper_name_inconsistent"] == 2
+        flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
+        assert {issue.block_id for issue in flagged} == {1, 2}
+
+
+def test_quality_checks_do_not_flag_same_long_cjk_name_in_different_contexts():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "I am going to Hudson Oaks.", "我去哈德逊奥克斯。"),
+        _block(2, "She is going to Hudson Oaks.", "她去哈德逊奥克斯。"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)
+
+    assert "proper_name_inconsistent" not in report.summary["by_type"]
+
+
+def test_quality_checks_do_not_flag_short_consistent_cjk_names():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Li Na arrived.", "李娜到了。"),
+        _block(2, "I saw Li Na run.", "我看见李娜跑了。"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)
+
+    assert "proper_name_inconsistent" not in report.summary["by_type"]
+
+
+def test_quality_checks_flag_inconsistent_short_cjk_names_with_shared_context():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Li Na arrived.", "李娜到了。"),
+        _block(2, "Li Na arrived too.", "丽娜到了。"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)
+
+    assert report.summary["by_type"]["proper_name_inconsistent"] == 2
+    flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
+    assert {issue.block_id for issue in flagged} == {1, 2}
+
+
+def test_quality_checks_skip_proper_name_metric_for_non_chinese_targets():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Hudson Oaks is quiet tonight.", "Hudson Oaks is quiet tonight."),
+        _block(2, "I came from Hudson Oaks.", "I came from Hudson Oaks yesterday."),
+    ]
+
+    report = run_quality_checks(blocks, target_language="English", max_chars=40)
+
+    assert "proper_name_inconsistent" not in report.summary["by_type"]

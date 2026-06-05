@@ -8,6 +8,194 @@ from app.evaluation.corpus import CorpusCase
 
 
 _TAG_RE = re.compile(r"</?[a-zA-Z][^>]*>")
+_PROPER_NAME_RE = re.compile(
+    r"\b(?:[A-Z][a-z]+(?:['-][A-Za-z]+)*)(?:\s+(?:[A-Z][a-z]+(?:['-][A-Za-z]+)*)){1,}\b"
+)
+_CJK_RE = re.compile(r"[\u3400-\u9fff]+")
+_LEADING_NAME_STOPWORDS = {"A", "An", "The", "This", "That", "These", "Those"}
+_COMMON_TITLE_PHRASES = {
+    "Are You",
+    "Good Morning",
+    "Good Afternoon",
+    "Good Evening",
+    "Good Night",
+    "How Are You",
+    "Where Are You",
+    "What Are You",
+    "Who Are You",
+    "Why Are You",
+    "Thank You",
+    "Excuse Me",
+    "I Love You",
+}
+_COMMON_TITLE_WORDS = {
+    "are",
+    "good",
+    "how",
+    "morning",
+    "afternoon",
+    "evening",
+    "night",
+    "where",
+    "what",
+    "who",
+    "why",
+    "thank",
+    "you",
+    "excuse",
+    "me",
+    "please",
+    "sorry",
+    "hello",
+    "hi",
+    "welcome",
+}
+_SHORT_NAME_CONTEXT_CHARS = {
+    "了",
+    "到",
+    "看",
+    "见",
+    "来",
+    "跑",
+    "走",
+    "说",
+    "在",
+    "去",
+    "是",
+    "有",
+    "会",
+    "想",
+    "要",
+    "让",
+    "把",
+    "被",
+    "很",
+    "真",
+    "太",
+    "都",
+    "也",
+    "还",
+    "又",
+    "呢",
+    "吗",
+}
+_LONG_NAME_IDENTITY_SUFFIXES = (
+    "医院",
+    "大学",
+    "学院",
+    "中学",
+    "小学",
+    "车站",
+    "机场",
+    "公园",
+    "广场",
+    "中心",
+    "酒店",
+    "饭店",
+    "公司",
+    "集团",
+    "社区",
+    "小区",
+    "大厦",
+    "城",
+    "镇",
+    "市",
+    "县",
+    "区",
+    "乡",
+    "村",
+    "庄",
+    "街",
+    "路",
+    "桥",
+)
+_LONG_NAME_IDENTITY_PREFIXES = (
+    "老",
+    "小",
+    "新",
+    "旧",
+    "大",
+    "东",
+    "西",
+    "南",
+    "北",
+    "中",
+)
+_LONG_NAME_CONTEXT_ANCHORS = (
+    "一切正常",
+    "很安静",
+    "看起来",
+    "灯火通明",
+    "美极了",
+    "空荡",
+    "正常",
+)
+_LONG_NAME_CONTEXT_PREFIX_HINTS = (
+    "我",
+    "你",
+    "他",
+    "她",
+    "它",
+    "们",
+    "在",
+    "从",
+    "到",
+    "去",
+    "来",
+    "住",
+    "看",
+    "见",
+    "喜欢",
+    "讨厌",
+    "非常",
+    "特别",
+    "真的",
+    "了",
+)
+_LONG_NAME_CONTEXT_PREFIX_TOKENS = (
+    "喜欢",
+    "讨厌",
+    "昨天",
+    "今天",
+    "明天",
+    "突然",
+    "随后",
+    "然后",
+    "后来",
+    "之前",
+    "之后",
+    "以前",
+    "过去",
+    "当时",
+    "那时",
+    "此时",
+    "刚才",
+    "刚刚",
+    "现在",
+    "今晚",
+    "昨晚",
+    "明晚",
+    "我们",
+    "你们",
+    "他们",
+    "她们",
+    "它们",
+    "我",
+    "你",
+    "他",
+    "她",
+    "它",
+    "们",
+    "在",
+    "从",
+    "到",
+    "去",
+    "来",
+    "住",
+    "看",
+    "见",
+    "了",
+)
 
 
 def _by_id(blocks: list[dict[str, str]], text_key: str) -> dict[str, str]:
@@ -26,6 +214,349 @@ def _tags(text: str) -> list[str]:
 
 def _round(value: float) -> float:
     return round(value, 4)
+
+
+def _clean_text(value: Any) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _compact_whitespace(text: str) -> str:
+    return re.sub(r"\s+", "", _clean_text(text))
+
+
+def _is_sentence_start(source_text: str, start: int) -> bool:
+    if start <= 0:
+        return True
+    prefix = _clean_text(source_text)[:start].rstrip()
+    if not prefix:
+        return True
+    return prefix[-1] in ".!?;:\n\r\"'()[]{}"
+
+
+def _looks_like_common_title_phrase(source_text: str, start: int, name: str) -> bool:
+    if name in _COMMON_TITLE_PHRASES:
+        return True
+    if not _is_sentence_start(source_text, start):
+        return False
+    tokens = [token.lower() for token in name.split()]
+    return bool(tokens) and all(token in _COMMON_TITLE_WORDS for token in tokens)
+
+
+def _is_supported_proper_name(source_text: str, start: int, name: str) -> bool:
+    tokens = name.split()
+    if len(tokens) < 2:
+        return False
+    if any(len(token) < 2 for token in tokens):
+        return False
+    if tokens[0] in _LEADING_NAME_STOPWORDS and len(tokens) < 3:
+        return False
+    if _looks_like_common_title_phrase(source_text, start, name):
+        return False
+    return True
+
+
+def _extract_proper_names(source_text: str) -> list[str]:
+    return [
+        match.group(0)
+        for match in _PROPER_NAME_RE.finditer(_clean_text(source_text))
+        if _is_supported_proper_name(source_text, match.start(), match.group(0))
+    ]
+
+
+def _repeated_proper_names(source_by_id: dict[str, str]) -> list[str]:
+    counts: dict[str, int] = {}
+    for source_text in source_by_id.values():
+        for name in _extract_proper_names(source_text):
+            counts[name] = counts.get(name, 0) + 1
+    return sorted(name for name, count in counts.items() if count > 1)
+
+
+def _is_short_source_name(proper_name: str) -> bool:
+    tokens = proper_name.split()
+    return (
+        len(tokens) == 2
+        and sum(len(token) for token in tokens) <= 6
+        and max((len(token) for token in tokens), default=0) <= 3
+    )
+
+
+def _cjk_compact_text(text: str) -> str:
+    return "".join(_CJK_RE.findall(_compact_whitespace(text)))
+
+
+def _cjk_substrings(text: str, min_length: int = 2) -> set[str]:
+    if len(text) < min_length:
+        return set()
+    limit = min(len(text), 12)
+    substrings = set()
+    for start in range(len(text)):
+        max_end = min(len(text), start + limit)
+        for end in range(start + min_length, max_end + 1):
+            substrings.add(text[start:end])
+    return substrings
+
+
+def _common_cjk_substrings(translations: list[str], min_length: int = 2) -> list[str]:
+    if not translations:
+        return []
+    shared = _cjk_substrings(translations[0], min_length=min_length)
+    for translation in translations[1:]:
+        shared &= _cjk_substrings(translation, min_length=min_length)
+        if not shared:
+            return []
+    return sorted(shared, key=lambda item: (-len(item), item))
+
+
+def _anchor_neighbors(text: str, anchor: str) -> tuple[str, str]:
+    index = text.find(anchor)
+    if index < 0:
+        return "", ""
+    before = text[index - 1] if index > 0 else ""
+    after_index = index + len(anchor)
+    after = text[after_index] if after_index < len(text) else ""
+    return before, after
+
+
+def _has_conflicting_neighbor(chars: list[str]) -> bool:
+    return len({char for char in chars if char}) > 1
+
+
+def _is_unsafe_shared_anchor(anchor: str, translations: list[str]) -> bool:
+    before_chars = []
+    after_chars = []
+    for translation in translations:
+        before, after = _anchor_neighbors(translation, anchor)
+        before_chars.append(before)
+        after_chars.append(after)
+    return _has_conflicting_neighbor(before_chars) or _has_conflicting_neighbor(after_chars)
+
+
+def _contains_context_chars(anchor: str) -> bool:
+    return any(char in _SHORT_NAME_CONTEXT_CHARS for char in anchor)
+
+
+def _is_context_anchor(anchor: str) -> bool:
+    if _contains_context_chars(anchor):
+        return True
+    return any(anchor in phrase or phrase in anchor for phrase in _LONG_NAME_CONTEXT_ANCHORS)
+
+
+def _prefix_before_anchor(text: str, anchor: str) -> str:
+    index = text.find(anchor)
+    return text[:index] if index > 0 else ""
+
+
+def _suffix_after_anchor(text: str, anchor: str) -> str:
+    index = text.find(anchor)
+    if index < 0:
+        return ""
+    return text[index + len(anchor):]
+
+
+def _looks_like_sentence_prefix(prefix: str, min_name_prefix_length: int = 4) -> bool:
+    if len(prefix) < min_name_prefix_length:
+        return True
+    if not _anchor_adjacent_name_prefix(prefix):
+        return True
+    return any(hint in prefix for hint in _LONG_NAME_CONTEXT_PREFIX_HINTS)
+
+
+def _anchor_adjacent_name_prefix(prefix: str) -> str:
+    chunk = prefix
+    while chunk:
+        context = next(
+            (item for item in _LONG_NAME_CONTEXT_PREFIX_TOKENS if chunk.startswith(item)),
+            "",
+        )
+        if not context:
+            break
+        chunk = chunk[len(context):]
+    return chunk[-3:]
+
+
+def _looks_like_name_prefix_chunk(prefix: str) -> bool:
+    chunk = _anchor_adjacent_name_prefix(prefix)
+    if not chunk or len(chunk) > 3:
+        return False
+    if _contains_context_chars(chunk):
+        return False
+    return not any(hint in chunk for hint in _LONG_NAME_CONTEXT_PREFIX_HINTS)
+
+
+def _has_conflicting_name_prefixes(
+    anchor: str, translations: list[str], min_name_prefix_length: int = 4
+) -> bool:
+    prefixes = [_prefix_before_anchor(text, anchor) for text in translations]
+    nonempty = [prefix for prefix in prefixes if prefix]
+    if len(nonempty) != len(prefixes):
+        return False
+    if len(set(nonempty)) < 2:
+        return False
+    return all(
+        not _looks_like_sentence_prefix(prefix, min_name_prefix_length)
+        for prefix in nonempty
+    )
+
+
+def _has_competing_name_prefix_chunks(anchor: str, translations: list[str]) -> bool:
+    prefixes = [_prefix_before_anchor(text, anchor) for text in translations]
+    chunks = [_anchor_adjacent_name_prefix(prefix) for prefix in prefixes]
+    nonempty = [chunk for chunk in chunks if chunk]
+    if len(nonempty) != len(chunks):
+        return False
+    if len(set(nonempty)) < 2:
+        return False
+    return all(_looks_like_name_prefix_chunk(chunk) for chunk in nonempty)
+
+
+def _estimated_cjk_name_length_floor(proper_name: str) -> int:
+    letter_count = sum(len(re.sub(r"[^A-Za-z]", "", token)) for token in proper_name.split())
+    return max(4, (letter_count + 2) // 3)
+
+
+def _looks_like_ordinary_context_suffix(suffix: str) -> bool:
+    if len(suffix) < 3:
+        return True
+    if _contains_context_chars(suffix[:3]):
+        return True
+    return any(suffix.startswith(anchor) for anchor in _LONG_NAME_CONTEXT_ANCHORS)
+
+
+def _has_competing_name_suffixes(
+    anchor: str, translations: list[str], proper_name: str
+) -> bool:
+    if len(anchor) >= _estimated_cjk_name_length_floor(proper_name):
+        return False
+    suffixes = [_suffix_after_anchor(text, anchor) for text in translations]
+    if len(set(suffixes)) < 2:
+        return False
+    substantive = [
+        suffix for suffix in suffixes if suffix and not _looks_like_ordinary_context_suffix(suffix)
+    ]
+    return len(substantive) >= 2 or (bool(substantive) and "" in suffixes)
+
+
+def _is_valid_long_name_anchor(
+    anchor: str, translations: list[str], proper_name: str = ""
+) -> bool:
+    # Safe anchors are plausible full target-name cores that may appear with
+    # different sentence context. Unsafe anchors are repeated context phrases
+    # or shared subparts of competing prefix/suffix transliterations.
+    if _is_context_anchor(anchor):
+        return False
+    if _has_competing_name_prefix_chunks(anchor, translations):
+        return False
+    if proper_name and _has_competing_name_suffixes(anchor, translations, proper_name):
+        return False
+    return not _has_conflicting_name_prefixes(anchor, translations)
+
+
+def _is_valid_short_name_anchor(anchor: str, translations: list[str]) -> bool:
+    if _contains_context_chars(anchor):
+        return False
+    return not _has_conflicting_name_prefixes(
+        anchor, translations, min_name_prefix_length=1
+    )
+
+
+def _shared_cjk_anchor(translations: list[str]) -> str:
+    common = _common_cjk_substrings(translations, min_length=2)
+    if not common:
+        return ""
+
+    unsafe = {
+        anchor for anchor in common if _is_unsafe_shared_anchor(anchor, translations)
+    }
+    for anchor in common:
+        if anchor in unsafe:
+            continue
+        if any(anchor != other and anchor in other for other in unsafe):
+            continue
+        return anchor
+    return ""
+
+
+def _long_name_cjk_anchor(translations: list[str], proper_name: str = "") -> str:
+    common = _common_cjk_substrings(translations, min_length=4)
+    for anchor in common:
+        if _is_valid_long_name_anchor(anchor, translations, proper_name):
+            return anchor
+    return ""
+
+
+def _fallback_long_name_anchor(translations: list[str], proper_name: str = "") -> str:
+    common = _common_cjk_substrings(translations, min_length=2)
+    for anchor in common:
+        if _is_valid_long_name_anchor(anchor, translations, proper_name):
+            return anchor
+    return ""
+
+
+def _short_name_cjk_anchor(translations: list[str]) -> str:
+    common = _common_cjk_substrings(translations, min_length=2)
+    for anchor in common:
+        if len(anchor) <= 3 and _is_valid_short_name_anchor(anchor, translations):
+            return anchor
+    return ""
+
+
+def _target_signature(translation: str, shared_anchor: str = "") -> str:
+    cjk_text = _cjk_compact_text(translation)
+    if shared_anchor and shared_anchor in cjk_text:
+        return shared_anchor
+    if cjk_text:
+        return cjk_text
+    return _compact_whitespace(translation)
+
+
+def _consume_identity_suffixes(text: str, start: int) -> int:
+    end = start
+    while True:
+        tail = text[end:]
+        marker = next(
+            (item for item in _LONG_NAME_IDENTITY_SUFFIXES if tail.startswith(item)),
+            "",
+        )
+        if not marker:
+            return end
+        end += len(marker)
+
+
+def _consume_identity_prefixes(text: str, start: int) -> int:
+    begin = start
+    while True:
+        head = text[:begin]
+        marker = next(
+            (item for item in _LONG_NAME_IDENTITY_PREFIXES if head.endswith(item)),
+            "",
+        )
+        if not marker:
+            return begin
+        begin -= len(marker)
+
+
+def _long_name_signature(translation: str, shared_anchor: str) -> str:
+    """Return a plausible translated-name chunk for long CJK names.
+
+    Examples:
+    - `我去哈德逊奥克斯` and `她讨厌哈德逊奥克斯` -> `哈德逊奥克斯` (no issue)
+    - `哈德逊奥克斯镇很安静` and `哈德逊奥克斯市看起来空荡` -> different chunks (issue)
+    - `哈德逊奥克斯` and `哈德逊橡树` -> different chunks (issue)
+    """
+    cjk_text = _cjk_compact_text(translation)
+    if not shared_anchor or shared_anchor not in cjk_text:
+        # No reliable shared anchor means we cannot isolate a common name core.
+        # In that case keep the compact CJK text so distinct renderings still
+        # separate, while same-rendering context cases continue to rely on the
+        # shared-anchor path above.
+        return cjk_text or _compact_whitespace(translation)
+    anchor_start = cjk_text.find(shared_anchor)
+    start = _consume_identity_prefixes(cjk_text, anchor_start)
+    end = anchor_start + len(shared_anchor)
+    end = _consume_identity_suffixes(cjk_text, end)
+    if len(shared_anchor) < 4:
+        return cjk_text or _compact_whitespace(translation)
+    return cjk_text[start:end] or shared_anchor
 
 
 def terminology_score(case: CorpusCase, candidate_by_id: dict[str, str]) -> dict[str, Any]:
@@ -109,6 +640,77 @@ def format_score(case: CorpusCase, candidate_by_id: dict[str, str]) -> dict[str,
         "broken_ids": broken,
         "tagged_count": total_tagged,
         "breakage_rate": _round(len(broken) / total_tagged) if total_tagged else 0.0,
+    }
+
+
+def proper_name_consistency_score(
+    source_by_id: dict[str, str], candidate_by_id: dict[str, str]
+) -> dict[str, Any]:
+    normalized_source_by_id = {
+        str(block_id).strip(): _clean_text(source_text)
+        for block_id, source_text in source_by_id.items()
+        if str(block_id).strip()
+    }
+    normalized_candidate_by_id = {
+        str(block_id).strip(): _clean_text(translation)
+        for block_id, translation in candidate_by_id.items()
+        if str(block_id).strip()
+    }
+
+    issues = []
+    for proper_name in _repeated_proper_names(normalized_source_by_id):
+        matcher = re.compile(rf"\b{re.escape(proper_name)}\b")
+        observations = []
+
+        for block_id, source_text in normalized_source_by_id.items():
+            if not matcher.search(source_text):
+                continue
+            translation = normalized_candidate_by_id.get(block_id, "")
+            if not translation.strip():
+                continue
+            observations.append({
+                "block_id": block_id,
+                "source_text": source_text,
+                "translation": translation,
+            })
+
+        if len(observations) < 2:
+            continue
+
+        cjk_translations = [
+            cjk_text
+            for cjk_text in (_cjk_compact_text(item["translation"]) for item in observations)
+            if cjk_text
+        ]
+        shared_anchor = ""
+        if _is_short_source_name(proper_name):
+            shared_anchor = _short_name_cjk_anchor(cjk_translations)
+        else:
+            shared_anchor = _long_name_cjk_anchor(cjk_translations, proper_name)
+        if not shared_anchor and not _is_short_source_name(proper_name):
+            shared_anchor = _fallback_long_name_anchor(cjk_translations, proper_name)
+
+        target_forms = []
+        for item in observations:
+            if _is_short_source_name(proper_name):
+                signature = _target_signature(item["translation"], shared_anchor)
+            else:
+                signature = _long_name_signature(item["translation"], shared_anchor)
+            item["target_signature"] = signature
+            item["target_anchor"] = shared_anchor
+            if signature not in target_forms:
+                target_forms.append(signature)
+
+        if len(target_forms) > 1:
+            issues.append({
+                "source": proper_name,
+                "target_forms": target_forms,
+                "observations": observations,
+            })
+
+    return {
+        "issue_count": len(issues),
+        "issues": issues,
     }
 
 

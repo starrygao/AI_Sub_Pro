@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional
 
+from app.evaluation.metrics import proper_name_consistency_score
 from app.engines.kb_models import ProjectKb
 from app.utils.project_store import atomic_write_json
 
@@ -76,7 +77,25 @@ _SOUND_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
 
 def _is_chinese_target(target_language: str) -> bool:
     text = _clean_text(target_language).lower()
-    return text in {"简体中文", "中文", "zh", "zh-cn", "chs", "zho", "cmn"}
+    return text in {
+        "简体中文",
+        "繁体中文",
+        "繁體中文",
+        "中文",
+        "zh",
+        "zh-cn",
+        "zh-hans",
+        "zh-hans-cn",
+        "zh-tw",
+        "zh-hant",
+        "zh-hant-tw",
+        "simplified chinese",
+        "traditional chinese",
+        "chs",
+        "cht",
+        "zho",
+        "cmn",
+    }
 
 
 def _kb_terms(project_kb: Optional[ProjectKb]) -> list[tuple[str, str]]:
@@ -111,6 +130,8 @@ def run_quality_checks(
     seen_ids = set()
     kb_terms = _kb_terms(project_kb)
     chinese_target = _is_chinese_target(target_language)
+    source_by_id: dict[str, str] = {}
+    translation_by_id: dict[str, str] = {}
 
     for block in blocks or []:
         if getattr(block, "filtered", False):
@@ -118,6 +139,11 @@ def run_quality_checks(
         block_id = getattr(block, "index", None)
         source = _clean_text(getattr(block, "text", ""))
         translation = _clean_text(getattr(block, "translation", ""))
+
+        if isinstance(block_id, int):
+            block_key = str(block_id)
+            source_by_id.setdefault(block_key, source)
+            translation_by_id.setdefault(block_key, translation)
 
         if isinstance(block_id, int):
             if block_id in seen_ids:
@@ -185,6 +211,25 @@ def run_quality_checks(
                     source_text=source,
                     translation=translation,
                     expected=term_target,
+                ))
+
+    if chinese_target:
+        proper_name_issues = proper_name_consistency_score(source_by_id, translation_by_id)
+        for item in proper_name_issues["issues"]:
+            target_forms = [form for form in item.get("target_forms", []) if form]
+            message = f"inferred proper name {item['source']} uses inconsistent target forms"
+            if target_forms:
+                message = f"{message}: {', '.join(target_forms)}"
+            for observation in item.get("observations", []):
+                block_value = observation.get("block_id")
+                block_id = int(block_value) if str(block_value).isdigit() else None
+                issues.append(QualityIssue(
+                    type="proper_name_inconsistent",
+                    severity="warning",
+                    block_id=block_id,
+                    message=message,
+                    source_text=item["source"],
+                    translation=_clean_text(observation.get("translation", "")),
                 ))
 
     status = "ok" if not issues else "needs_review"
