@@ -162,6 +162,68 @@ def test_import_tsv_corpus_drops_duplicates(tmp_path):
     assert exact_matches[0].source_name == "unit-tsv"
 
 
+@pytest.mark.parametrize(
+    ("filename", "input_format", "body"),
+    [
+        ("phrases.csv", "csv", "source,target\nHello,world,你好\n"),
+        ("phrases.tsv", "tsv", "source\ttarget\nHello\tworld\t你好\n"),
+    ],
+)
+def test_import_delimited_corpus_rejects_rows_with_extra_fields(
+    tmp_path,
+    filename,
+    input_format,
+    body,
+):
+    corpus = tmp_path / filename
+    corpus.write_text(body, encoding="utf-8")
+    library = PhraseLibrary(tmp_path / "phrases.sqlite3")
+
+    report = import_corpus(
+        corpus,
+        input_format=input_format,
+        source_name="unit-delimited",
+        license_name="local-test",
+        source_language="en",
+        target_language="zh-CN",
+        library=library,
+    )
+
+    assert report.accepted == 0
+    assert report.rejected == 1
+    assert report.duplicates == 0
+    assert report.errors == [{"row_number": 2, "error": "line 2: row has extra fields"}]
+    assert library.retrieve(
+        "Hello",
+        source_language="en",
+        target_language="zh-CN",
+        limit=5,
+    ) == []
+
+
+def test_import_delimited_corpus_rejects_missing_custom_columns(tmp_path):
+    corpus = tmp_path / "phrases.csv"
+    corpus.write_text(
+        "\n".join([
+            "source,target",
+            "Hello,你好",
+        ]),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CorpusImportError, match="missing required column\\(s\\): english, chinese"):
+        import_corpus(
+            corpus,
+            input_format="csv",
+            source_name="unit-columns",
+            license_name="local-test",
+            source_language="en",
+            target_language="zh-CN",
+            source_column="english",
+            target_column="chinese",
+        )
+
+
 def test_import_corpus_cli_dry_run(tmp_path):
     corpus = tmp_path / "phrases.csv"
     corpus.write_text(

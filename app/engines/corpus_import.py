@@ -79,6 +79,11 @@ def import_corpus(
     dry_run: bool = False,
     library: PhraseLibrary | None = None,
 ) -> CorpusImportReport:
+    """Import local corpus rows into PhraseLibrary.
+
+    Dry-run validates and samples file rows only; it does not compare against
+    an existing phrase database unless the caller explicitly does that.
+    """
     metadata = _validate_metadata(
         input_format=input_format,
         source_name=source_name,
@@ -297,4 +302,7 @@ def _iter_delimited_rows(
                 "missing required column(s): " + ", ".join(missing)
             )
         for row_number, row in enumerate(reader, start=2):
+            if None in row:
+                yield row_number, {}, f"line {row_number}: row has extra fields"
+                continue
             yield row_number, row, None
