@@ -72,6 +72,7 @@ function app() {
     confirmCancelText: '取消',
     confirmIntent: 'danger',
     confirmResolve: null,
+    homeSourceMode: 'local',
     newVideoPath: '',
     fileImporting: false,
     projectCreating: false,
@@ -744,6 +745,93 @@ function app() {
       const name = String(file?.name || '').toLowerCase();
       const videoExts = ['.mp4','.mkv','.avi','.mov','.wmv','.flv','.webm','.ts','.m4v'];
       return videoExts.some(ext => name.endsWith(ext));
+    },
+
+    homeSourceOptions() {
+      return [
+        {
+          mode: 'local',
+          label: '本地视频',
+          helper: '视频文件',
+          strategy: '优先读取内嵌字幕和同名外挂字幕；没有可用字幕时再进入 ASR 听写。',
+          actionLabel: '选择视频文件',
+          disabled: false,
+        },
+        {
+          mode: 'network',
+          label: '网络视频',
+          helper: 'URL',
+          strategy: '下载到项目文件夹，优先获取平台原生字幕；没有字幕再进入 ASR 听写。',
+          actionLabel: '下载并翻译',
+          disabled: false,
+        },
+        {
+          mode: 'subtitle',
+          label: '字幕文件',
+          helper: 'SRT / VTT / ASS',
+          strategy: '后续将支持直接翻译字幕文件，并保留时间轴和格式。',
+          actionLabel: '即将支持',
+          disabled: true,
+        },
+        {
+          mode: 'audio',
+          label: '音频文件',
+          helper: 'MP3 / WAV / M4A',
+          strategy: '后续将支持纯音频听写、翻译和导出字幕。',
+          actionLabel: '即将支持',
+          disabled: true,
+        },
+      ];
+    },
+
+    homeSourceOption(mode = this.homeSourceMode) {
+      const value = typeof mode === 'string' ? mode.trim() : '';
+      return this.homeSourceOptions().find((option) => option.mode === value)
+        || this.homeSourceOptions()[0];
+    },
+
+    setHomeSourceMode(mode) {
+      const option = this.homeSourceOption(mode);
+      if (!option) return;
+      this.homeSourceMode = option.mode;
+      this.trailerError = null;
+    },
+
+    homeSourceStrategy() {
+      return this.homeSourceOption().strategy || '';
+    },
+
+    homeSourceActionLabel() {
+      const option = this.homeSourceOption();
+      if (option.mode === 'local') {
+        if (this.fileImporting) return '读取中...';
+        if (this.projectCreating) return '创建中...';
+      }
+      if (option.mode === 'network' && this.trailerSubmitting) return '提交中...';
+      return option.actionLabel || '开始';
+    },
+
+    homeSourceActionDisabled() {
+      const option = this.homeSourceOption();
+      if (option.disabled) return true;
+      if (option.mode === 'local') return this.fileImporting || this.projectCreating;
+      if (option.mode === 'network') {
+        return !String(this.trailerUrlInput || '').trim() || this.trailerSubmitting;
+      }
+      return true;
+    },
+
+    async startHomeSourceAction() {
+      const option = this.homeSourceOption();
+      if (option.disabled) {
+        this.toast(`${option.label}即将支持`, 'error');
+        return;
+      }
+      if (option.mode === 'network') {
+        await this.startTrailerUrlJob();
+        return;
+      }
+      await this.openFilePicker();
     },
 
     canStartProject() {

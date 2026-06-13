@@ -254,6 +254,35 @@ def test_home_online_video_entry_replaces_tmdb_trailer_entry():
     assert "按 TMDB ID" not in html
 
 
+def test_home_unified_source_modes_are_visible_and_accessible():
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
+
+    for snippet in (
+        "来源模式",
+        "homeSourceOptions()",
+        "setHomeSourceMode(option.mode)",
+        "homeSourceStrategy()",
+        "startHomeSourceAction()",
+        "homeSourceMode === 'network'",
+        "aria-label=\"选择输入来源\"",
+        ":aria-pressed=\"homeSourceMode === option.mode\"",
+        ":disabled=\"option.disabled\"",
+    ):
+        assert snippet in html
+
+    for snippet in (
+        "homeSourceMode",
+        "homeSourceOptions()",
+        "homeSourceOption(mode)",
+        "setHomeSourceMode(mode)",
+        "homeSourceStrategy()",
+        "homeSourceActionLabel()",
+        "startHomeSourceAction()",
+    ):
+        assert snippet in js
+
+
 def test_online_video_success_explains_download_and_subtitle_plan():
     html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
     js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")

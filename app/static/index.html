@@ -82,10 +82,32 @@
               </svg>
             </div>
             <h2 class="text-[26px] font-semibold mb-2">拖入视频文件</h2>
-            <p class="text-[14px] text-surface-400 mb-7 leading-relaxed">拖入视频，自动识别语音、翻译字幕并烧录到视频中。一步到位，输出成品。</p>
+            <p class="text-[14px] text-surface-400 mb-5 leading-relaxed">拖入视频、粘贴网络地址，或选择后续开放的字幕和音频入口。网络视频会自动识别信息；系统会优先使用已有字幕和原生字幕，没有字幕再进入听写。</p>
+
+            <div class="home-source-selector text-left mb-5" role="group" aria-label="选择输入来源">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-[12px] font-medium text-surface-500">来源模式</span>
+                <span class="text-[11px] text-surface-400" x-text="homeSourceOption().helper"></span>
+              </div>
+              <div class="home-source-options grid grid-cols-2 gap-2">
+                <template x-for="option in homeSourceOptions()" :key="option.mode">
+                  <button type="button"
+                          @click="setHomeSourceMode(option.mode)"
+                          :disabled="option.disabled"
+                          :aria-pressed="homeSourceMode === option.mode"
+                          class="home-source-option text-left rounded-xl px-3 py-2"
+                          :class="homeSourceMode === option.mode ? 'home-source-option--active' : ''">
+                    <span class="block text-[13px] font-medium" x-text="option.label"></span>
+                    <span class="block text-[11px] text-surface-400 mt-0.5" x-text="option.helper"></span>
+                  </button>
+                </template>
+              </div>
+              <p class="mt-2 text-[12px] text-surface-500 leading-relaxed" x-text="homeSourceStrategy()"></p>
+            </div>
 
             <!-- Drop Zone -->
             <div class="drop-zone rounded-3xl p-10 cursor-pointer group"
+                 x-show="homeSourceMode === 'local'"
                  role="button"
                  tabindex="0"
                  aria-label="选择或拖入视频文件"
@@ -111,7 +133,7 @@
             </div>
 
             <!-- Or enter path manually -->
-            <div class="home-manual-path mt-5 flex items-center gap-3 max-w-md mx-auto">
+            <div x-show="homeSourceMode === 'local'" class="home-manual-path mt-5 flex items-center gap-3 max-w-md mx-auto">
               <input x-model="newVideoPath" type="text" placeholder="或粘贴视频文件路径..."
                      aria-label="视频文件路径"
                      class="flex-1 px-4 py-2.5 rounded-xl text-[13px]"
@@ -119,6 +141,40 @@
               <button @click="quickStart()" :disabled="!canStartProject()" class="btn-primary px-5 py-2.5 rounded-xl text-[13px] font-medium disabled:opacity-30 disabled:cursor-not-allowed">
                 <span x-text="fileImporting ? '读取中...' : (projectCreating ? '创建中...' : '开始')"></span>
               </button>
+            </div>
+
+            <div x-show="homeSourceMode === 'network'" x-cloak class="home-network-source mt-5 text-left">
+              <div class="space-y-2">
+                <input type="url"
+                       x-model="trailerUrlInput"
+                       @input="trailerError=null"
+                       @keydown.enter.prevent="startHomeSourceAction()"
+                       placeholder="https://www.youtube.com/watch?v=..."
+                       aria-label="YouTube 或直接视频地址"
+                       class="w-full px-3 py-2 rounded-xl text-[13px]">
+                <div class="grid grid-cols-2 gap-2">
+                  <input x-model="trailerNameInput"
+                         placeholder="名称（留空自动识别）"
+                         aria-label="在线视频名称"
+                         class="px-3 py-2 rounded-xl text-[12px] min-w-0">
+                  <input x-model="trailerOriginalLanguage"
+                         placeholder="原始语言 auto/en/ja"
+                         aria-label="在线视频原始语言"
+                         class="px-3 py-2 rounded-xl text-[12px] min-w-0">
+                </div>
+                <button @click="startHomeSourceAction()"
+                        :disabled="homeSourceActionDisabled()"
+                        class="btn-primary w-full px-4 py-2.5 rounded-xl text-[13px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        x-text="homeSourceActionLabel()"></button>
+                <p x-show="trailerError"
+                   x-cloak
+                   class="text-[11px] text-danger leading-relaxed break-words"
+                   x-text="trailerError"></p>
+                <div class="flex justify-center">
+                  <button @click="openTrailerWizard()"
+                          class="home-link-button text-[12px] text-accent">打开详细入口</button>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -171,48 +227,6 @@
                   </div>
                 </button>
               </template>
-            </div>
-          </div>
-
-          <!-- Online video URL entry (full-video local entry is the drop-zone above) -->
-          <div class="glass rounded-2xl p-4 text-left w-full">
-            <div class="flex items-center gap-3 mb-3">
-              <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
-                <svg class="w-5 h-5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v7.5A2.25 2.25 0 005.25 18h13.5A2.25 2.25 0 0021 15.75v-4.5M15.75 3.75H21m0 0V9m0-5.25L12 12.75" /></svg>
-              </div>
-              <div>
-                <h3 class="text-[15px] font-semibold mb-0.5">在线视频翻译</h3>
-                <p class="text-[12px] text-surface-500 leading-relaxed">粘贴 YouTube 链接或直接视频地址，自动识别信息并优先翻译原生字幕。</p>
-              </div>
-            </div>
-            <div class="space-y-2">
-              <input type="url"
-                     x-model="trailerUrlInput"
-                     @input="trailerError=null"
-                     @keydown.enter.prevent="startTrailerUrlJob()"
-                     placeholder="https://www.youtube.com/watch?v=..."
-                     aria-label="YouTube 或直接视频地址"
-                     class="w-full px-3 py-2 rounded-xl text-[13px]">
-              <div class="grid grid-cols-2 gap-2">
-                <input x-model="trailerNameInput"
-                       placeholder="名称（留空自动识别）"
-                       aria-label="在线视频名称"
-                       class="px-3 py-2 rounded-xl text-[12px] min-w-0">
-                <input x-model="trailerOriginalLanguage"
-                       placeholder="原始语言 auto/en/ja"
-                       aria-label="在线视频原始语言"
-                       class="px-3 py-2 rounded-xl text-[12px] min-w-0">
-              </div>
-              <button @click="startTrailerUrlJob()"
-                      :disabled="!trailerUrlInput.trim() || trailerSubmitting"
-                      class="btn-primary w-full px-4 py-2 rounded-xl text-[13px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                      x-text="trailerSubmitting ? '提交中...' : '下载并翻译'"></button>
-              <p x-show="trailerError"
-                 x-cloak
-                 class="text-[11px] text-danger leading-relaxed break-words"
-                 x-text="trailerError"></p>
-              <button @click="openTrailerWizard()"
-                      class="home-link-button text-[12px] text-accent">打开详细入口</button>
             </div>
           </div>
 

@@ -333,3 +333,63 @@ def test_video_file_import_ignores_duplicate_uploads_while_busy():
         });
         """
     )
+
+
+def test_home_source_mode_routes_supported_sources_and_explains_pending_ones():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          if (state.homeSourceMode !== 'local') {
+            throw new Error(`expected local source by default, got ${state.homeSourceMode}`);
+          }
+
+          const options = state.homeSourceOptions();
+          const modes = options.map((option) => option.mode);
+          const expectedModes = ['local', 'network', 'subtitle', 'audio'];
+          if (JSON.stringify(modes) !== JSON.stringify(expectedModes)) {
+            throw new Error(`expected broad source modes, got ${JSON.stringify(modes)}`);
+          }
+          if (!options.find((option) => option.mode === 'network')?.strategy.includes('原生字幕')) {
+            throw new Error(`expected network mode to explain native subtitle priority, got ${JSON.stringify(options)}`);
+          }
+          if (!options.find((option) => option.mode === 'subtitle')?.disabled) {
+            throw new Error('expected subtitle-only mode to be visible but disabled until supported');
+          }
+          if (!state.homeSourceStrategy().includes('内嵌字幕')) {
+            throw new Error(`expected local strategy to mention embedded subtitles, got ${state.homeSourceStrategy()}`);
+          }
+
+          let picked = false;
+          state.openFilePicker = async () => { picked = true; };
+          await state.startHomeSourceAction();
+          if (!picked) throw new Error('expected local source action to open file picker');
+
+          state.setHomeSourceMode('network');
+          state.trailerUrlInput = 'https://youtu.be/demo';
+          let trailerStarted = false;
+          state.startTrailerUrlJob = async () => { trailerStarted = true; };
+          await state.startHomeSourceAction();
+          if (!trailerStarted) throw new Error('expected network source action to start URL job');
+
+          let toastMessage = '';
+          state.toast = (msg, type) => { toastMessage = `${type || 'success'}:${msg}`; };
+          state.setHomeSourceMode('subtitle');
+          await state.startHomeSourceAction();
+          if (!toastMessage.includes('即将支持') || !toastMessage.includes('字幕')) {
+            throw new Error(`expected pending subtitle source toast, got ${toastMessage}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
