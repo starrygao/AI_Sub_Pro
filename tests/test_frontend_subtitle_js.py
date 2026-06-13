@@ -668,6 +668,77 @@ def test_export_srt_uses_native_save_dialog_when_available():
     )
 
 
+def test_export_subtitle_can_save_webvtt_with_native_dialog():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const saved = [];
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          window: {
+            pywebview: {
+              api: {
+                save_text_file: async (filename, content) => {
+                  saved.push({filename, content});
+                  return {ok: true, path: `/Volumes/Media/${filename}`};
+                },
+              },
+            },
+          },
+          Blob: function() { throw new Error('native VTT save must not create a Blob download'); },
+          URL: { createObjectURL: () => { throw new Error('native VTT save must not create object URLs'); } },
+          document: { createElement: () => { throw new Error('native VTT save must not create anchors'); } },
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const toasts = [];
+          state.currentProject = {id: 'p1', status: 'translated'};
+          state.subtitles = [{index: 1, text: 'Hello', translation: '你好', filtered: false}];
+          state.toast = (message, type) => { toasts.push({message, type}); };
+          state.api = async (url, method) => {
+            if (url !== '/api/projects/p1/export?format=translated&container=vtt' || method !== 'POST') {
+              throw new Error(`unexpected VTT export API call ${method} ${url}`);
+            }
+            return {
+              content: 'WEBVTT\\n\\n00:00:00.000 --> 00:00:01.000\\n你好\\n',
+              filename: 'movie.translated.vtt',
+            };
+          };
+
+          if (!state.canExportSubtitle('translated')) {
+            throw new Error('expected translated subtitles to be VTT-exportable');
+          }
+          if (!state.exportSubtitleLabel('translated', 'vtt').includes('VTT')) {
+            throw new Error(`expected VTT label, got ${state.exportSubtitleLabel('translated', 'vtt')}`);
+          }
+
+          await state.exportSubtitle('translated', 'vtt');
+
+          if (saved.length !== 1) throw new Error(`expected one native VTT save, got ${saved.length}`);
+          if (saved[0].filename !== 'movie.translated.vtt') {
+            throw new Error(`expected VTT filename, got ${saved[0].filename}`);
+          }
+          if (!saved[0].content.startsWith('WEBVTT')) {
+            throw new Error(`expected WebVTT content, got ${saved[0].content}`);
+          }
+          if (!toasts.some((t) => t.message === '字幕已保存')) {
+            throw new Error(`expected saved toast, got ${JSON.stringify(toasts)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_save_output_video_uses_native_save_dialog_and_blocks_duplicate_submit():
     _run_node(
         """

@@ -130,6 +130,51 @@ def test_srt_helpers_tolerate_malformed_inputs(tmp_path):
     assert "bad" not in text
 
 
+def test_parse_vtt_accepts_header_cue_ids_and_settings():
+    from app.utils.srt import parse_vtt
+
+    blocks = parse_vtt(
+        """WEBVTT
+
+intro
+00:00:01.000 --> 00:00:02.500 align:start position:0%
+Hello world
+
+00:02.750 --> 00:03.000
+Second cue
+
+note1
+00:00:04.000 --> 00:00:05.000
+Cue id that begins with note
+"""
+    )
+
+    assert len(blocks) == 3
+    assert blocks[0].index == 1
+    assert blocks[0].text == "Hello world"
+    assert blocks[0].start.total_seconds() == 1
+    assert blocks[0].end.total_seconds() == 2.5
+    assert blocks[1].index == 2
+    assert blocks[1].start.total_seconds() == 2.75
+    assert blocks[2].text == "Cue id that begins with note"
+
+
+def test_srt_to_vtt_preserves_multiline_text_and_uses_dot_milliseconds():
+    from app.utils.srt import srt_to_vtt
+
+    content = srt_to_vtt(
+        "1\n"
+        "00:00:01,000 --> 00:00:02,500\n"
+        "你好\n"
+        "Hello\n\n"
+    )
+
+    assert content.startswith("WEBVTT\n\n")
+    assert "1\n" not in content
+    assert "00:00:01.000 --> 00:00:02.500" in content
+    assert "你好\nHello" in content
+
+
 def test_apply_offset_drops_blocks_collapsed_at_zero():
     from app.utils.srt import SubtitleBlock, apply_offset
 

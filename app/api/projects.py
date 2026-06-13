@@ -34,7 +34,17 @@ from app.utils.project_store import (
     PID_PATTERN,
 )
 from app.utils.media import get_tracks, get_duration, get_media_info, is_text_subtitle_codec
-from app.utils.srt import fmt_time, parse_srt, parse_srt_file, parse_time_strict, write_srt, write_bilingual_srt, SubtitleBlock
+from app.utils.srt import (
+    fmt_time,
+    parse_srt,
+    parse_srt_file,
+    parse_time_strict,
+    parse_vtt,
+    srt_to_vtt,
+    write_srt,
+    write_bilingual_srt,
+    SubtitleBlock,
+)
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 log = logging.getLogger(__name__)
@@ -47,7 +57,7 @@ MAX_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024
 MAX_SUBTITLE_UPLOAD_BYTES = 32 * 1024 * 1024
 MAX_AUDIO_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
 _VIDEO_UPLOAD_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".ts", ".m4v"}
-_SUBTITLE_UPLOAD_EXTS = {".srt"}
+_SUBTITLE_UPLOAD_EXTS = {".srt", ".vtt"}
 _AUDIO_UPLOAD_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".webm"}
 
 
@@ -442,6 +452,18 @@ def _export_filename(project: dict, pid: str, suffix: str) -> str:
 
 def _read_export_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _subtitle_export_payload(path: Path, project: dict, pid: str, suffix: str, container: str) -> dict:
+    content = _read_export_text(path)
+    filename_suffix = suffix
+    if container == "vtt":
+        content = srt_to_vtt(content)
+        filename_suffix = suffix.removesuffix(".srt") + ".vtt"
+    return {
+        "content": content,
+        "filename": _export_filename(project, pid, filename_suffix),
+    }
 
 
 def _has_video_extension(path_or_name: str) -> bool:
@@ -907,17 +929,18 @@ async def import_subtitle_project(
     content_notes: Optional[str] = Form(None),
     manual_terms: Optional[str] = Form(None),
 ):
-    """Create a subtitle-only project from an uploaded SRT file."""
+    """Create a subtitle-only project from an uploaded SRT or WebVTT file."""
     safe_name = _safe_upload_name(file.filename, "subtitles.srt")
     if not _has_subtitle_extension(safe_name):
-        raise HTTPException(400, "Subtitle file must use an SRT extension")
+        raise HTTPException(400, "Subtitle file must use an SRT or VTT extension")
 
     data = await _read_upload_limited(
         file,
         limit=MAX_SUBTITLE_UPLOAD_BYTES,
         label="Subtitle file",
     )
-    blocks = parse_srt(data)
+    subtitle_ext = Path(safe_name).suffix.lower()
+    blocks = parse_vtt(data) if subtitle_ext == ".vtt" else parse_srt(data)
     if not blocks:
         raise HTTPException(400, "Subtitle file must contain valid subtitle blocks")
 
@@ -966,7 +989,7 @@ async def import_subtitle_project(
         "source_title": display_name,
         "source_language": _text_default(original_language, ""),
         "source_has_subtitles": True,
-        "subtitle_source": "uploaded",
+        "subtitle_source": "uploaded_vtt" if subtitle_ext == ".vtt" else "uploaded",
         "native_subtitle_language": _text_default(original_language, ""),
         "asr_skipped": True,
         "content_type": resolved_content_type,
@@ -1526,10 +1549,16 @@ def save_subtitles(data: SubtitleEdit, pid: str = PathParam(pattern=PID_PATTERN)
 
 
 @router.post("/{pid}/export")
-def export_srt(pid: str = PathParam(pattern=PID_PATTERN), format: str = "translated"):
-    """Export final SRT file."""
+def export_srt(
+    pid: str = PathParam(pattern=PID_PATTERN),
+    format: str = "translated",
+    container: str = "srt",
+):
+    """Export final subtitle file."""
     if format not in {"original", "bilingual", "translated"}:
         raise HTTPException(400, "invalid format")
+    if container not in {"srt", "vtt"}:
+        raise HTTPException(400, "invalid container")
 
     pdir = _project_dir(pid)
     project = _load_project(pid)
@@ -1537,12 +1566,12 @@ def export_srt(pid: str = PathParam(pattern=PID_PATTERN), format: str = "transla
     if format == "original":
         for fname in ["filtered.srt", "raw.srt", "native.srt"]:
             if (pdir / fname).is_file():
-                return {"content": _read_export_text(pdir / fname), "filename": _export_filename(project, pid, ".srt")}
+                return _subtitle_export_payload(pdir / fname, project, pid, ".srt", container)
     elif format == "bilingual":
         if (pdir / "bilingual.srt").is_file():
-            return {"content": _read_export_text(pdir / "bilingual.srt"), "filename": _export_filename(project, pid, ".bilingual.srt")}
+            return _subtitle_export_payload(pdir / "bilingual.srt", project, pid, ".bilingual.srt", container)
     else:
         if (pdir / "translated.srt").is_file():
-            return {"content": _read_export_text(pdir / "translated.srt"), "filename": _export_filename(project, pid, ".translated.srt")}
+            return _subtitle_export_payload(pdir / "translated.srt", project, pid, ".translated.srt", container)
 
     raise HTTPException(404, "No subtitle file available for export")

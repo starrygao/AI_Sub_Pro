@@ -385,12 +385,18 @@ function app() {
       return !!this.subtitleActionPending;
     },
 
-    exportActionKey(format) {
-      return `export:${format || ''}`;
+    exportActionKey(format, container = 'srt') {
+      const normalizedContainer = container === 'vtt' ? 'vtt' : 'srt';
+      const suffix = normalizedContainer === 'srt' ? '' : `:${normalizedContainer}`;
+      return `export:${format || ''}${suffix}`;
     },
 
     isExportingSrt(format) {
-      return this.projectActionPending === this.exportActionKey(format);
+      return this.isExportingSubtitle(format, 'srt');
+    },
+
+    isExportingSubtitle(format, container = 'srt') {
+      return this.projectActionPending === this.exportActionKey(format, container);
     },
 
     hasExportableOriginalSubtitles() {
@@ -412,13 +418,24 @@ function app() {
       return false;
     },
 
+    canExportSubtitle(format) {
+      return this.canExportSrt(format);
+    },
+
     exportSrtLabel(format) {
+      return this.exportSubtitleLabel(format, 'srt');
+    },
+
+    exportSubtitleLabel(format, container = 'srt') {
+      const normalizedContainer = container === 'vtt' ? 'vtt' : 'srt';
       const labels = {
         translated: '导出翻译字幕',
         bilingual: '导出双语字幕',
         original: '导出原文字幕',
       };
-      return this.isExportingSrt(format) ? '导出中...' : (labels[format] || '导出字幕');
+      const base = labels[format] || '导出字幕';
+      const label = normalizedContainer === 'vtt' ? `${base.replace('字幕', '').trim()} VTT` : base;
+      return this.isExportingSubtitle(format, normalizedContainer) ? '导出中...' : label;
     },
 
     exportUnavailableMessage(format) {
@@ -802,9 +819,9 @@ function app() {
         {
           mode: 'subtitle',
           label: '字幕文件',
-          helper: 'SRT',
-          strategy: '直接读取 SRT 时间轴，创建字幕项目后马上翻译；无需 ASR 或视频下载。',
-          actionLabel: '选择 SRT 字幕',
+          helper: 'SRT / VTT',
+          strategy: '直接读取 SRT 或 VTT 时间轴，创建字幕项目后马上翻译；无需 ASR 或视频下载。',
+          actionLabel: '选择字幕文件',
           disabled: false,
         },
         {
@@ -906,7 +923,7 @@ function app() {
 
     isSubtitleFile(file) {
       const name = String(file?.name || '').toLowerCase();
-      return name.endsWith('.srt');
+      return name.endsWith('.srt') || name.endsWith('.vtt');
     },
 
     isAudioFile(file) {
@@ -949,7 +966,7 @@ function app() {
     async useSelectedSubtitleFile(file) {
       if (!file) return;
       if (!this.isSubtitleFile(file)) {
-        this.toast('请选择 SRT 字幕文件', 'error');
+        this.toast('请选择 SRT 或 VTT 字幕文件', 'error');
         return;
       }
       if (this.fileImporting || this.projectCreating) return;
@@ -3067,8 +3084,9 @@ function app() {
       }
     },
 
-    async exportSrt(format) {
-      if (!this.canExportSrt(format)) {
+    async exportSubtitle(format, container = 'srt') {
+      container = container === 'vtt' ? 'vtt' : 'srt';
+      if (!this.canExportSubtitle(format)) {
         this.toast(this.exportUnavailableMessage(format), 'error');
         return;
       }
@@ -3082,11 +3100,14 @@ function app() {
         });
         if (!confirmed) return;
       }
-      const actionKey = this.exportActionKey(format);
+      const actionKey = this.exportActionKey(format, container);
       this.projectActionPending = actionKey;
       try {
-        const data = await this.api(`/api/projects/${this.currentProject.id}/export?format=${format}`, 'POST');
-        const filename = this.safeDownloadFilename(data.filename, `${format || 'subtitles'}.srt`);
+        const exportUrl = container === 'srt'
+          ? `/api/projects/${this.currentProject.id}/export?format=${encodeURIComponent(format)}`
+          : `/api/projects/${this.currentProject.id}/export?format=${encodeURIComponent(format)}&container=${encodeURIComponent(container)}`;
+        const data = await this.api(exportUrl, 'POST');
+        const filename = this.safeDownloadFilename(data.filename, `${format || 'subtitles'}.${container}`);
         const nativeApi = this.nativeSaveApi();
         if (nativeApi && typeof nativeApi.save_text_file === 'function') {
           const result = await nativeApi.save_text_file(filename, String(data.content || ''));
@@ -3094,7 +3115,8 @@ function app() {
           this.toast('字幕已保存');
           return;
         }
-        const blob = new Blob([data.content], { type: 'text/plain;charset=utf-8' });
+        const mime = container === 'vtt' ? 'text/vtt;charset=utf-8' : 'text/plain;charset=utf-8';
+        const blob = new Blob([data.content], { type: mime });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -3108,6 +3130,10 @@ function app() {
       finally {
         if (this.projectActionPending === actionKey) this.projectActionPending = '';
       }
+    },
+
+    async exportSrt(format) {
+      return this.exportSubtitle(format, 'srt');
     },
 
     async saveOutputVideo() {

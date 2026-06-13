@@ -179,7 +179,7 @@
 
             <div x-show="homeSourceMode === 'subtitle'" x-cloak class="home-subtitle-source mt-5 text-left">
               <div class="rounded-2xl px-4 py-4" style="background: rgba(255,255,255,0.58); border: 1px solid var(--mac-border);">
-                <p class="text-[13px] font-medium text-surface-700">导入 SRT 字幕文件</p>
+                <p class="text-[13px] font-medium text-surface-700">导入 SRT / VTT 字幕文件</p>
                 <p class="text-[12px] text-surface-500 mt-1 leading-relaxed">保留原始时间轴，创建字幕项目后直接进入翻译；不下载视频，也不执行 ASR。</p>
                 <button @click="startHomeSourceAction()"
                         :disabled="homeSourceActionDisabled()"
@@ -616,6 +616,22 @@
                       :title="canExportSrt('original') ? '另存原文字幕' : exportUnavailableMessage('original')"
                       class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] disabled:opacity-40 disabled:cursor-not-allowed"
                       x-text="exportSrtLabel('original')"></button>
+              <div class="border-t border-black/[0.06] my-1"></div>
+              <button @click="exportSubtitle('translated', 'vtt'); open=false"
+                      :disabled="!canExportSubtitle('translated')"
+                      :title="canExportSubtitle('translated') ? '另存翻译 VTT' : exportUnavailableMessage('translated')"
+                      class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] disabled:opacity-40 disabled:cursor-not-allowed"
+                      x-text="exportSubtitleLabel('translated', 'vtt')"></button>
+              <button @click="exportSubtitle('bilingual', 'vtt'); open=false"
+                      :disabled="!canExportSubtitle('bilingual')"
+                      :title="canExportSubtitle('bilingual') ? '另存双语 VTT' : exportUnavailableMessage('bilingual')"
+                      class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] disabled:opacity-40 disabled:cursor-not-allowed"
+                      x-text="exportSubtitleLabel('bilingual', 'vtt')"></button>
+              <button @click="exportSubtitle('original', 'vtt'); open=false"
+                      :disabled="!canExportSubtitle('original')"
+                      :title="canExportSubtitle('original') ? '另存原文 VTT' : exportUnavailableMessage('original')"
+                      class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] disabled:opacity-40 disabled:cursor-not-allowed"
+                      x-text="exportSubtitleLabel('original', 'vtt')"></button>
             </div>
           </div>
         </div>
@@ -1782,8 +1798,8 @@
 <input type="file" x-ref="fileInput" class="hidden" accept="video/*,.mkv,.avi,.mov,.mp4,.wmv,.flv,.webm"
        aria-label="选择视频文件"
        @change="handleFileSelect($event)">
-<input type="file" x-ref="subtitleFileInput" class="hidden" accept=".srt"
-       aria-label="选择 SRT 字幕文件"
+<input type="file" x-ref="subtitleFileInput" class="hidden" accept=".srt,.vtt"
+       aria-label="选择 SRT/VTT 字幕文件"
        @change="handleSubtitleFileSelect($event)">
 <input type="file" x-ref="audioFileInput" class="hidden" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,.webm"
        aria-label="选择音频文件"

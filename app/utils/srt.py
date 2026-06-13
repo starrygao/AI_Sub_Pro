@@ -35,6 +35,7 @@ class SubtitleBlock:
 
 
 _TIME_RE = re.compile(r"^(\d+):(\d{2}):(\d{2})[,.](\d{3})$")
+_VTT_TIME_RE = re.compile(r"^(?:(\d+):)?(\d{2}):(\d{2})\.(\d{3})$")
 
 
 def parse_time_strict(s: str) -> Optional[timedelta]:
@@ -85,6 +86,50 @@ def fmt_time(td: timedelta) -> str:
     return f"{h:02d}:{mi:02d}:{s:02d},{ms:03d}"
 
 
+def parse_vtt_time_strict(s: str) -> Optional[timedelta]:
+    """Parse a WebVTT time string, accepting HH:MM:SS.mmm or MM:SS.mmm."""
+    if not isinstance(s, str):
+        return None
+    text = s.strip()
+    m = _VTT_TIME_RE.match(text)
+    if not m:
+        return None
+    try:
+        h = int(m[1]) if m[1] is not None else 0
+        mi = int(m[2])
+        sec = int(m[3])
+        ms = int(m[4])
+    except ValueError:
+        return None
+    if sec >= 60:
+        return None
+    if m[1] is not None and mi >= 60:
+        return None
+    try:
+        return timedelta(hours=h, minutes=mi, seconds=sec, milliseconds=ms)
+    except OverflowError:
+        return None
+
+
+def fmt_vtt_time(td: timedelta) -> str:
+    """Format timedelta to WebVTT time string '00:01:23.456'."""
+    try:
+        total = td.total_seconds()
+    except (AttributeError, TypeError, OverflowError, ValueError):
+        total = 0
+    try:
+        finite = isfinite(total)
+    except (OverflowError, TypeError, ValueError):
+        finite = False
+    if not finite:
+        total = 0
+    total_ms = int(max(0, total) * 1000)
+    h, rem = divmod(total_ms, 3600 * 1000)
+    mi, rem = divmod(rem, 60 * 1000)
+    sec, ms = divmod(rem, 1000)
+    return f"{h:02d}:{mi:02d}:{sec:02d}.{ms:03d}"
+
+
 def parse_srt(content: str) -> List[SubtitleBlock]:
     """Parse SRT content string into SubtitleBlock list."""
     if isinstance(content, bytes):
@@ -127,6 +172,99 @@ def parse_srt(content: str) -> List[SubtitleBlock]:
         if text:
             blocks.append(SubtitleBlock(index=idx, start=start, end=end, text=text))
     return blocks
+
+
+def parse_vtt(content: str) -> List[SubtitleBlock]:
+    """Parse WebVTT content string into SubtitleBlock list."""
+    if isinstance(content, bytes):
+        content = content.decode("utf-8-sig", errors="ignore")
+    if not isinstance(content, str):
+        return []
+    text = content.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff").strip()
+    if not text:
+        return []
+    blocks: List[SubtitleBlock] = []
+    raw_blocks = re.split(r"\n\s*\n", text)
+    for raw in raw_blocks:
+        lines = [line.strip() for line in raw.split("\n") if line.strip()]
+        if not lines:
+            continue
+        first = lines[0].upper()
+        if first.startswith("WEBVTT") and not any("-->" in line for line in lines):
+            continue
+        if _is_vtt_control_block(lines[0]):
+            continue
+        time_idx = -1
+        for i, line in enumerate(lines):
+            if "-->" in line:
+                time_idx = i
+                break
+        if time_idx < 0:
+            continue
+        start_text, end_part = lines[time_idx].split("-->", 1)
+        end_text = end_part.strip().split()[0] if end_part.strip() else ""
+        start = parse_vtt_time_strict(start_text.strip())
+        end = parse_vtt_time_strict(end_text)
+        if start is None or end is None or end <= start:
+            continue
+        cue_text = " ".join(lines[time_idx + 1 :]).strip()
+        if cue_text:
+            blocks.append(
+                SubtitleBlock(index=len(blocks) + 1, start=start, end=end, text=cue_text)
+            )
+    return blocks
+
+
+def _is_vtt_control_block(first_line: str) -> bool:
+    marker = first_line.strip().upper()
+    return marker == "STYLE" or marker == "REGION" or marker == "NOTE" or marker.startswith("NOTE ")
+
+
+def srt_to_vtt(content: str) -> str:
+    """Convert SRT text to a WebVTT document."""
+    if isinstance(content, bytes):
+        content = content.decode("utf-8-sig", errors="ignore")
+    if not isinstance(content, str):
+        return "WEBVTT\n\n"
+    text = content.replace("\r\n", "\n").replace("\r", "\n").strip()
+    out_lines = ["WEBVTT", ""]
+    if not text:
+        return "WEBVTT\n\n"
+    has_cue = False
+    raw_blocks = re.split(r"\n\s*\n", text)
+    for raw in raw_blocks:
+        lines = [line.rstrip() for line in raw.split("\n")]
+        time_idx = -1
+        for i, line in enumerate(lines):
+            if "-->" in line:
+                time_idx = i
+                break
+        if time_idx < 0:
+            continue
+        tm = re.match(
+            r"\s*(\d+:\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d+:\d{2}:\d{2}[,.]\d{3})",
+            lines[time_idx],
+        )
+        if not tm:
+            continue
+        start = parse_time_strict(tm.group(1))
+        end = parse_time_strict(tm.group(2))
+        if start is None or end is None or end <= start:
+            continue
+        cue_lines = lines[time_idx + 1 :]
+        while cue_lines and not cue_lines[0].strip():
+            cue_lines.pop(0)
+        while cue_lines and not cue_lines[-1].strip():
+            cue_lines.pop()
+        if not any(line.strip() for line in cue_lines):
+            continue
+        out_lines.append(f"{fmt_vtt_time(start)} --> {fmt_vtt_time(end)}")
+        out_lines.extend(cue_lines)
+        out_lines.append("")
+        has_cue = True
+    if not has_cue:
+        return "WEBVTT\n\n"
+    return "\n".join(out_lines).rstrip() + "\n"
 
 
 def parse_srt_file(path: str) -> List[SubtitleBlock]:

@@ -198,6 +198,8 @@ def test_project_detail_export_actions_have_disabled_and_pending_states():
     assert ':disabled="!canExportSrt(\'bilingual\')"' in html
     assert ':disabled="!canExportSrt(\'original\')"' in html
     assert "exportSrtLabel('translated')" in html
+    assert "exportSubtitleLabel('translated', 'vtt')" in html
+    assert "@click=\"exportSubtitle('translated', 'vtt'); open=false\"" in html
     assert "exportUnavailableMessage('translated')" in html
     assert "canExportSrt(format)" in js
     assert "isExportingSrt(format)" in js
@@ -272,9 +274,9 @@ def test_home_unified_source_modes_are_visible_and_accessible():
         "homeSourceMode === 'audio'",
         "aria-label=\"选择输入来源\"",
         ":aria-pressed=\"homeSourceMode === option.mode\"",
-        "aria-label=\"选择 SRT 字幕文件\"",
+        "aria-label=\"选择 SRT/VTT 字幕文件\"",
         "x-ref=\"subtitleFileInput\"",
-        "accept=\".srt\"",
+        "accept=\".srt,.vtt\"",
         "aria-label=\"选择音频文件\"",
         "x-ref=\"audioFileInput\"",
         "accept=\"audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,.webm\"",
@@ -294,6 +296,8 @@ def test_home_unified_source_modes_are_visible_and_accessible():
         "useSelectedSubtitleFile(file)",
         "openSubtitleFilePicker()",
         "handleSubtitleFileSelect(event)",
+        "exportSubtitle(format, container = 'srt')",
+        "/export?format=${encodeURIComponent(format)}&container=${encodeURIComponent(container)}",
         "isAudioFile(file)",
         "uploadAudioFile(file)",
         "useSelectedAudioFile(file)",

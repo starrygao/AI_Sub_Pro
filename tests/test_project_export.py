@@ -41,6 +41,15 @@ def test_export_rejects_unknown_format(client, tmp_project_dir):
     assert "format" in r.json()["detail"]
 
 
+def test_export_rejects_unknown_container(client, tmp_project_dir):
+    pid = _seed_project(tmp_project_dir)
+
+    r = client.post(f"/api/projects/{pid}/export?format=translated&container=ass")
+
+    assert r.status_code == 400
+    assert "container" in r.json()["detail"]
+
+
 def test_export_uses_project_id_when_name_is_missing(client, tmp_project_dir):
     pid = _seed_project(tmp_project_dir)
     pdir = tmp_project_dir / pid
@@ -114,3 +123,35 @@ def test_export_original_prefers_filtered_editable_timeline(client, tmp_project_
     assert r.status_code == 200
     assert "Filtered editable" in r.json()["content"]
     assert "Raw original" not in r.json()["content"]
+
+
+def test_export_translated_as_webvtt(client, tmp_project_dir):
+    pid = _seed_project(tmp_project_dir)
+
+    r = client.post(f"/api/projects/{pid}/export?format=translated&container=vtt")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["filename"] == "movie.translated.vtt"
+    assert data["content"].startswith("WEBVTT\n\n")
+    assert "00:00:00.000 --> 00:00:01.000" in data["content"]
+    assert "你好" in data["content"]
+    assert "00:00:00,000" not in data["content"]
+
+
+def test_export_original_as_webvtt_prefers_filtered_timeline(client, tmp_project_dir):
+    pid = _seed_project(tmp_project_dir)
+    pdir = tmp_project_dir / pid
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:02,000 --> 00:00:03,000\nFiltered original\n\n",
+        encoding="utf-8",
+    )
+
+    r = client.post(f"/api/projects/{pid}/export?format=original&container=vtt")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["filename"] == "movie.vtt"
+    assert "WEBVTT" in data["content"]
+    assert "00:00:02.000 --> 00:00:03.000" in data["content"]
+    assert "Filtered original" in data["content"]

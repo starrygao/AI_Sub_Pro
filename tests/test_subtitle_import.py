@@ -60,6 +60,39 @@ def test_import_subtitle_creates_translatable_project(client, tmp_project_dir):
     assert len(subtitles.json()["blocks"]) == 2
 
 
+def test_import_subtitle_accepts_webvtt_and_writes_editable_srt(client, tmp_project_dir):
+    vtt = (
+        "WEBVTT\n\n"
+        "intro\n"
+        "00:00:00.000 --> 00:00:01.200 align:start\n"
+        "Hello VTT.\n\n"
+        "00:00:01.500 --> 00:00:03.000\n"
+        "Machine learning lecture.\n\n"
+    )
+
+    r = client.post(
+        "/api/projects/import-subtitle",
+        data={"target_language": "English", "original_language": "en"},
+        files={"file": ("Stanford.CS229.Lecture.vtt", vtt.encode("utf-8"), "text/vtt")},
+    )
+
+    assert r.status_code == 200
+    project = r.json()
+    pid = project["id"]
+    pdir = tmp_project_dir / pid
+    raw = (pdir / "raw.srt").read_text(encoding="utf-8")
+
+    assert project["source_type"] == "subtitle"
+    assert project["name"] == "Stanford.CS229.Lecture.vtt"
+    assert project["subtitle_source"] == "uploaded_vtt"
+    assert "00:00:00,000 --> 00:00:01,200" in raw
+    assert "Hello VTT." in raw
+
+    subtitles = client.get(f"/api/projects/{pid}/subtitles")
+    assert subtitles.status_code == 200
+    assert len(subtitles.json()["blocks"]) == 2
+
+
 def test_import_subtitle_rejects_non_srt_extension(client):
     r = client.post(
         "/api/projects/import-subtitle",
@@ -67,7 +100,7 @@ def test_import_subtitle_rejects_non_srt_extension(client):
     )
 
     assert r.status_code == 400
-    assert "SRT" in r.json()["detail"]
+    assert "subtitle" in r.json()["detail"].lower()
 
 
 def test_import_subtitle_rejects_empty_or_unparseable_srt(client):
