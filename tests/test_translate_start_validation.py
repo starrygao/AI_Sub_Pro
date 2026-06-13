@@ -147,6 +147,81 @@ def test_start_full_persists_requested_workflow_options_before_launch(tmp_projec
     assert saved["target_language"] == "English"
 
 
+def test_start_full_dispatches_audio_and_subtitle_sources_to_supported_workflows(tmp_project_dir, monkeypatch):
+    from app.api import translate as translate_api
+
+    _allow_translation(monkeypatch)
+    launched = {}
+
+    class DummyThread:
+        def __init__(self, target=None, args=()):
+            self.target = target
+            self.args = args
+
+        def start(self):
+            launched.setdefault("started", []).append((self.target, self.args))
+
+    def fake_register(pid, factory, **kwargs):
+        launched.setdefault("pids", []).append(pid)
+        return factory()
+
+    monkeypatch.setattr(translate_api, "try_register_task", fake_register)
+    monkeypatch.setattr(translate_api.threading, "Thread", lambda target, args=(), daemon=True: DummyThread(target, args))
+    client = _client(tmp_project_dir, monkeypatch)
+
+    audio_pid = "audfull1"
+    audio_dir = tmp_project_dir / audio_pid
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    (audio_dir / "original.mp3").write_bytes(b"audio")
+    (audio_dir / "project.json").write_text(json.dumps({
+        "id": audio_pid,
+        "name": "audio.mp3",
+        "video_path": str(audio_dir / "original.mp3"),
+        "source_type": "audio",
+        "status": "created",
+        "selected_audio_track": 0,
+        "audio_tracks": [{"index": 0, "codec": "mp3"}],
+        "target_language": "简体中文",
+    }), encoding="utf-8")
+
+    r = client.post(
+        f"/api/projects/{audio_pid}/start-full",
+        json={"language": "en", "target_language": "English"},
+    )
+
+    assert r.status_code == 200
+    assert r.json()["stage"] == "asr_translate"
+    assert launched["started"][-1] == (translate_api._run_asr_translate_pipeline, (audio_pid, 0, "en", "English"))
+
+    subtitle_pid = "subfull1"
+    subtitle_dir = tmp_project_dir / subtitle_pid
+    subtitle_dir.mkdir(parents=True, exist_ok=True)
+    (subtitle_dir / "raw.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n",
+        encoding="utf-8",
+    )
+    (subtitle_dir / "project.json").write_text(json.dumps({
+        "id": subtitle_pid,
+        "name": "lecture.srt",
+        "video_path": None,
+        "source_type": "subtitle",
+        "status": "created",
+        "selected_audio_track": 0,
+        "audio_tracks": [],
+        "target_language": "简体中文",
+        "asr_skipped": True,
+    }), encoding="utf-8")
+
+    r = client.post(
+        f"/api/projects/{subtitle_pid}/start-full",
+        json={"language": "en", "target_language": "Japanese"},
+    )
+
+    assert r.status_code == 200
+    assert r.json()["stage"] == "translate"
+    assert launched["started"][-1] == (translate_api._run_translate_pipeline, (subtitle_pid, "Japanese"))
+
+
 def test_start_translate_persists_requested_target_language_before_launch(tmp_project_dir, monkeypatch):
     from app.api import translate as translate_api
 
@@ -218,6 +293,92 @@ def test_manual_start_rejects_project_with_processing_status(tmp_project_dir, mo
 
     assert r.status_code == 409
     assert "running" in r.json()["detail"]
+
+
+def test_start_burn_rejects_projects_without_video_burn_stage(tmp_project_dir, monkeypatch):
+    client = _client(tmp_project_dir, monkeypatch)
+
+    for pid, source_type, video_path in (
+        ("audnoburn", "audio", str(tmp_project_dir / "audnoburn" / "original.mp3")),
+        ("subnoburn", "subtitle", None),
+    ):
+        pdir = tmp_project_dir / pid
+        pdir.mkdir(parents=True, exist_ok=True)
+        if video_path:
+            (pdir / "original.mp3").write_bytes(b"audio")
+        (pdir / "translated.srt").write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\n你好\n\n",
+            encoding="utf-8",
+        )
+        (pdir / "project.json").write_text(json.dumps({
+            "id": pid,
+            "name": pid,
+            "video_path": video_path,
+            "source_type": source_type,
+            "status": "translated",
+            "selected_audio_track": 0,
+            "audio_tracks": [{"index": 0, "codec": "mp3"}] if source_type == "audio" else [],
+            "target_language": "简体中文",
+        }), encoding="utf-8")
+
+        r = client.post(f"/api/projects/{pid}/burn")
+
+        assert r.status_code == 400
+        assert "burn" in r.json()["detail"].lower()
+
+
+def test_resume_audio_project_with_translated_srt_does_not_launch_burn(tmp_project_dir, monkeypatch):
+    from app.api import translate as translate_api
+
+    _allow_translation(monkeypatch)
+    launched = {}
+
+    class DummyThread:
+        def __init__(self, target=None, args=()):
+            self.target = target
+            self.args = args
+
+        def start(self):
+            launched["target"] = self.target
+            launched["args"] = self.args
+
+    def fake_register(pid, factory, **kwargs):
+        launched["pid"] = pid
+        return factory()
+
+    monkeypatch.setattr(translate_api, "try_register_task", fake_register)
+    monkeypatch.setattr(translate_api.threading, "Thread", lambda target, args, daemon: DummyThread(target, args))
+
+    client = _client(tmp_project_dir, monkeypatch)
+    pid = "audresume"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / "original.mp3").write_bytes(b"audio")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n",
+        encoding="utf-8",
+    )
+    (pdir / "translated.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n你好\n\n",
+        encoding="utf-8",
+    )
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "audio.mp3",
+        "video_path": str(pdir / "original.mp3"),
+        "source_type": "audio",
+        "status": "translated",
+        "selected_audio_track": 0,
+        "audio_tracks": [{"index": 0, "codec": "mp3"}],
+        "target_language": "简体中文",
+    }), encoding="utf-8")
+
+    r = client.post(f"/api/projects/{pid}/resume")
+
+    assert r.status_code == 200
+    assert r.json()["stage"] == "translate"
+    assert launched["target"] is translate_api._run_translate_pipeline
+    assert launched["args"] == (pid, "简体中文")
 
 
 def test_resolve_text_option_ignores_non_string_legacy_fallback():

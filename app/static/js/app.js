@@ -321,6 +321,38 @@ function app() {
       return this.isProjectBusy(project) || !!this.projectActionPending || !!this.workflowActionPending;
     },
 
+    projectSourceType(project) {
+      return String(project?.source_type || 'upload').trim() || 'upload';
+    },
+
+    isSubtitleOnlyProject(project) {
+      return this.projectSourceType(project) === 'subtitle';
+    },
+
+    isAudioOnlyProject(project) {
+      return this.projectSourceType(project) === 'audio';
+    },
+
+    canRunAsr(project) {
+      return !!project && !this.isSubtitleOnlyProject(project);
+    },
+
+    canTranslateProject(project) {
+      return !!project;
+    },
+
+    canBurnVideo(project) {
+      return !!project && !this.isAudioOnlyProject(project) && !this.isSubtitleOnlyProject(project);
+    },
+
+    projectPrimaryActionLabel(project) {
+      if (this.projectActionPending === 'start-full') return '启动中...';
+      if (project?.status === 'error') return '重试';
+      if (this.isSubtitleOnlyProject(project)) return '翻译字幕';
+      if (this.isAudioOnlyProject(project)) return '转写并翻译';
+      return '一键处理';
+    },
+
     shouldPollProjectList() {
       return Array.isArray(this.projects) && this.projects.some((project) => this.isProjectBusy(project));
     },
@@ -415,6 +447,7 @@ function app() {
 
     canSaveVideo() {
       if (!this.currentProject || this.projectActionsDisabled(this.currentProject)) return false;
+      if (!this.canBurnVideo(this.currentProject)) return false;
       return !!String(this.currentProject.output_video || '').trim()
         && this.currentProject.status === 'completed';
     },
@@ -434,6 +467,7 @@ function app() {
 
     saveVideoUnavailableMessage() {
       if (!this.currentProject) return '请先打开项目';
+      if (!this.canBurnVideo(this.currentProject)) return '当前项目没有视频烧录输出';
       if (this.isProjectBusy(this.currentProject)) return '项目处理中，完成后再保存';
       if (this.projectActionPending) return '当前操作未完成，请稍后再试';
       return '视频尚未完成，暂时不能保存';
@@ -2517,6 +2551,10 @@ function app() {
 
     async startASR() {
       if (!this.currentProject) return;
+      if (!this.canRunAsr(this.currentProject)) {
+        this.toast('纯字幕项目不需要语音识别', 'error');
+        return;
+      }
       await this.runProjectAction(
         'start-asr',
         `/api/projects/${this.currentProject.id}/start-asr`,
@@ -2539,17 +2577,24 @@ function app() {
     async startFull() {
       if (!this.currentProject) return;
       const audioOnly = this.currentProject.source_type === 'audio';
+      const subtitleOnly = this.currentProject.source_type === 'subtitle';
       await this.runProjectAction(
         'start-full',
-        `/api/projects/${this.currentProject.id}/${audioOnly ? 'start-transcribe-translate' : 'start-full'}`,
-        { language: this.asrLanguage, target_language: this.targetLang },
-        audioOnly ? '开始转写并翻译...' : '开始一键处理...',
+        `/api/projects/${this.currentProject.id}/${audioOnly ? 'start-transcribe-translate' : (subtitleOnly ? 'start-translate' : 'start-full')}`,
+        subtitleOnly
+          ? { target_language: this.targetLang }
+          : { language: this.asrLanguage, target_language: this.targetLang },
+        audioOnly ? '开始转写并翻译...' : (subtitleOnly ? '开始翻译字幕...' : '开始一键处理...'),
         { requiresTranslation: true }
       );
     },
 
     async startBurn() {
       if (!this.currentProject) return;
+      if (!this.canBurnVideo(this.currentProject)) {
+        this.toast('当前项目没有视频烧录步骤', 'error');
+        return;
+      }
       await this.runProjectAction(
         'burn',
         `/api/projects/${this.currentProject.id}/burn`,

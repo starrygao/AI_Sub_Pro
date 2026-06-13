@@ -1156,6 +1156,67 @@ def test_audio_project_start_full_uses_transcribe_translate_endpoint():
     )
 
 
+def test_source_specific_project_actions_skip_unsupported_pipeline_steps():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const calls = [];
+          const toasts = [];
+          state.sysCheck = {translation_ready: true};
+          state.targetLang = 'English';
+          state.asrLanguage = 'en';
+          state.toast = (msg, type) => { toasts.push([msg, type || 'success']); };
+          state.api = async (url, method, body) => {
+            calls.push([method, url, body]);
+            if (url === '/api/projects/sub1/start-translate' && method === 'POST') return {status: 'started'};
+            throw new Error(`unexpected API call ${method} ${url}`);
+          };
+
+          state.currentProject = {id: 'aud1', status: 'created', source_type: 'audio'};
+          if (!state.canRunAsr(state.currentProject)) throw new Error('audio projects should support ASR');
+          if (state.canBurnVideo(state.currentProject)) throw new Error('audio projects should not support burn');
+          await state.startBurn();
+          if (calls.length !== 0) throw new Error(`audio burn should not call API, got ${JSON.stringify(calls)}`);
+          if (!toasts.some((item) => item[0].includes('视频烧录'))) {
+            throw new Error(`expected unsupported burn toast, got ${JSON.stringify(toasts)}`);
+          }
+
+          toasts.length = 0;
+          state.currentProject = {id: 'sub1', status: 'created', source_type: 'subtitle'};
+          if (state.canRunAsr(state.currentProject)) throw new Error('subtitle projects should not support ASR');
+          if (state.canBurnVideo(state.currentProject)) throw new Error('subtitle projects should not support burn');
+          if (!state.canTranslateProject(state.currentProject)) throw new Error('subtitle projects should support translation');
+          if (state.projectPrimaryActionLabel(state.currentProject) !== '翻译字幕') {
+            throw new Error(`expected subtitle primary label, got ${state.projectPrimaryActionLabel(state.currentProject)}`);
+          }
+          await state.startASR();
+          await state.startBurn();
+          if (calls.length !== 0) throw new Error(`subtitle ASR/burn should not call API, got ${JSON.stringify(calls)}`);
+
+          await state.startFull();
+          if (calls.length !== 1) throw new Error(`subtitle primary action should call one API, got ${JSON.stringify(calls)}`);
+          if (calls[0][1] !== '/api/projects/sub1/start-translate') {
+            throw new Error(`subtitle primary action should translate only, got ${JSON.stringify(calls)}`);
+          }
+          if (calls[0][2].target_language !== 'English') {
+            throw new Error(`expected target language payload, got ${JSON.stringify(calls)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_cancel_task_ignores_duplicate_submits_while_pending():
     _run_node(
         """

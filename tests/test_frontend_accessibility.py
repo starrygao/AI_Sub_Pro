@@ -214,6 +214,9 @@ def test_project_detail_exposes_core_pipeline_actions_as_toolbar_buttons():
 
     for snippet in (
         "project-detail-quick-actions",
+        "canRunAsr(currentProject)",
+        "canBurnVideo(currentProject)",
+        "projectPrimaryActionLabel(currentProject)",
         '@click="startASR()"',
         '@click="startTranslate()"',
         '@click="startBurn()"',

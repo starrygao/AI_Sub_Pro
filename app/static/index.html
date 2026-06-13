@@ -538,7 +538,7 @@
           </select>
           <button @click="startFull()" :disabled="projectActionsDisabled(currentProject)" class="btn-primary px-4 py-1.5 rounded-xl text-[12px] font-medium flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" /></svg>
-            <span x-text="projectActionPending === 'start-full' ? '启动中...' : (currentProject?.status === 'error' ? '重试' : '一键处理')"></span>
+            <span x-text="projectPrimaryActionLabel(currentProject)"></span>
           </button>
           <button x-show="isProjectBusy(currentProject) || projectActionPending === 'cancel'"
                   @click="cancelTask()"
@@ -547,19 +547,22 @@
                   x-text="projectActionPending === 'cancel' ? '取消中...' : '取消'"></button>
 
           <div class="project-detail-quick-actions flex items-center gap-1.5">
-            <button @click="startASR()"
+            <button x-show="canRunAsr(currentProject)"
+                    @click="startASR()"
                     :disabled="projectActionsDisabled(currentProject)"
                     class="project-detail-quick-action btn-secondary px-3 py-1.5 rounded-xl text-[12px] font-medium flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
               <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" /></svg>
               识别
             </button>
-            <button @click="startTranslate()"
+            <button x-show="canTranslateProject(currentProject)"
+                    @click="startTranslate()"
                     :disabled="projectActionsDisabled(currentProject)"
                     class="project-detail-quick-action btn-secondary px-3 py-1.5 rounded-xl text-[12px] font-medium flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
               <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802" /></svg>
               翻译
             </button>
-            <button @click="startBurn()"
+            <button x-show="canBurnVideo(currentProject)"
+                    @click="startBurn()"
                     :disabled="projectActionsDisabled(currentProject)"
                     class="project-detail-quick-action btn-secondary px-3 py-1.5 rounded-xl text-[12px] font-medium flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
               <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" /><path stroke-linecap="round" stroke-linejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z" /></svg>
@@ -585,15 +588,15 @@
               更多
             </button>
             <div x-show="open" @click.away="open=false" class="action-popover absolute right-0 mt-2 glass rounded-xl shadow-xl py-1.5 w-44 slide-down">
-              <button @click="startASR(); open=false" :disabled="projectActionsDisabled(currentProject)" class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
+              <button x-show="canRunAsr(currentProject)" @click="startASR(); open=false" :disabled="projectActionsDisabled(currentProject)" class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
                 <svg class="w-4 h-4 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" /></svg>
                 仅识别
               </button>
-              <button @click="startTranslate(); open=false" :disabled="projectActionsDisabled(currentProject)" class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
+              <button x-show="canTranslateProject(currentProject)" @click="startTranslate(); open=false" :disabled="projectActionsDisabled(currentProject)" class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
                 <svg class="w-4 h-4 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802" /></svg>
                 仅翻译
               </button>
-              <button @click="startBurn(); open=false" :disabled="projectActionsDisabled(currentProject)" class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
+              <button x-show="canBurnVideo(currentProject)" @click="startBurn(); open=false" :disabled="projectActionsDisabled(currentProject)" class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
                 <svg class="w-4 h-4 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" /><path stroke-linecap="round" stroke-linejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z" /></svg>
                 烧录字幕
               </button>

@@ -198,6 +198,15 @@ def _first_safe_project_artifact(pid: str, filenames: list[str]) -> tuple[Option
     return None, None
 
 
+def _project_source_type(project: dict) -> str:
+    value = project.get("source_type") if isinstance(project, dict) else None
+    return value.strip() if isinstance(value, str) and value.strip() else "upload"
+
+
+def _project_supports_video_burn(project: dict) -> bool:
+    return _project_source_type(project) not in {"audio", "subtitle"}
+
+
 def _safe_generated_project_output_path(pid: str, filename: str) -> Optional[Path]:
     rel = Path(filename)
     if rel.is_absolute() or ".." in rel.parts:
@@ -289,10 +298,12 @@ def _latest_failed_stage(pid: str) -> str:
     return "asr"
 
 
-def _resume_stage_for_project(pid: str) -> str:
-    if _first_safe_project_artifact(pid, ["translated.srt", "bilingual.srt"])[0]:
+def _resume_stage_for_project(pid: str, project: Optional[dict] = None) -> str:
+    if _project_supports_video_burn(project or {}) and _first_safe_project_artifact(pid, ["translated.srt", "bilingual.srt"])[0]:
         return "burn"
     if _first_safe_project_artifact(pid, ["filtered.srt", "raw.srt", "native.srt"])[0]:
+        return "translate"
+    if _project_source_type(project or {}) == "subtitle":
         return "translate"
     return "asr"
 
@@ -1276,6 +1287,14 @@ def start_full(pid: str = PathParam(pattern=PID_PATTERN), req: FullPipelineReque
     """Start full pipeline (ASR + translate)."""
     project = _load_project(pid)
     _reject_busy_project(project)
+    if _project_source_type(project) == "audio":
+        return start_transcribe_translate(pid, req)
+    if _project_source_type(project) == "subtitle":
+        response = start_translate(
+            pid,
+            TranslateRequest(target_language=req.target_language),
+        )
+        return _add_launch_stage(response, "translate")
     audio_track = _resolve_audio_track(project, req.audio_track)
     language = _resolve_text_option(req.language, project.get("asr_language"), "auto", "language")
     target_lang = _resolve_text_option(
@@ -1358,6 +1377,8 @@ def _launch_resume_stage(pid: str, project: dict, stage: str) -> dict:
             TranslateRequest(target_language=project.get("target_language")),
         )
     elif stage == "burn":
+        if not _project_supports_video_burn(project):
+            raise HTTPException(400, "Project source does not support video burn")
         response = start_burn(pid)
     else:
         raise HTTPException(400, "stage must be asr, translate, or burn")
@@ -1383,7 +1404,7 @@ def resume_project(pid: str = PathParam(pattern=PID_PATTERN)):
     if is_task_registered(pid):
         raise HTTPException(409, "Task already running for this project")
     _reject_busy_project(project)
-    stage = _resume_stage_for_project(pid)
+    stage = _resume_stage_for_project(pid, project)
     return _launch_resume_stage(pid, project, stage)
 
 
@@ -1418,6 +1439,8 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
     """Burn subtitles into video (standalone)."""
     project = _load_project(pid)
     _reject_busy_project(project)
+    if not _project_supports_video_burn(project):
+        raise HTTPException(400, "Project source does not support video burn")
 
     def _burn_task():
         try:
