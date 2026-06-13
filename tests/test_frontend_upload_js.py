@@ -438,6 +438,78 @@ def test_home_source_mode_routes_supported_sources_and_explains_pending_ones():
     )
 
 
+def test_home_source_readiness_points_to_settings_for_missing_translation_or_asr():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const pendingReadiness = state.homeSourceReadiness({mode: 'local'});
+          if (pendingReadiness.message) {
+            throw new Error(`expected no readiness warning before system check, got ${JSON.stringify(pendingReadiness)}`);
+          }
+
+          state.sysCheck = {
+            translation_ready: false,
+            translation_hint: '请配置 OpenAI API Key',
+            asr_install_prompts: [
+              {
+                id: 'asr-backend-local-missing',
+                title: '未检测到本地 ASR 后端',
+                message: '请安装 faster-whisper 或 mlx-whisper。',
+              },
+            ],
+            asr_recommendation: {ready: false, download_required: true, download_hint: '~1.6GB'},
+          };
+
+          const translationReadiness = state.homeSourceReadiness({mode: 'subtitle'});
+          if (!translationReadiness.message.includes('翻译引擎') || !translationReadiness.message.includes('OpenAI')) {
+            throw new Error(`expected translation readiness warning, got ${JSON.stringify(translationReadiness)}`);
+          }
+          if (translationReadiness.actionText !== '去设置') {
+            throw new Error(`expected settings action, got ${JSON.stringify(translationReadiness)}`);
+          }
+
+          const views = [];
+          state.setView = async (view) => { views.push(view); state.view = view; return true; };
+          await state.handleHomeSourceReadinessAction(translationReadiness);
+          if (views[0] !== 'settings') {
+            throw new Error(`expected readiness action to open settings, got ${JSON.stringify(views)}`);
+          }
+
+          state.sysCheck.translation_ready = true;
+          const audioReadiness = state.homeSourceReadiness({mode: 'audio'});
+          if (!audioReadiness.message.includes('音频入口需要 ASR') || !audioReadiness.message.includes('请安装 faster-whisper')) {
+            throw new Error(`expected audio ASR warning, got ${JSON.stringify(audioReadiness)}`);
+          }
+          if (audioReadiness.tone !== 'warn') {
+            throw new Error(`expected warn tone for missing ASR, got ${JSON.stringify(audioReadiness)}`);
+          }
+
+          const networkReadiness = state.homeSourceReadiness({mode: 'network'});
+          if (!networkReadiness.message.includes('无平台字幕时需要 ASR')) {
+            throw new Error(`expected network ASR fallback warning, got ${JSON.stringify(networkReadiness)}`);
+          }
+
+          const subtitleReadiness = state.homeSourceReadiness({mode: 'subtitle'});
+          if (subtitleReadiness.message) {
+            throw new Error(`subtitle-only source should not warn about ASR, got ${JSON.stringify(subtitleReadiness)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_selected_subtitle_file_creates_project_and_starts_translation():
     _run_node(
         """

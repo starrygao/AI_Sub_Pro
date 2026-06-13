@@ -870,6 +870,54 @@ function app() {
         .map((item) => item.trim());
     },
 
+    homeSourceReadiness(option = this.homeSourceOption()) {
+      const resolved = this.homeSourceOption(option?.mode || this.homeSourceMode);
+      if (!this.sysCheck) {
+        return {tone: '', message: '', action: '', actionText: ''};
+      }
+      if (!this.systemTranslationReady()) {
+        return {
+          tone: 'error',
+          message: `翻译引擎未就绪：${this.systemTranslationHint()}`,
+          action: 'settings',
+          actionText: '去设置',
+        };
+      }
+
+      const prompts = this.asrInstallPrompts();
+      if (!prompts.length) return {tone: '', message: '', action: '', actionText: ''};
+      const firstPrompt = prompts[0] || {};
+      const promptMessage = typeof firstPrompt.message === 'string' && firstPrompt.message.trim()
+        ? firstPrompt.message.trim()
+        : '请先安装或配置 ASR 依赖。';
+      if (resolved.mode === 'audio') {
+        return {
+          tone: 'warn',
+          message: `音频入口需要 ASR：${promptMessage}`,
+          action: 'settings',
+          actionText: '去设置',
+        };
+      }
+      if (resolved.mode === 'local' || resolved.mode === 'network') {
+        const prefix = resolved.mode === 'network'
+          ? '无平台字幕时需要 ASR'
+          : '无内嵌/外挂字幕时需要 ASR';
+        return {
+          tone: 'warn',
+          message: `${prefix}：${promptMessage}`,
+          action: 'settings',
+          actionText: '去设置',
+        };
+      }
+      return {tone: '', message: '', action: '', actionText: ''};
+    },
+
+    async handleHomeSourceReadinessAction(readiness) {
+      if (readiness?.action === 'settings') {
+        await this.setView('settings');
+      }
+    },
+
     homeSourceActionLabel() {
       const option = this.homeSourceOption();
       if (option.mode === 'local') {
