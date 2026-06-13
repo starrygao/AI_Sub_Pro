@@ -572,6 +572,89 @@ def test_frontend_uses_system_asr_model_options_and_notifies_missing_backend():
     assert result.returncode == 0, result.stderr
 
 
+def test_frontend_asr_setup_actions_are_actionable():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const clipboardWrites = [];
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          navigator: {
+            clipboard: {
+              writeText: async (value) => clipboardWrites.push(value),
+            },
+          },
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const toasts = [];
+          state.toast = (msg, type) => toasts.push({msg, type});
+          state.settings.asr = {mode: 'speed', backend: 'auto', model_size: 'tiny'};
+          state.sysCheck = {
+            asr_install_prompts: [
+              {
+                id: 'asr-backend-local-missing',
+                title: '未检测到本地 ASR 后端',
+                message: '请安装 ASR 依赖。',
+                install_command: 'python3 -m pip install -r requirements-asr.txt',
+              },
+            ],
+            asr_recommendation: {
+              mode: 'accuracy',
+              backend: 'faster_whisper',
+              model_size: 'large-v3',
+              ready: false,
+              download_required: true,
+              download_hint: '~3GB',
+            },
+          };
+
+          const pills = state.asrSetupActionPills();
+          if (!pills.some((pill) => pill.label === '缺少 ASR 依赖')) {
+            throw new Error(`expected missing dependency pill, got ${JSON.stringify(pills)}`);
+          }
+          if (!pills.some((pill) => pill.label === '需下载模型')) {
+            throw new Error(`expected model download pill, got ${JSON.stringify(pills)}`);
+          }
+
+          await state.copyAsrInstallCommand(state.sysCheck.asr_install_prompts[0]);
+          if (clipboardWrites[0] !== 'python3 -m pip install -r requirements-asr.txt') {
+            throw new Error(`expected install command copied, got ${JSON.stringify(clipboardWrites)}`);
+          }
+
+          if (!state.canApplyAsrRecommendation()) {
+            throw new Error('expected recommendation to be applicable');
+          }
+          state.applyAsrRecommendation();
+          if (state.settings.asr.mode !== 'accuracy') {
+            throw new Error(`expected recommended mode, got ${state.settings.asr.mode}`);
+          }
+          if (state.settings.asr.backend !== 'faster_whisper') {
+            throw new Error(`expected recommended backend, got ${state.settings.asr.backend}`);
+          }
+          if (state.settings.asr.model_size !== 'large-v3') {
+            throw new Error(`expected recommended model, got ${state.settings.asr.model_size}`);
+          }
+          if (!toasts.some((toast) => toast.msg.includes('保存设置后生效'))) {
+            throw new Error(`expected save reminder toast, got ${JSON.stringify(toasts)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_frontend_normalizes_asr_mode_and_backend_from_settings_payload():
     result = run_js(
         """

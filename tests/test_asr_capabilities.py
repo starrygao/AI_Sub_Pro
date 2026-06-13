@@ -56,6 +56,13 @@ def test_detect_asr_capabilities_exports_model_options_for_settings_ui(monkeypat
     assert "large-v4" in option_ids
     assert options[0]["label"]
     assert all("download_hint" in item for item in options)
+    assert all("available" in item for item in options)
+    assert all("source" in item for item in options)
+
+    selected = next(item for item in options if item["model_size"] == "large-v4")
+    assert selected["selected"] is True
+    assert selected["available"] is False
+    assert selected["source"] == "download"
 
 
 def test_recommend_asr_settings_maps_speed_accuracy_and_offline(monkeypatch):

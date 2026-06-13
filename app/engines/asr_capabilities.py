@@ -95,19 +95,36 @@ def asr_model_options(selected_model: str = "") -> list[dict[str, Any]]:
     return [_model_option(model) for model in models]
 
 
+def _model_option_with_status(
+    option: dict[str, Any],
+    info: dict[str, Any],
+    selected_model: str,
+) -> dict[str, Any]:
+    enriched = dict(option)
+    enriched["available"] = bool(info.get("available"))
+    enriched["source"] = info.get("source", "unknown")
+    enriched["selected"] = option.get("model_size") == selected_model
+    return enriched
+
+
 def detect_asr_capabilities(asr_cfg: dict | None = None) -> dict[str, Any]:
     cfg = asr_cfg if isinstance(asr_cfg, dict) else {}
     system = platform.system()
     machine = platform.machine()
     apple_silicon = system == "Darwin" and machine in {"arm64", "aarch64"}
     selected_model = cfg.get("model_size") if isinstance(cfg.get("model_size"), str) else ""
+    selected_model = selected_model.strip()
     selected_backend = cfg.get("backend") if isinstance(cfg.get("backend"), str) else "auto"
     selected_backend = selected_backend.strip()
     if selected_backend not in ASR_BACKENDS:
         selected_backend = "auto"
 
-    model_options = asr_model_options(selected_model)
-    models = {item["model_size"]: _model_info(item["model_size"]) for item in model_options}
+    base_model_options = asr_model_options(selected_model)
+    models = {item["model_size"]: _model_info(item["model_size"]) for item in base_model_options}
+    model_options = [
+        _model_option_with_status(item, models.get(item["model_size"], {}), selected_model)
+        for item in base_model_options
+    ]
 
     return {
         "platform": {

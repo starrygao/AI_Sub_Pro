@@ -896,7 +896,13 @@ function app() {
           const downloadHint = typeof option?.download_hint === 'string'
             ? option.download_hint.trim()
             : '';
-          return { model_size: model, label, download_hint: downloadHint };
+          const normalized = { model_size: model, label, download_hint: downloadHint };
+          if (typeof option?.available === 'boolean') normalized.available = option.available;
+          if (typeof option?.source === 'string' && option.source.trim()) {
+            normalized.source = option.source.trim();
+          }
+          if (typeof option?.selected === 'boolean') normalized.selected = option.selected;
+          return normalized;
         })
         .filter(Boolean);
       const selected = typeof this.settings?.asr?.model_size === 'string'
@@ -906,6 +912,110 @@ function app() {
         options.push({ model_size: selected, label: selected, download_hint: '' });
       }
       return options.length ? options : fallback;
+    },
+
+    asrInstallPrompts() {
+      const prompts = Array.isArray(this.sysCheck?.asr_install_prompts)
+        ? this.sysCheck.asr_install_prompts
+        : [];
+      return prompts.filter((prompt) => this.isPlainObject(prompt));
+    },
+
+    asrRecommendation() {
+      return this.isPlainObject(this.sysCheck?.asr_recommendation)
+        ? this.sysCheck.asr_recommendation
+        : {};
+    },
+
+    asrSetupActionPills() {
+      const prompts = this.asrInstallPrompts();
+      const rec = this.asrRecommendation();
+      const pills = [];
+      if (prompts.length) {
+        pills.push({ label: '缺少 ASR 依赖', tone: 'error' });
+      }
+      if (rec.download_required) {
+        pills.push({ label: '需下载模型', tone: 'warn' });
+      }
+      if (!pills.length && rec.ready === true) {
+        pills.push({ label: 'ASR 就绪', tone: 'success' });
+      } else if (!prompts.length && rec.ready === false) {
+        pills.push({ label: 'ASR 未就绪', tone: 'warn' });
+      }
+      return pills;
+    },
+
+    asrSetupPillClass(pill) {
+      const tone = typeof pill?.tone === 'string' ? pill.tone : '';
+      if (tone === 'success') return 'asr-setup-pill--success';
+      if (tone === 'error') return 'asr-setup-pill--error';
+      return 'asr-setup-pill--warn';
+    },
+
+    selectedAsrModelSyncText() {
+      const selected = typeof this.settings?.asr?.model_size === 'string'
+        ? this.settings.asr.model_size.trim()
+        : '';
+      if (!selected) return '';
+      const option = this.asrModelOptions().find((item) => item.model_size === selected);
+      if (!option) return '';
+      const source = typeof option.source === 'string' && option.source.trim()
+        ? option.source.trim()
+        : '';
+      if (option.available === true) {
+        return source ? `模型已同步：${source}` : '模型已同步';
+      }
+      if (option.available === false) {
+        return option.download_hint ? `模型未下载：${option.download_hint}` : '模型未下载';
+      }
+      return option.download_hint ? `模型下载提示：${option.download_hint}` : '';
+    },
+
+    canApplyAsrRecommendation() {
+      const rec = this.asrRecommendation();
+      const allowedModes = ['speed', 'accuracy', 'offline'];
+      const allowedBackends = ['auto', 'mlx_whisper', 'faster_whisper', 'openai_whisper'];
+      const mode = typeof rec.mode === 'string' ? rec.mode.trim() : '';
+      const backend = typeof rec.backend === 'string' ? rec.backend.trim() : '';
+      const model = typeof rec.model_size === 'string' ? rec.model_size.trim() : '';
+      return allowedModes.includes(mode) || allowedBackends.includes(backend) || !!model;
+    },
+
+    applyAsrRecommendation() {
+      if (!this.canApplyAsrRecommendation()) {
+        this.toast('暂无可应用的 ASR 推荐', 'error');
+        return;
+      }
+      const rec = this.asrRecommendation();
+      const allowedModes = ['speed', 'accuracy', 'offline'];
+      const allowedBackends = ['auto', 'mlx_whisper', 'faster_whisper', 'openai_whisper'];
+      const mode = typeof rec.mode === 'string' ? rec.mode.trim() : '';
+      const backend = typeof rec.backend === 'string' ? rec.backend.trim() : '';
+      const model = typeof rec.model_size === 'string' ? rec.model_size.trim() : '';
+      if (!this.isPlainObject(this.settings.asr)) this.settings.asr = {};
+      if (allowedModes.includes(mode)) this.settings.asr.mode = mode;
+      if (allowedBackends.includes(backend)) this.settings.asr.backend = backend;
+      if (model) this.settings.asr.model_size = model;
+      this.toast('已应用推荐 ASR 设置，保存设置后生效', 'success');
+    },
+
+    async copyAsrInstallCommand(prompt) {
+      const command = typeof prompt?.install_command === 'string'
+        ? prompt.install_command.trim()
+        : '';
+      if (!command) {
+        this.toast('没有可复制的 ASR 安装命令', 'error');
+        return;
+      }
+      try {
+        if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+          throw new Error('clipboard unavailable');
+        }
+        await navigator.clipboard.writeText(command);
+        this.toast('已复制 ASR 安装命令', 'success');
+      } catch (e) {
+        this.toast('复制 ASR 安装命令失败，请手动复制', 'error');
+      }
     },
 
     notifyAsrInstallPrompts(result) {

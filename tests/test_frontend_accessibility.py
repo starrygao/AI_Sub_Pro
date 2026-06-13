@@ -41,6 +41,8 @@ def test_settings_controls_have_accessible_names():
         ":aria-label=\"(showKeys[provider] ? '隐藏 ' : '显示 ') + translationProviderLabel(provider) + ' API 密钥'\"",
         ":aria-label=\"'从剪贴板粘贴 ' + translationProviderLabel(provider) + ' API 密钥'\"",
         ":aria-label=\"'测试 ' + translationProviderLabel(provider) + ' API 密钥'\"",
+        "aria-label=\"应用推荐 ASR 设置\"",
+        "aria-label=\"复制 ASR 安装命令\"",
         "aria-label=\"Whisper 模型\"",
         "aria-label=\"ASR 默认语言\"",
         "aria-label=\"ASR 时间偏移毫秒\"",
@@ -81,9 +83,30 @@ def test_asr_mode_and_recommendation_are_visible_in_settings():
     assert 'x-for="option in asrModelOptions()"' in html
     assert "sysCheck?.asr_install_prompts?.length" in html
     assert 'x-show="sysCheck?.asr_recommendation && !sysCheckLoading && !sysCheckError"' in html
+    assert "asrSetupActionPills()" in html
+    assert "applyAsrRecommendation()" in html
+    assert "copyAsrInstallCommand(prompt)" in html
+    assert "应用推荐 ASR 设置" in html
+    assert "复制安装命令" in html
     assert "asrRecommendationSummary()" in html
     assert "sysCheck?.asr_recommendation?.reason" in html
     assert "asrModeLabel" in js
+    assert "asrSetupActionPills" in js
+    assert "copyAsrInstallCommand" in js
+    assert "applyAsrRecommendation" in js
+
+
+def test_asr_setup_pills_use_packaged_css_classes():
+    js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
+    css = (ROOT / "app/static/css/app.css").read_text(encoding="utf-8")
+
+    for class_name in (
+        "asr-setup-pill--success",
+        "asr-setup-pill--warn",
+        "asr-setup-pill--error",
+    ):
+        assert class_name in js
+        assert f".{class_name}" in css
 
 
 def test_translation_strategy_panel_is_visible_in_project_detail():

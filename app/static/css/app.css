@@ -199,6 +199,24 @@ h1, h2 {
 }
 .btn-danger:hover { background: rgba(255,59,48,0.15); }
 
+.asr-setup-pill--success {
+  background: rgba(22, 163, 74, 0.10);
+  border-color: rgba(22, 163, 74, 0.20);
+  color: #16a34a;
+}
+
+.asr-setup-pill--warn {
+  background: rgba(217, 119, 6, 0.10);
+  border-color: rgba(217, 119, 6, 0.20);
+  color: #d97706;
+}
+
+.asr-setup-pill--error {
+  background: rgba(220, 38, 38, 0.10);
+  border-color: rgba(220, 38, 38, 0.20);
+  color: #dc2626;
+}
+
 /* Interaction targets */
 .app-sidebar nav button {
   min-height: 2.75rem;

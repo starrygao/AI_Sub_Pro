@@ -1207,6 +1207,7 @@
                   <option :value="option.model_size" x-text="option.label"></option>
                 </template>
               </select>
+              <p class="mt-1 text-[11px] text-surface-400" x-show="selectedAsrModelSyncText()" x-text="selectedAsrModelSyncText()"></p>
             </div>
             <div>
               <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">默认语言</label>
@@ -1224,15 +1225,36 @@
             </div>
           </div>
           <div x-show="sysCheck?.asr_recommendation && !sysCheckLoading && !sysCheckError" class="mt-4 rounded-xl border border-surface-200 px-3 py-2 text-[12px] text-surface-600">
-            <p class="font-medium text-surface-700" x-text="asrRecommendationSummary()"></p>
-            <p class="mt-1 text-surface-400" x-text="sysCheck?.asr_recommendation?.reason || ''"></p>
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="mb-2 flex flex-wrap gap-1.5" x-show="asrSetupActionPills().length">
+                  <template x-for="pill in asrSetupActionPills()" :key="pill.label">
+                    <span class="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium" :class="asrSetupPillClass(pill)" x-text="pill.label"></span>
+                  </template>
+                </div>
+                <p class="font-medium text-surface-700" x-text="asrRecommendationSummary()"></p>
+                <p class="mt-1 text-surface-400" x-text="sysCheck?.asr_recommendation?.reason || ''"></p>
+              </div>
+              <button type="button"
+                      @click="applyAsrRecommendation()"
+                      :disabled="!canApplyAsrRecommendation()"
+                      aria-label="应用推荐 ASR 设置"
+                      class="btn-secondary shrink-0 px-3 py-1.5 rounded-lg text-[12px] font-medium disabled:opacity-40 disabled:cursor-not-allowed">应用推荐 ASR 设置</button>
+            </div>
           </div>
           <div x-show="sysCheck?.asr_install_prompts?.length && !sysCheckLoading && !sysCheckError" class="mt-3 rounded-xl border border-warn/30 px-3 py-2 text-[12px] text-warn" style="background: rgba(245,158,11,0.08);">
             <template x-for="prompt in sysCheck.asr_install_prompts" :key="prompt.id || prompt.message">
-              <div class="space-y-1">
-                <p class="font-medium" x-text="prompt.title || 'ASR 依赖提醒'"></p>
-                <p x-text="prompt.message || ''"></p>
-                <p class="font-mono text-[11px] text-surface-500" x-show="prompt.install_command" x-text="prompt.install_command"></p>
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0 space-y-1">
+                  <p class="font-medium" x-text="prompt.title || 'ASR 依赖提醒'"></p>
+                  <p x-text="prompt.message || ''"></p>
+                  <p class="break-all font-mono text-[11px] text-surface-500" x-show="prompt.install_command" x-text="prompt.install_command"></p>
+                </div>
+                <button type="button"
+                        @click="copyAsrInstallCommand(prompt)"
+                        :disabled="!prompt.install_command"
+                        aria-label="复制 ASR 安装命令"
+                        class="btn-secondary shrink-0 px-3 py-1.5 rounded-lg text-[12px] font-medium disabled:opacity-40 disabled:cursor-not-allowed">复制安装命令</button>
               </div>
             </template>
           </div>
