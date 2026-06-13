@@ -254,6 +254,28 @@ def test_home_online_video_entry_replaces_tmdb_trailer_entry():
     assert "按 TMDB ID" not in html
 
 
+def test_online_video_success_explains_download_and_subtitle_plan():
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
+
+    for snippet in (
+        "trailerCreatedProjects.length",
+        "createdTrailerProjectTitle(project)",
+        "networkVideoPlanLocation(project)",
+        "networkVideoPlanSummary(project)",
+        "下载与字幕策略",
+    ):
+        assert snippet in html
+
+    for snippet in (
+        "trailerCreatedProjects",
+        "normalizeCreatedTrailerProjects",
+        "networkVideoPlanLocation",
+        "networkVideoPlanSummary",
+    ):
+        assert snippet in js
+
+
 def test_action_popover_layers_above_surrounding_cards():
     html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
     css = (ROOT / "app/static/css/app.css").read_text(encoding="utf-8")

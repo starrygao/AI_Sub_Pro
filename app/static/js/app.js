@@ -144,6 +144,7 @@ function app() {
     trailerSelectedVideos: [],
     trailerError: null,
     trailerCreatedCount: 0,
+    trailerCreatedProjects: [],
     trailerLoading: false,
     trailerSubmitting: false,
     trailerSearchRequestSeq: 0,
@@ -3270,6 +3271,50 @@ function app() {
       });
     },
 
+    normalizeCreatedTrailerProjects(data) {
+      const raw = Array.isArray(data?.projects) ? data.projects : [];
+      return raw
+        .filter((project) => this.isPlainObject(project))
+        .map((project) => ({
+          id: typeof project.id === 'string' ? project.id.trim() : '',
+          name: typeof project.name === 'string' ? project.name.trim() : '',
+          network_video_plan: this.isPlainObject(project.network_video_plan)
+            ? project.network_video_plan
+            : null,
+        }))
+        .filter((project) => project.id || project.name || project.network_video_plan);
+    },
+
+    createdTrailerProjectTitle(project) {
+      const name = typeof project?.name === 'string' ? project.name.trim() : '';
+      const id = typeof project?.id === 'string' ? project.id.trim() : '';
+      if (name && id) return `${name} · ${id}`;
+      return name || id || '在线视频项目';
+    },
+
+    networkVideoPlan(project) {
+      return this.isPlainObject(project?.network_video_plan)
+        ? project.network_video_plan
+        : {};
+    },
+
+    networkVideoPlanLocation(project) {
+      const plan = this.networkVideoPlan(project);
+      for (const key of ['download_path', 'download_path_hint', 'download_location_label']) {
+        const value = typeof plan[key] === 'string' ? plan[key].trim() : '';
+        if (value) return value;
+      }
+      return '项目文件夹 original.mp4';
+    },
+
+    networkVideoPlanSummary(project) {
+      const plan = this.networkVideoPlan(project);
+      const label = typeof plan.subtitle_strategy_label === 'string'
+        ? plan.subtitle_strategy_label.trim()
+        : '';
+      return label || '优先获取平台原生字幕；没有字幕再进入 ASR 听写。';
+    },
+
     async startTrailerJobs() {
       if (this.trailerSubmitting) return;
       if (this.trailerSelectedVideos.length === 0) return;
@@ -3304,6 +3349,7 @@ function app() {
         const data = await r.json();
         const pids = Array.isArray(data.pids) ? data.pids : [];
         this.trailerCreatedCount = pids.length;
+        this.trailerCreatedProjects = this.normalizeCreatedTrailerProjects(data);
         this.trailerStep = 5;
         setTimeout(() => {
           this.showTrailerProjects();
@@ -3350,6 +3396,7 @@ function app() {
         const data = await r.json();
         const pids = Array.isArray(data.pids) ? data.pids : [];
         this.trailerCreatedCount = pids.length;
+        this.trailerCreatedProjects = this.normalizeCreatedTrailerProjects(data);
         await this.setView('trailer');
         this.trailerStep = 5;
         setTimeout(() => {
@@ -3378,6 +3425,7 @@ function app() {
       this.trailerSelectedVideos = [];
       this.trailerError = null;
       this.trailerCreatedCount = 0;
+      this.trailerCreatedProjects = [];
       this.trailerLoading = false;
       this.trailerSubmitting = false;
     },

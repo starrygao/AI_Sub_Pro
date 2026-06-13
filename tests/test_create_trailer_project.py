@@ -48,6 +48,13 @@ def test_create_trailer_project_writes_project_json(patched_projects_dir):
     assert data["status"] == "created"
     assert data["pipeline_stage"] == "download"
     assert data["name"].startswith("Game of Thrones")
+    plan = data["network_video_plan"]
+    assert plan["save_scope"] == "project_library"
+    assert plan["download_filename"] == "original.mp4"
+    assert plan["download_path"] == str(patched_projects_dir / pid / "original.mp4")
+    assert plan["subtitle_strategy"] == "native_subtitles_then_asr"
+    assert plan["native_subtitle_priority"] is True
+    assert "原生字幕" in plan["subtitle_strategy_label"]
 
 
 def test_create_trailer_project_movie_no_season(patched_projects_dir):

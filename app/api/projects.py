@@ -78,6 +78,7 @@ _PROJECT_SAFE_DEFAULTS = {
     "source_has_subtitles": False,
     "subtitle_source": None,
     "native_subtitle_language": None,
+    "network_video_plan": None,
     "content_type": "auto",
     "academic_field": "",
     "content_notes": "",
@@ -191,6 +192,8 @@ def _apply_safe_defaults(project: dict) -> dict:
             project[field] = None
     if not isinstance(project.get("network_metadata"), dict):
         project["network_metadata"] = {}
+    if project.get("network_video_plan") is not None and not isinstance(project.get("network_video_plan"), dict):
+        project["network_video_plan"] = None
     project["content_type"] = normalize_content_type(project.get("content_type"))
     for field, limit in (
         ("academic_field", 80),
@@ -516,6 +519,20 @@ def _save_project(pid: str, data: dict):
     atomic_write_json(PROJECTS_DIR / pid / "project.json", data)
 
 
+def _network_video_plan(pdir: Path) -> dict:
+    download_path = pdir / "original.mp4"
+    return {
+        "save_scope": "project_library",
+        "download_filename": "original.mp4",
+        "download_path": str(download_path),
+        "download_location_label": "项目文件夹 original.mp4",
+        "download_path_hint": "~/AI_Sub_Pro_Data/projects/<项目ID>/original.mp4",
+        "subtitle_strategy": "native_subtitles_then_asr",
+        "subtitle_strategy_label": "优先获取平台原生字幕；没有字幕再进入 ASR 听写。",
+        "native_subtitle_priority": True,
+    }
+
+
 def create_trailer_project(
     tmdb_id: Optional[int],
     tmdb_type: Optional[str],
@@ -557,6 +574,7 @@ def create_trailer_project(
         "error": None,
         "output_video": None,
         "network_metadata": network_metadata,
+        "network_video_plan": _network_video_plan(pdir),
         "source_title": network_metadata.get("title"),
         "source_uploader": network_metadata.get("uploader"),
         "source_channel": network_metadata.get("channel"),

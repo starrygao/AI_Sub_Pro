@@ -110,6 +110,14 @@ def _metadata_language(metadata: dict) -> Optional[str]:
     return None
 
 
+def _submission_project(project: dict) -> dict:
+    return {
+        "id": project.get("id"),
+        "name": project.get("name"),
+        "network_video_plan": project.get("network_video_plan"),
+    }
+
+
 @router.post("/search")
 async def search(req: SearchReq):
     if req.media_type not in (None, "tv", "movie"):
@@ -295,6 +303,7 @@ def start(req: StartReq):
     target_language = _configured_target_language(req.target_language)
     require_translation_ready()
     pids: List[str] = []
+    projects: List[dict] = []
     seen_keys = set()
     for raw_key in req.video_keys:
         key = raw_key.strip()
@@ -322,10 +331,11 @@ def start(req: StartReq):
             target_language=target_language,
         )
         pids.append(project["id"])
+        projects.append(_submission_project(project))
         _spawn_pipeline_thread(project["id"])
     if not pids:
         raise HTTPException(status_code=400, detail="no valid video_keys submitted")
-    return {"pids": pids, "status": "submitted"}
+    return {"pids": pids, "projects": projects, "status": "submitted"}
 
 
 @router.post("/start-url")
@@ -365,4 +375,4 @@ def start_url(req: StartUrlReq):
         network_metadata=network_metadata,
     )
     _spawn_pipeline_thread(project["id"])
-    return {"pids": [project["id"]], "status": "submitted"}
+    return {"pids": [project["id"]], "projects": [_submission_project(project)], "status": "submitted"}

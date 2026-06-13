@@ -1301,6 +1301,78 @@ def test_trailer_url_start_confirms_download_location_before_fetch():
     assert result.returncode == 0, result.stderr
 
 
+def test_trailer_url_success_keeps_download_and_subtitle_plan():
+    script = textwrap.dedent(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = {
+          console,
+          setTimeout: () => 0,
+          clearTimeout,
+          fetch: async () => ({
+            ok: true,
+            json: async () => ({
+              pids: ['p1'],
+              projects: [
+                {
+                  id: 'p1',
+                  name: 'Network lecture',
+                  network_video_plan: {
+                    download_path: '/tmp/AI_Sub_Pro_Data/projects/p1/original.mp4',
+                    download_filename: 'original.mp4',
+                    download_location_label: '项目文件夹 original.mp4',
+                    subtitle_strategy_label: '优先获取平台原生字幕；没有字幕再进入 ASR 听写。',
+                  },
+                },
+              ],
+            }),
+          }),
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          state.sysCheck = {translation_ready: true};
+          state.askConfirm = async () => true;
+          state.trailerUrlInput = 'https://www.youtube.com/watch?v=abc123def45';
+          await state.startTrailerUrlJob();
+
+          if (state.trailerCreatedProjects.length !== 1) {
+            throw new Error(`expected created project summary, got ${JSON.stringify(state.trailerCreatedProjects)}`);
+          }
+          const project = state.trailerCreatedProjects[0];
+          if (state.networkVideoPlanLocation(project) !== '/tmp/AI_Sub_Pro_Data/projects/p1/original.mp4') {
+            throw new Error(`expected download path, got ${state.networkVideoPlanLocation(project)}`);
+          }
+          const summary = state.networkVideoPlanSummary(project);
+          if (!summary.includes('原生字幕') || !summary.includes('ASR')) {
+            throw new Error(`expected subtitle-first summary, got ${summary}`);
+          }
+          if (!state.createdTrailerProjectTitle(project).includes('Network lecture')) {
+            throw new Error(`expected readable project title, got ${state.createdTrailerProjectTitle(project)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_project_location_reveal_helper_includes_network_video_projects():
     script = textwrap.dedent(
         """

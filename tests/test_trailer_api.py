@@ -127,6 +127,10 @@ def test_start_url_endpoint_creates_project_and_schedules(patched_projects_dir, 
     assert data["status"] == "submitted"
     assert len(data["pids"]) == 1
     assert threaded == data["pids"]
+    assert data["projects"][0]["id"] == data["pids"][0]
+    assert data["projects"][0]["name"] == "Manual trailer"
+    assert data["projects"][0]["network_video_plan"]["download_filename"] == "original.mp4"
+    assert data["projects"][0]["network_video_plan"]["native_subtitle_priority"] is True
     project = _load_project(data["pids"][0])
     assert project["source_type"] == "trailer"
     assert project["tmdb_id"] is None
@@ -171,8 +175,10 @@ def test_start_url_endpoint_uses_probe_metadata_when_name_and_language_missing(
     })
 
     assert r.status_code == 200
-    pid = r.json()["pids"][0]
+    data = r.json()
+    pid = data["pids"][0]
     assert threaded == [pid]
+    assert data["projects"][0]["network_video_plan"]["subtitle_strategy"] == "native_subtitles_then_asr"
     project = _load_project(pid)
     assert project["name"] == "MIT 6.S191 Lecture 1"
     assert project["original_language"] == "en"
