@@ -361,6 +361,10 @@ def test_home_source_mode_routes_supported_sources_and_explains_pending_ones():
           if (!options.find((option) => option.mode === 'network')?.strategy.includes('原生字幕')) {
             throw new Error(`expected network mode to explain native subtitle priority, got ${JSON.stringify(options)}`);
           }
+          const networkCapabilities = state.homeSourceCapabilities({mode: 'network'});
+          if (!networkCapabilities.some((item) => item.includes('YouTube')) || !networkCapabilities.some((item) => item.includes('平台字幕'))) {
+            throw new Error(`expected network capabilities to mention URL sources and platform subtitles, got ${JSON.stringify(networkCapabilities)}`);
+          }
           const subtitleOption = options.find((option) => option.mode === 'subtitle');
           if (subtitleOption?.disabled) {
             throw new Error('expected subtitle-only mode to be enabled for SRT import');
@@ -368,8 +372,16 @@ def test_home_source_mode_routes_supported_sources_and_explains_pending_ones():
           if (!subtitleOption?.strategy.includes('SRT') || !subtitleOption?.strategy.includes('VTT') || !subtitleOption?.strategy.includes('ASS')) {
             throw new Error(`expected subtitle source to explain SRT/VTT/ASS import, got ${JSON.stringify(subtitleOption)}`);
           }
+          const subtitleCapabilities = state.homeSourceCapabilities(subtitleOption);
+          if (!subtitleCapabilities.some((item) => item.includes('无需 ASR')) || !subtitleCapabilities.some((item) => item.includes('保留时间轴'))) {
+            throw new Error(`expected subtitle capabilities to explain direct translation, got ${JSON.stringify(subtitleCapabilities)}`);
+          }
           if (!state.homeSourceStrategy().includes('内嵌字幕')) {
             throw new Error(`expected local strategy to mention embedded subtitles, got ${state.homeSourceStrategy()}`);
+          }
+          const localCapabilities = state.homeSourceCapabilities();
+          if (!localCapabilities.some((item) => item.includes('内嵌字幕')) || !localCapabilities.some((item) => item.includes('烧录'))) {
+            throw new Error(`expected local capabilities to mention embedded subtitles and burn-in output, got ${JSON.stringify(localCapabilities)}`);
           }
           const audioOption = options.find((option) => option.mode === 'audio');
           if (audioOption?.disabled) {
@@ -377,6 +389,10 @@ def test_home_source_mode_routes_supported_sources_and_explains_pending_ones():
           }
           if (!audioOption?.strategy.includes('ASR') && !audioOption?.strategy.includes('听写')) {
             throw new Error(`expected audio source to explain transcription, got ${JSON.stringify(audioOption)}`);
+          }
+          const audioCapabilities = state.homeSourceCapabilities(audioOption);
+          if (!audioCapabilities.some((item) => item.includes('ASR')) || !audioCapabilities.some((item) => item.includes('SRT / VTT'))) {
+            throw new Error(`expected audio capabilities to mention ASR and subtitle export, got ${JSON.stringify(audioCapabilities)}`);
           }
 
           let picked = false;

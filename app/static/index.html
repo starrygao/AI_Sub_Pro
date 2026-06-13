@@ -103,6 +103,11 @@
                 </template>
               </div>
               <p class="mt-2 text-[12px] text-surface-500 leading-relaxed" x-text="homeSourceStrategy()"></p>
+              <ul class="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-1.5 text-[11px] text-surface-400">
+                <template x-for="capability in homeSourceCapabilities()" :key="capability">
+                  <li class="rounded-lg px-2 py-1" style="background: rgba(255,255,255,0.54); border: 1px solid var(--mac-border);" x-text="capability"></li>
+                </template>
+              </ul>
             </div>
 
             <!-- Drop Zone -->

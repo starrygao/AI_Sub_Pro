@@ -809,6 +809,7 @@ function app() {
           label: '本地视频',
           helper: '视频文件',
           strategy: '优先读取内嵌字幕和同名外挂字幕；没有可用字幕时再进入 ASR 听写。',
+          capabilities: ['内嵌字幕/外挂字幕优先', '无字幕时 ASR 听写', '完成后可烧录视频'],
           actionLabel: '选择视频文件',
           disabled: false,
         },
@@ -817,6 +818,7 @@ function app() {
           label: '网络视频',
           helper: 'URL',
           strategy: '下载到项目文件夹，优先获取平台原生字幕；没有字幕再进入 ASR 听写。',
+          capabilities: ['YouTube 或直接视频地址', '平台字幕优先翻译', '自动识别标题和内容类型'],
           actionLabel: '下载并翻译',
           disabled: false,
         },
@@ -825,6 +827,7 @@ function app() {
           label: '字幕文件',
           helper: 'SRT / VTT / ASS',
           strategy: '直接读取 SRT、VTT、ASS/SSA 时间轴，创建字幕项目后马上翻译；ASS 样式会转为可编辑文本。',
+          capabilities: ['无需 ASR', '保留时间轴', '支持 SRT / VTT / ASS / SSA'],
           actionLabel: '选择字幕文件',
           disabled: false,
         },
@@ -833,6 +836,7 @@ function app() {
           label: '音频文件',
           helper: 'MP3 / WAV / M4A',
           strategy: '上传纯音频后进入 ASR 听写和翻译，完成后可导出 SRT / VTT 字幕；不执行视频烧录。',
+          capabilities: ['ASR 听写后翻译', '适合访谈/课程/播客', '可导出 SRT / VTT'],
           actionLabel: '选择音频文件',
           disabled: false,
         },
@@ -854,6 +858,16 @@ function app() {
 
     homeSourceStrategy() {
       return this.homeSourceOption().strategy || '';
+    },
+
+    homeSourceCapabilities(option = this.homeSourceOption()) {
+      const resolved = Array.isArray(option?.capabilities)
+        ? option
+        : this.homeSourceOption(option?.mode || this.homeSourceMode);
+      const capabilities = Array.isArray(resolved?.capabilities) ? resolved.capabilities : [];
+      return capabilities
+        .filter((item) => typeof item === 'string' && item.trim())
+        .map((item) => item.trim());
     },
 
     homeSourceActionLabel() {
