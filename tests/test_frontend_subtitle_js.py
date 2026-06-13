@@ -17,6 +17,28 @@ def _run_node(script: str):
     assert result.returncode == 0, result.stderr
 
 
+def test_save_video_label_reflects_pending_state():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        if (state.saveVideoLabel() !== '保存视频') {
+          throw new Error(`expected idle save label, got ${state.saveVideoLabel()}`);
+        }
+        state.projectActionPending = 'save-video';
+        if (state.saveVideoLabel() !== '保存中...') {
+          throw new Error(`expected pending save label, got ${state.saveVideoLabel()}`);
+        }
+        """
+    )
+
+
 def test_subtitle_split_rolls_back_when_persist_fails():
     _run_node(
         """

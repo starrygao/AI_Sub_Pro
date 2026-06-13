@@ -57,6 +57,60 @@ def test_create_trailer_project_writes_project_json(patched_projects_dir):
     assert "原生字幕" in plan["subtitle_strategy_label"]
 
 
+def test_create_trailer_project_plan_includes_detected_subtitle_languages(patched_projects_dir):
+    from app.api.projects import create_trailer_project
+
+    meta = create_trailer_project(
+        tmdb_id=None,
+        tmdb_type=None,
+        season_number=None,
+        video_key=None,
+        youtube_url="https://www.youtube.com/watch?v=abc123def45",
+        original_language="en",
+        name="MIT lecture",
+        network_metadata={
+            "subtitle_languages": ["en", "en-US", ""],
+            "automatic_caption_languages": ["zh-Hans", "en"],
+            "has_subtitles": True,
+        },
+    )
+
+    plan = meta["network_video_plan"]
+    assert plan["detected_subtitle_languages"] == ["en", "en-US"]
+    assert plan["detected_automatic_caption_languages"] == ["zh-Hans", "en"]
+    assert plan["subtitle_probe_status"] == "available"
+    assert "en, en-US" in plan["subtitle_strategy_label"]
+    assert "自动字幕：zh-Hans, en" in plan["subtitle_strategy_label"]
+    assert "失败再进入 ASR" in plan["subtitle_strategy_label"]
+
+
+def test_create_trailer_project_plan_explains_asr_when_no_subtitles_detected(patched_projects_dir):
+    from app.api.projects import create_trailer_project
+
+    meta = create_trailer_project(
+        tmdb_id=None,
+        tmdb_type=None,
+        season_number=None,
+        video_key=None,
+        youtube_url="https://cdn.example.com/lecture.mp4",
+        original_language="auto",
+        name="Direct lecture",
+        network_metadata={
+            "source_type": "direct_video",
+            "subtitle_languages": [],
+            "automatic_caption_languages": [],
+            "has_subtitles": False,
+        },
+    )
+
+    plan = meta["network_video_plan"]
+    assert plan["subtitle_probe_status"] == "not_found"
+    assert plan["detected_subtitle_languages"] == []
+    assert plan["detected_automatic_caption_languages"] == []
+    assert "未检测到平台字幕" in plan["subtitle_strategy_label"]
+    assert "ASR 听写" in plan["subtitle_strategy_label"]
+
+
 def test_create_trailer_project_movie_no_season(patched_projects_dir):
     from app.api.projects import create_trailer_project
 

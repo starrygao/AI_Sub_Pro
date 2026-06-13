@@ -81,7 +81,9 @@ def test_asr_mode_and_recommendation_are_visible_in_settings():
     assert 'x-model="settings.asr.backend"' in html
     assert 'aria-label="本地 ASR 后端"' in html
     assert 'x-for="option in asrModelOptions()"' in html
-    assert "sysCheck?.asr_install_prompts?.length" in html
+    assert "asrInstallPrompts().length" in html
+    assert "prompt in asrInstallPrompts()" in html
+    assert "prompt in sysCheck.asr_install_prompts" not in html
     assert 'x-show="sysCheck?.asr_recommendation && !sysCheckLoading && !sysCheckError"' in html
     assert "asrSetupActionPills()" in html
     assert "applyAsrRecommendation()" in html
@@ -206,6 +208,8 @@ def test_project_detail_export_actions_have_disabled_and_pending_states():
     assert "hasExportableTranslatedSubtitles()" in js
     assert "@click=\"saveOutputVideo()\"" in html
     assert ":disabled=\"!canSaveVideo()\"" in html
+    assert "saveVideoLabel()" in html
+    assert "saveVideoLabel()" in js
     assert "download-video`" not in html
     assert "saveOutputVideo()" in js
 

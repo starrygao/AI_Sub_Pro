@@ -482,6 +482,10 @@ function app() {
       return this.projectActionPending === 'save-video';
     },
 
+    saveVideoLabel() {
+      return this.isSavingVideo() ? '保存中...' : '保存视频';
+    },
+
     saveVideoUnavailableMessage() {
       if (!this.currentProject) return '请先打开项目';
       if (!this.canBurnVideo(this.currentProject)) return '当前项目没有视频烧录输出';
@@ -3624,12 +3628,47 @@ function app() {
       return '项目文件夹 original.mp4';
     },
 
+    networkVideoPlanLanguages(value) {
+      if (!Array.isArray(value)) return [];
+      const languages = [];
+      const seen = new Set();
+      value.forEach((item) => {
+        if (typeof item !== 'string') return;
+        const language = item.trim();
+        if (!language) return;
+        const normalized = language.toLowerCase();
+        if (['auto', 'und', 'unknown', 'none', 'null'].includes(normalized)) return;
+        if (seen.has(normalized)) return;
+        seen.add(normalized);
+        languages.push(language);
+      });
+      return languages.slice(0, 8);
+    },
+
     networkVideoPlanSummary(project) {
       const plan = this.networkVideoPlan(project);
       const label = typeof plan.subtitle_strategy_label === 'string'
         ? plan.subtitle_strategy_label.trim()
         : '';
-      return label || '优先获取平台原生字幕；没有字幕再进入 ASR 听写。';
+      if (label) return label;
+
+      const subtitleLanguages = this.networkVideoPlanLanguages(plan.detected_subtitle_languages);
+      const automaticCaptionLanguages = this.networkVideoPlanLanguages(plan.detected_automatic_caption_languages);
+      if (subtitleLanguages.length || automaticCaptionLanguages.length) {
+        const detected = [];
+        if (subtitleLanguages.length) {
+          detected.push(`原生字幕：${subtitleLanguages.join(', ')}`);
+        }
+        if (automaticCaptionLanguages.length) {
+          detected.push(`自动字幕：${automaticCaptionLanguages.join(', ')}`);
+        }
+        return `检测到平台字幕（${detected.join('；')}）；会优先下载字幕并翻译，失败再进入 ASR 听写。`;
+      }
+
+      if (plan.subtitle_probe_status === 'not_found') {
+        return '未检测到平台字幕；下载视频后进入 ASR 听写。';
+      }
+      return '优先获取平台原生字幕；没有字幕再进入 ASR 听写。';
     },
 
     async startTrailerJobs() {

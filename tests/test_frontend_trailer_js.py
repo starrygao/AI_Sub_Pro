@@ -1324,7 +1324,9 @@ def test_trailer_url_success_keeps_download_and_subtitle_plan():
                     download_path: '/tmp/AI_Sub_Pro_Data/projects/p1/original.mp4',
                     download_filename: 'original.mp4',
                     download_location_label: '项目文件夹 original.mp4',
-                    subtitle_strategy_label: '优先获取平台原生字幕；没有字幕再进入 ASR 听写。',
+                    detected_subtitle_languages: ['en', 'en-US'],
+                    detected_automatic_caption_languages: ['zh-Hans'],
+                    subtitle_probe_status: 'available',
                   },
                 },
               ],
@@ -1349,8 +1351,8 @@ def test_trailer_url_success_keeps_download_and_subtitle_plan():
             throw new Error(`expected download path, got ${state.networkVideoPlanLocation(project)}`);
           }
           const summary = state.networkVideoPlanSummary(project);
-          if (!summary.includes('原生字幕') || !summary.includes('ASR')) {
-            throw new Error(`expected subtitle-first summary, got ${summary}`);
+          if (!summary.includes('原生字幕：en, en-US') || !summary.includes('自动字幕：zh-Hans') || !summary.includes('ASR')) {
+            throw new Error(`expected detected subtitle languages and ASR fallback summary, got ${summary}`);
           }
           if (!state.createdTrailerProjectTitle(project).includes('Network lecture')) {
             throw new Error(`expected readable project title, got ${state.createdTrailerProjectTitle(project)}`);
@@ -1396,6 +1398,42 @@ def test_project_location_reveal_helper_includes_network_video_projects():
         }
         if (state.canRevealProjectLocation(null) || state.canRevealProjectLocation({})) {
           throw new Error('expected malformed projects not to reveal');
+        }
+        """
+    )
+
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_network_video_plan_summary_explains_asr_when_no_subtitles_detected():
+    script = textwrap.dedent(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        const summary = state.networkVideoPlanSummary({
+          network_video_plan: {
+            subtitle_probe_status: 'not_found',
+            detected_subtitle_languages: [],
+            detected_automatic_caption_languages: [],
+          },
+        });
+        if (!summary.includes('未检测到平台字幕') || !summary.includes('ASR 听写')) {
+          throw new Error(`expected ASR fallback summary, got ${summary}`);
         }
         """
     )

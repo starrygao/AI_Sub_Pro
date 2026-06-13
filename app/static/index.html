@@ -1309,8 +1309,8 @@
                       class="btn-secondary shrink-0 px-3 py-1.5 rounded-lg text-[12px] font-medium disabled:opacity-40 disabled:cursor-not-allowed">应用推荐 ASR 设置</button>
             </div>
           </div>
-          <div x-show="sysCheck?.asr_install_prompts?.length && !sysCheckLoading && !sysCheckError" class="mt-3 rounded-xl border border-warn/30 px-3 py-2 text-[12px] text-warn" style="background: rgba(245,158,11,0.08);">
-            <template x-for="prompt in sysCheck.asr_install_prompts" :key="prompt.id || prompt.message">
+          <div x-show="asrInstallPrompts().length && !sysCheckLoading && !sysCheckError" class="mt-3 rounded-xl border border-warn/30 px-3 py-2 text-[12px] text-warn" style="background: rgba(245,158,11,0.08);">
+            <template x-for="prompt in asrInstallPrompts()" :key="prompt.id || prompt.message">
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0 space-y-1">
                   <p class="font-medium" x-text="prompt.title || 'ASR 依赖提醒'"></p>

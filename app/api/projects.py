@@ -617,8 +617,72 @@ def _save_project(pid: str, data: dict):
     atomic_write_json(PROJECTS_DIR / pid / "project.json", data)
 
 
-def _network_video_plan(pdir: Path) -> dict:
+def _network_metadata_languages(network_metadata: Optional[dict], key: str) -> list[str]:
+    if not isinstance(network_metadata, dict):
+        return []
+    raw_items = network_metadata.get(key)
+    if not isinstance(raw_items, list):
+        return []
+
+    languages: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_items:
+        if not isinstance(raw, str):
+            continue
+        language = raw.strip()
+        if not language or language.lower() in {"auto", "und", "unknown", "none", "null"}:
+            continue
+        normalized = language.lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        languages.append(language)
+    return languages[:20]
+
+
+def _network_subtitle_probe_status(
+    network_metadata: Optional[dict],
+    subtitle_languages: list[str],
+    automatic_caption_languages: list[str],
+) -> str:
+    if subtitle_languages or automatic_caption_languages:
+        return "available"
+    if isinstance(network_metadata, dict):
+        has_subtitles = network_metadata.get("has_subtitles")
+        if has_subtitles is True:
+            return "available"
+        if has_subtitles is False:
+            return "not_found"
+    return "unknown"
+
+
+def _network_subtitle_strategy_label(
+    status: str,
+    subtitle_languages: list[str],
+    automatic_caption_languages: list[str],
+) -> str:
+    if status == "available":
+        detected = []
+        if subtitle_languages:
+            detected.append("原生字幕：" + ", ".join(subtitle_languages))
+        if automatic_caption_languages:
+            detected.append("自动字幕：" + ", ".join(automatic_caption_languages))
+        detected_label = "；".join(detected) if detected else "平台字幕"
+        return f"检测到平台字幕（{detected_label}）；会优先下载字幕并翻译，失败再进入 ASR 听写。"
+    if status == "not_found":
+        return "未检测到平台字幕；下载视频后进入 ASR 听写。"
+    return "优先获取平台原生字幕；没有字幕再进入 ASR 听写。"
+
+
+def _network_video_plan(pdir: Path, network_metadata: Optional[dict] = None) -> dict:
     download_path = pdir / "original.mp4"
+    subtitle_languages = _network_metadata_languages(network_metadata, "subtitle_languages")
+    automatic_caption_languages = _network_metadata_languages(network_metadata, "automatic_caption_languages")
+    subtitle_probe_status = _network_subtitle_probe_status(
+        network_metadata,
+        subtitle_languages,
+        automatic_caption_languages,
+    )
     return {
         "save_scope": "project_library",
         "download_filename": "original.mp4",
@@ -626,7 +690,14 @@ def _network_video_plan(pdir: Path) -> dict:
         "download_location_label": "项目文件夹 original.mp4",
         "download_path_hint": "~/AI_Sub_Pro_Data/projects/<项目ID>/original.mp4",
         "subtitle_strategy": "native_subtitles_then_asr",
-        "subtitle_strategy_label": "优先获取平台原生字幕；没有字幕再进入 ASR 听写。",
+        "subtitle_strategy_label": _network_subtitle_strategy_label(
+            subtitle_probe_status,
+            subtitle_languages,
+            automatic_caption_languages,
+        ),
+        "subtitle_probe_status": subtitle_probe_status,
+        "detected_subtitle_languages": subtitle_languages,
+        "detected_automatic_caption_languages": automatic_caption_languages,
         "native_subtitle_priority": True,
     }
 
@@ -672,7 +743,7 @@ def create_trailer_project(
         "error": None,
         "output_video": None,
         "network_metadata": network_metadata,
-        "network_video_plan": _network_video_plan(pdir),
+        "network_video_plan": _network_video_plan(pdir, network_metadata),
         "source_title": network_metadata.get("title"),
         "source_uploader": network_metadata.get("uploader"),
         "source_channel": network_metadata.get("channel"),
