@@ -1,4 +1,4 @@
-"""Trailer API routes: search, videos, start."""
+"""Trailer API routes: TMDB lookup and direct URL video jobs."""
 import math
 import queue
 import logging
@@ -21,9 +21,10 @@ from app.engines.tmdb import (
 )
 from app.config import Config
 from app.api.settings import require_translation_ready
-from app.engines.trailer_downloader import build_youtube_url
+from app.engines.trailer_downloader import build_youtube_url, _validate_download_url, probe_video_info
 from app.engines.trailer_pipeline import run_trailer_pipeline
 from app.api.projects import create_trailer_project
+from app.utils.errors import redact_error_message
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +50,13 @@ class StartReq(BaseModel):
     target_language: Optional[str] = None
 
 
+class StartUrlReq(BaseModel):
+    video_url: str
+    name: Optional[str] = None
+    original_language: Optional[str] = None
+    target_language: Optional[str] = None
+
+
 def _require_positive_int(name: str, value: Optional[int]) -> None:
     if value is not None and value < 1:
         raise HTTPException(status_code=400, detail=f"{name} must be positive")
@@ -70,6 +78,36 @@ def _configured_target_language(override: Optional[str] = None) -> str:
     if isinstance(configured, str) and configured.strip():
         return configured.strip()
     return "简体中文"
+
+
+def _default_url_project_name(url: str) -> str:
+    value = url.strip()
+    if "youtu" in value.lower():
+        return "YouTube 视频"
+    return "在线视频"
+
+
+def _probe_network_metadata(video_url: str) -> dict:
+    try:
+        info = probe_video_info(video_url)
+    except Exception as e:
+        log.warning("network video metadata probe failed: %s", redact_error_message(e, 160))
+        return {}
+    return info if isinstance(info, dict) else {}
+
+
+def _metadata_title(metadata: dict) -> Optional[str]:
+    value = metadata.get("title") if isinstance(metadata, dict) else None
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _metadata_language(metadata: dict) -> Optional[str]:
+    value = metadata.get("language") if isinstance(metadata, dict) else None
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
 
 @router.post("/search")
@@ -288,3 +326,43 @@ def start(req: StartReq):
     if not pids:
         raise HTTPException(status_code=400, detail="no valid video_keys submitted")
     return {"pids": pids, "status": "submitted"}
+
+
+@router.post("/start-url")
+def start_url(req: StartUrlReq):
+    video_url = _require_non_blank("video_url", req.video_url)
+    try:
+        _validate_download_url(video_url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    target_language = _configured_target_language(req.target_language)
+    require_translation_ready()
+    has_manual_name = bool(req.name is not None and req.name.strip())
+    has_manual_language = (
+        req.original_language is not None
+        and req.original_language.strip()
+        and req.original_language.strip().lower() != "auto"
+    )
+    network_metadata = _probe_network_metadata(video_url) if not (has_manual_name and has_manual_language) else {}
+    if has_manual_name:
+        name = req.name.strip()
+    else:
+        name = _metadata_title(network_metadata) or _default_url_project_name(video_url)
+    if has_manual_language:
+        original_language = req.original_language.strip()
+    else:
+        original_language = _metadata_language(network_metadata) or "auto"
+    project = create_trailer_project(
+        tmdb_id=None,
+        tmdb_type=None,
+        season_number=None,
+        video_key=None,
+        youtube_url=video_url,
+        original_language=original_language,
+        name=name,
+        asr_language=original_language,
+        target_language=target_language,
+        network_metadata=network_metadata,
+    )
+    _spawn_pipeline_thread(project["id"])
+    return {"pids": [project["id"]], "status": "submitted"}

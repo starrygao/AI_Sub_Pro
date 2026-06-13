@@ -18,6 +18,12 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, StrictInt
 
 from app.config import PROJECTS_DIR
+from app.engines.project_metadata import (
+    CONTENT_TYPE_OPTIONS,
+    infer_content_metadata_from_filename,
+    normalize_content_type,
+    should_skip_tmdb_enrichment,
+)
 from app.engines.workflow_state import load_workflow_state, stage_log_path
 from app.utils.project_store import (
     project_dir as _ps_project_dir,
@@ -60,6 +66,22 @@ _PROJECT_SAFE_DEFAULTS = {
     "asr_language": "auto",
     "target_language": "简体中文",
     "error": None,
+    "network_metadata": None,
+    "source_title": None,
+    "source_uploader": None,
+    "source_channel": None,
+    "source_duration": None,
+    "source_webpage_url": None,
+    "source_extractor": None,
+    "source_language": None,
+    "source_has_subtitles": False,
+    "subtitle_source": None,
+    "native_subtitle_language": None,
+    "content_type": "auto",
+    "academic_field": "",
+    "content_notes": "",
+    "manual_terms": "",
+    "metadata_source": "",
 }
 
 
@@ -151,8 +173,53 @@ def _apply_safe_defaults(project: dict) -> dict:
         "show_title",
         "poster_path",
         "error",
+        "source_title",
+        "source_uploader",
+        "source_channel",
+        "source_webpage_url",
+        "source_extractor",
+        "source_language",
+        "subtitle_source",
+        "native_subtitle_language",
+        "academic_field",
+        "content_notes",
+        "manual_terms",
+        "metadata_source",
     ):
         if project.get(field) is not None and not isinstance(project.get(field), str):
+            project[field] = None
+    if not isinstance(project.get("network_metadata"), dict):
+        project["network_metadata"] = {}
+    project["content_type"] = normalize_content_type(project.get("content_type"))
+    for field, limit in (
+        ("academic_field", 80),
+        ("content_notes", 1200),
+        ("manual_terms", 2400),
+        ("metadata_source", 40),
+    ):
+        value = project.get(field)
+        if value is None:
+            project[field] = ""
+        elif isinstance(value, str):
+            project[field] = value.strip()[:limit]
+        else:
+            project[field] = ""
+    for field, limit in (
+        ("source_title", 160),
+        ("source_uploader", 160),
+        ("source_channel", 160),
+        ("source_webpage_url", 500),
+        ("source_extractor", 80),
+        ("source_language", 32),
+        ("subtitle_source", 40),
+        ("native_subtitle_language", 32),
+    ):
+        value = project.get(field)
+        if value is None:
+            continue
+        if isinstance(value, str):
+            project[field] = value.strip()[:limit] or None
+        else:
             project[field] = None
     if project.get("source_type") not in ("upload", "trailer"):
         project["source_type"] = "upload"
@@ -183,6 +250,17 @@ def _apply_safe_defaults(project: dict) -> dict:
     if not math.isfinite(duration):
         duration = 0
     project["duration"] = max(0, duration)
+    source_duration = project.get("source_duration")
+    if source_duration is not None:
+        try:
+            source_duration = float(source_duration)
+        except (OverflowError, TypeError, ValueError):
+            source_duration = None
+        if source_duration is not None and (not math.isfinite(source_duration) or source_duration < 0):
+            source_duration = None
+        if isinstance(source_duration, float) and source_duration.is_integer():
+            source_duration = int(source_duration)
+    project["source_duration"] = source_duration
     if project.get("tmdb_type") not in (None, "movie", "tv"):
         project["tmdb_type"] = None
     for field, default in (
@@ -190,6 +268,7 @@ def _apply_safe_defaults(project: dict) -> dict:
         ("asr_skipped", False),
         ("prefer_embedded_subtitle", True),
         ("auto_run", False),
+        ("source_has_subtitles", False),
     ):
         if not isinstance(project.get(field), bool):
             project[field] = default
@@ -245,6 +324,10 @@ class CreateProjectReq(BaseModel):
     name: Optional[str] = None
     asr_language: Optional[str] = None
     target_language: Optional[str] = None
+    content_type: Optional[str] = None
+    academic_field: Optional[str] = None
+    content_notes: Optional[str] = None
+    manual_terms: Optional[str] = None
 
 
 class SubtitleEdit(BaseModel):
@@ -433,9 +516,9 @@ def _save_project(pid: str, data: dict):
 
 
 def create_trailer_project(
-    tmdb_id: int,
-    tmdb_type: str,
-    video_key: str,
+    tmdb_id: Optional[int],
+    tmdb_type: Optional[str],
+    video_key: Optional[str],
     youtube_url: str,
     original_language: str,
     name: str,
@@ -443,6 +526,7 @@ def create_trailer_project(
     parent_project_id=None,
     asr_language: str = "auto",
     target_language: str = "简体中文",
+    network_metadata: Optional[dict] = None,
 ) -> dict:
     """Create a new trailer-source project directory + project.json.
 
@@ -452,6 +536,7 @@ def create_trailer_project(
     pid = _new_project_id()
     pdir = PROJECTS_DIR / pid
     pdir.mkdir(parents=True, exist_ok=True)
+    network_metadata = network_metadata if isinstance(network_metadata, dict) else {}
 
     project = {
         "id": pid,
@@ -470,6 +555,17 @@ def create_trailer_project(
         "target_language": _text_default(target_language, "简体中文"),
         "error": None,
         "output_video": None,
+        "network_metadata": network_metadata,
+        "source_title": network_metadata.get("title"),
+        "source_uploader": network_metadata.get("uploader"),
+        "source_channel": network_metadata.get("channel"),
+        "source_duration": network_metadata.get("duration"),
+        "source_webpage_url": network_metadata.get("webpage_url"),
+        "source_extractor": network_metadata.get("extractor_key"),
+        "source_language": network_metadata.get("language"),
+        "source_has_subtitles": bool(network_metadata.get("has_subtitles")),
+        "subtitle_source": None,
+        "native_subtitle_language": None,
         # Trailer-specific
         "source_type": "trailer",
         "tmdb_id": tmdb_id,
@@ -484,6 +580,7 @@ def create_trailer_project(
         "archived": False,
     }
 
+    project = _apply_safe_defaults(project)
     atomic_write_json(pdir / "project.json", project)
 
     return project
@@ -513,8 +610,12 @@ def list_projects(include_archived: bool = Query(False)):
 
 @router.post("")
 async def create_project(req: CreateProjectReq):
-    """Create a new project from a video file. Auto-enriches with TMDB
-    metadata when guessit can extract a usable title from the filename."""
+    """Create a new project from a video file.
+
+    Filename/content metadata is inferred first. TMDB is then used only as
+    best-effort film/TV enrichment, so lectures/tutorials are not forced
+    through an entertainment metadata path.
+    """
     video_path = req.video_path.strip()
     if not os.path.exists(video_path):
         raise HTTPException(400, f"Video file not found: {video_path}")
@@ -535,6 +636,26 @@ async def create_project(req: CreateProjectReq):
 
     asr_language = _text_default(req.asr_language, "auto")
     target_language = _text_default(req.target_language, "简体中文")
+    inferred_metadata = infer_content_metadata_from_filename(name)
+    requested_content_type = normalize_content_type(req.content_type)
+    has_manual_metadata = any(
+        isinstance(value, str) and value.strip()
+        for value in (
+            req.content_type,
+            req.academic_field,
+            req.content_notes,
+            req.manual_terms,
+        )
+    )
+    content_type = (
+        requested_content_type
+        if requested_content_type != "auto"
+        else inferred_metadata.get("content_type", "auto")
+    )
+    academic_field = _text_default(
+        req.academic_field,
+        inferred_metadata.get("academic_field", ""),
+    )
     project = {
         "id": pid,
         "name": name,
@@ -552,23 +673,33 @@ async def create_project(req: CreateProjectReq):
         "asr_language": asr_language,
         "target_language": target_language,
         "error": None,
+        "content_type": content_type,
+        "academic_field": academic_field,
+        "content_notes": (req.content_notes or "").strip() if isinstance(req.content_notes, str) else "",
+        "manual_terms": (req.manual_terms or "").strip() if isinstance(req.manual_terms, str) else "",
+        "metadata_source": "manual" if has_manual_metadata else inferred_metadata.get("metadata_source", ""),
     }
     project = _apply_safe_defaults(project)
 
     # TMDB enrichment from filename. Best-effort: any failure (no key,
     # network, no parse) leaves the project as-is; UI can manually link later.
     try:
-        from app.engines.tmdb_enrich import enrich_from_filename
-        enrich = await enrich_from_filename(name)
-        if enrich.get("auto_attached"):
-            project["tmdb_id"] = enrich["tmdb_id"]
-            project["tmdb_type"] = enrich["tmdb_type"]
-            project["season_number"] = enrich.get("season_number")
-            project["show_title"] = enrich.get("show_title")
-            project["original_language"] = enrich.get("original_language")
-            project["poster_path"] = enrich.get("poster_path")
-        elif enrich.get("candidates"):
-            project["tmdb_candidates"] = enrich["candidates"]
+        if not should_skip_tmdb_enrichment(project):
+            from app.engines.tmdb_enrich import enrich_from_filename
+            enrich = await enrich_from_filename(name)
+            if enrich.get("auto_attached"):
+                project["tmdb_id"] = enrich["tmdb_id"]
+                project["tmdb_type"] = enrich["tmdb_type"]
+                project["season_number"] = enrich.get("season_number")
+                project["show_title"] = enrich.get("show_title")
+                project["original_language"] = enrich.get("original_language")
+                project["poster_path"] = enrich.get("poster_path")
+                if project.get("content_type") == "auto":
+                    project["content_type"] = "series" if enrich.get("tmdb_type") == "tv" else "movie"
+                    if not project.get("metadata_source"):
+                        project["metadata_source"] = "tmdb"
+            elif enrich.get("candidates"):
+                project["tmdb_candidates"] = enrich["candidates"]
     except Exception:
         # Never block project creation on enrichment errors.
         pass
@@ -727,6 +858,11 @@ _PATCHABLE_FIELDS = {
     "tmdb_candidates",
     "name",
     "archived",
+    "content_type",
+    "academic_field",
+    "content_notes",
+    "manual_terms",
+    "metadata_source",
 }
 
 _CLEARABLE_FIELDS = {
@@ -739,6 +875,11 @@ _CLEARABLE_FIELDS = {
     "original_language",
     "tmdb_candidates",
     "selected_subtitle_track",
+    "content_type",
+    "academic_field",
+    "content_notes",
+    "manual_terms",
+    "metadata_source",
 }
 
 
@@ -757,6 +898,11 @@ class PatchProjectReq(BaseModel):
     original_language: Optional[str] = None
     name: Optional[str] = None
     archived: Optional[bool] = None
+    content_type: Optional[str] = None
+    academic_field: Optional[str] = None
+    content_notes: Optional[str] = None
+    manual_terms: Optional[str] = None
+    metadata_source: Optional[str] = None
     # Sentinel set: caller passes field names whose value should be set to
     # null/None (since None on the request means "not provided" in pydantic).
     clear: Optional[List[str]] = None
@@ -784,6 +930,10 @@ def _validate_project_patch(project: dict, payload: dict) -> None:
     name = payload.get("name")
     if "name" in payload and name is not None and not name.strip():
         raise ValueError("name must not be empty")
+
+    content_type = payload.get("content_type")
+    if "content_type" in payload and content_type not in CONTENT_TYPE_OPTIONS:
+        raise ValueError("invalid content_type")
 
     for field, tracks_field in (
         ("selected_audio_track", "audio_tracks"),
@@ -834,8 +984,16 @@ def patch_project(req: PatchProjectReq, pid: str = PathParam(pattern=PID_PATTERN
     """Partially update a project. Only whitelisted fields are accepted.
     Pass field names in `clear` to explicitly set those fields to null."""
     payload = req.model_dump(exclude_unset=True, exclude={"clear"})
-    if isinstance(payload.get("name"), str):
-        payload["name"] = payload["name"].strip()
+    for field in (
+        "name",
+        "content_type",
+        "academic_field",
+        "content_notes",
+        "manual_terms",
+        "metadata_source",
+    ):
+        if isinstance(payload.get(field), str):
+            payload[field] = payload[field].strip()
 
     def _apply(project):
         _validate_project_patch(project, payload)
@@ -843,7 +1001,11 @@ def patch_project(req: PatchProjectReq, pid: str = PathParam(pattern=PID_PATTERN
             if k in _PATCHABLE_FIELDS:
                 project[k] = v
         for k in (req.clear or []):
-            if k in _CLEARABLE_FIELDS:
+            if k == "content_type":
+                project[k] = "auto"
+            elif k in {"academic_field", "content_notes", "manual_terms", "metadata_source"}:
+                project[k] = ""
+            elif k in _CLEARABLE_FIELDS:
                 project[k] = None
 
     try:

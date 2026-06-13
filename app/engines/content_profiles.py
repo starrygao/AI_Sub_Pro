@@ -47,6 +47,16 @@ _PROFILES: tuple[ContentProfile, ...] = (
         signals=("documentary", "unscripted", "non-fiction"),
     ),
     ContentProfile(
+        id="academic_lecture",
+        label="Academic lecture / research talk",
+        rules=(
+            "Translate dense academic claims faithfully; preserve caveats, hedges, definitions, and proof/theorem structure.",
+            "Preserve equations, symbols, variables, units, citations, paper titles, and formal abbreviations when they are part of the source.",
+            "Keep discipline terms consistent; when an English abbreviation is standard, preserve it and translate the surrounding explanation.",
+        ),
+        signals=("academic_lecture", "lecture", "seminar", "research talk"),
+    ),
+    ContentProfile(
         id="sitcom_comedy",
         label="Sitcom / comedy",
         rules=(
@@ -143,7 +153,14 @@ def _iter_metadata_strings(meta_info: dict) -> list[str]:
         "overview",
         "tmdb_type",
         "source_type",
+        "source_title",
+        "source_uploader",
+        "source_channel",
         "category",
+        "content_type",
+        "academic_field",
+        "content_notes",
+        "manual_terms",
     ):
         value = meta_info.get(key)
         if isinstance(value, str) and value.strip():
@@ -198,6 +215,11 @@ def _looks_episode_like(meta_info: dict) -> bool:
     return bool(re.search(r"\bs\d{1,2}e\d{1,2}\b", blob)) or _has_token(meta_info, "series", "tv")
 
 
+def _is_tv_like(meta_info: dict) -> bool:
+    media_type = _normalized_type(meta_info)
+    return media_type in {"tv", "series"} or _looks_episode_like(meta_info)
+
+
 def _is_english_series(meta_info: dict) -> bool:
     lang = _language_code(meta_info)
     media_type = _normalized_type(meta_info)
@@ -228,6 +250,19 @@ def _is_documentary_unscripted(meta_info: dict) -> bool:
     )
 
 
+def _is_academic_lecture(meta_info: dict) -> bool:
+    return _has_token(meta_info, "academic_lecture", "lecture", "seminar", "colloquium") or _has_phrase(
+        meta_info,
+        "academic lecture",
+        "research talk",
+        "conference talk",
+        "guest lecture",
+        "paper presentation",
+        "学术",
+        "讲座",
+    )
+
+
 def _is_sitcom_comedy(meta_info: dict) -> bool:
     return _has_token(meta_info, "sitcom", "comedy") or _has_phrase(
         meta_info,
@@ -241,23 +276,39 @@ def _is_sitcom_comedy(meta_info: dict) -> bool:
 
 def _is_korean_drama(meta_info: dict) -> bool:
     lang = _language_code(meta_info)
-    return lang in {"ko", "kor", "korean"} or _has_phrase(
+    if _has_phrase(
         meta_info,
         "k-drama",
         "korean drama",
         "韩剧",
         "韓劇",
+    ):
+        return True
+    return (
+        lang in {"ko", "kor", "korean"}
+        and _is_tv_like(meta_info)
+        and not _is_interview(meta_info)
+        and not _is_documentary_unscripted(meta_info)
+        and not _is_anime(meta_info)
     )
 
 
 def _is_japanese_drama(meta_info: dict) -> bool:
     lang = _language_code(meta_info)
-    return lang in {"ja", "jp", "jpn", "japanese"} or _has_phrase(
+    if _has_phrase(
         meta_info,
         "j-drama",
         "japanese drama",
         "日剧",
         "日劇",
+    ):
+        return True
+    return (
+        lang in {"ja", "jp", "jpn", "japanese"}
+        and _is_tv_like(meta_info)
+        and not _is_interview(meta_info)
+        and not _is_documentary_unscripted(meta_info)
+        and not _is_anime(meta_info)
     )
 
 
@@ -273,11 +324,28 @@ def _is_anime(meta_info: dict) -> bool:
 
 
 def _is_legal_adult(meta_info: dict) -> bool:
-    return _has_token(meta_info, "adult", "av") or _has_phrase(
+    genre_tokens = {
+        token.casefold()
+        for key in ("genres", "genre", "tags", "categories", "category", "content_type")
+        for token in (
+            meta_info.get(key)
+            if isinstance(meta_info.get(key), list)
+            else [meta_info.get(key)]
+        )
+        if isinstance(token, str) and token.strip()
+    }
+    explicit_tag = bool(genre_tokens & {"adult", "av", "legal_adult", "explicit_adult", "xxx"})
+    return explicit_tag or _has_phrase(
         meta_info,
         "legal adult",
         "adult video",
-        "成人",
+        "adult film",
+        "adult content",
+        "porn",
+        "xxx",
+        "成人视频",
+        "成人片",
+        "成人电影",
     )
 
 
@@ -310,6 +378,7 @@ _PREDICATES = {
     "us_series": _is_english_series,
     "interview": _is_interview,
     "documentary_unscripted": _is_documentary_unscripted,
+    "academic_lecture": _is_academic_lecture,
     "sitcom_comedy": _is_sitcom_comedy,
     "korean_drama": _is_korean_drama,
     "japanese_drama": _is_japanese_drama,

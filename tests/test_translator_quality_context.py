@@ -524,6 +524,44 @@ def test_build_prompt_injects_subtitle_style_guidance(monkeypatch):
     assert translator.last_quality_trace.style_hits[0]["scope"] == "subtitle_style"
 
 
+def test_build_prompt_injects_project_metadata_and_manual_terms(monkeypatch):
+    from app.engines import translator as tmod
+    from app.engines.knowledge import KnowledgeBase
+
+    monkeypatch.setattr(tmod, "_shared_kb", KnowledgeBase(), raising=False)
+    config = _translator_config()
+    config["translation"]["use_translation_memory"] = False
+    config["translation"]["use_phrase_library"] = False
+    translator = tmod.SubtitleTranslator(config)
+
+    prompt = translator._build_prompt(
+        "简体中文",
+        {
+            "name": "Stanford CS229 Lecture 04",
+            "content_type": "academic_lecture",
+            "academic_field": "machine learning",
+            "content_notes": "Lecture about gradient descent and convexity.",
+            "manual_terms": "gradient descent=梯度下降\nconvexity=凸性",
+            "original_language": "en",
+        },
+        None,
+        [],
+        [],
+        items=[
+            {"id": 1, "original": "Gradient descent relies on convexity assumptions."},
+        ],
+    )
+
+    assert "Project content metadata" in prompt
+    assert "academic lecture" in prompt.lower()
+    assert "machine learning" in prompt
+    assert "gradient descent -> 梯度下降" in prompt
+    assert "convexity -> 凸性" in prompt
+    assert "Academic lecture / research talk" in prompt
+    assert translator.last_quality_trace.kb_hits
+    assert any(hit["scope"] == "manual_terms" for hit in translator.last_quality_trace.kb_hits)
+
+
 def test_build_prompt_gates_legal_adult_phrase_examples(monkeypatch, tmp_path):
     from app.engines import translator as tmod
     from app.engines.knowledge import KnowledgeBase

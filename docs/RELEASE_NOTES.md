@@ -2,6 +2,37 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.7 - Network Video Metadata and Native Subtitle Translation
+
+Highlights:
+
+- The home screen standalone TMDB trailer entry is replaced with an online
+  video translation entry for YouTube links and direct video file URLs.
+- A new direct URL trailer API creates download/transcribe/translate projects
+  without requiring TMDB metadata, while existing TMDB enrichment remains
+  available for film and TV project metadata.
+- URL projects now probe network video metadata before creation when the user
+  leaves title or source language on auto, then save source title, uploader,
+  channel, duration, source language, and platform subtitle availability.
+- Downloaded native subtitles are preferred across detected source languages,
+  not just English; when adopted, the pipeline skips ASR and translates the
+  platform subtitle file directly.
+- Translation prompts now receive stronger content-type context, including
+  academic, interview, tutorial, film/TV, legal adult guidance, and detected
+  network source context.
+
+Quality/Verification:
+
+- Full test suite passed locally: `1111 passed in 202.29s`.
+- Focused trailer/frontend/project-metadata regression passed: `176 passed`.
+- Translator quality regression passed: `28 passed`.
+- Package script regression passed: `33 passed`.
+- Local package target: `AI_Sub_Pro_v1.3.7.dmg`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.7.dmg` is the macOS package name for this release line.
+
 ## v1.3.5 - ASR Install Prompts and Model Catalog Sync
 
 Highlights:

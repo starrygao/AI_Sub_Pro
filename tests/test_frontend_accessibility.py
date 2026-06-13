@@ -54,6 +54,14 @@ def test_settings_controls_have_accessible_names():
         "aria-label=\"更多操作\"",
         "aria-label=\"关闭错误提示\"",
         "aria-label=\"切换内嵌字幕处理方式\"",
+        "aria-label=\"内容类型\"",
+        "aria-label=\"原始语言\"",
+        "aria-label=\"学科或领域\"",
+        "aria-label=\"内容说明\"",
+        "aria-label=\"手动术语\"",
+        "aria-label=\"YouTube 或直接视频地址\"",
+        "aria-label=\"在线视频名称\"",
+        "aria-label=\"在线视频原始语言\"",
         "aria-label=\"新增下一行字幕\"",
         "aria-label=\"分割这一行字幕\"",
         "aria-label=\"删除这一行字幕\"",
@@ -181,6 +189,22 @@ def test_click_navigation_uses_set_view_guard():
     assert "@click=\"openTrailerWizard()" in html
 
 
+def test_home_online_video_entry_replaces_tmdb_trailer_entry():
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
+
+    assert "在线视频翻译" in html
+    assert "自动识别信息" in html
+    assert "原生字幕" in html
+    assert "startTrailerUrlJob()" in html
+    assert "trailerUrlInput" in html
+    assert 'x-show="trailerError"' in html
+    assert "async startTrailerUrlJob()" in js
+    assert "/api/trailer/start-url" in js
+    assert "输入剧名或 TMDB ID" not in html
+    assert "按 TMDB ID" not in html
+
+
 def test_project_rename_uses_app_modal_instead_of_prompt():
     html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
     js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
@@ -197,6 +221,33 @@ def test_project_rename_uses_app_modal_instead_of_prompt():
     assert "prompt(" not in js
 
 
+def test_project_content_metadata_ui_is_wired():
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
+
+    expected_html = [
+        "内容信息",
+        "学术讲座 / 课程",
+        "gradient descent=梯度下降",
+        "saveProjectMetadata()",
+        "isProjectMutationPending('metadata', currentProject?.id)",
+        "影视信息补全 / 预告片 (TMDB)",
+        "普通翻译不依赖 TMDB",
+    ]
+    for snippet in expected_html:
+        assert snippet in html
+
+    expected_js = [
+        "projectMetadataHint(project)",
+        "async saveProjectMetadata()",
+        "content_type:",
+        "manual_terms:",
+        "metadata_source: 'manual'",
+    ]
+    for snippet in expected_js:
+        assert snippet in js
+
+
 def test_app_modals_have_dialog_semantics_and_escape_handlers():
     html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
 
@@ -208,11 +259,9 @@ def test_app_modals_have_dialog_semantics_and_escape_handlers():
         '@keydown.escape.window="cancelRenameProject()"',
         '@keydown.escape.window="cancelNewKb()"',
         'x-ref="kbNewKeyInput"',
-        'previousTrailerStep()',
-        'trailerStep > 1 && trailerStep < 5',
-        'advanceTrailerVideoStep()',
-        ':disabled="!canFetchTrailerVideos()"',
-        "trailerLoading ? '加载中...' : '下一步 →'",
+        'startTrailerUrlJob()',
+        'trailerUrlInput',
+        "trailerSubmitting ? '提交中...' : '下载并翻译'",
     ]
     for snippet in expected:
         assert snippet in html
@@ -305,7 +354,9 @@ def test_project_cards_and_subtitle_edit_cells_are_keyboard_reachable():
     assert ':aria-label="\'编辑第 \' + s.index + \' 条字幕译文\'"' in html
     assert ':title="currentProject?.name || \'\'' in html
     assert '@keydown.enter.prevent="startEdit(idx, s.translation)"' in html
-    assert '<button type="button" x-show="trailerStep > 1 && trailerStep < 5"' in html
+    assert '@keydown.enter.prevent="startTrailerUrlJob()"' in html
+    assert ':disabled="!trailerUrlInput.trim() || trailerSubmitting"' in html
+    assert '@click="setView(\'home\')" class="btn-secondary px-3 py-1.5 rounded-lg text-[13px]">返回首页</button>' in html
     assert ':disabled="isProjectMutationPending(\'reveal\', p.id)"' in html
     assert ':disabled="p.status===\'processing\' || !!p.pipeline_stage || isProjectMutationPending(\'delete\', p.id)"' in html
     assert ':disabled="projectActionsDisabled(currentProject)"' in html

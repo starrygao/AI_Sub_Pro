@@ -107,6 +107,137 @@ def test_start_endpoint_creates_projects_and_schedules(patched_projects_dir, mon
     assert threaded == data["pids"]
 
 
+def test_start_url_endpoint_creates_project_and_schedules(patched_projects_dir, monkeypatch):
+    from app.main import app
+    from app.api.projects import _load_project
+
+    client = TestClient(app)
+    threaded = []
+    monkeypatch.setattr("app.api.trailer._spawn_pipeline_thread", lambda pid: threaded.append(pid))
+
+    r = client.post("/api/trailer/start-url", json={
+        "video_url": "https://www.youtube.com/watch?v=abc123def45",
+        "name": "Manual trailer",
+        "original_language": "en",
+        "target_language": "简体中文",
+    })
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "submitted"
+    assert len(data["pids"]) == 1
+    assert threaded == data["pids"]
+    project = _load_project(data["pids"][0])
+    assert project["source_type"] == "trailer"
+    assert project["tmdb_id"] is None
+    assert project["tmdb_type"] is None
+    assert project["youtube_url"] == "https://www.youtube.com/watch?v=abc123def45"
+    assert project["name"] == "Manual trailer"
+    assert project["asr_language"] == "en"
+    assert project["target_language"] == "简体中文"
+    assert project["pipeline_stage"] == "download"
+
+
+def test_start_url_endpoint_uses_probe_metadata_when_name_and_language_missing(
+    patched_projects_dir,
+    monkeypatch,
+):
+    from app.main import app
+    from app.api.projects import _load_project
+
+    client = TestClient(app)
+    threaded = []
+    monkeypatch.setattr("app.api.trailer._spawn_pipeline_thread", lambda pid: threaded.append(pid))
+    monkeypatch.setattr(
+        "app.api.trailer.probe_video_info",
+        lambda url: {
+            "title": "MIT 6.S191 Lecture 1",
+            "uploader": "MIT Introduction to Deep Learning",
+            "channel": "MIT Deep Learning",
+            "duration": 3250,
+            "language": "en",
+            "webpage_url": url,
+            "extractor_key": "Youtube",
+            "source_type": "youtube",
+            "subtitle_languages": ["en"],
+            "automatic_caption_languages": ["zh-Hans"],
+            "has_subtitles": True,
+        },
+    )
+
+    r = client.post("/api/trailer/start-url", json={
+        "video_url": "https://www.youtube.com/watch?v=abc123def45",
+        "target_language": "简体中文",
+    })
+
+    assert r.status_code == 200
+    pid = r.json()["pids"][0]
+    assert threaded == [pid]
+    project = _load_project(pid)
+    assert project["name"] == "MIT 6.S191 Lecture 1"
+    assert project["original_language"] == "en"
+    assert project["asr_language"] == "en"
+    assert project["source_title"] == "MIT 6.S191 Lecture 1"
+    assert project["source_uploader"] == "MIT Introduction to Deep Learning"
+    assert project["source_duration"] == 3250
+    assert project["source_has_subtitles"] is True
+    assert project["network_metadata"]["subtitle_languages"] == ["en"]
+
+
+def test_start_url_endpoint_treats_auto_language_as_probeable(
+    patched_projects_dir,
+    monkeypatch,
+):
+    from app.main import app
+    from app.api.projects import _load_project
+
+    client = TestClient(app)
+    monkeypatch.setattr("app.api.trailer._spawn_pipeline_thread", lambda pid: None)
+    monkeypatch.setattr(
+        "app.api.trailer.probe_video_info",
+        lambda url: {
+            "title": "Detected title",
+            "language": "ko",
+            "webpage_url": url,
+            "source_type": "youtube",
+            "subtitle_languages": ["ko"],
+            "automatic_caption_languages": [],
+            "has_subtitles": True,
+        },
+    )
+
+    r = client.post("/api/trailer/start-url", json={
+        "video_url": "https://www.youtube.com/watch?v=abc123def45",
+        "name": "Manual title",
+        "original_language": "auto",
+    })
+
+    assert r.status_code == 200
+    project = _load_project(r.json()["pids"][0])
+    assert project["name"] == "Manual title"
+    assert project["original_language"] == "ko"
+    assert project["asr_language"] == "ko"
+
+
+def test_start_url_endpoint_rejects_invalid_video_url_before_creating_projects(patched_projects_dir, monkeypatch):
+    from app.main import app
+
+    client = TestClient(app)
+    monkeypatch.setattr(
+        "app.api.trailer._spawn_pipeline_thread",
+        lambda pid: (_ for _ in ()).throw(AssertionError("should not schedule invalid URL")),
+    )
+
+    r = client.post("/api/trailer/start-url", json={
+        "video_url": "https://example.com/watch/123",
+        "name": "Bad URL",
+    })
+
+    assert r.status_code == 400
+    assert "video" in r.json()["detail"].lower()
+    assert list(patched_projects_dir.iterdir()) == []
+
+
 def test_start_endpoint_rejects_missing_translation_provider_before_creating_projects(patched_projects_dir, monkeypatch):
     from app.main import app
     from app.api import trailer as trailer_api

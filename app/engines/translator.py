@@ -36,6 +36,7 @@ from app.engines.content_profiles import (
     infer_content_profiles,
 )
 from app.engines.domain_terms import build_domain_prompt_snippet, find_domain_terms_in_texts
+from app.engines.project_metadata import build_project_metadata_prompt_snippet
 from app.engines.subtitle_style_profiles import build_subtitle_style_prompt_snippet
 from app.engines.terminology_conflicts import collect_terminology_conflicts
 
@@ -740,6 +741,11 @@ class SubtitleTranslator:
             if legacy_terms:
                 terms_str = json.dumps(legacy_terms, ensure_ascii=False)
                 parts.append(f"术语表(严格遵守): {terms_str}")
+
+        metadata_snippet, metadata_hits = build_project_metadata_prompt_snippet(meta_info)
+        if metadata_snippet:
+            parts.append(metadata_snippet)
+            self.last_quality_trace.kb_hits.extend(metadata_hits)
 
         domain_snippet, domain_hits = self._build_domain_terminology_snippet(items or [], project_kb)
         if domain_snippet:

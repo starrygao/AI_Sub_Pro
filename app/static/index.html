@@ -174,19 +174,47 @@
             </div>
           </div>
 
-          <!-- Trailer entry (full-video entry is the drop-zone above) -->
-          <button class="glass rounded-2xl p-4 text-left w-full transition-all hover:shadow-md hover:-translate-y-0.5"
-                  @click="openTrailerWizard()">
-            <div class="flex items-center gap-4">
-              <div class="w-11 h-11 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
-                <svg class="w-5 h-5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg>
+          <!-- Online video URL entry (full-video local entry is the drop-zone above) -->
+          <div class="glass rounded-2xl p-4 text-left w-full">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
+                <svg class="w-5 h-5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v7.5A2.25 2.25 0 005.25 18h13.5A2.25 2.25 0 0021 15.75v-4.5M15.75 3.75H21m0 0V9m0-5.25L12 12.75" /></svg>
               </div>
               <div>
-                <h3 class="text-[15px] font-semibold mb-1">预告翻译</h3>
-                <p class="text-[12px] text-surface-500 leading-relaxed">输入剧名或 TMDB ID，自动下载并翻译预告片</p>
+                <h3 class="text-[15px] font-semibold mb-0.5">在线视频翻译</h3>
+                <p class="text-[12px] text-surface-500 leading-relaxed">粘贴 YouTube 链接或直接视频地址，自动识别信息并优先翻译原生字幕。</p>
               </div>
             </div>
-          </button>
+            <div class="space-y-2">
+              <input type="url"
+                     x-model="trailerUrlInput"
+                     @input="trailerError=null"
+                     @keydown.enter.prevent="startTrailerUrlJob()"
+                     placeholder="https://www.youtube.com/watch?v=..."
+                     aria-label="YouTube 或直接视频地址"
+                     class="w-full px-3 py-2 rounded-xl text-[13px]">
+              <div class="grid grid-cols-2 gap-2">
+                <input x-model="trailerNameInput"
+                       placeholder="名称（留空自动识别）"
+                       aria-label="在线视频名称"
+                       class="px-3 py-2 rounded-xl text-[12px] min-w-0">
+                <input x-model="trailerOriginalLanguage"
+                       placeholder="原始语言 auto/en/ja"
+                       aria-label="在线视频原始语言"
+                       class="px-3 py-2 rounded-xl text-[12px] min-w-0">
+              </div>
+              <button @click="startTrailerUrlJob()"
+                      :disabled="!trailerUrlInput.trim() || trailerSubmitting"
+                      class="btn-primary w-full px-4 py-2 rounded-xl text-[13px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                      x-text="trailerSubmitting ? '提交中...' : '下载并翻译'"></button>
+              <p x-show="trailerError"
+                 x-cloak
+                 class="text-[11px] text-danger leading-relaxed break-words"
+                 x-text="trailerError"></p>
+              <button @click="openTrailerWizard()"
+                      class="home-link-button text-[12px] text-accent">打开详细入口</button>
+            </div>
+          </div>
 
           <!-- System status -->
           <div x-show="sysCheckError || (sysCheck && !sysCheck.ready)" class="glass rounded-2xl p-4 text-left">
@@ -226,25 +254,14 @@
       </div>
     </div>
 
-    <!-- ========== TRAILER WIZARD ========== -->
+    <!-- ========== ONLINE VIDEO URL ========== -->
     <div x-show="view==='trailer'" class="max-w-3xl mx-auto py-10 px-6" x-cloak>
       <div class="flex items-center justify-between mb-6">
-        <h2 class="text-2xl font-semibold">预告翻译</h2>
+        <h2 class="text-2xl font-semibold">在线视频翻译</h2>
         <button @click="setView('home')" class="btn-secondary px-3 py-1.5 rounded-lg text-[13px]">返回首页</button>
       </div>
-      <div class="glass-dark rounded-2xl p-4 mb-6">
-        <div class="flex items-center justify-between text-[12px] text-surface-500 mb-2">
-          <span>第 <span x-text="trailerStep"></span> 步，共 5 步</span>
-          <button type="button" x-show="trailerStep > 1 && trailerStep < 5" @click="previousTrailerStep()" class="hover:text-accent">← 上一步</button>
-        </div>
-        <div class="h-1 bg-surface-200 rounded-full overflow-hidden">
-          <div class="h-full bg-accent transition-all" :style="`width:${(trailerStep/5)*100}%`"></div>
-        </div>
-      </div>
-      <!-- Error panel (shared across steps 1-4) -->
       <div x-show="trailerError" x-cloak class="mb-4 rounded-xl border border-accent/40 bg-accent/10 p-4">
         <div class="flex items-start gap-3">
-          <div class="text-accent text-lg leading-none mt-0.5">⚠</div>
           <div class="flex-1 min-w-0">
             <p class="text-[13px] text-surface-700 break-words" x-text="trailerError"></p>
             <button x-show="trailerErrorNeedsSettings()"
@@ -255,165 +272,52 @@
         </div>
       </div>
 
-      <!-- Step 1: Search -->
       <div x-show="trailerStep===1" x-cloak class="glass rounded-2xl p-6">
-        <h3 class="text-[16px] font-semibold mb-4">搜索剧集或电影</h3>
-        <div class="flex items-center gap-4 mb-4 text-[13px]">
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input type="radio" value="title" x-model="trailerSearchMode" aria-label="按名称搜索预告片" class="accent-accent">
-            <span>按名称</span>
-          </label>
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input type="radio" value="tmdb_id" x-model="trailerSearchMode" aria-label="按 TMDB ID 搜索预告片" class="accent-accent">
-            <span>按 TMDB ID</span>
-          </label>
+        <div class="mb-5">
+          <h3 class="text-[16px] font-semibold mb-1">添加 YouTube 或视频地址</h3>
+          <p class="text-[12px] text-surface-500">粘贴 YouTube 链接，或以 mp4、mkv、mov、webm、m4v 结尾的直接视频文件地址。留空名称和语言时会自动识别；如平台字幕可用，会直接翻译字幕，否则进入听写流程。</p>
         </div>
-        <div class="flex gap-2">
-          <input type="text"
-                 x-model="trailerSearchQuery"
+        <div class="space-y-4">
+          <label class="block">
+            <span class="block text-[12px] text-surface-400 mb-1.5 font-medium">视频地址</span>
+            <input type="url"
+                 x-model="trailerUrlInput"
                  @input="trailerError=null"
-                 @keydown.enter="searchTrailers()"
-                 :placeholder="trailerSearchMode==='tmdb_id' ? '例：1399' : '例：权力的游戏'"
-                 :aria-label="trailerSearchMode==='tmdb_id' ? 'TMDB ID' : '剧名或电影名'"
-                 class="flex-1 px-3 py-2 rounded-lg border border-surface-200 bg-white text-[14px] focus:outline-none focus:border-accent">
-          <button @click="searchTrailers()"
-                  :disabled="!trailerSearchQuery.trim() || trailerLoading"
-                  class="btn-primary px-5 py-2 rounded-lg text-[13px] font-medium disabled:opacity-50 disabled:cursor-not-allowed">
-            <span x-show="!trailerLoading">搜索</span>
-            <span x-show="trailerLoading">搜索中...</span>
-          </button>
-        </div>
-        <p class="mt-3 text-[12px] text-surface-400">输入剧名或 TMDB ID，系统会从 TMDB 检索匹配作品。</p>
-      </div>
-
-      <!-- Step 2: Show candidates -->
-      <div x-show="trailerStep===2" x-cloak class="space-y-3">
-        <div class="flex items-center justify-between">
-          <button @click="trailerStep=1; trailerError=null" class="text-[13px] text-surface-500 hover:text-accent">← 返回搜索</button>
-          <span class="text-[12px] text-surface-400" x-text="`共 ${trailerSearchResults.length} 个结果`"></span>
-        </div>
-        <div x-show="trailerSearchResults.length===0" class="glass rounded-2xl p-10 text-center">
-          <div class="text-3xl mb-2">🔍</div>
-          <p class="text-[14px] text-surface-600">未找到，换一个关键词试试</p>
-        </div>
-        <template x-for="item in trailerSearchResults" :key="`${item.media_type}-${item.id}`">
-          <button @click="selectShow(item)"
-                  class="w-full glass rounded-2xl p-4 flex gap-4 text-left transition-all hover:shadow-md hover:-translate-y-0.5">
-            <template x-if="item.poster_path">
-              <img :src="`https://image.tmdb.org/t/p/w154${item.poster_path}`"
-                   class="w-20 h-30 rounded-lg object-cover flex-shrink-0 bg-surface-100"
-                   style="width:80px; height:120px;"
-                   loading="lazy">
-            </template>
-            <template x-if="!item.poster_path">
-              <div class="rounded-lg bg-surface-100 flex-shrink-0 flex items-center justify-center text-surface-300 text-2xl"
-                   style="width:80px; height:120px;">🎞️</div>
-            </template>
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2 mb-1">
-                <h4 class="text-[15px] font-semibold truncate" x-text="item.name || item.title"></h4>
-                <span class="pill bg-surface-100 text-surface-500 text-[11px] px-2 py-0.5 rounded"
-                      x-text="item.media_type==='tv' ? '剧集' : '电影'"></span>
-              </div>
-              <p x-show="(item.original_name && item.original_name !== item.name) || (item.original_title && item.original_title !== item.title)"
-                 class="text-[12px] text-surface-400 truncate"
-                 x-text="item.original_name || item.original_title"></p>
-              <p class="text-[12px] text-surface-500 mt-0.5"
-                 x-text="(item.first_air_date || item.release_date || '').slice(0,4)"></p>
-              <p class="text-[13px] text-surface-600 mt-1 line-clamp-2"
-                 x-text="item.overview || '暂无简介'"></p>
-            </div>
-          </button>
-        </template>
-      </div>
-
-      <!-- Step 3: Season picker (TV only) -->
-      <div x-show="trailerStep===3" x-cloak class="glass rounded-2xl p-6">
-        <div class="flex items-center justify-between mb-4">
-          <div>
-            <h3 class="text-[16px] font-semibold">选择季</h3>
-            <p class="text-[12px] text-surface-400 mt-0.5"
-               x-text="trailerSelectedShow ? (trailerSelectedShow.name || trailerSelectedShow.title) : ''"></p>
-          </div>
-          <button @click="trailerStep=2" class="text-[13px] text-surface-500 hover:text-accent">← 返回</button>
-        </div>
-        <p class="text-[12px] text-surface-500 mb-3">可多选季，或选择「整部剧」获取剧集整体预告。</p>
-        <div class="flex flex-wrap gap-2">
-          <template x-for="s in trailerSeasons" :key="s">
-            <button @click="(trailerSelectedSeasons.includes(s) ? trailerSelectedSeasons.splice(trailerSelectedSeasons.indexOf(s),1) : trailerSelectedSeasons.push(s))"
-                    :class="trailerSelectedSeasons.includes(s) ? 'bg-accent text-white border-accent' : 'bg-white text-surface-600 border-surface-200 hover:border-accent'"
-                    class="pill px-3 py-1.5 rounded-full border text-[13px] transition-colors"
-                    x-text="`第 ${s} 季`"></button>
-          </template>
-          <button @click="trailerSelectedSeasons = []"
-                  :class="trailerSelectedSeasons.length===0 ? 'bg-accent text-white border-accent' : 'bg-white text-surface-600 border-surface-200 hover:border-accent'"
-                  class="pill px-3 py-1.5 rounded-full border text-[13px] transition-colors">整部剧</button>
-        </div>
-        <div class="mt-6 flex justify-end">
-          <button @click="advanceTrailerVideoStep()"
-                  :disabled="!canFetchTrailerVideos()"
-                  class="btn-primary px-5 py-2 rounded-lg text-[13px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                  x-text="trailerLoading ? '加载中...' : '下一步 →'"></button>
-        </div>
-      </div>
-
-      <!-- Step 4: Trailer videos -->
-      <div x-show="trailerStep===4" x-cloak class="space-y-3">
-        <div class="flex items-center justify-between">
-          <button @click="trailerSelectedShow && trailerSelectedShow.media_type==='tv' ? trailerStep=3 : trailerStep=2; trailerError=null"
-                  class="text-[13px] text-surface-500 hover:text-accent">← 返回</button>
-          <span class="text-[12px] text-surface-400"
-                x-text="trailerLoading ? '加载中...' : `共 ${trailerVideos.length} 个视频`"></span>
-        </div>
-        <div x-show="trailerLoading" class="glass rounded-2xl p-10 text-center">
-          <div class="text-surface-400 text-[14px]">加载中...</div>
-        </div>
-        <div x-show="!trailerLoading && trailerVideos.length===0" class="glass rounded-2xl p-10 text-center">
-          <div class="text-3xl mb-2">📭</div>
-          <p class="text-[14px] text-surface-600">未找到预告视频</p>
-          <p class="text-[12px] text-surface-400 mt-1">尝试其他季或返回更换作品</p>
-        </div>
-        <template x-for="v in trailerVideos" :key="v.key">
-          <label class="glass rounded-2xl p-4 flex gap-4 cursor-pointer transition-all hover:shadow-md"
-                 :class="trailerSelectedVideos.includes(v.key) ? 'ring-2 ring-accent' : ''">
-            <img :src="`https://img.youtube.com/vi/${v.key}/default.jpg`"
-                 class="rounded-lg object-cover flex-shrink-0 bg-surface-100"
-                 style="width:160px; height:90px;"
-                 loading="lazy">
-            <div class="flex-1 min-w-0">
-              <h4 class="text-[14px] font-semibold truncate" x-text="v.name"></h4>
-              <div class="flex items-center gap-2 mt-1 flex-wrap">
-                <span class="pill bg-surface-100 text-surface-500 text-[11px] px-2 py-0.5 rounded" x-text="v.type"></span>
-                <span x-show="v.official" class="pill bg-accent/10 text-accent text-[11px] px-2 py-0.5 rounded">官方 ✓</span>
-                <span class="text-[11px] text-surface-400" x-text="(v.published_at || '').slice(0,10)"></span>
-                <span x-show="v.iso_639_1" class="text-[11px] text-surface-400 uppercase" x-text="v.iso_639_1"></span>
-              </div>
-            </div>
-            <div class="flex items-center">
-              <input type="checkbox"
-                     :checked="trailerSelectedVideos.includes(v.key)"
-                     @change="toggleVideo(v.key)"
-                     :aria-label="'选择预告片 ' + (v.name || v.key)"
-                     class="w-5 h-5 accent-accent cursor-pointer">
-            </div>
+                 @keydown.enter.prevent="startTrailerUrlJob()"
+                 placeholder="https://www.youtube.com/watch?v=..."
+                 aria-label="YouTube 或直接视频地址"
+                 class="w-full px-3 py-2 rounded-xl text-[14px]">
           </label>
-        </template>
-        <div x-show="trailerVideos.length > 0" class="sticky bottom-4 pt-2">
-          <button @click="startTrailerJobs()"
-                  :disabled="trailerSelectedVideos.length===0 || trailerSubmitting"
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label class="block">
+              <span class="block text-[12px] text-surface-400 mb-1.5 font-medium">名称（可选）</span>
+              <input x-model="trailerNameInput"
+                     placeholder="留空自动识别标题"
+                     aria-label="在线视频名称"
+                     class="w-full px-3 py-2 rounded-xl text-[13px]">
+            </label>
+            <label class="block">
+              <span class="block text-[12px] text-surface-400 mb-1.5 font-medium">原始语言</span>
+              <input x-model="trailerOriginalLanguage"
+                     placeholder="auto / en / ja / ko"
+                     aria-label="在线视频原始语言"
+                     class="w-full px-3 py-2 rounded-xl text-[13px]">
+            </label>
+          </div>
+          <button @click="startTrailerUrlJob()"
+                  :disabled="!trailerUrlInput.trim() || trailerSubmitting"
                   class="btn-primary w-full px-5 py-3 rounded-xl text-[14px] font-medium disabled:opacity-50 disabled:cursor-not-allowed">
-            <span x-show="!trailerSubmitting"
-                  x-text="`开始翻译 (${trailerSelectedVideos.length} 个预告)`"></span>
-            <span x-show="trailerSubmitting">提交中...</span>
+            <span x-text="trailerSubmitting ? '提交中...' : '下载并翻译'"></span>
           </button>
         </div>
       </div>
 
-      <!-- Step 5: Confirmation -->
       <div x-show="trailerStep===5" x-cloak class="glass rounded-2xl p-10 text-center">
-        <div class="w-14 h-14 mx-auto mb-4 rounded-full bg-accent/15 flex items-center justify-center text-accent text-2xl">✓</div>
+        <div class="w-14 h-14 mx-auto mb-4 rounded-full bg-accent/15 flex items-center justify-center text-accent">
+          <svg class="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+        </div>
         <h3 class="text-[18px] font-semibold mb-2">
-          已创建 <span x-text="trailerCreatedCount"></span> 个预告项目
+          已创建 <span x-text="trailerCreatedCount"></span> 个在线视频项目
         </h3>
         <p class="text-[13px] text-surface-500 mb-6">正在后台下载并翻译，您可以在项目列表查看进度。</p>
         <button @click="showTrailerProjects()"
@@ -695,7 +599,7 @@
       <div x-show="!currentProject?.tmdb_id && currentProject?.tmdb_candidates?.length > 0"
            class="flex-shrink-0 mx-6 mt-3 glass rounded-2xl p-3 border-l-2 border-l-warn">
         <div class="flex items-center justify-between mb-2">
-          <p class="text-[12.5px] font-semibold">未确定 TMDB 关联,从候选中选择</p>
+          <p class="text-[12.5px] font-semibold">文件名匹配到影视候选，可选择补全信息</p>
           <button @click="dismissTmdbCandidates()"
                   :disabled="isProjectMutationPending('tmdb', currentProject?.id)"
                   class="text-[11px] text-surface-400 hover:text-danger disabled:opacity-40 disabled:cursor-not-allowed"
@@ -724,6 +628,65 @@
           </template>
         </div>
       </div>
+
+      <template x-if="currentProject">
+        <div class="flex-shrink-0 mx-6 mt-3 glass rounded-2xl p-4 border-l-2 border-l-accent">
+          <div class="flex items-start justify-between gap-4 mb-3">
+            <div>
+              <p class="text-[12.5px] font-semibold">内容信息</p>
+              <p class="text-[11px] text-surface-400 mt-0.5" x-text="projectMetadataHint(currentProject)"></p>
+            </div>
+            <button @click="saveProjectMetadata()"
+                    :disabled="isProjectMutationPending('metadata', currentProject?.id)"
+                    class="btn-secondary px-3 py-1.5 rounded-lg text-[12px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    x-text="isProjectMutationPending('metadata', currentProject?.id) ? '保存中...' : '保存'"></button>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <label class="block">
+              <span class="block text-[11px] text-surface-400 mb-1">内容类型</span>
+              <select x-model="currentProject.content_type" aria-label="内容类型" class="w-full px-3 py-2 rounded-xl text-[13px]">
+                <option value="auto">自动判断</option>
+                <option value="movie">电影</option>
+                <option value="series">剧集</option>
+                <option value="documentary">纪录片 / 非虚构</option>
+                <option value="interview">访谈 / 播客</option>
+                <option value="academic_lecture">学术讲座 / 课程</option>
+                <option value="technical_tutorial">技术教程</option>
+                <option value="legal_adult">成人内容</option>
+                <option value="other">其他</option>
+              </select>
+            </label>
+            <label class="block">
+              <span class="block text-[11px] text-surface-400 mb-1">原始语言</span>
+              <input x-model="currentProject.original_language" placeholder="例：en、ja、ko"
+                     aria-label="原始语言"
+                     class="w-full px-3 py-2 rounded-xl text-[13px]">
+            </label>
+            <label class="block" x-show="currentProject.content_type === 'academic_lecture' || currentProject.academic_field">
+              <span class="block text-[11px] text-surface-400 mb-1">学科 / 领域</span>
+              <input x-model="currentProject.academic_field" placeholder="例：machine learning、physics"
+                     aria-label="学科或领域"
+                     class="w-full px-3 py-2 rounded-xl text-[13px]">
+            </label>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+            <label class="block">
+              <span class="block text-[11px] text-surface-400 mb-1">内容说明</span>
+              <textarea x-model="currentProject.content_notes" rows="2"
+                        placeholder="例：CS229 第 4 讲，主题是梯度下降和凸性。"
+                        aria-label="内容说明"
+                        class="w-full px-3 py-2 rounded-xl text-[13px] resize-none"></textarea>
+            </label>
+            <label class="block">
+              <span class="block text-[11px] text-surface-400 mb-1">手动术语</span>
+              <textarea x-model="currentProject.manual_terms" rows="2"
+                        placeholder="一行一个：gradient descent=梯度下降"
+                        aria-label="手动术语"
+                        class="w-full px-3 py-2 rounded-xl text-[13px] resize-none"></textarea>
+            </label>
+          </div>
+        </div>
+      </template>
 
       <!-- Embedded subtitle bypass banner -->
       <div x-show="currentProject && currentProject.selected_subtitle_track !== null && currentProject.selected_subtitle_track !== undefined"
@@ -1344,11 +1307,11 @@
           </div>
         </div>
 
-        <!-- 预告片 (TMDB) — always visible, separate from translation provider -->
+        <!-- 影视信息补全 / 预告片 (TMDB) — always visible, separate from translation provider -->
         <div id="settings-tmdb" class="glass rounded-2xl p-5">
           <h3 class="text-[13px] font-semibold mb-4 flex items-center gap-2">
             <svg class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg>
-            预告片 (TMDB)
+            影视信息补全 / 预告片 (TMDB)
           </h3>
           <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">TMDB API 密钥</label>
           <div class="settings-tmdb-key-row flex gap-2">
@@ -1379,7 +1342,7 @@
             </span>
           </div>
           <p class="text-[11px] text-surface-400 mt-2">
-            在 <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" class="text-accent underline">themoviedb.org/settings/api</a> 免费获取；也可通过 AI_SUB_PRO_TMDB_API_KEY 环境变量提供
+            可选配置。普通翻译不依赖 TMDB；填写后会用文件名自动补全影视标题、语言、海报和预告片检索。在 <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" class="text-accent underline">themoviedb.org/settings/api</a> 免费获取；也可通过 AI_SUB_PRO_TMDB_API_KEY 环境变量提供
           </p>
 
           <hr class="my-4 border-surface-200">

@@ -17,18 +17,91 @@ from app.utils.errors import redact_error_message
 log = logging.getLogger(__name__)
 
 
-def _adopt_youtube_subtitles(pdir: Path) -> bool:
-    """If yt-dlp downloaded YouTube native subtitles alongside the video, copy them
-    into `filtered.srt` (and `raw.srt`) so the translate stage uses them and ASR is skipped.
-    Returns True if subtitles were adopted.
-    """
-    # yt-dlp names subs as `<stem>.<lang>.<ext>` e.g. original.en.srt / original.en-US.vtt
-    candidates = sorted(pdir.glob("original.en*.srt")) + sorted(pdir.glob("original.en*.vtt"))
-    if not candidates:
+def _normalize_subtitle_language(value) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = value.strip().replace("_", "-")
+    if text.lower() in {"", "auto", "und", "unknown", "none", "null"}:
+        return ""
+    return text
+
+
+def _downloaded_subtitle_language(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix not in {".srt", ".vtt"}:
+        return ""
+    name = path.name
+    if not name.startswith("original.") or not name.endswith(suffix):
+        return ""
+    return _normalize_subtitle_language(name[len("original."):-len(suffix)])
+
+
+def _language_matches(candidate: str, preferred: str) -> bool:
+    cand = _normalize_subtitle_language(candidate).lower()
+    pref = _normalize_subtitle_language(preferred).lower()
+    if not cand or not pref:
         return False
+    return cand == pref or cand.startswith(f"{pref}-") or pref.startswith(f"{cand}-")
+
+
+def _dedupe_languages(values) -> list[str]:
+    out = []
+    seen = set()
+    for raw in values or []:
+        lang = _normalize_subtitle_language(raw)
+        if not lang:
+            continue
+        key = lang.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(lang)
+    return out
+
+
+def _preferred_subtitle_languages(project: dict) -> list[str]:
+    values = []
+    for field in ("original_language", "asr_language", "source_language"):
+        values.append(project.get(field))
+    metadata = project.get("network_metadata")
+    if isinstance(metadata, dict):
+        for field in ("subtitle_languages", "automatic_caption_languages"):
+            items = metadata.get(field)
+            if isinstance(items, list):
+                values.extend(items)
+    values.extend(["en", "en-US", "en-GB", "en-orig"])
+    return _dedupe_languages(values)
+
+
+def _downloaded_subtitle_candidates(pdir: Path, preferred_languages=None) -> list[Path]:
+    candidates = [
+        path for path in (sorted(pdir.glob("original.*.srt")) + sorted(pdir.glob("original.*.vtt")))
+        if _downloaded_subtitle_language(path)
+    ]
+    preferred = _dedupe_languages(preferred_languages)
+
+    def rank(path: Path):
+        lang = _downloaded_subtitle_language(path)
+        pref_rank = len(preferred) + 100
+        for idx, pref in enumerate(preferred):
+            if _language_matches(lang, pref):
+                pref_rank = idx
+                break
+        ext_rank = 0 if path.suffix.lower() == ".srt" else 1
+        return (pref_rank, ext_rank, path.name)
+
+    return sorted(candidates, key=rank)
+
+
+def _adopt_downloaded_subtitles(pdir: Path, preferred_languages=None) -> str | None:
+    """Copy downloaded native subtitles into filtered/raw SRT and return the adopted language."""
+    candidates = _downloaded_subtitle_candidates(pdir, preferred_languages)
+    if not candidates:
+        return None
     target = pdir / "filtered.srt"
     for src in candidates:
-        log.info("adopting YouTube subtitles for ASR bypass: %s", src.name)
+        lang = _downloaded_subtitle_language(src)
+        log.info("adopting native subtitles for ASR bypass: %s", src.name)
 
         try:
             if src.suffix == ".srt":
@@ -56,8 +129,13 @@ def _adopt_youtube_subtitles(pdir: Path) -> bool:
 
         # Mirror to raw.srt too (some pipeline paths read it)
         (pdir / "raw.srt").write_bytes(target.read_bytes())
-        return True
-    return False
+        return lang
+    return None
+
+
+def _adopt_youtube_subtitles(pdir: Path) -> bool:
+    """Compatibility wrapper for older tests/callers."""
+    return _adopt_downloaded_subtitles(pdir) is not None
 
 
 def _vtt_to_srt(vtt_text: str) -> str:
@@ -174,12 +252,19 @@ def _download_stage(pid: str) -> None:
     def on_progress(pct, msg):
         update_progress(pid, "download", pct, msg)
 
+    subtitle_languages = _preferred_subtitle_languages(proj)
     _save_partial(pid, pipeline_stage="download", status="processing")
     update_progress(pid, "download", 0, "starting download")
 
     with slot("download", pid):
         try:
-            download_trailer(url, out_path, progress_callback=on_progress, max_height=max_height)
+            download_trailer(
+                url,
+                out_path,
+                progress_callback=on_progress,
+                max_height=max_height,
+                subtitle_languages=subtitle_languages,
+            )
         except Exception as e:
             raise RuntimeError(f"download failed: {redact_error_message(e, 120)}")
 
@@ -188,10 +273,16 @@ def _download_stage(pid: str) -> None:
     update_progress(pid, "download", 100, "download complete")
 
     # If YouTube provided native subtitles, adopt them so we can skip the ASR stage.
-    if _adopt_youtube_subtitles(pdir):
-        _save_partial(pid, asr_skipped=True)
-        update_progress(pid, "asr", 100, "使用 YouTube 原生字幕,跳过 ASR")
-        log.info("ASR will be skipped pid=%s (adopted YouTube subtitles)", pid)
+    adopted_language = _adopt_downloaded_subtitles(pdir, subtitle_languages)
+    if adopted_language:
+        _save_partial(
+            pid,
+            asr_skipped=True,
+            subtitle_source="native",
+            native_subtitle_language=adopted_language,
+        )
+        update_progress(pid, "asr", 100, f"使用原生字幕({adopted_language}),跳过 ASR")
+        log.info("ASR will be skipped pid=%s (adopted native subtitles %s)", pid, adopted_language)
 
 
 def _check_stage_status(pid: str, stage_name: str) -> None:

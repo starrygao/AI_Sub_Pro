@@ -1175,6 +1175,111 @@ def test_frontend_model_loader_filters_malformed_model_entries():
     assert result.returncode == 0, result.stderr
 
 
+def test_trailer_url_start_posts_direct_video_url_payload():
+    script = textwrap.dedent(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        let payload = null;
+        let requestedUrl = null;
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          fetch: async (url, options) => {
+            requestedUrl = url;
+            payload = JSON.parse(options.body);
+            return {ok: true, json: async () => ({pids: ['p1']})};
+          },
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          state.targetLang = 'English';
+          state.sysCheck = {translation_ready: true};
+          state.trailerUrlInput = ' https://www.youtube.com/watch?v=abc123def45 ';
+          state.trailerNameInput = ' Manual trailer ';
+          state.trailerOriginalLanguage = ' en ';
+          await state.startTrailerUrlJob();
+
+          if (requestedUrl !== '/api/trailer/start-url') {
+            throw new Error(`expected direct URL endpoint, got ${requestedUrl}`);
+          }
+          if (payload.video_url !== 'https://www.youtube.com/watch?v=abc123def45') {
+            throw new Error(`expected trimmed video_url, got ${JSON.stringify(payload)}`);
+          }
+          if (payload.name !== 'Manual trailer') throw new Error(`bad name ${JSON.stringify(payload)}`);
+          if (payload.original_language !== 'en') throw new Error(`bad source language ${JSON.stringify(payload)}`);
+          if (payload.target_language !== 'English') throw new Error(`bad target language ${JSON.stringify(payload)}`);
+          if (state.view !== 'trailer' || state.trailerStep !== 5 || state.trailerCreatedCount !== 1) {
+            throw new Error(`expected confirmation state, got ${JSON.stringify({view: state.view, step: state.trailerStep, count: state.trailerCreatedCount})}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_trailer_url_start_blocks_empty_url_without_fetch():
+    script = textwrap.dedent(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          fetch: async () => {
+            throw new Error('fetch should not be called for empty URL');
+          },
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          state.sysCheck = {translation_ready: true};
+          state.trailerUrlInput = '   ';
+          await state.startTrailerUrlJob();
+          if (!state.trailerError || !state.trailerError.includes('视频地址')) {
+            throw new Error(`expected empty URL error, got ${state.trailerError}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_trailer_start_counts_only_array_pids():
     script = textwrap.dedent(
         """

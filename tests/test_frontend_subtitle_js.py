@@ -1465,6 +1465,58 @@ def test_tmdb_candidate_actions_block_duplicate_patch_while_pending():
     )
 
 
+def test_project_metadata_save_patches_manual_context():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          let calls = 0;
+          let loadProjectsCalls = 0;
+          state.toast = () => {};
+          state.loadProjects = async () => { loadProjectsCalls += 1; };
+          state.currentProject = {
+            id: 'p1',
+            content_type: 'academic_lecture',
+            original_language: ' en ',
+            academic_field: ' machine learning ',
+            content_notes: ' Lecture about gradient descent. ',
+            manual_terms: ' gradient descent=梯度下降 ',
+          };
+          state.api = async (url, method, body) => {
+            calls += 1;
+            if (url !== '/api/projects/p1' || method !== 'PATCH') {
+              throw new Error(`unexpected metadata PATCH ${method} ${url}`);
+            }
+            if (body.content_type !== 'academic_lecture') throw new Error(`bad content type ${body.content_type}`);
+            if (body.original_language !== 'en') throw new Error(`bad language ${body.original_language}`);
+            if (body.academic_field !== 'machine learning') throw new Error(`bad field ${body.academic_field}`);
+            if (body.content_notes !== 'Lecture about gradient descent.') throw new Error(`bad notes ${body.content_notes}`);
+            if (body.manual_terms !== 'gradient descent=梯度下降') throw new Error(`bad terms ${body.manual_terms}`);
+            if (body.metadata_source !== 'manual') throw new Error(`bad metadata source ${body.metadata_source}`);
+            return {id: 'p1', content_type: 'academic_lecture', metadata_source: 'manual'};
+          };
+
+          await state.saveProjectMetadata();
+          if (calls !== 1) throw new Error(`expected one metadata PATCH, got ${calls}`);
+          if (loadProjectsCalls !== 1) throw new Error(`expected projects reload, got ${loadProjectsCalls}`);
+          if (state.currentProject.metadata_source !== 'manual') {
+            throw new Error(`expected current project to update, got ${JSON.stringify(state.currentProject)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_open_provider_page_rejects_unknown_provider_and_uses_noopener():
     _run_node(
         """

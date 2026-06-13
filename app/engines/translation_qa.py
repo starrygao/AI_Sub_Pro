@@ -14,6 +14,7 @@ from app.engines.domain_terms import (
     match_is_overridden_by_project_kb,
 )
 from app.engines.kb_models import ProjectKb
+from app.engines.project_metadata import manual_term_pairs
 from app.engines.subtitle_style_profiles import (
     SubtitleStyleProfile,
     infer_subtitle_style_profile,
@@ -171,7 +172,7 @@ def _is_chinese_target(target_language: str) -> bool:
 
 def _has_technical_tutorial_context(meta_info: Optional[dict]) -> bool:
     return any(
-        profile.id == "technical_tutorial"
+        profile.id in {"technical_tutorial", "academic_lecture"}
         for profile in infer_content_profiles(meta_info if isinstance(meta_info, dict) else {})
     )
 
@@ -215,6 +216,7 @@ _FAR_CATEGORY_BY_TYPE = {
     "missing_translation": "functional",
     "duplicate_id": "functional",
     "kb_term_missing": "functional",
+    "manual_term_missing": "functional",
     "canonical_term_missing": "functional",
     "proper_name_inconsistent": "functional",
     "english_residue": "acceptability",
@@ -284,6 +286,7 @@ def run_quality_checks(
     issues: list[QualityIssue] = []
     seen_ids = set()
     kb_terms = _kb_terms(project_kb)
+    manual_terms = manual_term_pairs(meta_info if isinstance(meta_info, dict) else {})
     chinese_target = _is_chinese_target(target_language)
     technical_tutorial_context = _has_technical_tutorial_context(meta_info)
     active_style_profile = style_profile or infer_subtitle_style_profile(target_language, meta_info)
@@ -438,6 +441,18 @@ def run_quality_checks(
                     severity="error",
                     block_id=block_id if isinstance(block_id, int) else None,
                     message=f"expected KB term {term_source} → {term_target}",
+                    source_text=source,
+                    translation=translation,
+                    expected=term_target,
+                ))
+
+        for term_source, term_target in manual_terms:
+            if term_source.lower() in lower_source and term_target not in translation:
+                issues.append(QualityIssue(
+                    type="manual_term_missing",
+                    severity="error",
+                    block_id=block_id if isinstance(block_id, int) else None,
+                    message=f"expected manual term {term_source} -> {term_target}",
                     source_text=source,
                     translation=translation,
                     expected=term_target,

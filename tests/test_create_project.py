@@ -176,3 +176,68 @@ async def test_create_project_sanitizes_non_finite_tmdb_candidates_before_save(t
     saved = json.loads((projects_dir / project["id"] / "project.json").read_text(encoding="utf-8"))
     assert project["tmdb_candidates"][0]["vote_average"] is None
     assert saved["tmdb_candidates"][0]["vote_average"] is None
+
+
+@pytest.mark.asyncio
+async def test_create_project_infers_academic_metadata_and_skips_tmdb(tmp_path, monkeypatch):
+    from app.api import projects as projects_api
+    from app.api.projects import CreateProjectReq, create_project
+    from app.engines import tmdb_enrich
+
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    video = tmp_path / "Stanford.CS229.Lecture.04.Gradient.Descent.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(projects_api, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(projects_api, "get_tracks", lambda *args, **kwargs: [])
+    monkeypatch.setattr(projects_api, "get_duration", lambda *args, **kwargs: 12.3)
+
+    async def fake_enrich(_name):
+        raise AssertionError("academic lecture should not trigger TMDB enrichment")
+
+    monkeypatch.setattr(tmdb_enrich, "enrich_from_filename", fake_enrich)
+
+    project = await create_project(CreateProjectReq(video_path=str(video)))
+
+    assert project["content_type"] == "academic_lecture"
+    assert project["academic_field"] == "computer science"
+    assert project["metadata_source"] == "filename"
+
+
+def test_patch_project_persists_manual_content_metadata(tmp_path, monkeypatch):
+    from app.api import projects as projects_api
+    from app.api.projects import PatchProjectReq, patch_project
+    from app.utils import project_store
+
+    projects_dir = tmp_path / "projects"
+    pdir = projects_dir / "p1"
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": "p1",
+        "name": "Lecture.mp4",
+        "video_path": str(tmp_path / "Lecture.mp4"),
+        "duration": 1,
+    }), encoding="utf-8")
+    monkeypatch.setattr(projects_api, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", projects_dir)
+
+    updated = patch_project(PatchProjectReq(
+        content_type="academic_lecture",
+        academic_field="economics",
+        content_notes="Seminar about causal inference.",
+        manual_terms="causal inference=因果推断",
+    ), pid="p1")
+
+    assert updated["content_type"] == "academic_lecture"
+    assert updated["academic_field"] == "economics"
+    assert updated["content_notes"] == "Seminar about causal inference."
+    assert updated["manual_terms"] == "causal inference=因果推断"
+
+    cleared = patch_project(PatchProjectReq(
+        clear=["content_type", "academic_field", "content_notes", "manual_terms", "metadata_source"],
+    ), pid="p1")
+    assert cleared["content_type"] == "auto"
+    assert cleared["academic_field"] == ""
+    assert cleared["content_notes"] == ""
+    assert cleared["manual_terms"] == ""
+    assert cleared["metadata_source"] == ""

@@ -129,6 +129,9 @@ function app() {
     trailerStep: 1,
     trailerSearchMode: 'title',          // 'title' | 'tmdb_id'
     trailerSearchQuery: '',
+    trailerUrlInput: '',
+    trailerNameInput: '',
+    trailerOriginalLanguage: 'auto',
     trailerSearchResults: [],
     trailerSelectedShow: null,
     trailerSeasons: [],
@@ -1764,6 +1767,61 @@ function app() {
       return parts.join(' · ');
     },
 
+    contentTypeLabel(value) {
+      const labels = {
+        auto: '自动判断',
+        movie: '电影',
+        series: '剧集',
+        documentary: '纪录片 / 非虚构',
+        interview: '访谈 / 播客',
+        academic_lecture: '学术讲座 / 课程',
+        technical_tutorial: '技术教程',
+        legal_adult: '成人内容',
+        other: '其他',
+      };
+      return labels[value] || labels.auto;
+    },
+
+    projectMetadataHint(project) {
+      const type = project?.content_type || 'auto';
+      if (type === 'academic_lecture') {
+        return '建议填写学科、课程/讲座主题和高频术语，例如 gradient descent=梯度下降。';
+      }
+      if (type === 'technical_tutorial') {
+        return '建议填写技术栈、版本、命令/API 名称和固定译法。';
+      }
+      if (type === 'interview') {
+        return '建议填写嘉宾、节目主题和姓名/机构固定译法。';
+      }
+      if (type === 'legal_adult') {
+        return '仅在合法成人内容中使用；可填写称呼、语气和需要固定的露骨表达译法。';
+      }
+      return '可选填写。影视项目会继续尝试 TMDB 补全；非影视项目可直接用这里的信息指导翻译。';
+    },
+
+    async saveProjectMetadata() {
+      const project = this.currentProject;
+      if (!project?.id || this.isProjectMutationPending('metadata', project.id)) return;
+      this.setProjectMutationPending('metadata', project.id, true);
+      try {
+        const updated = await this.api(`/api/projects/${project.id}`, 'PATCH', {
+          content_type: String(project.content_type || 'auto').trim() || 'auto',
+          original_language: String(project.original_language || '').trim(),
+          academic_field: String(project.academic_field || '').trim(),
+          content_notes: String(project.content_notes || '').trim(),
+          manual_terms: String(project.manual_terms || '').trim(),
+          metadata_source: 'manual',
+        });
+        if (this.currentProject?.id === project.id) this.currentProject = updated;
+        await this.loadProjects();
+        this.toast('内容信息已保存');
+      } catch(e) {
+        this.toast(e.message, 'error');
+      } finally {
+        this.setProjectMutationPending('metadata', project.id, false);
+      }
+    },
+
     async toggleEmbeddedSubtitle() {
       if (!this.currentProject) return;
       const projectId = this.currentProject.id;
@@ -3012,11 +3070,58 @@ function app() {
       }
     },
 
+    async startTrailerUrlJob() {
+      if (this.trailerSubmitting) return;
+      const videoUrl = String(this.trailerUrlInput || '').trim();
+      if (!videoUrl) {
+        this.trailerError = '请先输入 YouTube 链接或视频地址';
+        return;
+      }
+      this.trailerError = null;
+      this.trailerSubmitting = true;
+      try {
+        if (!await this.ensureTranslationReadyForWorkflow()) {
+          this.trailerError = `请先完成翻译引擎配置：${this.systemTranslationHint()}`;
+          return;
+        }
+        const payload = {
+          video_url: videoUrl,
+          name: String(this.trailerNameInput || '').trim(),
+          original_language: String(this.trailerOriginalLanguage || 'auto').trim() || 'auto',
+          target_language: this.targetLang,
+        };
+        const r = await fetch('/api/trailer/start-url', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload),
+        });
+        if (!r.ok) {
+          this.trailerError = await this.apiErrorMessage(r, `创建失败 (${r.status})`);
+          return;
+        }
+        const data = await r.json();
+        const pids = Array.isArray(data.pids) ? data.pids : [];
+        this.trailerCreatedCount = pids.length;
+        await this.setView('trailer');
+        this.trailerStep = 5;
+        setTimeout(() => {
+          this.showTrailerProjects();
+        }, 2000);
+      } catch (e) {
+        this.trailerError = `网络错误: ${e.message}`;
+      } finally {
+        this.trailerSubmitting = false;
+      }
+    },
+
     resetTrailer() {
       this.trailerSearchRequestSeq += 1;
       this.trailerVideoRequestSeq += 1;
       this.trailerStep = 1;
       this.trailerSearchQuery = '';
+      this.trailerUrlInput = '';
+      this.trailerNameInput = '';
+      this.trailerOriginalLanguage = 'auto';
       this.trailerSearchResults = [];
       this.trailerSelectedShow = null;
       this.trailerSeasons = [];

@@ -294,3 +294,25 @@ def test_quality_checks_allow_technical_identifiers_for_tutorials():
     )
 
     assert "english_residue" not in report.summary["by_type"]
+
+
+def test_quality_checks_apply_manual_metadata_terms():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Gradient descent converges here.", "梯度递减在这里收敛。"),
+    ]
+
+    report = run_quality_checks(
+        blocks,
+        target_language="简体中文",
+        max_chars=40,
+        meta_info={
+            "content_type": "academic_lecture",
+            "manual_terms": "Gradient descent=梯度下降",
+        },
+    )
+
+    manual = [issue for issue in report.issues if issue.type == "manual_term_missing"]
+    assert manual
+    assert manual[0].expected == "梯度下降"

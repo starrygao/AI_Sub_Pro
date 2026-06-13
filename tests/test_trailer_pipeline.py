@@ -244,7 +244,7 @@ def test_download_stage_does_not_advance_after_cancel_during_download(tmp_projec
         name="Trailer",
     )
 
-    def fake_download(url, out_path, progress_callback=None, max_height=1080):
+    def fake_download(url, out_path, progress_callback=None, max_height=1080, **kw):
         request_cancel(project["id"])
         return out_path
 
@@ -286,6 +286,45 @@ def test_adopt_youtube_subtitles_skips_badly_encoded_vtt_candidate(tmp_path):
 
     assert tp._adopt_youtube_subtitles(tmp_path) is True
     assert "Hello" in (tmp_path / "filtered.srt").read_text(encoding="utf-8")
+
+
+def test_download_stage_adopts_non_english_native_subtitles_using_project_language(
+    patched_projects_dir,
+    monkeypatch,
+):
+    from app.api.projects import create_trailer_project, _load_project
+    from app.engines import trailer_pipeline as tp
+
+    project = create_trailer_project(
+        tmdb_id=None,
+        tmdb_type=None,
+        video_key=None,
+        youtube_url="https://www.youtube.com/watch?v=abc123def45",
+        original_language="ja",
+        asr_language="ja",
+        name="Japanese Interview",
+    )
+
+    def fake_download(url, out, progress_callback=None, max_height=None, **kw):
+        from pathlib import Path
+
+        out_path = Path(out)
+        out_path.write_bytes(b"video")
+        (out_path.parent / "original.ja.vtt").write_text(
+            "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nこんにちは\n",
+            encoding="utf-8",
+        )
+        return out
+
+    monkeypatch.setattr(tp, "download_trailer", fake_download)
+
+    tp._download_stage(project["id"])
+
+    loaded = _load_project(project["id"])
+    assert loaded["asr_skipped"] is True
+    assert loaded["subtitle_source"] == "native"
+    assert loaded["native_subtitle_language"] == "ja"
+    assert "こんにちは" in (patched_projects_dir / project["id"] / "filtered.srt").read_text(encoding="utf-8")
 
 
 def test_vtt_to_srt_supports_minute_timestamp_format():
