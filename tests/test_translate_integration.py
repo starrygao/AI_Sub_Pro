@@ -778,7 +778,13 @@ def test_asr_pipeline_writes_filter_state_with_atomic_json(tmp_path, monkeypatch
     monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
     monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
     monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
-        "asr": {"language": "auto", "model_size": "tiny", "vad_filter": False, "beam_size": 1},
+        "asr": {
+            "language": "auto",
+            "model_size": "tiny",
+            "vad_filter": False,
+            "beam_size": 1,
+            "backend": "faster_whisper",
+        },
         "translation": {},
     })
     monkeypatch.setattr(api_translate, "_emit_progress", lambda *args, **kwargs: None)
@@ -786,7 +792,10 @@ def test_asr_pipeline_writes_filter_state_with_atomic_json(tmp_path, monkeypatch
     monkeypatch.setattr(api_translate, "_try_bypass_asr_with_embedded_subtitle", lambda *args, **kwargs: False)
     monkeypatch.setattr("app.engines.audio.preprocess_audio", lambda *args, **kwargs: str(pdir / "audio.wav"))
 
+    captured_transcribe = {}
+
     def fake_transcribe(*args, **kwargs):
+        captured_transcribe["kwargs"] = kwargs
         return [SubtitleBlock(
             index=1,
             start=timedelta(seconds=0),
@@ -814,3 +823,4 @@ def test_asr_pipeline_writes_filter_state_with_atomic_json(tmp_path, monkeypatch
     assert writes == [
         (pdir / "filter_state.json", {"1": {"filtered": True, "reason": "ASR噪音"}})
     ]
+    assert captured_transcribe["kwargs"]["backend"] == "faster_whisper"

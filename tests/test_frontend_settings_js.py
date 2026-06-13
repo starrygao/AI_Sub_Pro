@@ -519,7 +519,7 @@ def test_frontend_formats_asr_recommendation_from_system_check():
     assert result.returncode == 0, result.stderr
 
 
-def test_frontend_normalizes_asr_mode_from_settings_payload():
+def test_frontend_normalizes_asr_mode_and_backend_from_settings_payload():
     result = run_js(
         """
         const fs = require('fs');
@@ -544,6 +544,21 @@ def test_frontend_normalizes_asr_mode_from_settings_payload():
         const missing = state.normalizeSettings({asr: {}});
         if (missing.asr.mode !== 'speed') {
           throw new Error(`expected missing ASR mode to default to speed, got ${missing.asr.mode}`);
+        }
+
+        const invalidBackend = state.normalizeSettings({asr: {backend: ' cloud '}});
+        if (invalidBackend.asr.backend !== 'auto') {
+          throw new Error(`expected invalid ASR backend to fall back to auto, got ${invalidBackend.asr.backend}`);
+        }
+
+        const trimmedBackend = state.normalizeSettings({asr: {backend: ' faster_whisper '}});
+        if (trimmedBackend.asr.backend !== 'faster_whisper') {
+          throw new Error(`expected trimmed ASR backend, got ${trimmedBackend.asr.backend}`);
+        }
+
+        const missingBackend = state.normalizeSettings({asr: {}});
+        if (missingBackend.asr.backend !== 'auto') {
+          throw new Error(`expected missing ASR backend to default to auto, got ${missingBackend.asr.backend}`);
         }
         """
     )

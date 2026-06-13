@@ -19,7 +19,7 @@ function app() {
       api_keys: {openai:'',deepseek:'',gemini:''},
       tmdb: {api_key:'', language:'zh-CN'},
       trailer: {max_video_height: 1080},
-      asr: {mode: 'speed'},
+      asr: {mode: 'speed', backend: 'auto'},
       translation: { use_translation_memory: true, use_phrase_library: true, qa_auto_repair: false },
       providers: {
         claude_cli: { enabled: true, model: 'claude-opus-4-7', timeout_sec: 180 },
@@ -119,6 +119,10 @@ function app() {
     projectListRequestSeq: 0,
     openProjectRequestSeq: 0,
     projectMutationPending: {},
+    sidebarAutoCollapsed: false,
+    sidebarAutoCollapseThreshold: 120,
+    sidebarAutoExpandThreshold: 24,
+    sidebarAutoCollapseMinWidth: 768,
 
     // Trailer wizard state
     trailerStep: 1,
@@ -224,9 +228,31 @@ function app() {
       const leavingKnowledge = this.view === 'knowledge' && nextView !== 'knowledge';
       if (leavingKnowledge && !await this.prepareToLeaveKnowledge()) return false;
       this.view = nextView;
+      this.sidebarAutoCollapsed = false;
       if (nextView === 'projects') await this.loadProjects();
       if (nextView === 'knowledge') this.loadKbProjects();
       return true;
+    },
+
+    shouldAutoCollapseSidebar() {
+      const minWidth = Number(this.sidebarAutoCollapseMinWidth) || 0;
+      const width = typeof window !== 'undefined' && Number(window.innerWidth)
+        ? Number(window.innerWidth)
+        : minWidth;
+      return width >= minWidth;
+    },
+
+    handleAppMainScroll(event) {
+      const scrollTop = Number(event?.target?.scrollTop) || 0;
+      if (!this.shouldAutoCollapseSidebar()) {
+        this.sidebarAutoCollapsed = false;
+        return;
+      }
+      if (scrollTop >= this.sidebarAutoCollapseThreshold) {
+        this.sidebarAutoCollapsed = true;
+      } else if (scrollTop <= this.sidebarAutoExpandThreshold) {
+        this.sidebarAutoCollapsed = false;
+      }
     },
 
     async openTrailerWizard() {
@@ -647,6 +673,11 @@ function app() {
         ? normalized.asr.mode.trim()
         : '';
       normalized.asr.mode = allowedAsrModes.includes(asrMode) ? asrMode : 'speed';
+      const allowedAsrBackends = ['auto', 'mlx_whisper', 'faster_whisper', 'openai_whisper'];
+      const asrBackend = typeof normalized.asr.backend === 'string'
+        ? normalized.asr.backend.trim()
+        : '';
+      normalized.asr.backend = allowedAsrBackends.includes(asrBackend) ? asrBackend : 'auto';
       const appVersion = typeof normalized.app_info.version === 'string'
         ? normalized.app_info.version.trim()
         : '';

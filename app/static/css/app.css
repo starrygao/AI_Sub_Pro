@@ -53,11 +53,34 @@ h1, h2 {
   backdrop-filter: blur(28px) saturate(1.35);
   border-right-color: var(--mac-border) !important;
   box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.55);
+  overflow: hidden;
+  transition: width 0.22s ease, box-shadow 0.22s ease;
 }
 
 .app-sidebar h1 {
   color: var(--mac-text);
   font-weight: 700;
+}
+
+.app-sidebar-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: 0 0 1.75rem;
+  border-radius: 0.65rem;
+  background: var(--mac-blue-tint);
+  color: var(--mac-blue);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.app-sidebar-title,
+.app-sidebar-subtitle,
+.app-sidebar-footer,
+.nav-label {
+  transition: opacity 0.18s ease, max-width 0.22s ease;
 }
 
 .app-sidebar nav button {
@@ -71,6 +94,40 @@ h1, h2 {
 .app-sidebar nav button[class*="text-accent"] {
   background: rgba(0, 122, 255, 0.12) !important;
   border-color: rgba(0, 122, 255, 0.12);
+}
+
+@media (min-width: 768px) {
+  .app-sidebar--auto-collapsed {
+    width: 4.5rem !important;
+    box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.7);
+  }
+
+  .app-sidebar--auto-collapsed .titlebar-drag {
+    padding-left: 1.35rem !important;
+    padding-right: 1.35rem !important;
+  }
+
+  .app-sidebar--auto-collapsed .app-sidebar-title,
+  .app-sidebar--auto-collapsed .app-sidebar-subtitle,
+  .app-sidebar--auto-collapsed .app-sidebar-footer,
+  .app-sidebar--auto-collapsed .nav-label {
+    opacity: 0;
+    max-width: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .app-sidebar--auto-collapsed nav {
+    padding-left: 0.7rem !important;
+    padding-right: 0.7rem !important;
+  }
+
+  .app-sidebar--auto-collapsed nav button {
+    justify-content: center;
+    gap: 0 !important;
+    padding-left: 0.65rem !important;
+    padding-right: 0.65rem !important;
+  }
 }
 
 /* Solid panels (class name kept as .glass for layout compatibility) */

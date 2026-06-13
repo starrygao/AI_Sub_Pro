@@ -12,7 +12,7 @@ from typing import Optional
 from app.config import Config
 from app.version import APP_VERSION
 import app.engines.providers  # noqa: F401  (load provider modules before concurrent requests)
-from app.engines.asr_capabilities import ASR_MODES, detect_asr_capabilities, recommend_asr_settings
+from app.engines.asr_capabilities import ASR_BACKENDS, ASR_MODES, detect_asr_capabilities, recommend_asr_settings
 from app.engines.knowledge import _get_singleton as _kb_singleton, invalidate_translator_kb
 
 log = logging.getLogger(__name__)
@@ -416,6 +416,7 @@ def _validate_settings_update(data: dict) -> None:
             if asr["mode"] not in ASR_MODES:
                 allowed = ", ".join(ASR_MODES)
                 raise HTTPException(status_code=400, detail=f"ASR mode must be one of: {allowed}")
+        _validate_choice_field("asr", asr, "backend", allowed=set(ASR_BACKENDS))
         _require_non_blank_str("asr", asr, "model_size")
         _require_non_blank_str("asr", asr, "language")
         _require_int("asr", asr, "beam_size", min_value=1, max_value=20)

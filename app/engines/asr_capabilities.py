@@ -5,10 +5,10 @@ import importlib.util
 import platform
 from typing import Any
 
-from app.engines.asr import MODEL_DOWNLOAD_HINTS, resolve_mlx_model_source
+from app.engines.asr import ASR_BACKENDS, MODEL_DOWNLOAD_HINTS, resolve_mlx_model_source
 
 ASR_MODES = ("speed", "accuracy", "offline")
-BACKEND_ORDER = ("mlx_whisper", "faster_whisper", "openai_whisper")
+BACKEND_ORDER = tuple(backend for backend in ASR_BACKENDS if backend != "auto")
 MODEL_ORDER = ("tiny", "base", "small", "medium", "large-v3-turbo", "large-v3")
 OFFLINE_MODEL_ORDER = ("large-v3-turbo", "small", "base", "tiny", "medium", "large-v3")
 
@@ -76,6 +76,10 @@ def detect_asr_capabilities(asr_cfg: dict | None = None) -> dict[str, Any]:
     machine = platform.machine()
     apple_silicon = system == "Darwin" and machine in {"arm64", "aarch64"}
     selected_model = cfg.get("model_size") if isinstance(cfg.get("model_size"), str) else ""
+    selected_backend = cfg.get("backend") if isinstance(cfg.get("backend"), str) else "auto"
+    selected_backend = selected_backend.strip()
+    if selected_backend not in ASR_BACKENDS:
+        selected_backend = "auto"
 
     models = {model: _model_info(model) for model in MODEL_ORDER}
     if selected_model and selected_model not in models:
@@ -87,6 +91,7 @@ def detect_asr_capabilities(asr_cfg: dict | None = None) -> dict[str, Any]:
             "machine": machine,
             "apple_silicon": apple_silicon,
         },
+        "selected_backend": selected_backend,
         "backends": {
             "mlx_whisper": _backend(
                 _has_module("mlx_whisper"),
@@ -123,6 +128,15 @@ def _installed(caps: dict[str, Any], backend: str) -> bool:
 
 def _installed_backends(caps: dict[str, Any]) -> list[str]:
     return [backend for backend in BACKEND_ORDER if _installed(caps, backend)]
+
+
+def _selected_backend(caps: dict[str, Any]) -> str:
+    selected = caps.get("selected_backend") if isinstance(caps, dict) else ""
+    if isinstance(selected, str):
+        selected = selected.strip()
+        if selected in BACKEND_ORDER:
+            return selected
+    return ""
 
 
 def _model(caps: dict[str, Any], model: str) -> dict[str, Any]:
@@ -189,8 +203,37 @@ def _recommendation(
     }
 
 
+def _model_for_mode(mode: str, backend: str, caps: dict[str, Any]) -> str:
+    if mode == "accuracy":
+        return "large-v3"
+    if mode == "offline":
+        return _first_offline_model(caps, backend)
+    return "large-v3-turbo" if backend == "mlx_whisper" else "small"
+
+
 def recommend_asr_settings(mode: str, caps: dict[str, Any]) -> dict[str, Any]:
     selected_mode = mode if mode in ASR_MODES else "speed"
+    explicit_backend = _selected_backend(caps)
+    if explicit_backend:
+        model = _model_for_mode(selected_mode, explicit_backend, caps)
+        if not _installed(caps, explicit_backend):
+            return _recommendation(
+                mode=selected_mode,
+                backend=explicit_backend,
+                model=model,
+                ready=False,
+                reason=f"已选择 {explicit_backend} 后端，但本机未检测到该依赖。",
+                caps=caps,
+            )
+        return _recommendation(
+            mode=selected_mode,
+            backend=explicit_backend,
+            model=model,
+            ready=True,
+            reason=f"已按设置使用 {explicit_backend} 后端；模式用于选择模型大小和下载提示。",
+            caps=caps,
+        )
+
     installed = _installed_backends(caps)
     if not installed:
         return _recommendation(
@@ -204,16 +247,14 @@ def recommend_asr_settings(mode: str, caps: dict[str, Any]) -> dict[str, Any]:
 
     if selected_mode == "accuracy":
         backend = "faster_whisper" if _installed(caps, "faster_whisper") else installed[0]
-        model = "large-v3"
         reason = "准确优先：使用更大模型，并在可用时选择支持 VAD 和 beam search 的后端。"
     elif selected_mode == "offline":
         backend = "mlx_whisper" if _installed(caps, "mlx_whisper") else installed[0]
-        model = _first_offline_model(caps, backend)
         reason = "离线优先：优先选择已缓存或内置模型，减少下载依赖。"
     else:
         backend = "mlx_whisper" if _installed(caps, "mlx_whisper") else installed[0]
-        model = "large-v3-turbo" if backend == "mlx_whisper" else "small"
         reason = "速度优先：优先选择 Apple Silicon/本地快速后端和较快模型。"
+    model = _model_for_mode(selected_mode, backend, caps)
 
     return _recommendation(
         mode=selected_mode,

@@ -68,6 +68,8 @@ def test_asr_mode_and_recommendation_are_visible_in_settings():
 
     assert 'x-model="settings.asr.mode"' in html
     assert 'aria-label="ASR 模式"' in html
+    assert 'x-model="settings.asr.backend"' in html
+    assert 'aria-label="本地 ASR 后端"' in html
     assert 'x-show="sysCheck?.asr_recommendation && !sysCheckLoading && !sysCheckError"' in html
     assert "asrRecommendationSummary()" in html
     assert "sysCheck?.asr_recommendation?.reason" in html
@@ -409,6 +411,41 @@ def test_main_shell_has_mobile_responsive_layout_rules():
     assert ".projects-new-button" in css
     assert "white-space: nowrap;" in css
     assert ".project-detail-actions" in css
+
+
+def test_sidebar_auto_collapse_is_frontend_only_and_accessible():
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+    css = (ROOT / "app/static/css/app.css").read_text(encoding="utf-8")
+    js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
+
+    for snippet in (
+        "sidebarAutoCollapsed",
+        "@scroll=\"handleAppMainScroll($event)\"",
+        "app-sidebar--auto-collapsed",
+        "nav-label",
+        "aria-label=\"首页\"",
+        "aria-label=\"项目\"",
+        "aria-label=\"设置\"",
+        "aria-label=\"知识库\"",
+    ):
+        assert snippet in html
+
+    for snippet in (
+        ".app-sidebar--auto-collapsed",
+        "@media (min-width: 768px)",
+        ".app-sidebar--auto-collapsed nav button",
+        "width: 4.5rem !important;",
+        "gap: 0 !important;",
+    ):
+        assert snippet in css
+
+    for snippet in (
+        "sidebarAutoCollapseThreshold: 120",
+        "sidebarAutoExpandThreshold: 24",
+        "handleAppMainScroll(event)",
+        "shouldAutoCollapseSidebar()",
+    ):
+        assert snippet in js
 
 
 def test_primary_interactions_have_reliable_touch_targets():

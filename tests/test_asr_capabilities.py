@@ -19,9 +19,13 @@ def test_detect_asr_capabilities_prefers_apple_silicon_mlx(monkeypatch, tmp_path
         },
     )
 
-    caps = asr_capabilities.detect_asr_capabilities({"model_size": "large-v3-turbo"})
+    caps = asr_capabilities.detect_asr_capabilities({
+        "model_size": "large-v3-turbo",
+        "backend": "faster_whisper",
+    })
 
     assert caps["platform"]["system"] == "Darwin"
+    assert caps["selected_backend"] == "faster_whisper"
     assert caps["backends"]["mlx_whisper"]["installed"] is True
     assert caps["backends"]["mlx_whisper"]["accelerated"] is True
     assert caps["models"]["large-v3-turbo"]["available"] is True
@@ -165,3 +169,54 @@ def test_recommendation_degrades_when_no_backend_is_installed():
     assert rec["backend"] == ""
     assert rec["ready"] is False
     assert "安装" in rec["reason"]
+
+
+def test_recommendation_respects_explicit_backend_selection():
+    from app.engines.asr_capabilities import recommend_asr_settings
+
+    caps = {
+        "selected_backend": "faster_whisper",
+        "platform": {"system": "Darwin", "machine": "arm64"},
+        "backends": {
+            "mlx_whisper": {"installed": True, "accelerated": True, "supports_vad": False, "supports_beam": False},
+            "faster_whisper": {"installed": True, "accelerated": False, "supports_vad": True, "supports_beam": True},
+            "openai_whisper": {"installed": False, "accelerated": False, "supports_vad": False, "supports_beam": True},
+        },
+        "models": {
+            "large-v3": {
+                "faster_whisper": {
+                    "available": False,
+                    "source": "unknown",
+                    "download_hint": "~3GB",
+                },
+            },
+        },
+    }
+
+    rec = recommend_asr_settings("accuracy", caps)
+
+    assert rec["backend"] == "faster_whisper"
+    assert rec["model_size"] == "large-v3"
+    assert rec["ready"] is True
+    assert rec["supports_vad"] is True
+    assert rec["download_required"] is True
+
+
+def test_recommendation_reports_missing_explicit_backend():
+    from app.engines.asr_capabilities import recommend_asr_settings
+
+    caps = {
+        "selected_backend": "faster_whisper",
+        "backends": {
+            "mlx_whisper": {"installed": True, "accelerated": True, "supports_vad": False, "supports_beam": False},
+            "faster_whisper": {"installed": False, "accelerated": False, "supports_vad": True, "supports_beam": True},
+            "openai_whisper": {"installed": False, "accelerated": False, "supports_vad": False, "supports_beam": True},
+        },
+        "models": {},
+    }
+
+    rec = recommend_asr_settings("speed", caps)
+
+    assert rec["backend"] == "faster_whisper"
+    assert rec["ready"] is False
+    assert "未检测到" in rec["reason"]

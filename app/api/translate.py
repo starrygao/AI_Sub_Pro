@@ -599,6 +599,7 @@ def _run_asr_pipeline(pid: str, audio_track: int, language: str, owns_registrati
                 beam_size=_coerce_int_option(asr_cfg.get("beam_size"), 5, minimum=1, maximum=20),
                 callback=lambda msg: _emit_progress(pid, "asr", 60, msg),
                 error_log_dir=pdir,
+                backend=_coerce_str_option(asr_cfg.get("backend"), "auto"),
             )
             _check_cancel(pid)
 

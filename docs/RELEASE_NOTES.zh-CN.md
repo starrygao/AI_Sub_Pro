@@ -2,6 +2,36 @@
 
 语言：[English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.4 - UI 自动收起与 ASR 后端选择
+
+主要内容：
+
+- macOS 侧栏在长页面向下滚动时会自动收起，回到顶部附近会展开；移动端布局不受影响。
+- 设置页新增本地 ASR 后端选择：`auto`、`mlx_whisper`、`faster_whisper`、
+  `openai_whisper`。
+- ASR 主流程现在会真正使用该后端设置。`auto` 保持原有
+  MLX -> faster-whisper -> openai-whisper fallback；显式选择某个后端时，
+  失败会明确暴露，不再静默切换到其它引擎。
+- 系统检查推荐现在会报告当前配置的 ASR 后端，以及本机是否已安装对应依赖。
+
+质量验证：
+
+- 完整测试套件已通过：`1084 passed in 192.63s`。
+- UI/ASR/设置 focused regression 已通过：`199 passed in 20.91s`。
+- 桌面运行态检查已通过：设置页滚动后侧栏从 220px 收起到 72px，回到顶部恢复，
+  且 ASR 后端选择器可见。
+- 本地 DMG 校验已通过：`hdiutil verify dist/AI_Sub_Pro_v1.3.4.dmg`
+  报告 checksum 有效，并且在 `dist/` 下运行
+  `shasum -a 256 -c AI_Sub_Pro_v1.3.4.dmg.sha256` 通过。
+- 本机安装版验证已通过：`/api/settings` 报告 app 版本 `1.3.4`，
+  ASR 后端为 `auto`。
+
+安装包：
+
+- 已为 macOS 用户附加 `AI_Sub_Pro_v1.3.4.dmg`，并提供对应的
+  `AI_Sub_Pro_v1.3.4.dmg.sha256` 校验文件和 `release-size-report.json`。
+- 本地产物大小：330 MB DMG / 816 MB app。
+
 ## v1.3.3 - 打包版 ASR 后端修复
 
 主要内容：

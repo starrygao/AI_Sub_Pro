@@ -45,6 +45,7 @@ DEFAULT_CONFIG = {
     },
     "asr": {
         "mode": "speed",
+        "backend": "auto",
         "model_size": "large-v3-turbo",
         "language": "auto",
         "vad_filter": True,

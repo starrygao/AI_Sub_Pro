@@ -78,6 +78,47 @@ def test_load_projects_and_settings_surface_errors_without_spam():
     )
 
 
+def test_sidebar_auto_collapse_uses_scroll_hysteresis_and_viewport_guard():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout, window: { innerWidth: 1280 } };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.handleAppMainScroll({ target: { scrollTop: 80 } });
+        if (state.sidebarAutoCollapsed) {
+          throw new Error('sidebar should not collapse before threshold');
+        }
+
+        state.handleAppMainScroll({ target: { scrollTop: 140 } });
+        if (!state.sidebarAutoCollapsed) {
+          throw new Error('sidebar should collapse after threshold');
+        }
+
+        state.handleAppMainScroll({ target: { scrollTop: 60 } });
+        if (!state.sidebarAutoCollapsed) {
+          throw new Error('sidebar should stay collapsed until expand threshold');
+        }
+
+        state.handleAppMainScroll({ target: { scrollTop: 12 } });
+        if (state.sidebarAutoCollapsed) {
+          throw new Error('sidebar should expand near the top');
+        }
+
+        context.window.innerWidth = 640;
+        state.handleAppMainScroll({ target: { scrollTop: 160 } });
+        if (state.sidebarAutoCollapsed) {
+          throw new Error('sidebar should not auto-collapse in narrow layout');
+        }
+        """
+    )
+
+
 def test_load_projects_ignores_stale_response_when_archive_filter_changes():
     _run_node(
         """

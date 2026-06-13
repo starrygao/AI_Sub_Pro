@@ -2,6 +2,40 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.4 - UI Auto-Collapse and ASR Backend Selection
+
+Highlights:
+
+- The macOS sidebar now automatically collapses on long-page downward scroll
+  and expands again near the top, while mobile layout remains unchanged.
+- Settings now expose an explicit local ASR backend selector:
+  `auto`, `mlx_whisper`, `faster_whisper`, or `openai_whisper`.
+- The ASR pipeline now honors that backend setting. `auto` preserves the
+  existing MLX -> faster-whisper -> openai-whisper fallback order; an explicit
+  backend fails visibly instead of silently switching engines.
+- System check recommendations now report the configured ASR backend and
+  whether the selected local dependency is installed.
+
+Quality/Verification:
+
+- Full test suite passed: `1084 passed in 192.63s`.
+- Focused UI/ASR/settings regression passed: `199 passed in 20.91s`.
+- Runtime desktop check passed: settings-page scroll collapsed the sidebar
+  from 220px to 72px, restored it at the top, and showed the ASR backend
+  selector.
+- Local DMG verification passed: `hdiutil verify dist/AI_Sub_Pro_v1.3.4.dmg`
+  reported a valid checksum, and
+  `shasum -a 256 -c AI_Sub_Pro_v1.3.4.dmg.sha256` passed from `dist/`.
+- Local installed app verification passed: `/api/settings` reports app version
+  `1.3.4` and ASR backend `auto`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.4.dmg` is attached for macOS users, with a matching
+  `AI_Sub_Pro_v1.3.4.dmg.sha256` checksum file and
+  `release-size-report.json`.
+- Local artifact size: 330 MB DMG / 816 MB app.
+
 ## v1.3.3 - Packaged ASR Backend Fix
 
 Highlights:

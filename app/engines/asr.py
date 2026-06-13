@@ -25,6 +25,7 @@ _mlx_beam_warning_emitted = False
 # also treat 5 as the "default" here so users who never touched this config
 # are not spammed with an info log about it being ignored by mlx_whisper.
 _DEFAULT_BEAM_SIZE = 5
+ASR_BACKENDS = ("auto", "mlx_whisper", "faster_whisper", "openai_whisper")
 
 MLX_MODEL_REPOS = {
     "tiny": "mlx-community/whisper-tiny-mlx",
@@ -148,10 +149,13 @@ def transcribe(
     beam_size: int = 5,
     callback: Optional[Callable] = None,
     error_log_dir: Optional[str] = None,
+    backend: str = "auto",
 ) -> List[SubtitleBlock]:
     """
     Transcribe audio to subtitle blocks.
-    Tries backends in order: mlx_whisper -> faster-whisper -> openai-whisper.
+    With backend="auto", tries backends in order:
+    mlx_whisper -> faster-whisper -> openai-whisper. Explicit backends only
+    try that backend so users are not silently moved to another ASR engine.
 
     Note: `vad_filter` is honored by faster-whisper. mlx_whisper and
     openai-whisper do not support it, so a warning is logged when the app
@@ -166,48 +170,37 @@ def transcribe(
         raise FileNotFoundError(f"Audio not found: {audio_path}")
 
     lang = None if language == "auto" else language
+    selected_backend = backend.strip() if isinstance(backend, str) else "auto"
+    if selected_backend not in ASR_BACKENDS:
+        log.warning("Unknown ASR backend %r; falling back to auto", backend)
+        selected_backend = "auto"
+    backend_order = (
+        ("mlx_whisper", "faster_whisper", "openai_whisper")
+        if selected_backend == "auto"
+        else (selected_backend,)
+    )
 
     errors = []
 
-    # Try mlx_whisper first (fastest on Apple Silicon)
-    try:
-        return _transcribe_mlx(audio_path, lang, model_size, beam_size, callback, vad_filter=vad_filter)
-    except ImportError as e:
-        msg = f"mlx_whisper ImportError: {e}"
-        log.warning(msg)
-        errors.append(msg)
-    except Exception as e:
-        import traceback
-        msg = f"mlx_whisper failed: {e}\n{traceback.format_exc()}"
-        log.warning(msg)
-        errors.append(msg)
-
-    # Try faster-whisper. This is the cross-platform backend that supports
-    # VAD and beam search, and is already bundled by the Windows build script.
-    try:
-        return _transcribe_faster_whisper(audio_path, lang, model_size, vad_filter, beam_size, callback)
-    except ImportError as e:
-        msg = f"faster_whisper ImportError: {e}"
-        log.warning(msg)
-        errors.append(msg)
-    except Exception as e:
-        import traceback
-        msg = f"faster_whisper failed: {e}\n{traceback.format_exc()}"
-        log.warning(msg)
-        errors.append(msg)
-
-    # Try openai whisper
-    try:
-        return _transcribe_openai(audio_path, lang, model_size, beam_size, callback, vad_filter=vad_filter)
-    except ImportError as e:
-        msg = f"openai whisper ImportError: {e}"
-        log.warning(msg)
-        errors.append(msg)
-    except Exception as e:
-        import traceback
-        msg = f"openai whisper failed: {e}\n{traceback.format_exc()}"
-        log.warning(msg)
-        errors.append(msg)
+    for candidate in backend_order:
+        try:
+            if candidate == "mlx_whisper":
+                return _transcribe_mlx(audio_path, lang, model_size, beam_size, callback, vad_filter=vad_filter)
+            if candidate == "faster_whisper":
+                return _transcribe_faster_whisper(audio_path, lang, model_size, vad_filter, beam_size, callback)
+            if candidate == "openai_whisper":
+                return _transcribe_openai(audio_path, lang, model_size, beam_size, callback, vad_filter=vad_filter)
+        except ImportError as e:
+            label = "openai whisper" if candidate == "openai_whisper" else candidate
+            msg = f"{label} ImportError: {e}"
+            log.warning(msg)
+            errors.append(msg)
+        except Exception as e:
+            import traceback
+            label = "openai whisper" if candidate == "openai_whisper" else candidate
+            msg = f"{label} failed: {e}\n{traceback.format_exc()}"
+            log.warning(msg)
+            errors.append(msg)
 
     # Write detailed error log
     error_detail = "\n---\n".join(errors)

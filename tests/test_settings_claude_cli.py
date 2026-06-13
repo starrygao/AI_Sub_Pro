@@ -629,6 +629,26 @@ def test_update_settings_rejects_invalid_asr_mode(monkeypatch):
     assert "ASR mode" in r.json()["detail"]
 
 
+def test_update_settings_validates_asr_backend(monkeypatch):
+    from app.main import app
+    client = TestClient(app)
+
+    with patch("app.api.settings.Config.update") as update:
+        r = client.post("/api/settings", json={"asr": {"backend": " faster_whisper "}})
+
+    assert r.status_code == 200
+    assert update.call_args.args[0]["asr"]["backend"] == "faster_whisper"
+
+    monkeypatch.setattr(
+        "app.api.settings.Config.update",
+        lambda data: (_ for _ in ()).throw(AssertionError("Config.update should not be called")),
+    )
+    invalid = client.post("/api/settings", json={"asr": {"backend": "cloud"}})
+
+    assert invalid.status_code == 400
+    assert "asr.backend" in invalid.json()["detail"]
+
+
 def test_models_endpoint_returns_claude_cli_static_models_without_api_key():
     from app.main import app
     client = TestClient(app)

@@ -52,6 +52,10 @@ def test_default_config_has_asr_mode():
     assert DEFAULT_CONFIG["asr"]["mode"] == "speed"
 
 
+def test_default_config_has_asr_backend_auto():
+    assert DEFAULT_CONFIG["asr"]["backend"] == "auto"
+
+
 def test_config_loads_and_merges_partial_saved_config(tmp_path, monkeypatch):
     """Old config.json without new sections still loads; new keys populate from DEFAULT_CONFIG."""
     import app.config as cfg
@@ -82,6 +86,7 @@ def test_config_loads_and_merges_partial_saved_config(tmp_path, monkeypatch):
     assert loaded["translation"]["max_memory_examples"] == 6
     assert loaded["translation"]["max_phrase_examples"] == 6
     assert loaded["translation"]["qa_auto_repair_rounds"] == 1
+    assert loaded["asr"]["backend"] == "auto"
 
 
 def test_config_load_ignores_non_object_saved_sections(tmp_path, monkeypatch):
