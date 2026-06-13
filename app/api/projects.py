@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
 from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, StrictInt
@@ -34,7 +34,7 @@ from app.utils.project_store import (
     PID_PATTERN,
 )
 from app.utils.media import get_tracks, get_duration, get_media_info, is_text_subtitle_codec
-from app.utils.srt import fmt_time, parse_srt_file, parse_time_strict, write_srt, write_bilingual_srt, SubtitleBlock
+from app.utils.srt import fmt_time, parse_srt, parse_srt_file, parse_time_strict, write_srt, write_bilingual_srt, SubtitleBlock
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 log = logging.getLogger(__name__)
@@ -44,7 +44,9 @@ log = logging.getLogger(__name__)
 # preventing a single POST from filling the disk. Tests monkeypatch this
 # to a lower value to exercise the rejection path without writing GBs.
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024
+MAX_SUBTITLE_UPLOAD_BYTES = 32 * 1024 * 1024
 _VIDEO_UPLOAD_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".ts", ".m4v"}
+_SUBTITLE_UPLOAD_EXTS = {".srt"}
 
 
 _PROJECT_SAFE_DEFAULTS = {
@@ -225,7 +227,7 @@ def _apply_safe_defaults(project: dict) -> dict:
             project[field] = value.strip()[:limit] or None
         else:
             project[field] = None
-    if project.get("source_type") not in ("upload", "trailer"):
+    if project.get("source_type") not in ("upload", "trailer", "subtitle"):
         project["source_type"] = "upload"
     for field, default in (("asr_language", "auto"), ("target_language", "简体中文")):
         value = project.get(field)
@@ -442,6 +444,38 @@ def _read_export_text(path: Path) -> str:
 
 def _has_video_extension(path_or_name: str) -> bool:
     return Path(path_or_name).suffix.lower() in _VIDEO_UPLOAD_EXTS
+
+
+def _has_subtitle_extension(path_or_name: str) -> bool:
+    return Path(path_or_name).suffix.lower() in _SUBTITLE_UPLOAD_EXTS
+
+
+def _safe_upload_name(filename: Optional[str], fallback: str) -> str:
+    raw_name = (filename or "").strip()
+    safe_name = raw_name.replace("/", "_").replace("\\", "_")
+    if not safe_name or safe_name in (".", ".."):
+        safe_name = fallback
+    if any(ord(ch) < 32 for ch in safe_name):
+        safe_name = "".join("_" if ord(ch) < 32 else ch for ch in safe_name)
+    if len(safe_name.encode("utf-8")) > 255:
+        suffix = Path(safe_name).suffix
+        max_stem_bytes = 255 - len(suffix.encode("utf-8"))
+        safe_name = f"{_truncate_filename_stem(Path(safe_name).stem, max_stem_bytes)}{suffix}"
+    return safe_name.strip(" ._") or fallback
+
+
+async def _read_upload_limited(file: UploadFile, *, limit: int, label: str) -> bytes:
+    data = bytearray()
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        data.extend(chunk)
+        if len(data) > limit:
+            raise HTTPException(413, f"{label} exceeds {limit} bytes")
+    if not data:
+        raise HTTPException(400, f"{label} is empty")
+    return bytes(data)
 
 
 def _truncate_filename_stem(stem: str, max_bytes: int) -> str:
@@ -819,6 +853,93 @@ async def upload_video(file: UploadFile = File(...)):
         raise HTTPException(400, "Uploaded file is empty")
 
     return {"path": str(dest)}
+
+
+@router.post("/import-subtitle")
+async def import_subtitle_project(
+    file: UploadFile = File(...),
+    name: Optional[str] = Form(None),
+    original_language: Optional[str] = Form(None),
+    target_language: Optional[str] = Form(None),
+    content_type: Optional[str] = Form(None),
+    academic_field: Optional[str] = Form(None),
+    content_notes: Optional[str] = Form(None),
+    manual_terms: Optional[str] = Form(None),
+):
+    """Create a subtitle-only project from an uploaded SRT file."""
+    safe_name = _safe_upload_name(file.filename, "subtitles.srt")
+    if not _has_subtitle_extension(safe_name):
+        raise HTTPException(400, "Subtitle file must use an SRT extension")
+
+    data = await _read_upload_limited(
+        file,
+        limit=MAX_SUBTITLE_UPLOAD_BYTES,
+        label="Subtitle file",
+    )
+    blocks = parse_srt(data)
+    if not blocks:
+        raise HTTPException(400, "Subtitle file must contain valid subtitle blocks")
+
+    pid = _new_project_id()
+    pdir = PROJECTS_DIR / pid
+    pdir.mkdir(parents=True, exist_ok=True)
+
+    display_name = _text_default(name, safe_name)
+    target_lang = _text_default(target_language, "简体中文")
+    inferred_metadata = infer_content_metadata_from_filename(display_name)
+    requested_content_type = normalize_content_type(content_type)
+    has_manual_metadata = any(
+        isinstance(value, str) and value.strip()
+        for value in (content_type, academic_field, content_notes, manual_terms)
+    )
+    resolved_content_type = (
+        requested_content_type
+        if requested_content_type != "auto"
+        else inferred_metadata.get("content_type", "auto")
+    )
+    duration = max((block.end.total_seconds() for block in blocks), default=0)
+
+    write_srt(blocks, str(pdir / "raw.srt"))
+    write_srt(blocks, str(pdir / "filtered.srt"))
+
+    project = {
+        "id": pid,
+        "name": display_name,
+        "video_path": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "status": "created",
+        "progress": 0,
+        "progress_msg": "",
+        "duration": round(duration, 1),
+        "audio_tracks": [],
+        "subtitle_tracks": [],
+        "selected_audio_track": 0,
+        "selected_subtitle_track": None,
+        "prefer_embedded_subtitle": False,
+        "asr_language": _text_default(original_language, "auto"),
+        "target_language": target_lang,
+        "error": None,
+        "output_video": None,
+        "source_type": "subtitle",
+        "original_language": _text_default(original_language, ""),
+        "source_title": display_name,
+        "source_language": _text_default(original_language, ""),
+        "source_has_subtitles": True,
+        "subtitle_source": "uploaded",
+        "native_subtitle_language": _text_default(original_language, ""),
+        "asr_skipped": True,
+        "content_type": resolved_content_type,
+        "academic_field": _text_default(
+            academic_field,
+            inferred_metadata.get("academic_field", ""),
+        ),
+        "content_notes": (content_notes or "").strip() if isinstance(content_notes, str) else "",
+        "manual_terms": (manual_terms or "").strip() if isinstance(manual_terms, str) else "",
+        "metadata_source": "manual" if has_manual_metadata else inferred_metadata.get("metadata_source", ""),
+    }
+    project = _apply_safe_defaults(project)
+    _save_project(pid, project)
+    return project
 
 
 @router.get("/{pid}")

@@ -768,10 +768,10 @@ function app() {
         {
           mode: 'subtitle',
           label: '字幕文件',
-          helper: 'SRT / VTT / ASS',
-          strategy: '后续将支持直接翻译字幕文件，并保留时间轴和格式。',
-          actionLabel: '即将支持',
-          disabled: true,
+          helper: 'SRT',
+          strategy: '直接读取 SRT 时间轴，创建字幕项目后马上翻译；无需 ASR 或视频下载。',
+          actionLabel: '选择 SRT 字幕',
+          disabled: false,
         },
         {
           mode: 'audio',
@@ -808,6 +808,10 @@ function app() {
         if (this.projectCreating) return '创建中...';
       }
       if (option.mode === 'network' && this.trailerSubmitting) return '提交中...';
+      if (option.mode === 'subtitle') {
+        if (this.fileImporting) return '读取中...';
+        if (this.projectCreating) return '创建中...';
+      }
       return option.actionLabel || '开始';
     },
 
@@ -818,6 +822,7 @@ function app() {
       if (option.mode === 'network') {
         return !String(this.trailerUrlInput || '').trim() || this.trailerSubmitting;
       }
+      if (option.mode === 'subtitle') return this.fileImporting || this.projectCreating;
       return true;
     },
 
@@ -829,6 +834,10 @@ function app() {
       }
       if (option.mode === 'network') {
         await this.startTrailerUrlJob();
+        return;
+      }
+      if (option.mode === 'subtitle') {
+        await this.openSubtitleFilePicker();
         return;
       }
       await this.openFilePicker();
@@ -850,6 +859,60 @@ function app() {
       const data = await resp.json().catch(() => ({}));
       if (!data.path) throw new Error('服务器未返回文件路径');
       return data.path;
+    },
+
+    isSubtitleFile(file) {
+      const name = String(file?.name || '').toLowerCase();
+      return name.endsWith('.srt');
+    },
+
+    async uploadSubtitleFile(file) {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('target_language', this.targetLang || '简体中文');
+      if (this.asrLanguage && this.asrLanguage !== 'auto') {
+        formData.append('original_language', this.asrLanguage);
+      }
+      const resp = await fetch('/api/projects/import-subtitle', { method: 'POST', body: formData });
+      if (!resp.ok) {
+        throw new Error(await this.apiErrorMessage(resp, '字幕导入失败'));
+      }
+      const data = await resp.json().catch(() => ({}));
+      if (!data.id) throw new Error('服务器未返回项目 ID');
+      return data;
+    },
+
+    async useSelectedSubtitleFile(file) {
+      if (!file) return;
+      if (!this.isSubtitleFile(file)) {
+        this.toast('请选择 SRT 字幕文件', 'error');
+        return;
+      }
+      if (this.fileImporting || this.projectCreating) return;
+      this.fileImporting = true;
+      this.projectCreating = true;
+      try {
+        if (!await this.ensureTranslationReadyForWorkflow()) return;
+        const p = await this.uploadSubtitleFile(file);
+        this.toast('字幕项目已创建，开始翻译...');
+        this.clearKbSuggestions();
+        this.clearKbUsageTrace();
+        this.clearQualityReport();
+        this.clearTranslationStrategy();
+        this.currentProject = p;
+        this.workflowState = null;
+        this.workflowStateError = '';
+        this.applyWorkflowDefaultsFromProject(p);
+        await this.setView('detail');
+        this.connectWS(p.id);
+        await this.api(`/api/projects/${p.id}/start-translate`, 'POST', { target_language: this.targetLang });
+        this.currentProject.status = 'processing';
+      } catch(e) {
+        this.toast('字幕导入失败: ' + e.message, 'error');
+      } finally {
+        this.fileImporting = false;
+        this.projectCreating = false;
+      }
     },
 
     async useSelectedVideoFile(file) {
@@ -1861,10 +1924,24 @@ function app() {
       this.$refs.fileInput?.click();
     },
 
+    async openSubtitleFilePicker() {
+      if (this.fileImporting || this.projectCreating) return;
+      this.$refs.subtitleFileInput?.click();
+    },
+
     async handleFileSelect(event) {
       const file = event.target?.files?.[0];
       try {
         await this.useSelectedVideoFile(file);
+      } finally {
+        if (event.target) event.target.value = '';
+      }
+    },
+
+    async handleSubtitleFileSelect(event) {
+      const file = event.target?.files?.[0];
+      try {
+        await this.useSelectedSubtitleFile(file);
       } finally {
         if (event.target) event.target.value = '';
       }

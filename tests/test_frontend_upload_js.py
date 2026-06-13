@@ -361,8 +361,12 @@ def test_home_source_mode_routes_supported_sources_and_explains_pending_ones():
           if (!options.find((option) => option.mode === 'network')?.strategy.includes('原生字幕')) {
             throw new Error(`expected network mode to explain native subtitle priority, got ${JSON.stringify(options)}`);
           }
-          if (!options.find((option) => option.mode === 'subtitle')?.disabled) {
-            throw new Error('expected subtitle-only mode to be visible but disabled until supported');
+          const subtitleOption = options.find((option) => option.mode === 'subtitle');
+          if (subtitleOption?.disabled) {
+            throw new Error('expected subtitle-only mode to be enabled for SRT import');
+          }
+          if (!subtitleOption?.strategy.includes('SRT')) {
+            throw new Error(`expected subtitle source to explain SRT import, got ${JSON.stringify(subtitleOption)}`);
           }
           if (!state.homeSourceStrategy().includes('内嵌字幕')) {
             throw new Error(`expected local strategy to mention embedded subtitles, got ${state.homeSourceStrategy()}`);
@@ -380,12 +384,67 @@ def test_home_source_mode_routes_supported_sources_and_explains_pending_ones():
           await state.startHomeSourceAction();
           if (!trailerStarted) throw new Error('expected network source action to start URL job');
 
-          let toastMessage = '';
-          state.toast = (msg, type) => { toastMessage = `${type || 'success'}:${msg}`; };
+          let subtitlePickerOpened = false;
+          state.openSubtitleFilePicker = async () => { subtitlePickerOpened = true; };
           state.setHomeSourceMode('subtitle');
           await state.startHomeSourceAction();
-          if (!toastMessage.includes('即将支持') || !toastMessage.includes('字幕')) {
-            throw new Error(`expected pending subtitle source toast, got ${toastMessage}`);
+          if (!subtitlePickerOpened) throw new Error('expected subtitle source action to open SRT picker');
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_selected_subtitle_file_creates_project_and_starts_translation():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const calls = [];
+          state.sysCheck = {translation_ready: true};
+          state.targetLang = 'English';
+          state.toast = () => {};
+          state.setView = async (view) => { state.view = view; return true; };
+          state.connectWS = () => {};
+          state.uploadSubtitleFile = async (file) => {
+            calls.push(['upload', file.name]);
+            return {id: 'sub1', name: file.name, source_type: 'subtitle', target_language: 'English'};
+          };
+          state.api = async (url, method, body) => {
+            calls.push([method, url, body]);
+            if (url === '/api/projects/sub1/start-translate' && method === 'POST') {
+              return {status: 'started'};
+            }
+            throw new Error(`unexpected api call ${method} ${url}`);
+          };
+
+          await state.useSelectedSubtitleFile({name: 'lecture.srt'});
+
+          if (JSON.stringify(calls[0]) !== JSON.stringify(['upload', 'lecture.srt'])) {
+            throw new Error(`expected subtitle upload first, got ${JSON.stringify(calls)}`);
+          }
+          const startCall = calls.find((call) => call[1] === '/api/projects/sub1/start-translate');
+          if (!startCall || startCall[2].target_language !== 'English') {
+            throw new Error(`expected start-translate with target language, got ${JSON.stringify(calls)}`);
+          }
+          if (state.currentProject?.id !== 'sub1') {
+            throw new Error(`expected current subtitle project, got ${JSON.stringify(state.currentProject)}`);
+          }
+          if (state.view !== 'detail') {
+            throw new Error(`expected subtitle project detail view, got ${state.view}`);
+          }
+          if (state.fileImporting || state.projectCreating) {
+            throw new Error(`expected busy flags reset, got ${state.fileImporting}/${state.projectCreating}`);
           }
         })().catch((err) => {
           console.error(err.message);

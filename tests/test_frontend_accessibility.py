@@ -265,9 +265,12 @@ def test_home_unified_source_modes_are_visible_and_accessible():
         "homeSourceStrategy()",
         "startHomeSourceAction()",
         "homeSourceMode === 'network'",
+        "homeSourceMode === 'subtitle'",
         "aria-label=\"选择输入来源\"",
         ":aria-pressed=\"homeSourceMode === option.mode\"",
-        ":disabled=\"option.disabled\"",
+        "aria-label=\"选择 SRT 字幕文件\"",
+        "x-ref=\"subtitleFileInput\"",
+        "accept=\".srt\"",
     ):
         assert snippet in html
 
@@ -279,6 +282,12 @@ def test_home_unified_source_modes_are_visible_and_accessible():
         "homeSourceStrategy()",
         "homeSourceActionLabel()",
         "startHomeSourceAction()",
+        "isSubtitleFile(file)",
+        "uploadSubtitleFile(file)",
+        "useSelectedSubtitleFile(file)",
+        "openSubtitleFilePicker()",
+        "handleSubtitleFileSelect(event)",
+        "/api/projects/import-subtitle",
     ):
         assert snippet in js
 

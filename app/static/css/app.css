@@ -325,6 +325,12 @@ textarea,
   margin-right: auto;
 }
 
+.home-subtitle-source {
+  max-width: 32rem;
+  margin-left: auto;
+  margin-right: auto;
+}
+
 .home-recent-project {
   border: 1px solid transparent;
 }
