@@ -298,7 +298,12 @@ def test_bundled_phrase_packs_import_and_retrieve(tmp_path):
     assert "es-zh.subtitle_colloquial_starter.v1.json" in pack_names
     assert "fr-zh.subtitle_colloquial_starter.v1.json" in pack_names
     assert "de-zh.subtitle_colloquial_starter.v1.json" in pack_names
-    assert len(pack_names) == 12
+    assert "en-zh.domain_interview_documentary.v1.json" in pack_names
+    assert "en-zh.domain_comedy.v1.json" in pack_names
+    assert "en-zh.domain_technical_tutorial.v1.json" in pack_names
+    assert "en-zh.domain_legal_adult.v1.json" in pack_names
+    assert "ja-zh.domain_anime.v1.json" in pack_names
+    assert len(pack_names) == 17
 
     library = PhraseLibrary(tmp_path / "phrases.sqlite3")
     imported = import_bundled_phrase_packs(library=library)
@@ -328,6 +333,15 @@ def test_bundled_phrase_packs_import_and_retrieve(tmp_path):
     assert any(
         result.target_text == "等一下。"
         for result in library.retrieve("Attends une seconde.", source_language="fr", target_language="zh-CN")
+    )
+    assert any(
+        result.target_text == "运行这条命令。"
+        for result in library.retrieve(
+            "Run this command.",
+            source_language="en",
+            target_language="zh-CN",
+            preferred_tags={"technical"},
+        )
     )
     assert any(
         result.target_text == "等一下。"

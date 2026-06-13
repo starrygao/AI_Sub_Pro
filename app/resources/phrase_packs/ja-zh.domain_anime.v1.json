@@ -1,0 +1,124 @@
+{
+  "id": "ai-sub-pro.ja-zh.domain_anime",
+  "version": 1,
+  "source": "AI Sub Pro bundled synthetic subtitle phrase pack",
+  "license": "Project-local synthetic examples, MIT-compatible",
+  "source_language": "ja",
+  "target_language": "zh-CN",
+  "tags": [
+    "subtitle",
+    "dialogue",
+    "anime"
+  ],
+  "quality": 0.82,
+  "phrases": [
+    {
+      "source_text": "必殺技だ。",
+      "target_text": "这是必杀技。",
+      "quality": 0.84,
+      "tags": [
+        "anime",
+        "attack-name"
+      ]
+    },
+    {
+      "source_text": "まだ終わってない。",
+      "target_text": "还没结束。",
+      "quality": 0.84,
+      "tags": [
+        "anime",
+        "battle"
+      ]
+    },
+    {
+      "source_text": "仲間を信じろ。",
+      "target_text": "相信伙伴。",
+      "quality": 0.84,
+      "tags": [
+        "anime",
+        "relationship"
+      ]
+    },
+    {
+      "source_text": "先輩、お願いします。",
+      "target_text": "前辈，拜托了。",
+      "quality": 0.84,
+      "tags": [
+        "anime",
+        "honorific"
+      ]
+    },
+    {
+      "source_text": "勝負はこれからだ。",
+      "target_text": "较量现在才开始。",
+      "quality": 0.84,
+      "tags": [
+        "anime",
+        "battle"
+      ]
+    },
+    {
+      "source_text": "約束を守る。",
+      "target_text": "我会遵守约定。",
+      "quality": 0.84,
+      "tags": [
+        "anime",
+        "promise"
+      ]
+    },
+    {
+      "source_text": "逃げるわけにはいかない。",
+      "target_text": "我不能逃。",
+      "quality": 0.84,
+      "tags": [
+        "anime",
+        "resolve"
+      ]
+    },
+    {
+      "source_text": "力を貸して。",
+      "target_text": "借我力量。",
+      "quality": 0.84,
+      "tags": [
+        "anime",
+        "fantasy"
+      ]
+    },
+    {
+      "source_text": "転校生？",
+      "target_text": "转学生？",
+      "quality": 0.84,
+      "tags": [
+        "anime",
+        "school"
+      ]
+    },
+    {
+      "source_text": "部長に報告して。",
+      "target_text": "去向部长报告。",
+      "quality": 0.84,
+      "tags": [
+        "anime",
+        "school"
+      ]
+    },
+    {
+      "source_text": "世界を救うなんて無理だ。",
+      "target_text": "拯救世界根本不可能。",
+      "quality": 0.84,
+      "tags": [
+        "anime",
+        "fantasy"
+      ]
+    },
+    {
+      "source_text": "それでもやるしかない。",
+      "target_text": "即便如此，也只能去做。",
+      "quality": 0.84,
+      "tags": [
+        "anime",
+        "resolve"
+      ]
+    }
+  ]
+}

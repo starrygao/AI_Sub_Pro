@@ -1,0 +1,152 @@
+{
+  "id": "ai-sub-pro.en-zh.domain_interview_documentary",
+  "version": 1,
+  "source": "AI Sub Pro bundled synthetic subtitle phrase pack",
+  "license": "Project-local synthetic examples, MIT-compatible",
+  "source_language": "en",
+  "target_language": "zh-CN",
+  "tags": [
+    "subtitle",
+    "dialogue",
+    "interview",
+    "documentary"
+  ],
+  "quality": 0.82,
+  "phrases": [
+    {
+      "source_text": "Can you walk us through what happened?",
+      "target_text": "你能带我们回顾一下当时发生了什么吗？",
+      "quality": 0.86,
+      "tags": [
+        "interview",
+        "question"
+      ]
+    },
+    {
+      "source_text": "What did you make of it at the time?",
+      "target_text": "你当时是怎么看这件事的？",
+      "quality": 0.86,
+      "tags": [
+        "interview",
+        "question"
+      ]
+    },
+    {
+      "source_text": "Looking back, what stands out?",
+      "target_text": "现在回想起来，最让你印象深刻的是什么？",
+      "quality": 0.86,
+      "tags": [
+        "interview",
+        "reflection"
+      ]
+    },
+    {
+      "source_text": "For context, this was the first time officials had spoken publicly.",
+      "target_text": "作为背景，这是官员首次公开发声。",
+      "quality": 0.86,
+      "tags": [
+        "documentary",
+        "context"
+      ]
+    },
+    {
+      "source_text": "The footage was recorded two days later.",
+      "target_text": "这段画面录制于两天后。",
+      "quality": 0.86,
+      "tags": [
+        "documentary",
+        "chronology"
+      ]
+    },
+    {
+      "source_text": "The exact cause remains disputed.",
+      "target_text": "确切原因仍存在争议。",
+      "quality": 0.86,
+      "tags": [
+        "documentary",
+        "uncertainty"
+      ]
+    },
+    {
+      "source_text": "Former chief engineer",
+      "target_text": "前总工程师",
+      "quality": 0.86,
+      "tags": [
+        "documentary",
+        "first-title"
+      ]
+    },
+    {
+      "source_text": "Investigative reporter",
+      "target_text": "调查记者",
+      "quality": 0.86,
+      "tags": [
+        "documentary",
+        "first-title"
+      ]
+    },
+    {
+      "source_text": "Clinical psychologist",
+      "target_text": "临床心理学家",
+      "quality": 0.86,
+      "tags": [
+        "documentary",
+        "first-title"
+      ]
+    },
+    {
+      "source_text": "According to court records",
+      "target_text": "根据法庭记录",
+      "quality": 0.86,
+      "tags": [
+        "documentary",
+        "attribution"
+      ]
+    },
+    {
+      "source_text": "Researchers later confirmed the finding.",
+      "target_text": "研究人员后来证实了这一发现。",
+      "quality": 0.86,
+      "tags": [
+        "documentary",
+        "attribution"
+      ]
+    },
+    {
+      "source_text": "That account has never been independently verified.",
+      "target_text": "这一说法从未得到独立证实。",
+      "quality": 0.86,
+      "tags": [
+        "documentary",
+        "uncertainty"
+      ]
+    },
+    {
+      "source_text": "Let me put that another way.",
+      "target_text": "我换个说法。",
+      "quality": 0.86,
+      "tags": [
+        "interview",
+        "clarification"
+      ]
+    },
+    {
+      "source_text": "I want to be careful about that.",
+      "target_text": "关于这一点我得谨慎些。",
+      "quality": 0.86,
+      "tags": [
+        "interview",
+        "stance"
+      ]
+    },
+    {
+      "source_text": "That was the turning point.",
+      "target_text": "那就是转折点。",
+      "quality": 0.86,
+      "tags": [
+        "documentary",
+        "structure"
+      ]
+    }
+  ]
+}

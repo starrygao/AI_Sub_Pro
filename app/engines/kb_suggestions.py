@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from dataclasses import asdict, dataclass, field
 
+from app.engines.domain_terms import find_domain_terms, lookup_domain_term
 from app.engines.kb_models import ProjectKb
 from app.utils.project_store import atomic_write_json
 
@@ -136,6 +137,22 @@ _SPECIAL_TARGETS = {
 }
 
 
+def _suggested_target(source: str) -> str:
+    if source in _SPECIAL_TARGETS:
+        return _SPECIAL_TARGETS[source]
+    term = lookup_domain_term(source)
+    return term.target if term is not None else ""
+
+
+def _suggested_notes(source: str) -> str:
+    term = lookup_domain_term(source)
+    return term.notes if term is not None else ""
+
+
+def _suggested_confidence(source: str, confidence: float) -> float:
+    return max(confidence, 0.85) if lookup_domain_term(source) is not None else confidence
+
+
 @dataclass
 class KbSuggestion:
     source: str
@@ -183,18 +200,25 @@ def suggest_kb_entries(
             suggestion = suggestions[key]
             if evidence not in suggestion.evidence:
                 suggestion.evidence.append(evidence)
-            suggestion.confidence = max(suggestion.confidence, confidence)
+            if not suggestion.target:
+                suggestion.target = _suggested_target(term)
+            if not suggestion.notes:
+                suggestion.notes = _suggested_notes(term)
+            suggestion.confidence = max(
+                suggestion.confidence,
+                _suggested_confidence(term, confidence),
+            )
             suggestion.collision = collision
             suggestion.existing_entries = list(matches)
             continue
 
         suggestions[key] = KbSuggestion(
             source=term,
-            target=_SPECIAL_TARGETS.get(term, ""),
+            target=_suggested_target(term),
             category=category,
-            notes="",
+            notes=_suggested_notes(term),
             evidence=[evidence],
-            confidence=confidence,
+            confidence=_suggested_confidence(term, confidence),
             collision=collision,
             existing_entries=list(matches),
         )
@@ -216,14 +240,19 @@ def _iter_candidates(project: dict, subtitles: list[dict] | None):
 
     for phrase in _title_case_phrases(project.get("overview")):
         yield phrase, _category_for_phrase(phrase), "overview", 0.6, "overview"
+    for match in find_domain_terms(project.get("overview", "")):
+        yield match.term.source, match.term.category, "overview", 0.85, "domain_term"
 
     for subtitle in subtitles or []:
         if not isinstance(subtitle, dict):
             continue
         index = subtitle.get("index")
         evidence = f"subtitle:{index}" if index is not None else "subtitle"
-        for phrase in _title_case_phrases(subtitle.get("text")):
+        text = subtitle.get("text")
+        for phrase in _title_case_phrases(text):
             yield phrase, _category_for_phrase(phrase), evidence, 0.55, "subtitle"
+        for match in find_domain_terms(text):
+            yield match.term.source, match.term.category, evidence, 0.85, "domain_term"
 
 
 def _cast_names(cast):

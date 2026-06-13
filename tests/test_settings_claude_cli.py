@@ -510,6 +510,9 @@ def test_update_settings_rejects_invalid_boolean_values(monkeypatch):
     cases = [
         ({"translation": {"filter_repetitive": "false"}}, "filter_repetitive"),
         ({"translation": {"full_doc_mode": 1}}, "full_doc_mode"),
+        ({"translation": {"use_translation_memory": "true"}}, "use_translation_memory"),
+        ({"translation": {"use_phrase_library": 1}}, "use_phrase_library"),
+        ({"translation": {"qa_auto_repair": "false"}}, "qa_auto_repair"),
         ({"translation": {"max_memory_examples": True}}, "max_memory_examples"),
         ({"translation": {"max_phrase_examples": False}}, "max_phrase_examples"),
         ({"translation": {"qa_auto_repair_rounds": True}}, "qa_auto_repair_rounds"),

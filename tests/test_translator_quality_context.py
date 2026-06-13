@@ -392,3 +392,181 @@ def test_build_prompt_prefers_domain_phrase_pack_from_metadata(monkeypatch, tmp_
     assert "tags: medical" in prompt
     assert translator.last_quality_trace.phrase_hits
     assert translator.last_quality_trace.phrase_hits[0]["pack_id"] == "ai-sub-pro.en-zh.domain_medical"
+
+
+def test_build_prompt_injects_curated_domain_terms_below_project_kb(monkeypatch, tmp_path):
+    from app.engines import translator as tmod
+    from app.engines.kb_models import ProjectKb, TermEntry
+    from app.engines.knowledge import KnowledgeBase
+    from app.engines.phrase_library import PhraseLibrary
+
+    phrases = PhraseLibrary(tmp_path / "phrases.sqlite3")
+    phrases.add_phrase(
+        source_text="head for the sand",
+        target_text="朝沙地去",
+        source_language="en",
+        target_language="zh-CN",
+        source_name="unit-test",
+        license="local",
+        quality=0.9,
+    )
+    monkeypatch.setattr(tmod, "PhraseLibrary", lambda: phrases)
+
+    kb = KnowledgeBase()
+    kb.set_project("surviving", ProjectKb(
+        show_title="Surviving Earth",
+        slang=[TermEntry(source="Pangaea", target="盘古大陆")],
+    ))
+    monkeypatch.setattr(tmod, "_shared_kb", kb, raising=False)
+
+    config = _translator_config()
+    config["translation"]["use_translation_memory"] = False
+    translator = tmod.SubtitleTranslator(config)
+    prompt = translator._build_prompt(
+        "简体中文",
+        {"name": "Surviving Earth S01E01", "original_language": "en"},
+        None,
+        [],
+        [],
+        items=[
+            {"id": 1, "original": "These little climbers are Suminia."},
+            {"id": 2, "original": "called proto-Pterosaurs, head for the sand."},
+        ],
+    )
+
+    kb_pos = prompt.index("Use EXACTLY these translations")
+    domain_pos = prompt.index("Curated domain terminology")
+    phrase_pos = prompt.index("Subtitle phrase examples")
+    assert kb_pos < domain_pos < phrase_pos
+    assert "Suminia → 苏美尼兽" in prompt
+    assert "proto-Pterosaurs → 原翼龙类" in prompt
+    assert translator.last_quality_trace.kb_hits
+    assert translator.last_quality_trace.kb_hits[0]["scope"] == "curated_domain"
+
+
+def test_build_prompt_injects_content_profiles_before_phrase_examples(monkeypatch, tmp_path):
+    from app.engines import translator as tmod
+    from app.engines.knowledge import KnowledgeBase
+    from app.engines.phrase_library import PhraseLibrary
+
+    phrases = PhraseLibrary(tmp_path / "phrases.sqlite3")
+    phrases.add_phrase(
+        source_text="What happened?",
+        target_text="怎么回事？",
+        source_language="ko",
+        target_language="zh-CN",
+        source_name="unit-test",
+        license="local",
+        tags=["korean"],
+        quality=0.9,
+    )
+    monkeypatch.setattr(tmod, "PhraseLibrary", lambda: phrases)
+    monkeypatch.setattr(tmod, "_shared_kb", KnowledgeBase(), raising=False)
+
+    config = _translator_config()
+    config["translation"]["use_translation_memory"] = False
+    translator = tmod.SubtitleTranslator(config)
+    prompt = translator._build_prompt(
+        "简体中文",
+        {
+            "name": "Korean Drama Cast Interview S01E01",
+            "original_language": "ko",
+            "tmdb_type": "tv",
+            "tags": ["interview"],
+        },
+        None,
+        [],
+        [],
+        items=[
+            {"id": 1, "original": "What happened?"},
+        ],
+    )
+
+    profile_pos = prompt.index("Content profile guidance")
+    phrase_pos = prompt.index("Subtitle phrase examples")
+    assert profile_pos < phrase_pos
+    assert "[Korean drama]" in prompt
+    assert "[Interview]" in prompt
+    assert "honorific" in prompt.lower()
+    assert "filler" in prompt.lower()
+    assert translator.last_quality_trace.profile_hits
+    assert {hit["id"] for hit in translator.last_quality_trace.profile_hits} == {
+        "korean_drama",
+        "interview",
+    }
+
+
+def test_build_prompt_injects_subtitle_style_guidance(monkeypatch):
+    from app.engines import translator as tmod
+    from app.engines.knowledge import KnowledgeBase
+
+    monkeypatch.setattr(tmod, "_shared_kb", KnowledgeBase(), raising=False)
+    config = _translator_config()
+    config["translation"]["use_translation_memory"] = False
+    config["translation"]["use_phrase_library"] = False
+    translator = tmod.SubtitleTranslator(config)
+
+    prompt = translator._build_prompt(
+        "简体中文",
+        {"name": "Studio AV Release", "tags": ["adult"], "original_language": "en"},
+        None,
+        [],
+        [],
+        items=[
+            {"id": 1, "original": "Harder."},
+        ],
+    )
+
+    assert "Subtitle style constraints" in prompt
+    assert "16 Chinese characters per line" in prompt
+    assert "reading speed at or below 9.0 characters per second" in prompt
+    assert translator.last_quality_trace.style_hits
+    assert translator.last_quality_trace.style_hits[0]["scope"] == "subtitle_style"
+
+
+def test_build_prompt_gates_legal_adult_phrase_examples(monkeypatch, tmp_path):
+    from app.engines import translator as tmod
+    from app.engines.knowledge import KnowledgeBase
+    from app.engines.phrase_library import PhraseLibrary, import_bundled_phrase_packs
+
+    phrases = PhraseLibrary(tmp_path / "phrases.sqlite3")
+    import_bundled_phrase_packs(library=phrases)
+    monkeypatch.setattr(tmod, "PhraseLibrary", lambda: phrases)
+    monkeypatch.setattr(tmod, "_shared_kb", KnowledgeBase(), raising=False)
+
+    config = _translator_config()
+    config["translation"]["use_translation_memory"] = False
+    config["translation"]["max_phrase_examples"] = 6
+    translator = tmod.SubtitleTranslator(config)
+
+    plain_prompt = translator._build_prompt(
+        "简体中文",
+        {"name": "Airport Drama S01E01", "original_language": "en", "tmdb_type": "tv"},
+        None,
+        [],
+        [],
+        items=[{"id": 1, "original": "I'm coming."}],
+    )
+    plain_trace = translator.last_quality_trace.to_dict()
+
+    assert "我要去了" not in plain_prompt
+    assert all(
+        hit["pack_id"] != "ai-sub-pro.en-zh.domain_legal_adult"
+        for hit in plain_trace["phrase_hits"]
+    )
+
+    adult_prompt = translator._build_prompt(
+        "简体中文",
+        {"name": "Studio AV Release", "tags": ["adult"], "original_language": "en"},
+        None,
+        [],
+        [],
+        items=[{"id": 1, "original": "I'm coming."}],
+    )
+    adult_trace = translator.last_quality_trace.to_dict()
+
+    assert "我要去了" in adult_prompt
+    assert any(
+        hit["pack_id"] == "ai-sub-pro.en-zh.domain_legal_adult"
+        for hit in adult_trace["phrase_hits"]
+    )

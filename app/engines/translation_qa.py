@@ -8,7 +8,16 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from app.evaluation.metrics import proper_name_consistency_score
+from app.engines.content_profiles import infer_content_profiles
+from app.engines.domain_terms import (
+    find_domain_terms,
+    match_is_overridden_by_project_kb,
+)
 from app.engines.kb_models import ProjectKb
+from app.engines.subtitle_style_profiles import (
+    SubtitleStyleProfile,
+    infer_subtitle_style_profile,
+)
 from app.utils.project_store import atomic_write_json
 
 
@@ -73,6 +82,68 @@ def _clean_text(value) -> str:
 
 _ENGLISH_RE = re.compile(r"[A-Za-z]{3,}")
 _SOUND_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_REPEATED_CJK_RE = re.compile(r"([\u4e00-\u9fff])(?:[，,、\s]*\1){2,}")
+_ASCII_PUNCT_RE = re.compile(r"[?!,;:]")
+_TECH_ALLOWED_ENGLISH_TOKENS = {
+    "api",
+    "cli",
+    "cpu",
+    "css",
+    "csv",
+    "dns",
+    "docker",
+    "firebase",
+    "git",
+    "github",
+    "gitlab",
+    "gpu",
+    "graphql",
+    "html",
+    "http",
+    "https",
+    "ios",
+    "ip",
+    "java",
+    "javascript",
+    "json",
+    "jsonl",
+    "jwt",
+    "kubernetes",
+    "linux",
+    "localhost",
+    "macos",
+    "mysql",
+    "node",
+    "npm",
+    "oauth",
+    "pdf",
+    "pip",
+    "postgres",
+    "protobuf",
+    "python",
+    "react",
+    "redis",
+    "sdk",
+    "sql",
+    "sqlite",
+    "ssh",
+    "ssl",
+    "swift",
+    "tcp",
+    "tls",
+    "toml",
+    "typescript",
+    "udp",
+    "uri",
+    "url",
+    "uuid",
+    "websocket",
+    "windows",
+    "xcode",
+    "xml",
+    "yaml",
+}
 
 
 def _is_chinese_target(target_language: str) -> bool:
@@ -98,6 +169,28 @@ def _is_chinese_target(target_language: str) -> bool:
     }
 
 
+def _has_technical_tutorial_context(meta_info: Optional[dict]) -> bool:
+    return any(
+        profile.id == "technical_tutorial"
+        for profile in infer_content_profiles(meta_info if isinstance(meta_info, dict) else {})
+    )
+
+
+def _is_allowed_technical_token(token: str) -> bool:
+    normalized = _clean_text(token).casefold()
+    if normalized in _TECH_ALLOWED_ENGLISH_TOKENS:
+        return True
+    return bool(token.isupper() and 3 <= len(token) <= 10)
+
+
+def _english_residue_match(translation: str, *, allow_technical_terms: bool = False):
+    for match in _ENGLISH_RE.finditer(translation or ""):
+        if allow_technical_terms and _is_allowed_technical_token(match.group(0)):
+            continue
+        return match
+    return None
+
+
 def _kb_terms(project_kb: Optional[ProjectKb]) -> list[tuple[str, str]]:
     if project_kb is None:
         return []
@@ -118,18 +211,85 @@ def _issue_counts(issues: list[QualityIssue]) -> dict:
     return counts
 
 
+_FAR_CATEGORY_BY_TYPE = {
+    "missing_translation": "functional",
+    "duplicate_id": "functional",
+    "kb_term_missing": "functional",
+    "canonical_term_missing": "functional",
+    "proper_name_inconsistent": "functional",
+    "english_residue": "acceptability",
+    "sound_description_translated": "acceptability",
+    "punctuation_style": "acceptability",
+    "line_too_long": "readability",
+    "reading_speed_too_fast": "readability",
+    "too_many_lines": "readability",
+    "weak_semantic_line_break": "readability",
+    "repetition_not_compressed": "readability",
+}
+
+
+def _far_counts(issues: list[QualityIssue]) -> dict:
+    counts = {"functional": 0, "acceptability": 0, "readability": 0}
+    for issue in issues:
+        category = _FAR_CATEGORY_BY_TYPE.get(issue.type)
+        if category:
+            counts[category] += 1
+    return counts
+
+
+def _compact_subtitle_text(value: str) -> str:
+    return re.sub(r"\s+", "", _HTML_TAG_RE.sub("", value or ""))
+
+
+def _subtitle_lines(value: str) -> list[str]:
+    return [line.strip() for line in (value or "").splitlines() if line.strip()]
+
+
+def _duration_seconds(block) -> float:
+    start = getattr(block, "start", None)
+    end = getattr(block, "end", None)
+    try:
+        seconds = (end - start).total_seconds()
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return 0.0
+    return seconds if seconds > 0 else 0.0
+
+
+def _weak_semantic_break(lines: list[str]) -> bool:
+    if len(lines) < 2:
+        return False
+    compact_lines = [_compact_subtitle_text(line) for line in lines]
+    total = sum(len(line) for line in compact_lines)
+    if total < 6:
+        return False
+    return any(0 < len(line) <= 2 for line in compact_lines)
+
+
+def _style_profile_summary(profile: SubtitleStyleProfile | None) -> dict:
+    if profile is None:
+        return {}
+    return profile.to_trace()
+
+
 def run_quality_checks(
     blocks: Iterable,
     *,
     project_kb: Optional[ProjectKb] = None,
     target_language: str = "简体中文",
     max_chars: int = 32,
+    meta_info: Optional[dict] = None,
+    style_profile: Optional[SubtitleStyleProfile] = None,
     trace: Optional[dict] = None,
 ) -> TranslationQaReport:
     issues: list[QualityIssue] = []
     seen_ids = set()
     kb_terms = _kb_terms(project_kb)
     chinese_target = _is_chinese_target(target_language)
+    technical_tutorial_context = _has_technical_tutorial_context(meta_info)
+    active_style_profile = style_profile or infer_subtitle_style_profile(target_language, meta_info)
+    effective_max_chars = max_chars
+    if active_style_profile is not None and active_style_profile.max_line_chars > 0:
+        effective_max_chars = min(max_chars, active_style_profile.max_line_chars) if max_chars > 0 else active_style_profile.max_line_chars
     source_by_id: dict[str, str] = {}
     translation_by_id: dict[str, str] = {}
 
@@ -178,7 +338,14 @@ def run_quality_checks(
                 translation=translation,
             ))
 
-        if chinese_target and translation and _ENGLISH_RE.search(translation):
+        if (
+            chinese_target
+            and translation
+            and _english_residue_match(
+                translation,
+                allow_technical_terms=technical_tutorial_context,
+            )
+        ):
             issues.append(QualityIssue(
                 type="english_residue",
                 severity="warning",
@@ -188,17 +355,80 @@ def run_quality_checks(
                 translation=translation,
             ))
 
-        compact_translation = re.sub(r"\s+", "", translation)
-        if max_chars > 0 and len(compact_translation) > max_chars:
+        lines = _subtitle_lines(translation) or ([translation] if translation else [])
+        compact_translation = _compact_subtitle_text(translation)
+        if effective_max_chars > 0 and any(
+            len(_compact_subtitle_text(line)) > effective_max_chars for line in lines
+        ):
             issues.append(QualityIssue(
                 type="line_too_long",
                 severity="warning",
                 block_id=block_id if isinstance(block_id, int) else None,
-                message=f"translation length {len(compact_translation)} exceeds {max_chars}",
+                message=f"translation line exceeds {effective_max_chars}",
                 source_text=source,
                 translation=translation,
-                expected=str(max_chars),
+                expected=str(effective_max_chars),
             ))
+
+        if active_style_profile is not None and translation:
+            if len(lines) > active_style_profile.max_lines:
+                issues.append(QualityIssue(
+                    type="too_many_lines",
+                    severity="warning",
+                    block_id=block_id if isinstance(block_id, int) else None,
+                    message=f"subtitle has {len(lines)} lines; expected at most {active_style_profile.max_lines}",
+                    source_text=source,
+                    translation=translation,
+                    expected=str(active_style_profile.max_lines),
+                ))
+
+            duration = _duration_seconds(block)
+            if duration > 0 and compact_translation:
+                cps = len(compact_translation) / duration
+                if cps > active_style_profile.max_chars_per_second:
+                    issues.append(QualityIssue(
+                        type="reading_speed_too_fast",
+                        severity="warning",
+                        block_id=block_id if isinstance(block_id, int) else None,
+                        message=(
+                            f"reading speed {cps:.1f} chars/sec exceeds "
+                            f"{active_style_profile.max_chars_per_second:.1f}"
+                        ),
+                        source_text=source,
+                        translation=translation,
+                        expected=f"{active_style_profile.max_chars_per_second:.1f}",
+                    ))
+
+            if _weak_semantic_break(lines):
+                issues.append(QualityIssue(
+                    type="weak_semantic_line_break",
+                    severity="warning",
+                    block_id=block_id if isinstance(block_id, int) else None,
+                    message="line break splits a very short fragment; prefer phrase or punctuation boundaries",
+                    source_text=source,
+                    translation=translation,
+                ))
+
+            if _REPEATED_CJK_RE.search(translation):
+                issues.append(QualityIssue(
+                    type="repetition_not_compressed",
+                    severity="warning",
+                    block_id=block_id if isinstance(block_id, int) else None,
+                    message="repeated short expression may need subtitle compression",
+                    source_text=source,
+                    translation=translation,
+                ))
+
+            if chinese_target and _ASCII_PUNCT_RE.search(translation):
+                issues.append(QualityIssue(
+                    type="punctuation_style",
+                    severity="warning",
+                    block_id=block_id if isinstance(block_id, int) else None,
+                    message="Chinese subtitles should prefer full-width Chinese punctuation",
+                    source_text=source,
+                    translation=translation,
+                    expected="Chinese punctuation",
+                ))
 
         lower_source = source.lower()
         for term_source, term_target in kb_terms:
@@ -211,6 +441,23 @@ def run_quality_checks(
                     source_text=source,
                     translation=translation,
                     expected=term_target,
+                ))
+
+        if chinese_target and source and translation:
+            for match in find_domain_terms(source):
+                if match_is_overridden_by_project_kb(match, project_kb):
+                    continue
+                term = match.term
+                if term.target_is_present(translation):
+                    continue
+                issues.append(QualityIssue(
+                    type="canonical_term_missing",
+                    severity="warning",
+                    block_id=block_id if isinstance(block_id, int) else None,
+                    message=f"expected curated term {match.matched_source} → {term.target}",
+                    source_text=source,
+                    translation=translation,
+                    expected=term.target,
                 ))
 
     if chinese_target:
@@ -239,6 +486,8 @@ def run_quality_checks(
         summary={
             "issue_count": len(issues),
             "by_type": _issue_counts(issues),
+            "far": _far_counts(issues),
+            "style_profile": _style_profile_summary(active_style_profile),
         },
         unresolved_blocks=sorted({
             issue.block_id for issue in issues if isinstance(issue.block_id, int)

@@ -37,6 +37,9 @@ def test_quality_checks_detect_common_deterministic_issues():
     assert "sound_description_translated" in issue_types
     assert "line_too_long" in issue_types
     assert report.summary["issue_count"] == len(report.issues)
+    assert report.summary["far"]["functional"] >= 2
+    assert report.summary["far"]["acceptability"] >= 1
+    assert report.summary["far"]["readability"] >= 1
 
 
 def test_quality_report_serializes_json_and_markdown(tmp_path):
@@ -211,3 +214,83 @@ def test_quality_checks_skip_proper_name_metric_for_non_chinese_targets():
     report = run_quality_checks(blocks, target_language="English", max_chars=40)
 
     assert "proper_name_inconsistent" not in report.summary["by_type"]
+
+
+def test_quality_checks_flag_curated_science_term_misses_without_project_kb():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "These little climbers are Suminia.", "这些小小攀爬者是苏米尼亚兽。"),
+        _block(2, "A female Dongusuchus.", "一只雌性东乌鳄。"),
+        _block(3, "called proto-Pterosaurs, head for the sand.", "新型滑翔爬行动物，正飞向沙滩。"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
+
+    assert report.summary["by_type"]["canonical_term_missing"] == 3
+    flagged = [issue for issue in report.issues if issue.type == "canonical_term_missing"]
+    assert {issue.block_id for issue in flagged} == {1, 2, 3}
+    assert {issue.expected for issue in flagged} == {"苏美尼兽", "顿古兹鳄", "原翼龙类"}
+    assert all(issue.severity == "warning" for issue in flagged)
+
+
+def test_quality_checks_project_kb_overrides_curated_science_terms():
+    from app.engines.kb_models import ProjectKb, TermEntry
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "These little climbers are Suminia.", "这些小小攀爬者是苏米尼亚兽。"),
+    ]
+    kb = ProjectKb(slang=[TermEntry(source="Suminia", target="苏米尼亚兽")])
+
+    report = run_quality_checks(blocks, project_kb=kb, target_language="简体中文", max_chars=40)
+
+    assert "canonical_term_missing" not in report.summary["by_type"]
+    assert "kb_term_missing" not in report.summary["by_type"]
+
+
+def test_quality_checks_apply_subtitle_style_profile_rules():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Fast line", "这是一条非常非常非常非常非常长的字幕"),
+        _block(2, "Too many lines", "第一行\n第二行\n第三行"),
+        _block(3, "Bad semantic break", "我\n知道你来了"),
+        _block(4, "No, no, no!", "不，不，不！"),
+        _block(5, "Are you okay?", "你好吗?"),
+    ]
+
+    report = run_quality_checks(
+        blocks,
+        target_language="简体中文",
+        max_chars=32,
+        meta_info={"genres": ["Drama"]},
+    )
+    by_type = report.summary["by_type"]
+
+    assert by_type["line_too_long"] == 1
+    assert by_type["reading_speed_too_fast"] >= 1
+    assert by_type["too_many_lines"] == 1
+    assert by_type["weak_semantic_line_break"] == 1
+    assert by_type["repetition_not_compressed"] == 1
+    assert by_type["punctuation_style"] == 1
+    assert report.summary["far"]["readability"] >= 5
+    assert report.summary["far"]["acceptability"] >= 1
+    assert report.summary["style_profile"]["id"] == "zh_cn_general"
+
+
+def test_quality_checks_allow_technical_identifiers_for_tutorials():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "The API returns a JSON object.", "API 会返回 JSON 对象。"),
+    ]
+
+    report = run_quality_checks(
+        blocks,
+        target_language="简体中文",
+        max_chars=40,
+        meta_info={"tags": ["tutorial", "programming"]},
+    )
+
+    assert "english_residue" not in report.summary["by_type"]

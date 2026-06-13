@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASE_VERSION = "1.3.2"
+RELEASE_VERSION = "1.3.3"
 
 
 def test_release_workflow_supports_pr_dry_run_tag_release_and_uploads():
@@ -172,6 +172,18 @@ def test_build_mac_preserves_tracked_pyinstaller_spec():
     assert 'ROOT_DIR="$(pwd)"' in script
     assert '--add-data "${ROOT_DIR}/app/static:app/static"' in script
     assert '--add-data "${ROOT_DIR}/app:app"' in script
+
+
+def test_build_mac_stamps_bundle_version_from_app_version():
+    script = (ROOT / "build_mac.sh").read_text(encoding="utf-8")
+
+    assert "from app.version import APP_VERSION" in script
+    assert "CFBundleShortVersionString" in script
+    assert "CFBundleVersion" in script
+    assert "/usr/libexec/PlistBuddy" in script
+    assert 'codesign --force --deep --sign - "$APP_PATH"' in script
+    assert script.index("python3 -m PyInstaller") < script.index("CFBundleShortVersionString")
+    assert script.index("CFBundleShortVersionString") < script.index('APP_SIZE=$(du -sh "$APP_PATH"')
 
 
 def test_build_mac_bundles_asr_backends_by_default_and_models_are_opt_in():

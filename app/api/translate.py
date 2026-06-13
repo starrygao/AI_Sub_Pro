@@ -815,6 +815,7 @@ def _persist_translation_quality_report(
             blocks,
             project_kb=project_kb,
             target_language=target_language,
+            meta_info=project,
             trace=trace,
         )
         repaired = []
@@ -835,6 +836,7 @@ def _persist_translation_quality_report(
                 blocks,
                 project_kb=project_kb,
                 target_language=target_language,
+                meta_info=project,
                 trace=trace,
             )
             current_hard_errors = sum(1 for issue in report.issues if issue.severity == "error")

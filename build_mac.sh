@@ -4,6 +4,7 @@
 set -e
 cd "$(dirname "$0")"
 ROOT_DIR="$(pwd)"
+APP_PATH="dist/AI Sub Pro.app"
 
 echo "=== AI Sub Pro macOS Build ==="
 echo ""
@@ -213,11 +214,35 @@ python3 -m PyInstaller \
 
 # No launcher needed - main.py handles pywebview native window directly
 
+APP_VERSION="$(python3 - <<'PY'
+from app.version import APP_VERSION
+
+print(APP_VERSION)
+PY
+)"
+PLIST_PATH="$APP_PATH/Contents/Info.plist"
+set_plist_string() {
+    local key="$1"
+    local value="$2"
+    /usr/libexec/PlistBuddy -c "Set :${key} ${value}" "$PLIST_PATH" 2>/dev/null || \
+        /usr/libexec/PlistBuddy -c "Add :${key} string ${value}" "$PLIST_PATH"
+}
+
+if [ -f "$PLIST_PATH" ]; then
+    echo ""
+    echo "Stamping bundle version: $APP_VERSION"
+    set_plist_string "CFBundleShortVersionString" "$APP_VERSION"
+    set_plist_string "CFBundleVersion" "$APP_VERSION"
+    if command -v codesign >/dev/null 2>&1; then
+        codesign --force --deep --sign - "$APP_PATH"
+    fi
+fi
+
 echo ""
 echo "=== Build Complete! ==="
-APP_SIZE=$(du -sh "dist/AI Sub Pro.app" | awk '{print $1}')
-echo "  Output: dist/AI Sub Pro.app ($APP_SIZE)"
-echo "  Run:    open 'dist/AI Sub Pro.app'"
+APP_SIZE=$(du -sh "$APP_PATH" | awk '{print $1}')
+echo "  Output: $APP_PATH ($APP_SIZE)"
+echo "  Run:    open '$APP_PATH'"
 echo ""
 echo "  Note: ASR backends are bundled by default when installed."
 echo "        Set AISUBPRO_BUNDLE_LOCAL_ASR=1 to bundle local ASR models."

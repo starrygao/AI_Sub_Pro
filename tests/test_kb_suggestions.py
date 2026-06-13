@@ -412,3 +412,26 @@ def test_suggest_kb_entries_keeps_uppercase_acronyms_but_ignores_noise():
     assert {"NASA", "FBI", "IKEA"} <= sources
     assert "OK" not in sources
     assert "TV" not in sources
+
+
+def test_suggest_kb_entries_prefills_curated_science_terms():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"name": "Surviving Earth", "overview": "Permian and Triassic life."},
+        [
+            {"index": 141, "text": "These little climbers are Suminia."},
+            {"index": 330, "text": "A female Dongusuchus."},
+            {"index": 342, "text": "called proto-Pterosaurs, head for the sand."},
+        ],
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert by_source["Suminia"].target == "苏美尼兽"
+    assert by_source["Suminia"].category == "slang"
+    assert by_source["Suminia"].confidence >= 0.8
+    assert "subtitle:141" in by_source["Suminia"].evidence
+    assert "curated science terminology" in by_source["Suminia"].notes
+    assert by_source["Dongusuchus"].target == "顿古兹鳄"
+    assert by_source["proto-Pterosaurs"].target == "原翼龙类"

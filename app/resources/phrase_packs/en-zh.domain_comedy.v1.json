@@ -1,0 +1,107 @@
+{
+  "id": "ai-sub-pro.en-zh.domain_comedy",
+  "version": 1,
+  "source": "AI Sub Pro bundled synthetic subtitle phrase pack",
+  "license": "Project-local synthetic examples, MIT-compatible",
+  "source_language": "en",
+  "target_language": "zh-CN",
+  "tags": [
+    "subtitle",
+    "dialogue",
+    "comedy",
+    "sitcom"
+  ],
+  "quality": 0.82,
+  "phrases": [
+    {
+      "source_text": "Read the room.",
+      "target_text": "看点气氛行不行。",
+      "quality": 0.85,
+      "tags": [
+        "comedy",
+        "reaction"
+      ]
+    },
+    {
+      "source_text": "That came out wrong.",
+      "target_text": "我刚才说得不太对。",
+      "quality": 0.85,
+      "tags": [
+        "comedy",
+        "self-correction"
+      ]
+    },
+    {
+      "source_text": "I heard it as soon as I said it.",
+      "target_text": "我一说出口就知道不对了。",
+      "quality": 0.85,
+      "tags": [
+        "comedy",
+        "self-correction"
+      ]
+    },
+    {
+      "source_text": "You had one job.",
+      "target_text": "这么简单你都能搞砸。",
+      "quality": 0.85,
+      "tags": [
+        "comedy",
+        "sarcasm"
+      ]
+    },
+    {
+      "source_text": "Too soon?",
+      "target_text": "现在开这个玩笑太早了？",
+      "quality": 0.85,
+      "tags": [
+        "comedy",
+        "punchline"
+      ]
+    },
+    {
+      "source_text": "I regret everything.",
+      "target_text": "我现在什么都后悔了。",
+      "quality": 0.85,
+      "tags": [
+        "comedy",
+        "reaction"
+      ]
+    },
+    {
+      "source_text": "Please stop helping.",
+      "target_text": "你还是别帮了。",
+      "quality": 0.85,
+      "tags": [
+        "comedy",
+        "sarcasm"
+      ]
+    },
+    {
+      "source_text": "That is wildly specific.",
+      "target_text": "你这也太具体了吧。",
+      "quality": 0.85,
+      "tags": [
+        "comedy",
+        "reaction"
+      ]
+    },
+    {
+      "source_text": "I can explain. I cannot explain well.",
+      "target_text": "我可以解释，但可能解释不好。",
+      "quality": 0.85,
+      "tags": [
+        "comedy",
+        "punchline"
+      ]
+    },
+    {
+      "source_text": "This is why we can't have nice things.",
+      "target_text": "所以好事到我们这儿就没了。",
+      "quality": 0.85,
+      "tags": [
+        "comedy",
+        "catchphrase"
+      ]
+    }
+  ]
+}

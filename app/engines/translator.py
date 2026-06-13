@@ -31,6 +31,13 @@ from app.engines.providers.result_contract import (
 from app.engines.kb_trace import TranslationContextTrace, trace_for_project_kb
 from app.engines.phrase_library import PhraseLibrary
 from app.engines.translation_memory import TranslationMemoryStore, _lang as _memory_lang
+from app.engines.content_profiles import (
+    build_content_profile_prompt_snippet,
+    infer_content_profiles,
+)
+from app.engines.domain_terms import build_domain_prompt_snippet, find_domain_terms_in_texts
+from app.engines.subtitle_style_profiles import build_subtitle_style_prompt_snippet
+from app.engines.terminology_conflicts import collect_terminology_conflicts
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +74,15 @@ _PHRASE_CONTEXT_KEYWORDS = {
     "romance": {"romance", "date", "dating", "wedding", "love", "relationship"},
     "sci-fi": {"sci-fi", "science fiction", "alien", "spaceship", "robot", "android"},
     "fantasy": {"fantasy", "magic", "kingdom", "vampire", "witch", "dragon"},
+    "interview": {"interview", "talk show", "podcast", "q&a", "qa"},
+    "documentary": {"documentary", "docuseries", "unscripted", "non-fiction", "nonfiction"},
+    "comedy": {"comedy", "sitcom", "stand-up", "standup"},
+    "anime": {"anime", "animation", "アニメ"},
+    "technical": {"tutorial", "course", "programming", "coding", "developer", "how-to"},
+    "adult": {"adult", "av", "legal adult", "adult video"},
 }
+
+_ADULT_PHRASE_TAGS = {"adult", "explicit", "legal_adult"}
 
 
 def _provider_context_window(provider, default: int = 32_000) -> int:
@@ -175,6 +190,20 @@ def _phrase_context_tags(meta_info: dict) -> set[str]:
                 tags.add(tag)
                 break
     return tags
+
+
+def _allows_legal_adult_phrase_examples(meta_info: dict) -> bool:
+    return any(profile.id == "legal_adult" for profile in infer_content_profiles(meta_info))
+
+
+def _is_legal_adult_phrase_hit(hit) -> bool:
+    pack_id = str(getattr(hit, "pack_id", "") or "").casefold()
+    tags = {
+        tag
+        for tag in re.split(r"[,;\s]+", str(getattr(hit, "tags", "") or "").casefold())
+        if tag
+    }
+    return "domain_legal_adult" in pack_id or bool(tags & _ADULT_PHRASE_TAGS)
 
 
 class SubtitleTranslator:
@@ -688,6 +717,7 @@ class SubtitleTranslator:
         # v2 KB injection: select by project metadata + inject as hard constraints.
         # Falls back to legacy kb_data only when v2 produces no snippet.
         kb_snippet = ""
+        project_kb = None
         try:
             project_kb = _shared_kb.select_for_project(meta_info)
             self._kb_usage_trace = trace_for_project_kb(project_kb)
@@ -711,8 +741,28 @@ class SubtitleTranslator:
                 terms_str = json.dumps(legacy_terms, ensure_ascii=False)
                 parts.append(f"术语表(严格遵守): {terms_str}")
 
+        domain_snippet, domain_hits = self._build_domain_terminology_snippet(items or [], project_kb)
+        if domain_snippet:
+            parts.append(domain_snippet)
+            self.last_quality_trace.kb_hits.extend(domain_hits)
+
+        style_snippet, style_hits = build_subtitle_style_prompt_snippet(target_lang, meta_info)
+        if style_snippet:
+            parts.append(style_snippet)
+            self.last_quality_trace.style_hits.extend(style_hits)
+
+        profile_snippet, profile_hits = build_content_profile_prompt_snippet(meta_info)
+        if profile_snippet:
+            parts.append(profile_snippet)
+            self.last_quality_trace.profile_hits.extend(profile_hits)
+
         if phrase_snippet:
             parts.append(phrase_snippet)
+
+        self.last_quality_trace.conflict_hits = collect_terminology_conflicts(
+            project_kb=project_kb,
+            trace=self.last_quality_trace.to_dict(),
+        )
 
         # Context window
         if context_before:
@@ -740,6 +790,19 @@ class SubtitleTranslator:
         ])
 
         return "\n".join(parts)
+
+    @staticmethod
+    def _build_domain_terminology_snippet(
+        items: List[Dict],
+        project_kb,
+    ) -> tuple[str, list[dict]]:
+        texts = [
+            item.get("original", "")
+            for item in items
+            if isinstance(item, dict) and isinstance(item.get("original"), str)
+        ]
+        matches = find_domain_terms_in_texts(texts)
+        return build_domain_prompt_snippet(matches, project_kb)
 
     def _build_retrieval_snippets(
         self,
@@ -798,6 +861,7 @@ class SubtitleTranslator:
         if self.use_phrase_library and self.max_phrase_examples > 0:
             seen_phrases = set()
             preferred_tags = _phrase_context_tags(meta_info)
+            allow_adult_phrases = _allows_legal_adult_phrase_examples(meta_info)
             per_item_limit = min(20, self.max_phrase_examples)
             try:
                 library = PhraseLibrary()
@@ -813,6 +877,8 @@ class SubtitleTranslator:
                         preferred_tags=preferred_tags,
                         backend=self.phrase_retrieval_backend,
                     ):
+                        if _is_legal_adult_phrase_hit(hit) and not allow_adult_phrases:
+                            continue
                         key = (hit.source_text, hit.target_text)
                         if key in seen_phrases:
                             continue

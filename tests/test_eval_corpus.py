@@ -232,6 +232,15 @@ def test_load_golden_corpus_rejects_supplied_invalid_reference_blocks(tmp_path, 
         load_corpus_file(path)
 
 
+def test_translation_quality_loop_fixture_matches_current_schema():
+    from app.evaluation.corpus import load_corpus_file
+
+    corpus = load_corpus_file("tests/fixtures/golden_corpus/translation_quality_loop.json")
+
+    assert corpus.cases
+    assert all(isinstance(case.project, dict) and case.project for case in corpus.cases)
+
+
 def test_load_golden_corpus_rejects_empty_reference_translation(tmp_path):
     from app.evaluation.corpus import CorpusValidationError, load_corpus_file
 

@@ -2,7 +2,7 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
-## v1.3.2 - Packaged ASR Backend Fix
+## v1.3.3 - Packaged ASR Backend Fix
 
 Highlights:
 
@@ -22,18 +22,18 @@ Quality/Verification:
 - Full test suite passed: `1053 passed in 60.24s`.
 - Focused settings/package suite passed: `33 passed in 1.04s`.
 - Packaging-only suite passed: `32 passed in 0.24s`.
-- Local DMG verification passed: `hdiutil verify dist/AI_Sub_Pro_v1.3.2.dmg`
+- Local DMG verification passed: `hdiutil verify dist/AI_Sub_Pro_v1.3.3.dmg`
   reported a valid checksum, and
-  `shasum -a 256 -c AI_Sub_Pro_v1.3.2.dmg.sha256` passed from `dist/`.
+  `shasum -a 256 -c AI_Sub_Pro_v1.3.3.dmg.sha256` passed from `dist/`.
 - Local installed app verification passed: `/api/settings` reports app version
-  `1.3.2`, and `/api/system-check` reports `mlx_whisper: true`,
+  `1.3.3`, and `/api/system-check` reports `mlx_whisper: true`,
   `asr_recommendation.ready: true`, backend `mlx_whisper`, and model source
   `cache`.
 
 Packages:
 
-- `AI_Sub_Pro_v1.3.2.dmg` is attached for macOS users, with a matching
-  `AI_Sub_Pro_v1.3.2.dmg.sha256` checksum file and
+- `AI_Sub_Pro_v1.3.3.dmg` is attached for macOS users, with a matching
+  `AI_Sub_Pro_v1.3.3.dmg.sha256` checksum file and
   `release-size-report.json`.
 - The attached macOS package includes an installed ASR backend package. It does
   not bundle local Whisper model files; models download on first use or load

@@ -12,12 +12,18 @@ class TranslationContextTrace:
     memory_hits: list[dict] = field(default_factory=list)
     phrase_hits: list[dict] = field(default_factory=list)
     kb_hits: list[dict] = field(default_factory=list)
+    profile_hits: list[dict] = field(default_factory=list)
+    style_hits: list[dict] = field(default_factory=list)
+    conflict_hits: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
             "memory_hits": list(self.memory_hits),
             "phrase_hits": list(self.phrase_hits),
             "kb_hits": list(self.kb_hits),
+            "profile_hits": list(self.profile_hits),
+            "style_hits": list(self.style_hits),
+            "conflict_hits": list(self.conflict_hits),
         }
 
 

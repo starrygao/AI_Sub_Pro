@@ -359,6 +359,88 @@ def build_en_workplace() -> list[dict]:
     return rows
 
 
+def build_en_interview_documentary() -> list[dict]:
+    return from_pairs([
+        ("Can you walk us through what happened?", "你能带我们回顾一下当时发生了什么吗？", ["interview", "question"]),
+        ("What did you make of it at the time?", "你当时是怎么看这件事的？", ["interview", "question"]),
+        ("Looking back, what stands out?", "现在回想起来，最让你印象深刻的是什么？", ["interview", "reflection"]),
+        ("For context, this was the first time officials had spoken publicly.", "作为背景，这是官员首次公开发声。", ["documentary", "context"]),
+        ("The footage was recorded two days later.", "这段画面录制于两天后。", ["documentary", "chronology"]),
+        ("The exact cause remains disputed.", "确切原因仍存在争议。", ["documentary", "uncertainty"]),
+        ("Former chief engineer", "前总工程师", ["documentary", "first-title"]),
+        ("Investigative reporter", "调查记者", ["documentary", "first-title"]),
+        ("Clinical psychologist", "临床心理学家", ["documentary", "first-title"]),
+        ("According to court records", "根据法庭记录", ["documentary", "attribution"]),
+        ("Researchers later confirmed the finding.", "研究人员后来证实了这一发现。", ["documentary", "attribution"]),
+        ("That account has never been independently verified.", "这一说法从未得到独立证实。", ["documentary", "uncertainty"]),
+        ("Let me put that another way.", "我换个说法。", ["interview", "clarification"]),
+        ("I want to be careful about that.", "关于这一点我得谨慎些。", ["interview", "stance"]),
+        ("That was the turning point.", "那就是转折点。", ["documentary", "structure"]),
+    ], ["subtitle", "interview", "documentary"], 0.86)
+
+
+def build_en_comedy() -> list[dict]:
+    return from_pairs([
+        ("Read the room.", "看点气氛行不行。", ["comedy", "reaction"]),
+        ("That came out wrong.", "我刚才说得不太对。", ["comedy", "self-correction"]),
+        ("I heard it as soon as I said it.", "我一说出口就知道不对了。", ["comedy", "self-correction"]),
+        ("You had one job.", "这么简单你都能搞砸。", ["comedy", "sarcasm"]),
+        ("Too soon?", "现在开这个玩笑太早了？", ["comedy", "punchline"]),
+        ("I regret everything.", "我现在什么都后悔了。", ["comedy", "reaction"]),
+        ("Please stop helping.", "你还是别帮了。", ["comedy", "sarcasm"]),
+        ("That is wildly specific.", "你这也太具体了吧。", ["comedy", "reaction"]),
+        ("I can explain. I cannot explain well.", "我可以解释，但可能解释不好。", ["comedy", "punchline"]),
+        ("This is why we can't have nice things.", "所以好事到我们这儿就没了。", ["comedy", "catchphrase"]),
+    ], ["subtitle", "comedy", "sitcom"], 0.85)
+
+
+def build_en_technical_tutorial() -> list[dict]:
+    return from_pairs([
+        ("Open your terminal.", "打开终端。", ["technical", "instruction"]),
+        ("Run this command.", "运行这条命令。", ["technical", "instruction", "code"]),
+        ("Install the dependency.", "安装这个依赖。", ["technical", "instruction"]),
+        ("Create a new file called app.py.", "新建一个名为 app.py 的文件。", ["technical", "filename", "code"]),
+        ("Pass the flag exactly as shown.", "按显示的样子原样传入这个标志。", ["technical", "flag", "code"]),
+        ("The API returns a JSON object.", "这个 API 会返回一个 JSON 对象。", ["technical", "api", "code"]),
+        ("Do not commit your secrets.", "不要提交你的密钥。", ["technical", "security"]),
+        ("Restart the development server.", "重启开发服务器。", ["technical", "instruction"]),
+        ("Check the error message.", "检查错误信息。", ["technical", "debugging"]),
+        ("This function is asynchronous.", "这个函数是异步的。", ["technical", "code"]),
+        ("The version number matters here.", "这里版本号很关键。", ["technical", "version"]),
+        ("Copy the path, not the prompt.", "复制路径，不要复制提示符。", ["technical", "instruction"]),
+    ], ["subtitle", "technical", "tutorial"], 0.87)
+
+
+def build_en_legal_adult() -> list[dict]:
+    return from_pairs([
+        ("Fuck me.", "操我。", ["adult", "explicit"]),
+        ("I'm coming.", "我要去了。", ["adult", "explicit"]),
+        ("Harder.", "用力点。", ["adult", "explicit"]),
+        ("Don't stop.", "别停。", ["adult", "explicit"]),
+        ("That feels good.", "这样好爽。", ["adult", "explicit"]),
+        ("Look at me.", "看着我。", ["adult", "intimacy"]),
+        ("Come here.", "过来。", ["adult", "intimacy"]),
+        ("I want you.", "我想要你。", ["adult", "intimacy"]),
+    ], ["subtitle", "legal_adult", "adult"], 0.86)
+
+
+def build_ja_anime() -> list[dict]:
+    return from_pairs([
+        ("必殺技だ。", "这是必杀技。", ["anime", "attack-name"]),
+        ("まだ終わってない。", "还没结束。", ["anime", "battle"]),
+        ("仲間を信じろ。", "相信伙伴。", ["anime", "relationship"]),
+        ("先輩、お願いします。", "前辈，拜托了。", ["anime", "honorific"]),
+        ("勝負はこれからだ。", "较量现在才开始。", ["anime", "battle"]),
+        ("約束を守る。", "我会遵守约定。", ["anime", "promise"]),
+        ("逃げるわけにはいかない。", "我不能逃。", ["anime", "resolve"]),
+        ("力を貸して。", "借我力量。", ["anime", "fantasy"]),
+        ("転校生？", "转学生？", ["anime", "school"]),
+        ("部長に報告して。", "去向部长报告。", ["anime", "school"]),
+        ("世界を救うなんて無理だ。", "拯救世界根本不可能。", ["anime", "fantasy"]),
+        ("それでもやるしかない。", "即便如此，也只能去做。", ["anime", "resolve"]),
+    ], ["subtitle", "anime", "dialogue"], 0.84)
+
+
 JA_EXPANDED = [
     ("信じられない。", "真不敢相信。"), ("もう一度言って。", "再说一遍。"),
     ("聞いてないよ。", "我可没听说。"), ("そんなつもりじゃなかった。", "我不是那个意思。"),
@@ -551,11 +633,46 @@ def build_packs() -> list[dict]:
             build_en_workplace(),
         ),
         pack(
+            "ai-sub-pro.en-zh.domain_interview_documentary",
+            "en-zh.domain_interview_documentary.v1.json",
+            "en",
+            ["subtitle", "dialogue", "interview", "documentary"],
+            build_en_interview_documentary(),
+        ),
+        pack(
+            "ai-sub-pro.en-zh.domain_comedy",
+            "en-zh.domain_comedy.v1.json",
+            "en",
+            ["subtitle", "dialogue", "comedy", "sitcom"],
+            build_en_comedy(),
+        ),
+        pack(
+            "ai-sub-pro.en-zh.domain_technical_tutorial",
+            "en-zh.domain_technical_tutorial.v1.json",
+            "en",
+            ["subtitle", "technical", "tutorial", "code"],
+            build_en_technical_tutorial(),
+        ),
+        pack(
+            "ai-sub-pro.en-zh.domain_legal_adult",
+            "en-zh.domain_legal_adult.v1.json",
+            "en",
+            ["subtitle", "legal_adult", "adult", "explicit"],
+            build_en_legal_adult(),
+        ),
+        pack(
             "ai-sub-pro.ja-zh.subtitle_colloquial_expanded",
             "ja-zh.subtitle_colloquial_expanded.v1.json",
             "ja",
             ["subtitle", "dialogue", "colloquial", "expanded"],
             from_pairs(JA_EXPANDED, ["subtitle", "dialogue", "colloquial"], 0.83),
+        ),
+        pack(
+            "ai-sub-pro.ja-zh.domain_anime",
+            "ja-zh.domain_anime.v1.json",
+            "ja",
+            ["subtitle", "dialogue", "anime"],
+            build_ja_anime(),
         ),
         pack(
             "ai-sub-pro.ko-zh.subtitle_colloquial_expanded",

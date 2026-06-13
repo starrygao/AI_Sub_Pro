@@ -6,6 +6,7 @@
       "tags": ["series", "proper_noun"],
       "source_language": "en",
       "target_language": "zh-CN",
+      "project": {"name": "Proper Place Fixture"},
       "source_blocks": [
         {"id": "1", "text": "Hudson Oaks is quiet."}
       ],
@@ -21,6 +22,7 @@
       "tags": ["colloquial"],
       "source_language": "en",
       "target_language": "zh-CN",
+      "project": {"name": "Colloquial Fixture"},
       "source_blocks": [
         {"id": "1", "text": "Shoot your shot."}
       ],
@@ -36,6 +38,7 @@
       "tags": ["missing_translation", "english_residue"],
       "source_language": "en",
       "target_language": "zh-CN",
+      "project": {"name": "Missing Translation Fixture"},
       "source_blocks": [
         {"id": "1", "text": "Are you okay?"},
         {"id": "2", "text": "Stay with me."}
@@ -51,6 +54,7 @@
       "tags": ["long_sentence"],
       "source_language": "en",
       "target_language": "zh-CN",
+      "project": {"name": "Long Line Fixture"},
       "source_blocks": [
         {"id": "1", "text": "This is a long warning."}
       ],
@@ -59,6 +63,28 @@
       ],
       "expected_terms": [
         {"source": "warning", "target": "警示"}
+      ]
+    },
+    {
+      "id": "paleontology-terminology",
+      "tags": ["documentary", "paleontology", "terminology"],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {"name": "Surviving Earth Fixture"},
+      "source_blocks": [
+        {"id": "1", "text": "These little climbers are Suminia."},
+        {"id": "2", "text": "A female Dongusuchus."},
+        {"id": "3", "text": "called proto-Pterosaurs, head for the sand."}
+      ],
+      "candidate_blocks": [
+        {"id": "1", "translation": "这些小小攀爬者是苏米尼亚兽。"},
+        {"id": "2", "translation": "一只雌性东乌鳄。"},
+        {"id": "3", "translation": "新型滑翔爬行动物，正飞向沙滩。"}
+      ],
+      "expected_terms": [
+        {"source": "Suminia", "target": "苏美尼兽"},
+        {"source": "Dongusuchus", "target": "顿古兹鳄"},
+        {"source": "proto-Pterosaurs", "target": "原翼龙类"}
       ]
     }
   ]

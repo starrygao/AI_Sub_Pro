@@ -1,0 +1,89 @@
+{
+  "id": "ai-sub-pro.en-zh.domain_legal_adult",
+  "version": 1,
+  "source": "AI Sub Pro bundled synthetic subtitle phrase pack",
+  "license": "Project-local synthetic examples, MIT-compatible",
+  "source_language": "en",
+  "target_language": "zh-CN",
+  "tags": [
+    "subtitle",
+    "legal_adult",
+    "adult",
+    "explicit"
+  ],
+  "quality": 0.82,
+  "phrases": [
+    {
+      "source_text": "Fuck me.",
+      "target_text": "操我。",
+      "quality": 0.86,
+      "tags": [
+        "adult",
+        "explicit"
+      ]
+    },
+    {
+      "source_text": "I'm coming.",
+      "target_text": "我要去了。",
+      "quality": 0.86,
+      "tags": [
+        "adult",
+        "explicit"
+      ]
+    },
+    {
+      "source_text": "Harder.",
+      "target_text": "用力点。",
+      "quality": 0.86,
+      "tags": [
+        "adult",
+        "explicit"
+      ]
+    },
+    {
+      "source_text": "Don't stop.",
+      "target_text": "别停。",
+      "quality": 0.86,
+      "tags": [
+        "adult",
+        "explicit"
+      ]
+    },
+    {
+      "source_text": "That feels good.",
+      "target_text": "这样好爽。",
+      "quality": 0.86,
+      "tags": [
+        "adult",
+        "explicit"
+      ]
+    },
+    {
+      "source_text": "Look at me.",
+      "target_text": "看着我。",
+      "quality": 0.86,
+      "tags": [
+        "adult",
+        "intimacy"
+      ]
+    },
+    {
+      "source_text": "Come here.",
+      "target_text": "过来。",
+      "quality": 0.86,
+      "tags": [
+        "adult",
+        "intimacy"
+      ]
+    },
+    {
+      "source_text": "I want you.",
+      "target_text": "我想要你。",
+      "quality": 0.86,
+      "tags": [
+        "adult",
+        "intimacy"
+      ]
+    }
+  ]
+}

@@ -38,8 +38,33 @@
       "version": 1
     },
     {
+      "id": "ai-sub-pro.en-zh.domain_interview_documentary",
+      "file": "en-zh.domain_interview_documentary.v1.json",
+      "version": 1
+    },
+    {
+      "id": "ai-sub-pro.en-zh.domain_comedy",
+      "file": "en-zh.domain_comedy.v1.json",
+      "version": 1
+    },
+    {
+      "id": "ai-sub-pro.en-zh.domain_technical_tutorial",
+      "file": "en-zh.domain_technical_tutorial.v1.json",
+      "version": 1
+    },
+    {
+      "id": "ai-sub-pro.en-zh.domain_legal_adult",
+      "file": "en-zh.domain_legal_adult.v1.json",
+      "version": 1
+    },
+    {
       "id": "ai-sub-pro.ja-zh.subtitle_colloquial_expanded",
       "file": "ja-zh.subtitle_colloquial_expanded.v1.json",
+      "version": 1
+    },
+    {
+      "id": "ai-sub-pro.ja-zh.domain_anime",
+      "file": "ja-zh.domain_anime.v1.json",
       "version": 1
     },
     {

@@ -1,0 +1,129 @@
+{
+  "id": "ai-sub-pro.en-zh.domain_technical_tutorial",
+  "version": 1,
+  "source": "AI Sub Pro bundled synthetic subtitle phrase pack",
+  "license": "Project-local synthetic examples, MIT-compatible",
+  "source_language": "en",
+  "target_language": "zh-CN",
+  "tags": [
+    "subtitle",
+    "technical",
+    "tutorial",
+    "code"
+  ],
+  "quality": 0.82,
+  "phrases": [
+    {
+      "source_text": "Open your terminal.",
+      "target_text": "打开终端。",
+      "quality": 0.87,
+      "tags": [
+        "technical",
+        "instruction"
+      ]
+    },
+    {
+      "source_text": "Run this command.",
+      "target_text": "运行这条命令。",
+      "quality": 0.87,
+      "tags": [
+        "technical",
+        "instruction",
+        "code"
+      ]
+    },
+    {
+      "source_text": "Install the dependency.",
+      "target_text": "安装这个依赖。",
+      "quality": 0.87,
+      "tags": [
+        "technical",
+        "instruction"
+      ]
+    },
+    {
+      "source_text": "Create a new file called app.py.",
+      "target_text": "新建一个名为 app.py 的文件。",
+      "quality": 0.87,
+      "tags": [
+        "technical",
+        "filename",
+        "code"
+      ]
+    },
+    {
+      "source_text": "Pass the flag exactly as shown.",
+      "target_text": "按显示的样子原样传入这个标志。",
+      "quality": 0.87,
+      "tags": [
+        "technical",
+        "flag",
+        "code"
+      ]
+    },
+    {
+      "source_text": "The API returns a JSON object.",
+      "target_text": "这个 API 会返回一个 JSON 对象。",
+      "quality": 0.87,
+      "tags": [
+        "technical",
+        "api",
+        "code"
+      ]
+    },
+    {
+      "source_text": "Do not commit your secrets.",
+      "target_text": "不要提交你的密钥。",
+      "quality": 0.87,
+      "tags": [
+        "technical",
+        "security"
+      ]
+    },
+    {
+      "source_text": "Restart the development server.",
+      "target_text": "重启开发服务器。",
+      "quality": 0.87,
+      "tags": [
+        "technical",
+        "instruction"
+      ]
+    },
+    {
+      "source_text": "Check the error message.",
+      "target_text": "检查错误信息。",
+      "quality": 0.87,
+      "tags": [
+        "technical",
+        "debugging"
+      ]
+    },
+    {
+      "source_text": "This function is asynchronous.",
+      "target_text": "这个函数是异步的。",
+      "quality": 0.87,
+      "tags": [
+        "technical",
+        "code"
+      ]
+    },
+    {
+      "source_text": "The version number matters here.",
+      "target_text": "这里版本号很关键。",
+      "quality": 0.87,
+      "tags": [
+        "technical",
+        "version"
+      ]
+    },
+    {
+      "source_text": "Copy the path, not the prompt.",
+      "target_text": "复制路径，不要复制提示符。",
+      "quality": 0.87,
+      "tags": [
+        "technical",
+        "instruction"
+      ]
+    }
+  ]
+}
