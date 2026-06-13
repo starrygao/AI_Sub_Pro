@@ -45,8 +45,10 @@ log = logging.getLogger(__name__)
 # to a lower value to exercise the rejection path without writing GBs.
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024
 MAX_SUBTITLE_UPLOAD_BYTES = 32 * 1024 * 1024
+MAX_AUDIO_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
 _VIDEO_UPLOAD_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".ts", ".m4v"}
 _SUBTITLE_UPLOAD_EXTS = {".srt"}
+_AUDIO_UPLOAD_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".webm"}
 
 
 _PROJECT_SAFE_DEFAULTS = {
@@ -227,7 +229,7 @@ def _apply_safe_defaults(project: dict) -> dict:
             project[field] = value.strip()[:limit] or None
         else:
             project[field] = None
-    if project.get("source_type") not in ("upload", "trailer", "subtitle"):
+    if project.get("source_type") not in ("upload", "trailer", "subtitle", "audio"):
         project["source_type"] = "upload"
     for field, default in (("asr_language", "auto"), ("target_language", "简体中文")):
         value = project.get(field)
@@ -450,6 +452,10 @@ def _has_subtitle_extension(path_or_name: str) -> bool:
     return Path(path_or_name).suffix.lower() in _SUBTITLE_UPLOAD_EXTS
 
 
+def _has_audio_extension(path_or_name: str) -> bool:
+    return Path(path_or_name).suffix.lower() in _AUDIO_UPLOAD_EXTS
+
+
 def _safe_upload_name(filename: Optional[str], fallback: str) -> str:
     raw_name = (filename or "").strip()
     safe_name = raw_name.replace("/", "_").replace("\\", "_")
@@ -476,6 +482,41 @@ async def _read_upload_limited(file: UploadFile, *, limit: int, label: str) -> b
     if not data:
         raise HTTPException(400, f"{label} is empty")
     return bytes(data)
+
+
+async def _write_upload_limited(file: UploadFile, dest: Path, *, limit: int, label: str) -> int:
+    written = 0
+    try:
+        with open(dest, "xb") as f:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > limit:
+                    f.close()
+                    try:
+                        dest.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    raise HTTPException(413, f"{label} exceeds {limit} bytes")
+                f.write(chunk)
+    except HTTPException:
+        raise
+    except Exception:
+        try:
+            dest.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+
+    if written == 0:
+        try:
+            dest.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise HTTPException(400, f"{label} is empty")
+    return written
 
 
 def _truncate_filename_stem(stem: str, max_bytes: int) -> str:
@@ -928,6 +969,111 @@ async def import_subtitle_project(
         "subtitle_source": "uploaded",
         "native_subtitle_language": _text_default(original_language, ""),
         "asr_skipped": True,
+        "content_type": resolved_content_type,
+        "academic_field": _text_default(
+            academic_field,
+            inferred_metadata.get("academic_field", ""),
+        ),
+        "content_notes": (content_notes or "").strip() if isinstance(content_notes, str) else "",
+        "manual_terms": (manual_terms or "").strip() if isinstance(manual_terms, str) else "",
+        "metadata_source": "manual" if has_manual_metadata else inferred_metadata.get("metadata_source", ""),
+    }
+    project = _apply_safe_defaults(project)
+    _save_project(pid, project)
+    return project
+
+
+@router.post("/import-audio")
+async def import_audio_project(
+    file: UploadFile = File(...),
+    name: Optional[str] = Form(None),
+    original_language: Optional[str] = Form(None),
+    target_language: Optional[str] = Form(None),
+    content_type: Optional[str] = Form(None),
+    academic_field: Optional[str] = Form(None),
+    content_notes: Optional[str] = Form(None),
+    manual_terms: Optional[str] = Form(None),
+):
+    """Create an ASR-ready project from an uploaded audio file."""
+    safe_name = _safe_upload_name(file.filename, "audio.mp3")
+    if not _has_audio_extension(safe_name):
+        raise HTTPException(400, "Uploaded audio file must use an audio extension")
+
+    pid = _new_project_id()
+    pdir = PROJECTS_DIR / pid
+    pdir.mkdir(parents=True, exist_ok=True)
+    ext = Path(safe_name).suffix.lower()
+    audio_path = pdir / f"original{ext}"
+
+    try:
+        await _write_upload_limited(
+            file,
+            audio_path,
+            limit=MAX_AUDIO_UPLOAD_BYTES,
+            label="Audio file",
+        )
+    except Exception:
+        try:
+            shutil.rmtree(pdir, ignore_errors=True)
+        except Exception:
+            pass
+        raise
+
+    display_name = _text_default(name, safe_name)
+    target_lang = _text_default(target_language, "简体中文")
+    source_lang = _text_default(original_language, "")
+    asr_lang = _text_default(original_language, "auto")
+    inferred_metadata = infer_content_metadata_from_filename(display_name)
+    requested_content_type = normalize_content_type(content_type)
+    has_manual_metadata = any(
+        isinstance(value, str) and value.strip()
+        for value in (content_type, academic_field, content_notes, manual_terms)
+    )
+    resolved_content_type = (
+        requested_content_type
+        if requested_content_type != "auto"
+        else inferred_metadata.get("content_type", "auto")
+    )
+
+    audio_tracks = get_tracks(str(audio_path), "a")
+    if not audio_tracks:
+        audio_tracks = [{
+            "index": 0,
+            "codec": ext.lstrip(".") or "unknown",
+            "lang": source_lang or "und",
+            "title": "",
+            "channels": 0,
+            "sample_rate": "",
+        }]
+    duration = get_duration(str(audio_path))
+
+    project = {
+        "id": pid,
+        "name": display_name,
+        "video_path": str(audio_path),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "status": "created",
+        "progress": 0,
+        "progress_msg": "",
+        "duration": round(duration, 1),
+        "audio_tracks": audio_tracks,
+        "subtitle_tracks": [],
+        "selected_audio_track": 0,
+        "selected_subtitle_track": None,
+        "prefer_embedded_subtitle": False,
+        "asr_language": asr_lang,
+        "target_language": target_lang,
+        "error": None,
+        "output_video": None,
+        "source_type": "audio",
+        "original_language": source_lang,
+        "source_title": display_name,
+        "source_language": source_lang,
+        "source_duration": round(duration, 1),
+        "source_has_subtitles": False,
+        "subtitle_source": None,
+        "native_subtitle_language": "",
+        "asr_skipped": False,
         "content_type": resolved_content_type,
         "academic_field": _text_default(
             academic_field,

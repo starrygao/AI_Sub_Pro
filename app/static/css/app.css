@@ -331,6 +331,12 @@ textarea,
   margin-right: auto;
 }
 
+.home-audio-source {
+  max-width: 32rem;
+  margin-left: auto;
+  margin-right: auto;
+}
+
 .home-recent-project {
   border: 1px solid transparent;
 }

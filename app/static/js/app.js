@@ -777,9 +777,9 @@ function app() {
           mode: 'audio',
           label: '音频文件',
           helper: 'MP3 / WAV / M4A',
-          strategy: '后续将支持纯音频听写、翻译和导出字幕。',
-          actionLabel: '即将支持',
-          disabled: true,
+          strategy: '上传纯音频后进入 ASR 听写和翻译，完成后可导出 SRT / VTT 字幕；不执行视频烧录。',
+          actionLabel: '选择音频文件',
+          disabled: false,
         },
       ];
     },
@@ -812,6 +812,10 @@ function app() {
         if (this.fileImporting) return '读取中...';
         if (this.projectCreating) return '创建中...';
       }
+      if (option.mode === 'audio') {
+        if (this.fileImporting) return '读取中...';
+        if (this.projectCreating) return '创建中...';
+      }
       return option.actionLabel || '开始';
     },
 
@@ -823,6 +827,7 @@ function app() {
         return !String(this.trailerUrlInput || '').trim() || this.trailerSubmitting;
       }
       if (option.mode === 'subtitle') return this.fileImporting || this.projectCreating;
+      if (option.mode === 'audio') return this.fileImporting || this.projectCreating;
       return true;
     },
 
@@ -838,6 +843,10 @@ function app() {
       }
       if (option.mode === 'subtitle') {
         await this.openSubtitleFilePicker();
+        return;
+      }
+      if (option.mode === 'audio') {
+        await this.openAudioFilePicker();
         return;
       }
       await this.openFilePicker();
@@ -866,6 +875,11 @@ function app() {
       return name.endsWith('.srt');
     },
 
+    isAudioFile(file) {
+      const name = String(file?.name || '').toLowerCase();
+      return ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.webm'].some((ext) => name.endsWith(ext));
+    },
+
     async uploadSubtitleFile(file) {
       const formData = new FormData();
       formData.append('file', file);
@@ -876,6 +890,22 @@ function app() {
       const resp = await fetch('/api/projects/import-subtitle', { method: 'POST', body: formData });
       if (!resp.ok) {
         throw new Error(await this.apiErrorMessage(resp, '字幕导入失败'));
+      }
+      const data = await resp.json().catch(() => ({}));
+      if (!data.id) throw new Error('服务器未返回项目 ID');
+      return data;
+    },
+
+    async uploadAudioFile(file) {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('target_language', this.targetLang || '简体中文');
+      if (this.asrLanguage && this.asrLanguage !== 'auto') {
+        formData.append('original_language', this.asrLanguage);
+      }
+      const resp = await fetch('/api/projects/import-audio', { method: 'POST', body: formData });
+      if (!resp.ok) {
+        throw new Error(await this.apiErrorMessage(resp, '音频导入失败'));
       }
       const data = await resp.json().catch(() => ({}));
       if (!data.id) throw new Error('服务器未返回项目 ID');
@@ -909,6 +939,42 @@ function app() {
         this.currentProject.status = 'processing';
       } catch(e) {
         this.toast('字幕导入失败: ' + e.message, 'error');
+      } finally {
+        this.fileImporting = false;
+        this.projectCreating = false;
+      }
+    },
+
+    async useSelectedAudioFile(file) {
+      if (!file) return;
+      if (!this.isAudioFile(file)) {
+        this.toast('请选择音频文件（MP3、WAV、M4A、AAC、FLAC、OGG、OPUS）', 'error');
+        return;
+      }
+      if (this.fileImporting || this.projectCreating) return;
+      this.fileImporting = true;
+      this.projectCreating = true;
+      try {
+        if (!await this.ensureTranslationReadyForWorkflow()) return;
+        const p = await this.uploadAudioFile(file);
+        this.toast('音频项目已创建，开始转写并翻译...');
+        this.clearKbSuggestions();
+        this.clearKbUsageTrace();
+        this.clearQualityReport();
+        this.clearTranslationStrategy();
+        this.currentProject = p;
+        this.workflowState = null;
+        this.workflowStateError = '';
+        this.applyWorkflowDefaultsFromProject(p);
+        await this.setView('detail');
+        this.connectWS(p.id);
+        await this.api(`/api/projects/${p.id}/start-transcribe-translate`, 'POST', {
+          language: this.asrLanguage,
+          target_language: this.targetLang,
+        });
+        this.currentProject.status = 'processing';
+      } catch(e) {
+        this.toast('音频导入失败: ' + e.message, 'error');
       } finally {
         this.fileImporting = false;
         this.projectCreating = false;
@@ -1929,6 +1995,11 @@ function app() {
       this.$refs.subtitleFileInput?.click();
     },
 
+    async openAudioFilePicker() {
+      if (this.fileImporting || this.projectCreating) return;
+      this.$refs.audioFileInput?.click();
+    },
+
     async handleFileSelect(event) {
       const file = event.target?.files?.[0];
       try {
@@ -1942,6 +2013,15 @@ function app() {
       const file = event.target?.files?.[0];
       try {
         await this.useSelectedSubtitleFile(file);
+      } finally {
+        if (event.target) event.target.value = '';
+      }
+    },
+
+    async handleAudioFileSelect(event) {
+      const file = event.target?.files?.[0];
+      try {
+        await this.useSelectedAudioFile(file);
       } finally {
         if (event.target) event.target.value = '';
       }
@@ -2458,11 +2538,12 @@ function app() {
 
     async startFull() {
       if (!this.currentProject) return;
+      const audioOnly = this.currentProject.source_type === 'audio';
       await this.runProjectAction(
         'start-full',
-        `/api/projects/${this.currentProject.id}/start-full`,
+        `/api/projects/${this.currentProject.id}/${audioOnly ? 'start-transcribe-translate' : 'start-full'}`,
         { language: this.asrLanguage, target_language: this.targetLang },
-        '开始一键处理...',
+        audioOnly ? '开始转写并翻译...' : '开始一键处理...',
         { requiresTranslation: true }
       );
     },

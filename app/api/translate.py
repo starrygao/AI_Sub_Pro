@@ -326,6 +326,7 @@ def _reset_workflow_for_action(pid: str, action: str) -> dict:
     stages_by_action = {
         "asr": ["asr"],
         "translate": ["translate"],
+        "asr_translate": ["asr", "translate"],
         "full": ["asr", "translate", "burn"],
         "burn": ["burn"],
     }
@@ -1194,6 +1195,31 @@ def _run_full_pipeline(pid: str, audio_track: int, language: str, target_languag
         unregister_task(pid)
 
 
+def _run_asr_translate_pipeline(pid: str, audio_track: int, language: str, target_language: str):
+    """Run ASR + translation without burning subtitles into a video."""
+    try:
+        _run_asr_pipeline(pid, audio_track, language, owns_registration=False)
+        project = _load_project(pid)
+        if project["status"] == "error":
+            return
+        _check_cancel(pid)
+        _run_translate_pipeline(pid, target_language, owns_registration=False)
+    except Exception as e:
+        log.exception("ASR+translate pipeline failed for %s", pid)
+        error_msg = _safe_error_message(e)
+        try:
+            mutate_project(
+                pid,
+                lambda p: p.update({"status": "error", "error": error_msg}),
+                normalize=_apply_safe_defaults,
+            )
+        except Exception:
+            pass
+        _emit_progress(pid, "translate", 0, f"错误: {_safe_error_message(e, 100)}")
+    finally:
+        unregister_task(pid)
+
+
 @router.post("/{pid}/start-asr")
 def start_asr(pid: str = PathParam(pattern=PID_PATTERN), req: ASRRequest = ASRRequest()):
     """Start ASR pipeline."""
@@ -1280,6 +1306,47 @@ def start_full(pid: str = PathParam(pattern=PID_PATTERN), req: FullPipelineReque
         raise
     t.start()
     return {"status": "started", "message": "Full pipeline started"}
+
+
+@router.post("/{pid}/start-transcribe-translate")
+def start_transcribe_translate(pid: str = PathParam(pattern=PID_PATTERN), req: FullPipelineRequest = FullPipelineRequest()):
+    """Start ASR + translation without the video burn stage."""
+    project = _load_project(pid)
+    _reject_busy_project(project)
+    audio_track = _resolve_audio_track(project, req.audio_track)
+    language = _resolve_text_option(req.language, project.get("asr_language"), "auto", "language")
+    target_lang = _resolve_text_option(
+        req.target_language,
+        project.get("target_language"),
+        "简体中文",
+        "target_language",
+    )
+    require_translation_ready()
+    try:
+        t = try_register_task(pid, lambda: threading.Thread(
+            target=_run_asr_translate_pipeline,
+            args=(pid, audio_track, language, target_lang),
+            daemon=True,
+        ), reset_cancellation=True)
+    except TaskAlreadyRunning:
+        raise HTTPException(409, "Task already running for this project")
+    try:
+        _persist_workflow_options(
+            pid,
+            audio_track=audio_track,
+            language=language,
+            target_language=target_lang,
+        )
+        _reset_workflow_for_action(pid, "asr_translate")
+    except Exception:
+        unregister_task(pid)
+        raise
+    t.start()
+    return {
+        "status": "started",
+        "message": "Transcription and translation started",
+        "stage": "asr_translate",
+    }
 
 
 def _launch_resume_stage(pid: str, project: dict, stage: str) -> dict:

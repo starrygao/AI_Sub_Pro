@@ -1113,6 +1113,49 @@ def test_project_start_actions_ignore_duplicate_submits_while_pending():
     )
 
 
+def test_audio_project_start_full_uses_transcribe_translate_endpoint():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const calls = [];
+          state.currentProject = {id: 'aud1', status: 'created', source_type: 'audio'};
+          state.sysCheck = {translation_ready: true};
+          state.asrLanguage = 'en';
+          state.targetLang = 'English';
+          state.toast = () => {};
+          state.api = async (url, method, body) => {
+            calls.push([method, url, body]);
+            if (url === '/api/projects/aud1/start-transcribe-translate' && method === 'POST') {
+              return {status: 'started'};
+            }
+            throw new Error(`unexpected API call ${method} ${url}`);
+          };
+
+          await state.startFull();
+
+          if (calls.length !== 1) throw new Error(`expected one API call, got ${JSON.stringify(calls)}`);
+          if (calls[0][1] !== '/api/projects/aud1/start-transcribe-translate') {
+            throw new Error(`expected audio startFull to skip burn endpoint, got ${JSON.stringify(calls)}`);
+          }
+          if (calls[0][2].language !== 'en' || calls[0][2].target_language !== 'English') {
+            throw new Error(`expected language payload, got ${JSON.stringify(calls)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_cancel_task_ignores_duplicate_submits_while_pending():
     _run_node(
         """

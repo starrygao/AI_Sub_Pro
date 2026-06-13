@@ -266,11 +266,15 @@ def test_home_unified_source_modes_are_visible_and_accessible():
         "startHomeSourceAction()",
         "homeSourceMode === 'network'",
         "homeSourceMode === 'subtitle'",
+        "homeSourceMode === 'audio'",
         "aria-label=\"选择输入来源\"",
         ":aria-pressed=\"homeSourceMode === option.mode\"",
         "aria-label=\"选择 SRT 字幕文件\"",
         "x-ref=\"subtitleFileInput\"",
         "accept=\".srt\"",
+        "aria-label=\"选择音频文件\"",
+        "x-ref=\"audioFileInput\"",
+        "accept=\"audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,.webm\"",
     ):
         assert snippet in html
 
@@ -287,7 +291,14 @@ def test_home_unified_source_modes_are_visible_and_accessible():
         "useSelectedSubtitleFile(file)",
         "openSubtitleFilePicker()",
         "handleSubtitleFileSelect(event)",
+        "isAudioFile(file)",
+        "uploadAudioFile(file)",
+        "useSelectedAudioFile(file)",
+        "openAudioFilePicker()",
+        "handleAudioFileSelect(event)",
         "/api/projects/import-subtitle",
+        "/api/projects/import-audio",
+        "/start-transcribe-translate",
     ):
         assert snippet in js
 

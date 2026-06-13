@@ -371,6 +371,13 @@ def test_home_source_mode_routes_supported_sources_and_explains_pending_ones():
           if (!state.homeSourceStrategy().includes('内嵌字幕')) {
             throw new Error(`expected local strategy to mention embedded subtitles, got ${state.homeSourceStrategy()}`);
           }
+          const audioOption = options.find((option) => option.mode === 'audio');
+          if (audioOption?.disabled) {
+            throw new Error('expected audio mode to be enabled for ASR import');
+          }
+          if (!audioOption?.strategy.includes('ASR') && !audioOption?.strategy.includes('听写')) {
+            throw new Error(`expected audio source to explain transcription, got ${JSON.stringify(audioOption)}`);
+          }
 
           let picked = false;
           state.openFilePicker = async () => { picked = true; };
@@ -389,6 +396,12 @@ def test_home_source_mode_routes_supported_sources_and_explains_pending_ones():
           state.setHomeSourceMode('subtitle');
           await state.startHomeSourceAction();
           if (!subtitlePickerOpened) throw new Error('expected subtitle source action to open SRT picker');
+
+          let audioPickerOpened = false;
+          state.openAudioFilePicker = async () => { audioPickerOpened = true; };
+          state.setHomeSourceMode('audio');
+          await state.startHomeSourceAction();
+          if (!audioPickerOpened) throw new Error('expected audio source action to open audio picker');
         })().catch((err) => {
           console.error(err.message);
           process.exit(1);
@@ -442,6 +455,64 @@ def test_selected_subtitle_file_creates_project_and_starts_translation():
           }
           if (state.view !== 'detail') {
             throw new Error(`expected subtitle project detail view, got ${state.view}`);
+          }
+          if (state.fileImporting || state.projectCreating) {
+            throw new Error(`expected busy flags reset, got ${state.fileImporting}/${state.projectCreating}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_selected_audio_file_creates_project_and_starts_transcribe_translate():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const calls = [];
+          state.sysCheck = {translation_ready: true};
+          state.targetLang = 'English';
+          state.asrLanguage = 'en';
+          state.toast = () => {};
+          state.setView = async (view) => { state.view = view; return true; };
+          state.connectWS = () => {};
+          state.uploadAudioFile = async (file) => {
+            calls.push(['upload', file.name]);
+            return {id: 'aud1', name: file.name, source_type: 'audio', target_language: 'English'};
+          };
+          state.api = async (url, method, body) => {
+            calls.push([method, url, body]);
+            if (url === '/api/projects/aud1/start-transcribe-translate' && method === 'POST') {
+              return {status: 'started'};
+            }
+            throw new Error(`unexpected api call ${method} ${url}`);
+          };
+
+          await state.useSelectedAudioFile({name: 'lecture.mp3'});
+
+          if (JSON.stringify(calls[0]) !== JSON.stringify(['upload', 'lecture.mp3'])) {
+            throw new Error(`expected audio upload first, got ${JSON.stringify(calls)}`);
+          }
+          const startCall = calls.find((call) => call[1] === '/api/projects/aud1/start-transcribe-translate');
+          if (!startCall || startCall[2].language !== 'en' || startCall[2].target_language !== 'English') {
+            throw new Error(`expected start-transcribe-translate with ASR and target language, got ${JSON.stringify(calls)}`);
+          }
+          if (state.currentProject?.id !== 'aud1') {
+            throw new Error(`expected current audio project, got ${JSON.stringify(state.currentProject)}`);
+          }
+          if (state.view !== 'detail') {
+            throw new Error(`expected audio project detail view, got ${state.view}`);
           }
           if (state.fileImporting || state.projectCreating) {
             throw new Error(`expected busy flags reset, got ${state.fileImporting}/${state.projectCreating}`);
