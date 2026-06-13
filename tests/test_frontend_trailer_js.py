@@ -1320,6 +1320,8 @@ def test_trailer_url_success_keeps_download_and_subtitle_plan():
                 {
                   id: 'p1',
                   name: 'Network lecture',
+                  content_type: 'academic_lecture',
+                  academic_field: 'computer science',
                   network_video_plan: {
                     download_path: '/tmp/AI_Sub_Pro_Data/projects/p1/original.mp4',
                     download_filename: 'original.mp4',
@@ -1353,6 +1355,10 @@ def test_trailer_url_success_keeps_download_and_subtitle_plan():
           const summary = state.networkVideoPlanSummary(project);
           if (!summary.includes('原生字幕：en, en-US') || !summary.includes('自动字幕：zh-Hans') || !summary.includes('ASR')) {
             throw new Error(`expected detected subtitle languages and ASR fallback summary, got ${summary}`);
+          }
+          const contentSummary = state.createdTrailerProjectContentSummary(project);
+          if (contentSummary !== '内容类型：学术讲座 / 课程 · computer science') {
+            throw new Error(`expected content profile summary, got ${contentSummary}`);
           }
           if (!state.createdTrailerProjectTitle(project).includes('Network lecture')) {
             throw new Error(`expected readable project title, got ${state.createdTrailerProjectTitle(project)}`);

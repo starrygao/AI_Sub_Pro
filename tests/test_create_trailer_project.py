@@ -111,6 +111,36 @@ def test_create_trailer_project_plan_explains_asr_when_no_subtitles_detected(pat
     assert "ASR 听写" in plan["subtitle_strategy_label"]
 
 
+def test_create_trailer_project_infers_academic_metadata_from_network_source(patched_projects_dir):
+    from app.api.projects import create_trailer_project
+    from app.engines.translation_strategy import build_translation_strategy
+
+    meta = create_trailer_project(
+        tmdb_id=None,
+        tmdb_type=None,
+        season_number=None,
+        video_key=None,
+        youtube_url="https://www.youtube.com/watch?v=abc123def45",
+        original_language="en",
+        name="MIT 6.S191 Lecture 1",
+        network_metadata={
+            "title": "MIT 6.S191 Lecture 1: Deep Learning Basics",
+            "uploader": "MIT Introduction to Deep Learning",
+            "channel": "MIT Deep Learning",
+            "language": "en",
+        },
+    )
+
+    assert meta["content_type"] == "academic_lecture"
+    assert meta["academic_field"] == "computer science"
+    assert meta["metadata_source"] == "network_metadata"
+
+    strategy = build_translation_strategy(meta, {})
+    assert strategy["status"] == "ready"
+    assert strategy["content_type"] == "academic_lecture"
+    assert [profile["id"] for profile in strategy["active_profiles"]] == ["academic_lecture"]
+
+
 def test_create_trailer_project_movie_no_season(patched_projects_dir):
     from app.api.projects import create_trailer_project
 

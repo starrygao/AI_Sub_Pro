@@ -328,6 +328,7 @@ def test_online_video_success_explains_download_and_subtitle_plan():
     for snippet in (
         "trailerCreatedProjects.length",
         "createdTrailerProjectTitle(project)",
+        "createdTrailerProjectContentSummary(project)",
         "networkVideoPlanLocation(project)",
         "networkVideoPlanSummary(project)",
         "下载与字幕策略",
@@ -337,6 +338,7 @@ def test_online_video_success_explains_download_and_subtitle_plan():
     for snippet in (
         "trailerCreatedProjects",
         "normalizeCreatedTrailerProjects",
+        "createdTrailerProjectContentSummary",
         "networkVideoPlanLocation",
         "networkVideoPlanSummary",
     ):

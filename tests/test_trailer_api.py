@@ -182,6 +182,8 @@ def test_start_url_endpoint_uses_probe_metadata_when_name_and_language_missing(
     assert data["projects"][0]["network_video_plan"]["subtitle_probe_status"] == "available"
     assert data["projects"][0]["network_video_plan"]["detected_subtitle_languages"] == ["en"]
     assert data["projects"][0]["network_video_plan"]["detected_automatic_caption_languages"] == ["zh-Hans"]
+    assert data["projects"][0]["content_type"] == "academic_lecture"
+    assert data["projects"][0]["academic_field"] == "computer science"
     project = _load_project(pid)
     assert project["name"] == "MIT 6.S191 Lecture 1"
     assert project["original_language"] == "en"
@@ -192,6 +194,9 @@ def test_start_url_endpoint_uses_probe_metadata_when_name_and_language_missing(
     assert project["source_has_subtitles"] is True
     assert project["network_metadata"]["subtitle_languages"] == ["en"]
     assert "自动字幕：zh-Hans" in project["network_video_plan"]["subtitle_strategy_label"]
+    assert project["content_type"] == "academic_lecture"
+    assert project["academic_field"] == "computer science"
+    assert project["metadata_source"] == "network_metadata"
 
 
 def test_start_url_endpoint_treats_auto_language_as_probeable(

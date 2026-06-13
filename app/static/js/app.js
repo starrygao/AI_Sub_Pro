@@ -3599,11 +3599,14 @@ function app() {
         .map((project) => ({
           id: typeof project.id === 'string' ? project.id.trim() : '',
           name: typeof project.name === 'string' ? project.name.trim() : '',
+          content_type: typeof project.content_type === 'string' ? project.content_type.trim() : '',
+          academic_field: typeof project.academic_field === 'string' ? project.academic_field.trim() : '',
+          metadata_source: typeof project.metadata_source === 'string' ? project.metadata_source.trim() : '',
           network_video_plan: this.isPlainObject(project.network_video_plan)
             ? project.network_video_plan
             : null,
         }))
-        .filter((project) => project.id || project.name || project.network_video_plan);
+        .filter((project) => project.id || project.name || project.content_type || project.network_video_plan);
     },
 
     createdTrailerProjectTitle(project) {
@@ -3611,6 +3614,16 @@ function app() {
       const id = typeof project?.id === 'string' ? project.id.trim() : '';
       if (name && id) return `${name} · ${id}`;
       return name || id || '在线视频项目';
+    },
+
+    createdTrailerProjectContentSummary(project) {
+      const type = typeof project?.content_type === 'string' ? project.content_type.trim() : '';
+      if (!type || type === 'auto') return '';
+      const label = this.contentTypeLabel(type);
+      const academicField = typeof project?.academic_field === 'string'
+        ? project.academic_field.trim()
+        : '';
+      return `内容类型：${[label, academicField].filter(Boolean).join(' · ')}`;
     },
 
     networkVideoPlan(project) {

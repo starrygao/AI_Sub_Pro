@@ -114,6 +114,9 @@ def _submission_project(project: dict) -> dict:
     return {
         "id": project.get("id"),
         "name": project.get("name"),
+        "content_type": project.get("content_type"),
+        "academic_field": project.get("academic_field"),
+        "metadata_source": project.get("metadata_source"),
         "network_video_plan": project.get("network_video_plan"),
     }
 

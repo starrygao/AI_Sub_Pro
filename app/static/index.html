@@ -362,6 +362,7 @@
             <template x-for="project in trailerCreatedProjects" :key="project.id || project.name">
               <div>
                 <p class="font-medium text-surface-700 truncate" x-text="createdTrailerProjectTitle(project)"></p>
+                <p x-show="createdTrailerProjectContentSummary(project)" class="mt-0.5 text-surface-400" x-text="createdTrailerProjectContentSummary(project)"></p>
                 <p class="mt-0.5 break-words" x-text="'下载位置：' + networkVideoPlanLocation(project)"></p>
                 <p class="mt-0.5 text-surface-400" x-text="networkVideoPlanSummary(project)"></p>
               </div>

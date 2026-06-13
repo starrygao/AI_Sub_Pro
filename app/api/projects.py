@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
 from fastapi import Path as PathParam
@@ -702,6 +703,31 @@ def _network_video_plan(pdir: Path, network_metadata: Optional[dict] = None) -> 
     }
 
 
+def _network_content_metadata(name: str, youtube_url: str, network_metadata: Optional[dict]) -> dict:
+    parts: list[str] = []
+    has_network_metadata = False
+    if isinstance(network_metadata, dict):
+        for key in ("title", "uploader", "channel", "extractor_key", "source_type"):
+            value = network_metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+                has_network_metadata = True
+    if isinstance(name, str) and name.strip():
+        parts.append(name.strip())
+
+    try:
+        url_path_name = Path(urlparse(str(youtube_url or "")).path).name
+    except Exception:
+        url_path_name = ""
+    if url_path_name:
+        parts.append(url_path_name)
+
+    inferred = infer_content_metadata_from_filename(" ".join(parts))
+    if inferred.get("metadata_source") == "filename":
+        inferred["metadata_source"] = "network_metadata" if has_network_metadata else "url"
+    return inferred
+
+
 def create_trailer_project(
     tmdb_id: Optional[int],
     tmdb_type: Optional[str],
@@ -724,6 +750,7 @@ def create_trailer_project(
     pdir = PROJECTS_DIR / pid
     pdir.mkdir(parents=True, exist_ok=True)
     network_metadata = network_metadata if isinstance(network_metadata, dict) else {}
+    inferred_content_metadata = _network_content_metadata(name, youtube_url, network_metadata)
 
     project = {
         "id": pid,
@@ -754,6 +781,9 @@ def create_trailer_project(
         "source_has_subtitles": bool(network_metadata.get("has_subtitles")),
         "subtitle_source": None,
         "native_subtitle_language": None,
+        "content_type": inferred_content_metadata.get("content_type", "auto"),
+        "academic_field": inferred_content_metadata.get("academic_field", ""),
+        "metadata_source": inferred_content_metadata.get("metadata_source", ""),
         # Trailer-specific
         "source_type": "trailer",
         "tmdb_id": tmdb_id,
