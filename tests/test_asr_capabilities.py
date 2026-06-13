@@ -33,6 +33,31 @@ def test_detect_asr_capabilities_prefers_apple_silicon_mlx(monkeypatch, tmp_path
     assert caps["models"]["large-v3-turbo"]["mlx_whisper"]["available"] is True
 
 
+def test_detect_asr_capabilities_exports_model_options_for_settings_ui(monkeypatch):
+    from app.engines import asr_capabilities
+
+    monkeypatch.setattr(
+        asr_capabilities,
+        "resolve_mlx_model_source",
+        lambda model: {
+            "source": "download",
+            "available": False,
+            "path": "",
+            "path_or_repo": f"mlx-community/whisper-{model}-mlx",
+        },
+    )
+
+    caps = asr_capabilities.detect_asr_capabilities({"model_size": "large-v4"})
+
+    options = caps["model_options"]
+    option_ids = [item["model_size"] for item in options]
+    assert option_ids[:3] == ["tiny", "base", "small"]
+    assert "large-v3-turbo" in option_ids
+    assert "large-v4" in option_ids
+    assert options[0]["label"]
+    assert all("download_hint" in item for item in options)
+
+
 def test_recommend_asr_settings_maps_speed_accuracy_and_offline(monkeypatch):
     from app.engines.asr_capabilities import recommend_asr_settings
 

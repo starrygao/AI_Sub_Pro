@@ -18,6 +18,12 @@ from app.engines.knowledge import _get_singleton as _kb_singleton, invalidate_tr
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["settings"])
 
+_ASR_BACKEND_LABELS = {
+    "mlx_whisper": "MLX Whisper",
+    "faster_whisper": "faster-whisper",
+    "openai_whisper": "openai-whisper",
+}
+
 
 class TestKeyRequest(BaseModel):
     provider: str
@@ -60,6 +66,61 @@ _OBJECT_CONFIG_SECTIONS = {
 def _dict_section(cfg: dict, key: str) -> dict:
     value = cfg.get(key) if isinstance(cfg, dict) else None
     return value if isinstance(value, dict) else {}
+
+
+def _asr_backend_installed(caps: dict, backend: str) -> bool:
+    backends = caps.get("backends") if isinstance(caps, dict) else None
+    info = backends.get(backend) if isinstance(backends, dict) else None
+    return bool(isinstance(info, dict) and info.get("installed"))
+
+
+def _asr_install_prompts(caps: dict, recommendation: dict) -> list[dict]:
+    if not isinstance(caps, dict):
+        return []
+    backends = caps.get("backends") if isinstance(caps.get("backends"), dict) else {}
+    selected_backend = caps.get("selected_backend") if isinstance(caps.get("selected_backend"), str) else "auto"
+    selected_backend = selected_backend.strip()
+    installed = [
+        backend
+        for backend in ASR_BACKENDS
+        if backend != "auto" and _asr_backend_installed(caps, backend)
+    ]
+
+    missing_backend = ""
+    if selected_backend in ASR_BACKENDS and selected_backend != "auto":
+        if not _asr_backend_installed(caps, selected_backend):
+            missing_backend = selected_backend
+    elif not installed and backends:
+        missing_backend = "local_asr_backend"
+
+    if not missing_backend:
+        return []
+
+    if missing_backend == "local_asr_backend":
+        title = "未检测到本地 ASR 后端"
+        message = "未检测到本地 ASR 后端。请安装 requirements-asr.txt 中的 ASR 依赖。"
+        backend = ""
+        severity = "error"
+    else:
+        label = _ASR_BACKEND_LABELS.get(missing_backend, missing_backend)
+        title = f"{label} 未安装"
+        message = f"已选择 {missing_backend} 后端，但本机未检测到该依赖。请安装 ASR 依赖或切回自动。"
+        backend = missing_backend
+        severity = "warning"
+
+    if isinstance(recommendation, dict):
+        reason = recommendation.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            message = reason.strip()
+
+    return [{
+        "id": f"asr-backend-{missing_backend}-missing",
+        "severity": severity,
+        "backend": backend,
+        "title": title,
+        "message": message,
+        "install_command": "python3 -m pip install -r requirements-asr.txt",
+    }]
 
 
 def _validate_provider_field(field: str, provider: Optional[str], *, allow_empty: bool = True) -> Optional[str]:
@@ -629,6 +690,8 @@ def system_check():
         "asr_mode": asr_mode,
         "asr_capabilities": asr_capabilities,
         "asr_recommendation": asr_recommendation,
+        "asr_model_options": asr_capabilities.get("model_options", []),
+        "asr_install_prompts": _asr_install_prompts(asr_capabilities, asr_recommendation),
         **translation,
         "mlx_whisper": has_mlx,
         "mlx_error": mlx_error,

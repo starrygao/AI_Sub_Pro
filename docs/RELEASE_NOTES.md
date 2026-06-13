@@ -2,6 +2,41 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.5 - ASR Install Prompts and Model Catalog Sync
+
+Highlights:
+
+- System check now returns ASR install prompts when the user explicitly selects
+  a local backend that is not installed, or when no local ASR backend exists.
+- The settings page shows the ASR dependency prompt inline and raises one
+  deduplicated toast per missing backend during a session.
+- Whisper model choices now come from the backend capability catalog instead
+  of being duplicated as hardcoded frontend options; custom configured models
+  are preserved in the selectable list.
+- Automatic mode remains quiet when at least one local ASR backend is available,
+  so users are not spammed about optional backends they did not choose.
+
+Quality/Verification:
+
+- Full test suite passed: `1087 passed in 198.90s`.
+- Focused ASR/settings/frontend regression passed: `202 passed in 24.24s`.
+- Runtime source check passed: `/api/system-check` returned six ASR model
+  options, no install prompt in auto mode with MLX available, and the settings
+  UI rendered both dynamic model options and the ASR install prompt.
+- Local DMG verification passed: `hdiutil verify dist/AI_Sub_Pro_v1.3.5.dmg`
+  reported a valid checksum, and
+  `shasum -a 256 -c AI_Sub_Pro_v1.3.5.dmg.sha256` passed from `dist/`.
+- Local installed app verification passed: `/api/settings` reports app version
+  `1.3.5`, ASR backend `auto`, and `/api/system-check` exposes
+  `asr_model_options`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.5.dmg` is attached for macOS users, with a matching
+  `AI_Sub_Pro_v1.3.5.dmg.sha256` checksum file and
+  `release-size-report.json`.
+- Local artifact size: 328 MB DMG / 816 MB app.
+
 ## v1.3.4 - UI Auto-Collapse and ASR Backend Selection
 
 Highlights:

@@ -951,6 +951,9 @@ def test_system_check_includes_asr_capabilities_and_recommendation(monkeypatch):
                 "source": "bundled",
             }
         },
+        "model_options": [
+            {"model_size": "large-v3-turbo", "label": "large-v3-turbo (推荐)", "download_hint": "~1.6GB"},
+        ],
     })
     monkeypatch.setattr(settings_api, "recommend_asr_settings", lambda mode, caps: {
         "mode": mode,
@@ -974,11 +977,62 @@ def test_system_check_includes_asr_capabilities_and_recommendation(monkeypatch):
     assert data["asr_mode"] == "speed"
     assert data["asr_capabilities"]["platform"]["apple_silicon"] is True
     assert data["asr_recommendation"]["backend"] == "mlx_whisper"
+    assert data["asr_model_options"][0]["model_size"] == "large-v3-turbo"
+    assert data["asr_install_prompts"] == []
     assert data["whisper_model"] in {True, False}
     assert "translation_ready" in data
     assert "mlx_whisper" in data
     assert "mlx_error" in data
     assert "ready" in data
+
+
+def test_system_check_warns_when_selected_asr_backend_is_missing(monkeypatch):
+    import app.api.settings as settings_api
+    from app.main import app
+    client = TestClient(app)
+
+    monkeypatch.setattr(settings_api, "detect_asr_capabilities", lambda cfg: {
+        "selected_backend": "faster_whisper",
+        "platform": {"system": "Darwin", "machine": "arm64", "apple_silicon": True},
+        "backends": {
+            "mlx_whisper": {"installed": True, "accelerated": True, "supports_vad": False, "supports_beam": False},
+            "faster_whisper": {"installed": False, "accelerated": False, "supports_vad": True, "supports_beam": True},
+            "openai_whisper": {"installed": False, "accelerated": False, "supports_vad": False, "supports_beam": True},
+        },
+        "models": {},
+        "model_options": [
+            {"model_size": "large-v3", "label": "large-v3", "download_hint": "~3GB"},
+        ],
+    })
+    monkeypatch.setattr(settings_api, "recommend_asr_settings", lambda mode, caps: {
+        "mode": mode,
+        "backend": "faster_whisper",
+        "model_size": "large-v3",
+        "ready": False,
+        "download_required": True,
+        "download_hint": "~3GB",
+        "reason": "已选择 faster_whisper 后端，但本机未检测到该依赖。",
+    })
+
+    with patch("app.utils.media.check_ffmpeg", return_value=True), \
+         patch("app.api.settings.Config.to_dict", return_value={
+             **_system_check_config(
+                 primary_provider="openai",
+                 api_keys={"openai": "sk-test"},
+             ),
+             "asr": {"mode": "accuracy", "backend": "faster_whisper", "model_size": "large-v3"},
+         }):
+        r = client.get("/api/system-check")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["asr_model_options"][0]["model_size"] == "large-v3"
+    prompts = data["asr_install_prompts"]
+    assert prompts
+    assert prompts[0]["backend"] == "faster_whisper"
+    assert prompts[0]["severity"] == "warning"
+    assert "pip install" in prompts[0]["install_command"]
+    assert "faster_whisper" in prompts[0]["message"]
 
 
 def test_system_check_degrades_invalid_persisted_asr_mode(monkeypatch):

@@ -90,6 +90,7 @@ function app() {
     sysCheckError: '',
     sysCheckLoading: false,
     sysCheckRequestSeq: 0,
+    asrInstallPromptToastKeys: {},
     settingsSaving: false,
     showKeys: { openai: false, deepseek: false, gemini: false, primary: false, polish: false, tmdb: false },
     claudeCliStatus: null,  // null | {installed, logged_in}
@@ -836,6 +837,7 @@ function app() {
         if (this.sysCheckRequestSeq !== requestId) return;
         this.sysCheck = result;
         this.sysCheckError = '';
+        this.notifyAsrInstallPrompts(result);
       } catch(e) {
         if (this.sysCheckRequestSeq === requestId) {
           this.sysCheckError = e.message || '系统检查失败';
@@ -852,6 +854,61 @@ function app() {
         accuracy: '准确优先',
         offline: '离线优先',
       }[normalized] || normalized || '速度优先';
+    },
+
+    asrModelOptions() {
+      const fallback = [
+        { model_size: 'tiny', label: 'tiny (最快)', download_hint: '~150MB' },
+        { model_size: 'base', label: 'base', download_hint: '~300MB' },
+        { model_size: 'small', label: 'small', download_hint: '~900MB' },
+        { model_size: 'medium', label: 'medium', download_hint: '~1.5GB' },
+        { model_size: 'large-v3-turbo', label: 'large-v3-turbo (推荐)', download_hint: '~1.6GB' },
+        { model_size: 'large-v3', label: 'large-v3 (最准)', download_hint: '~3GB' },
+      ];
+      const rawOptions = Array.isArray(this.sysCheck?.asr_model_options)
+        ? this.sysCheck.asr_model_options
+        : fallback;
+      const seen = new Set();
+      const options = rawOptions
+        .map((option) => {
+          const model = typeof option?.model_size === 'string' ? option.model_size.trim() : '';
+          if (!model || seen.has(model)) return null;
+          seen.add(model);
+          const label = typeof option?.label === 'string' && option.label.trim()
+            ? option.label.trim()
+            : model;
+          const downloadHint = typeof option?.download_hint === 'string'
+            ? option.download_hint.trim()
+            : '';
+          return { model_size: model, label, download_hint: downloadHint };
+        })
+        .filter(Boolean);
+      const selected = typeof this.settings?.asr?.model_size === 'string'
+        ? this.settings.asr.model_size.trim()
+        : '';
+      if (selected && !seen.has(selected)) {
+        options.push({ model_size: selected, label: selected, download_hint: '' });
+      }
+      return options.length ? options : fallback;
+    },
+
+    notifyAsrInstallPrompts(result) {
+      const prompts = Array.isArray(result?.asr_install_prompts)
+        ? result.asr_install_prompts
+        : [];
+      prompts.forEach((prompt) => {
+        if (!this.isPlainObject(prompt)) return;
+        const severity = typeof prompt.severity === 'string' ? prompt.severity.trim() : '';
+        if (severity !== 'warning' && severity !== 'error') return;
+        const message = typeof prompt.message === 'string' ? prompt.message.trim() : '';
+        if (!message) return;
+        const key = typeof prompt.id === 'string' && prompt.id.trim()
+          ? prompt.id.trim()
+          : message;
+        if (this.asrInstallPromptToastKeys[key]) return;
+        this.asrInstallPromptToastKeys[key] = true;
+        this.toast(message, 'error');
+      });
     },
 
     asrRecommendationSummary() {

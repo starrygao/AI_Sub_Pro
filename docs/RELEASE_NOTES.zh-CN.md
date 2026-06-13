@@ -2,6 +2,35 @@
 
 语言：[English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.5 - ASR 安装提醒与模型目录同步
+
+主要内容：
+
+- 系统检查现在会在用户显式选择了未安装的本地 ASR 后端，或本机没有任何本地
+  ASR 后端时，返回可展示的安装提醒。
+- 设置页会内联显示 ASR 依赖提醒，并在当前会话中对每个缺失后端只弹出一次 toast。
+- Whisper 模型选项现在来自后端能力目录，不再在前端重复硬编码；用户已配置的自定义
+  模型也会保留在可选列表中。
+- 自动模式下只要至少有一个本地 ASR 后端可用，就不会因为未选择的可选后端缺失而打扰用户。
+
+质量验证：
+
+- 完整测试套件已通过：`1087 passed in 198.90s`。
+- ASR/设置/前端 focused regression 已通过：`202 passed in 24.24s`。
+- 源码运行态检查已通过：`/api/system-check` 返回 6 个 ASR 模型选项；MLX 可用且
+  backend 为 auto 时不返回安装提醒；设置页能渲染动态模型选项和 ASR 安装提醒。
+- 本地 DMG 校验已通过：`hdiutil verify dist/AI_Sub_Pro_v1.3.5.dmg`
+  报告 checksum 有效，并且在 `dist/` 下运行
+  `shasum -a 256 -c AI_Sub_Pro_v1.3.5.dmg.sha256` 通过。
+- 本机安装版验证已通过：`/api/settings` 报告 app 版本 `1.3.5`，
+  ASR 后端为 `auto`，且 `/api/system-check` 暴露 `asr_model_options`。
+
+安装包：
+
+- 已为 macOS 用户附加 `AI_Sub_Pro_v1.3.5.dmg`，并提供对应的
+  `AI_Sub_Pro_v1.3.5.dmg.sha256` 校验文件和 `release-size-report.json`。
+- 本地产物大小：328 MB DMG / 816 MB app。
+
 ## v1.3.4 - UI 自动收起与 ASR 后端选择
 
 主要内容：

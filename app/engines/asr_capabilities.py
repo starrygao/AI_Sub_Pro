@@ -11,6 +11,14 @@ ASR_MODES = ("speed", "accuracy", "offline")
 BACKEND_ORDER = tuple(backend for backend in ASR_BACKENDS if backend != "auto")
 MODEL_ORDER = ("tiny", "base", "small", "medium", "large-v3-turbo", "large-v3")
 OFFLINE_MODEL_ORDER = ("large-v3-turbo", "small", "base", "tiny", "medium", "large-v3")
+MODEL_LABELS = {
+    "tiny": "tiny (最快)",
+    "base": "base",
+    "small": "small",
+    "medium": "medium",
+    "large-v3-turbo": "large-v3-turbo (推荐)",
+    "large-v3": "large-v3 (最准)",
+}
 
 
 def _has_module(name: str) -> bool:
@@ -70,6 +78,23 @@ def _model_info(model: str) -> dict[str, Any]:
     }
 
 
+def _model_option(model: str) -> dict[str, Any]:
+    return {
+        "model_size": model,
+        "label": MODEL_LABELS.get(model, model),
+        "download_hint": MODEL_DOWNLOAD_HINTS.get(model, ""),
+    }
+
+
+def asr_model_options(selected_model: str = "") -> list[dict[str, Any]]:
+    models = list(MODEL_ORDER)
+    if isinstance(selected_model, str):
+        selected_model = selected_model.strip()
+        if selected_model and selected_model not in models:
+            models.append(selected_model)
+    return [_model_option(model) for model in models]
+
+
 def detect_asr_capabilities(asr_cfg: dict | None = None) -> dict[str, Any]:
     cfg = asr_cfg if isinstance(asr_cfg, dict) else {}
     system = platform.system()
@@ -81,9 +106,8 @@ def detect_asr_capabilities(asr_cfg: dict | None = None) -> dict[str, Any]:
     if selected_backend not in ASR_BACKENDS:
         selected_backend = "auto"
 
-    models = {model: _model_info(model) for model in MODEL_ORDER}
-    if selected_model and selected_model not in models:
-        models[selected_model] = _model_info(selected_model)
+    model_options = asr_model_options(selected_model)
+    models = {item["model_size"]: _model_info(item["model_size"]) for item in model_options}
 
     return {
         "platform": {
@@ -113,6 +137,7 @@ def detect_asr_capabilities(asr_cfg: dict | None = None) -> dict[str, Any]:
             ),
         },
         "models": models,
+        "model_options": model_options,
     }
 
 

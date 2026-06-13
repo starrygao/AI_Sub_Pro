@@ -519,6 +519,59 @@ def test_frontend_formats_asr_recommendation_from_system_check():
     assert result.returncode == 0, result.stderr
 
 
+def test_frontend_uses_system_asr_model_options_and_notifies_missing_backend():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.sysCheck = {
+          asr_model_options: [
+            { model_size: 'large-v4', label: 'large-v4 (new)', download_hint: '~4GB' },
+          ],
+        };
+        const options = state.asrModelOptions();
+        if (options.length !== 1 || options[0].model_size !== 'large-v4') {
+          throw new Error(`expected dynamic ASR model options, got ${JSON.stringify(options)}`);
+        }
+
+        state.notifyAsrInstallPrompts({
+          asr_install_prompts: [
+            {
+              id: 'asr-backend-faster_whisper-missing',
+              severity: 'warning',
+              backend: 'faster_whisper',
+              message: 'faster_whisper 未安装，请安装 ASR 依赖。',
+            },
+          ],
+        });
+        state.notifyAsrInstallPrompts({
+          asr_install_prompts: [
+            {
+              id: 'asr-backend-faster_whisper-missing',
+              severity: 'warning',
+              backend: 'faster_whisper',
+              message: 'faster_whisper 未安装，请安装 ASR 依赖。',
+            },
+          ],
+        });
+        if (state.toasts.length !== 1) {
+          throw new Error(`expected one deduplicated ASR install toast, got ${state.toasts.length}`);
+        }
+        if (state.toasts[0].type !== 'error' || !state.toasts[0].msg.includes('faster_whisper')) {
+          throw new Error(`unexpected ASR install toast: ${JSON.stringify(state.toasts[0])}`);
+        }
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_frontend_normalizes_asr_mode_and_backend_from_settings_payload():
     result = run_js(
         """

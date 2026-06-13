@@ -70,6 +70,8 @@ def test_asr_mode_and_recommendation_are_visible_in_settings():
     assert 'aria-label="ASR 模式"' in html
     assert 'x-model="settings.asr.backend"' in html
     assert 'aria-label="本地 ASR 后端"' in html
+    assert 'x-for="option in asrModelOptions()"' in html
+    assert "sysCheck?.asr_install_prompts?.length" in html
     assert 'x-show="sysCheck?.asr_recommendation && !sysCheckLoading && !sysCheckError"' in html
     assert "asrRecommendationSummary()" in html
     assert "sysCheck?.asr_recommendation?.reason" in html
