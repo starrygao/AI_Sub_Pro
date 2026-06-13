@@ -58,6 +58,10 @@ function app() {
     qaReportLoading: false,
     qaReportError: '',
     qaReportRequestSeq: 0,
+    translationStrategy: null,
+    translationStrategyLoading: false,
+    translationStrategyError: '',
+    translationStrategyRequestSeq: 0,
     projectRenamePrompt: false,
     projectRenameInput: '',
     projectRenameTarget: null,
@@ -1066,6 +1070,13 @@ function app() {
       this.qaReportError = '';
     },
 
+    clearTranslationStrategy() {
+      this.translationStrategyRequestSeq += 1;
+      this.translationStrategy = null;
+      this.translationStrategyLoading = false;
+      this.translationStrategyError = '';
+    },
+
     async loadKbSuggestions() {
       if (!this.currentProject?.id) {
         this.clearKbSuggestions();
@@ -1186,6 +1197,96 @@ function app() {
           ...summary,
         },
       };
+    },
+
+    normalizeTranslationStrategy(data) {
+      const src = this.isPlainObject(data) ? data : {};
+      const activeProfiles = Array.isArray(src.active_profiles)
+        ? src.active_profiles.filter(item => this.isPlainObject(item))
+        : [];
+      const recommendations = Array.isArray(src.recommendations)
+        ? src.recommendations.filter(item => this.isPlainObject(item))
+        : [];
+      const manualTerms = Array.isArray(src.manual_terms)
+        ? src.manual_terms.filter(item => this.isPlainObject(item))
+        : [];
+      const retrieval = this.isPlainObject(src.retrieval) ? src.retrieval : {};
+      const qa = this.isPlainObject(src.qa) ? src.qa : {};
+      const status = typeof src.status === 'string' && src.status.trim()
+        ? src.status.trim()
+        : 'needs_context';
+      const manualTermsCount = Number.isFinite(Number(src.manual_terms_count))
+        ? Number(src.manual_terms_count)
+        : manualTerms.length;
+      return {
+        ...src,
+        status,
+        summary: typeof src.summary === 'string' && src.summary.trim()
+          ? src.summary.trim()
+          : '尚未识别明确内容策略；可手动选择类型并补充术语。',
+        content_type: typeof src.content_type === 'string' ? src.content_type : 'auto',
+        content_type_label: typeof src.content_type_label === 'string' ? src.content_type_label : 'auto',
+        active_profiles: activeProfiles,
+        manual_terms: manualTerms,
+        manual_terms_count: manualTermsCount,
+        retrieval,
+        qa,
+        recommendations,
+      };
+    },
+
+    async loadTranslationStrategy() {
+      if (!this.currentProject?.id) {
+        this.clearTranslationStrategy();
+        return;
+      }
+      const projectId = String(this.currentProject.id);
+      const requestId = ++this.translationStrategyRequestSeq;
+      this.translationStrategyLoading = true;
+      this.translationStrategyError = '';
+      try {
+        const data = await this.api(`/api/projects/${encodeURIComponent(projectId)}/translation-strategy`);
+        if (this.translationStrategyRequestSeq !== requestId || String(this.currentProject?.id || '') !== projectId) return;
+        this.translationStrategy = this.normalizeTranslationStrategy(data);
+      } catch (e) {
+        if (this.translationStrategyRequestSeq === requestId && String(this.currentProject?.id || '') === projectId) {
+          this.translationStrategyError = e.message || '加载翻译策略失败';
+          this.translationStrategy = this.normalizeTranslationStrategy({status: 'needs_context'});
+        }
+      } finally {
+        if (this.translationStrategyRequestSeq === requestId && String(this.currentProject?.id || '') === projectId) {
+          this.translationStrategyLoading = false;
+        }
+      }
+    },
+
+    translationStrategyProfilePills() {
+      const strategy = this.normalizeTranslationStrategy(this.translationStrategy || {});
+      const labels = strategy.active_profiles
+        .map(profile => (typeof profile.label === 'string' ? profile.label.trim() : ''))
+        .filter(Boolean);
+      if (labels.length) return labels;
+      if (strategy.content_type_label && strategy.content_type_label !== 'auto') {
+        return [strategy.content_type_label];
+      }
+      return ['自动判断'];
+    },
+
+    translationStrategyCapabilityPills() {
+      const strategy = this.normalizeTranslationStrategy(this.translationStrategy || {});
+      const pills = [];
+      if (strategy.manual_terms_count > 0) pills.push(`术语 ${strategy.manual_terms_count}`);
+      if (strategy.retrieval?.translation_memory) pills.push('用户修订记忆');
+      if (strategy.retrieval?.phrase_library) pills.push('本地例句');
+      if (strategy.qa?.auto_repair) {
+        const rounds = Number.isFinite(Number(strategy.qa.auto_repair_rounds))
+          ? Number(strategy.qa.auto_repair_rounds)
+          : 1;
+        pills.push(`自动修复 ${rounds} 轮`);
+      } else {
+        pills.push('质量报告');
+      }
+      return pills;
     },
 
     async loadQualityReport() {
@@ -1589,6 +1690,7 @@ function app() {
         this.clearKbSuggestions();
         this.clearKbUsageTrace();
         this.clearQualityReport();
+        this.clearTranslationStrategy();
         this.currentProject = p;
         this.workflowState = null;
         this.workflowStateError = '';
@@ -1640,6 +1742,7 @@ function app() {
           this.clearKbSuggestions();
           this.clearKbUsageTrace();
           this.clearQualityReport();
+          this.clearTranslationStrategy();
           this.subtitles = [];
           this.progressPct = 0;
           this.progressMsg = '';
@@ -1742,12 +1845,14 @@ function app() {
           this.clearKbSuggestions();
           this.clearKbUsageTrace();
           this.clearQualityReport();
+          this.clearTranslationStrategy();
         }
         this.currentProject = project;
         await this.loadWorkflowState();
         if (this.openProjectRequestSeq !== requestId || this.currentProject?.id !== project.id) return;
         this.loadKbUsageTrace();
         this.loadQualityReport();
+        this.loadTranslationStrategy();
         this.applyWorkflowDefaultsFromProject(project);
         this.subtitles = Array.isArray(data.blocks) ? data.blocks.filter(b => this.isPlainObject(b)) : [];
         await this.setView('detail');

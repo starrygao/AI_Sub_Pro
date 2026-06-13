@@ -210,6 +210,61 @@ def test_project_quality_helpers_load_suggestions_and_report():
     assert result.returncode == 0, result.stderr
 
 
+def test_project_translation_strategy_helpers_load_and_format_status():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          state.currentProject = {id: 'p1'};
+          state.toast = () => {};
+          state.api = async (url) => {
+            if (url === '/api/projects/p1/translation-strategy') {
+              return {
+                status: 'ready',
+                summary: '已启用 1 个内容策略。',
+                active_profiles: [{id: 'academic_lecture', label: 'Academic lecture / research talk'}],
+                manual_terms_count: 2,
+                retrieval: {translation_memory: true, phrase_library: false},
+                qa: {auto_repair: true, auto_repair_rounds: 1},
+                recommendations: [{id: 'native_subtitles', message: '优先翻译原生字幕'}],
+              };
+            }
+            throw new Error(`unexpected API ${url}`);
+          };
+
+          await state.loadTranslationStrategy();
+
+          if (state.translationStrategy.status !== 'ready') {
+            throw new Error(`expected strategy status, got ${JSON.stringify(state.translationStrategy)}`);
+          }
+          const profiles = state.translationStrategyProfilePills();
+          if (profiles.length !== 1 || profiles[0] !== 'Academic lecture / research talk') {
+            throw new Error(`bad profile pills ${JSON.stringify(profiles)}`);
+          }
+          const capabilities = state.translationStrategyCapabilityPills();
+          for (const expected of ['术语 2', '用户修订记忆', '自动修复 1 轮']) {
+            if (!capabilities.includes(expected)) {
+              throw new Error(`missing capability ${expected}: ${JSON.stringify(capabilities)}`);
+            }
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_knowledge_navigation_closes_new_kb_prompt_without_dirty_editor():
     result = run_js(
         """

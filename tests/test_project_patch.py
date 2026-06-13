@@ -3,6 +3,7 @@ including the prefer_embedded_subtitle toggle and TMDB relink fields."""
 import json
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -75,6 +76,44 @@ def test_workflow_state_endpoint_returns_project_state(client):
 
     assert r.status_code == 200
     assert r.json() == load_workflow_state(pid)
+
+
+def test_project_translation_strategy_endpoint_explains_current_project(client):
+    from app.api import projects
+
+    pid = _make_project(client, name="Stanford.CS229.Lecture.04.mp4")
+    pfile = projects.PROJECTS_DIR / pid / "project.json"
+    project = json.loads(pfile.read_text(encoding="utf-8"))
+    project.update({
+        "content_type": "academic_lecture",
+        "academic_field": "machine learning",
+        "manual_terms": "gradient descent=梯度下降",
+        "source_title": "CS229 Lecture 04",
+        "source_language": "en",
+        "subtitle_source": "native",
+        "native_subtitle_language": "en",
+        "source_has_subtitles": True,
+    })
+    pfile.write_text(json.dumps(project, ensure_ascii=False), encoding="utf-8")
+
+    with patch("app.api.projects.Config.to_dict", return_value={
+        "translation": {
+            "use_translation_memory": True,
+            "use_phrase_library": True,
+            "qa_auto_repair": False,
+            "qa_auto_repair_rounds": 1,
+        }
+    }):
+        r = client.get(f"/api/projects/{pid}/translation-strategy")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["project_id"] == pid
+    assert data["content_type"] == "academic_lecture"
+    assert data["active_profiles"][0]["id"] == "academic_lecture"
+    assert data["manual_terms_count"] == 1
+    assert data["retrieval"]["translation_memory"] is True
+    assert data["qa"]["auto_repair"] is False
 
 
 def test_workflow_log_endpoint_downloads_stage_log(client):

@@ -17,13 +17,14 @@ from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, StrictInt
 
-from app.config import PROJECTS_DIR
+from app.config import Config, PROJECTS_DIR
 from app.engines.project_metadata import (
     CONTENT_TYPE_OPTIONS,
     infer_content_metadata_from_filename,
     normalize_content_type,
     should_skip_tmdb_enrichment,
 )
+from app.engines.translation_strategy import build_translation_strategy
 from app.engines.workflow_state import load_workflow_state, stage_log_path
 from app.utils.project_store import (
     project_dir as _ps_project_dir,
@@ -813,6 +814,13 @@ def get_workflow_state(pid: str = PathParam(pattern=PID_PATTERN)):
     """Get structured workflow state for a project."""
     _load_project(pid)
     return load_workflow_state(pid)
+
+
+@router.get("/{pid}/translation-strategy")
+def get_translation_strategy(pid: str = PathParam(pattern=PID_PATTERN)):
+    """Explain which translation strategy metadata will apply to a project."""
+    project = _load_project(pid)
+    return build_translation_strategy(project, Config.to_dict())
 
 
 @router.get("/{pid}/logs/{stage}")

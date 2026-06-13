@@ -86,6 +86,32 @@ def test_asr_mode_and_recommendation_are_visible_in_settings():
     assert "asrModeLabel" in js
 
 
+def test_translation_strategy_panel_is_visible_in_project_detail():
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
+
+    expected_html = [
+        "翻译策略说明",
+        "translationStrategyLoading",
+        "translationStrategy?.summary",
+        "translationStrategyProfilePills()",
+        "translationStrategyCapabilityPills()",
+        "@click=\"loadTranslationStrategy()\"",
+    ]
+    for snippet in expected_html:
+        assert snippet in html
+
+    expected_js = [
+        "translationStrategy:",
+        "loadTranslationStrategy()",
+        "normalizeTranslationStrategy",
+        "translationStrategyProfilePills",
+        "translationStrategyCapabilityPills",
+    ]
+    for snippet in expected_js:
+        assert snippet in js
+
+
 def test_checkbox_controls_have_explicit_accessible_names():
     html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
 
