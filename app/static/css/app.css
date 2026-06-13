@@ -315,6 +315,17 @@ textarea,
   align-items: center;
 }
 
+.action-popover-host {
+  isolation: isolate;
+  overflow: visible;
+  z-index: 200;
+}
+
+.action-popover {
+  overflow: visible;
+  z-index: 220;
+}
+
 .project-detail-actions select {
   background: rgba(255, 255, 255, 0.72) !important;
 }
@@ -398,6 +409,10 @@ textarea,
 .fade-up { animation: fadeUp 0.4s ease-out both; }
 .fade-in { animation: fadeIn 0.3s ease-out both; }
 .slide-down { animation: slideDown 0.3s ease-out both; }
+
+.app-confirm-message {
+  white-space: pre-line;
+}
 
 /* Toast */
 .toast-enter { animation: slideDown 0.3s ease-out; }

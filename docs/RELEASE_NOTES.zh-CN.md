@@ -2,6 +2,27 @@
 
 语言：[English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.8 - 下载位置提醒与弹出菜单层级修复
+
+主要内容：
+
+- 在线视频任务在下载前会弹出确认框，说明源视频会保存到
+  `~/AI_Sub_Pro_Data/projects/<project-id>/original.mp4`，不会保存到系统
+  Downloads / 下载目录。
+- 在线视频项目即使最终烧录视频还未完成，也可以在项目卡片中点击“显示”打开项目位置，
+  便于查看已下载源视频和中间文件。
+- 项目详情的更多操作菜单改用专用高层级 popover，展开选项不会再被邻近卡片或面板遮挡。
+
+质量验证：
+
+- 前端/accessibility/settings regression 已通过：`116 passed`。
+- 红绿 focused regression 已通过：`5 passed`。
+- 本地安装包目标：`AI_Sub_Pro_v1.3.8.dmg`。
+
+安装包：
+
+- `AI_Sub_Pro_v1.3.8.dmg` 是本 release line 的 macOS 安装包名称。
+
 ## v1.3.7 - 网络视频信息识别与原生字幕翻译
 
 主要内容：

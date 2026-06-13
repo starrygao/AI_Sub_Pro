@@ -205,6 +205,28 @@ def test_home_online_video_entry_replaces_tmdb_trailer_entry():
     assert "按 TMDB ID" not in html
 
 
+def test_action_popover_layers_above_surrounding_cards():
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+    css = (ROOT / "app/static/css/app.css").read_text(encoding="utf-8")
+
+    assert "action-popover-host" in html
+    assert "action-popover" in html
+    assert ".action-popover-host" in css
+    assert "overflow: visible" in css
+    assert "z-index: 200" in css
+    assert ".action-popover" in css
+    assert "z-index: 220" in css
+
+
+def test_project_cards_can_reveal_network_video_project_location_before_output():
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
+
+    assert 'x-show="canRevealProjectLocation(p)"' in html
+    assert "canRevealProjectLocation(project)" in js
+    assert 'x-show="p.output_video"\n                        @click.stop="revealInFinder(p.id)"' not in html
+
+
 def test_project_rename_uses_app_modal_instead_of_prompt():
     html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
     js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")

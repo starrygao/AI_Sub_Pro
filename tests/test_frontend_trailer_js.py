@@ -1201,6 +1201,7 @@ def test_trailer_url_start_posts_direct_video_url_payload():
           const state = context.app();
           state.targetLang = 'English';
           state.sysCheck = {translation_ready: true};
+          state.askConfirm = async () => true;
           state.trailerUrlInput = ' https://www.youtube.com/watch?v=abc123def45 ';
           state.trailerNameInput = ' Manual trailer ';
           state.trailerOriginalLanguage = ' en ';
@@ -1222,6 +1223,108 @@ def test_trailer_url_start_posts_direct_video_url_payload():
           console.error(err.message);
           process.exit(1);
         });
+        """
+    )
+
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_trailer_url_start_confirms_download_location_before_fetch():
+    script = textwrap.dedent(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          fetch: async () => {
+            throw new Error('fetch should not be called when download confirmation is cancelled');
+          },
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          let confirmOptions = null;
+          state.sysCheck = {translation_ready: true};
+          state.trailerUrlInput = 'https://www.youtube.com/watch?v=abc123def45';
+          state.askConfirm = async (options) => {
+            confirmOptions = options;
+            return false;
+          };
+
+          await state.startTrailerUrlJob();
+
+          if (!confirmOptions) throw new Error('expected a download confirmation dialog');
+          const message = String(confirmOptions.message || '');
+          if (!message.includes('~/AI_Sub_Pro_Data/projects/<项目ID>/original.mp4')) {
+            throw new Error(`expected project library path in confirmation, got ${message}`);
+          }
+          if (!message.includes('不会保存到系统下载目录')) {
+            throw new Error(`expected Downloads clarification, got ${message}`);
+          }
+          if (!message.includes('显示')) {
+            throw new Error(`expected project location hint, got ${message}`);
+          }
+          if (confirmOptions.confirmText !== '直接下载并翻译') {
+            throw new Error(`expected explicit direct-download confirm text, got ${confirmOptions.confirmText}`);
+          }
+          if (state.trailerSubmitting) throw new Error('submitting state should clear after cancelling confirmation');
+          if (state.trailerCreatedCount !== 0) throw new Error('cancelled confirmation should not create projects');
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_project_location_reveal_helper_includes_network_video_projects():
+    script = textwrap.dedent(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        if (!state.canRevealProjectLocation({id: 'p1', source_type: 'trailer'})) {
+          throw new Error('expected trailer/network projects to reveal project folder before output video exists');
+        }
+        if (!state.canRevealProjectLocation({id: 'p2', video_path: '/tmp/input.mp4'})) {
+          throw new Error('expected uploaded projects with source video to reveal project folder');
+        }
+        if (!state.canRevealProjectLocation({id: 'p3', output_video: '/tmp/out.mp4'})) {
+          throw new Error('expected completed projects to reveal output location');
+        }
+        if (state.canRevealProjectLocation(null) || state.canRevealProjectLocation({})) {
+          throw new Error('expected malformed projects not to reveal');
+        }
         """
     )
 

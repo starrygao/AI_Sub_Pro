@@ -220,6 +220,7 @@ from app.version import APP_VERSION
 print(APP_VERSION)
 PY
 )"
+BUNDLE_IDENTIFIER="com.aisubpro.app"
 PLIST_PATH="$APP_PATH/Contents/Info.plist"
 set_plist_string() {
     local key="$1"
@@ -231,6 +232,7 @@ set_plist_string() {
 if [ -f "$PLIST_PATH" ]; then
     echo ""
     echo "Stamping bundle version: $APP_VERSION"
+    set_plist_string "CFBundleIdentifier" "$BUNDLE_IDENTIFIER"
     set_plist_string "CFBundleShortVersionString" "$APP_VERSION"
     set_plist_string "CFBundleVersion" "$APP_VERSION"
     if command -v codesign >/dev/null 2>&1; then

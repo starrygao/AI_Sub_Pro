@@ -413,6 +413,15 @@ function app() {
         && this.currentProject.status === 'completed';
     },
 
+    canRevealProjectLocation(project) {
+      if (!project || !String(project.id || '').trim()) return false;
+      return !!(
+        String(project.output_video || '').trim()
+        || String(project.video_path || '').trim()
+        || project.source_type === 'trailer'
+      );
+    },
+
     isSavingVideo() {
       return this.projectActionPending === 'save-video';
     },
@@ -3025,6 +3034,27 @@ function app() {
         || message.includes('codex');
     },
 
+    networkVideoDownloadMessage() {
+      return [
+        '将直接下载这个网络视频，并创建本地翻译项目。',
+        '',
+        '下载位置：~/AI_Sub_Pro_Data/projects/<项目ID>/original.mp4',
+        '不会保存到系统下载目录。创建后可以在项目卡片或项目详情点击“显示”打开项目位置。',
+        '',
+        '如果平台提供原生字幕，会优先翻译字幕；否则下载视频后进入 ASR 听写。',
+      ].join('\n');
+    },
+
+    async confirmNetworkVideoDownload() {
+      return this.askConfirm({
+        title: '直接下载并翻译这个网络视频？',
+        message: this.networkVideoDownloadMessage(),
+        confirmText: '直接下载并翻译',
+        cancelText: '取消',
+        intent: 'primary',
+      });
+    },
+
     async startTrailerJobs() {
       if (this.trailerSubmitting) return;
       if (this.trailerSelectedVideos.length === 0) return;
@@ -3082,6 +3112,9 @@ function app() {
       try {
         if (!await this.ensureTranslationReadyForWorkflow()) {
           this.trailerError = `请先完成翻译引擎配置：${this.systemTranslationHint()}`;
+          return;
+        }
+        if (!await this.confirmNetworkVideoDownload()) {
           return;
         }
         const payload = {

@@ -91,5 +91,5 @@ app = BUNDLE(
     coll,
     name='AI Sub Pro.app',
     icon=None,
-    bundle_identifier=None,
+    bundle_identifier='com.aisubpro.app',
 )

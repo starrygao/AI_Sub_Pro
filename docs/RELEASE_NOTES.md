@@ -2,6 +2,30 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.8 - Download Location Prompt and Popover Layering
+
+Highlights:
+
+- Online video jobs now show a confirmation dialog before downloading,
+  explaining that the source video is stored under
+  `~/AI_Sub_Pro_Data/projects/<project-id>/original.mp4`, not the system
+  Downloads folder.
+- Project cards can open the project location for online-video jobs before
+  the final burned video is ready, so users can inspect the downloaded source
+  and intermediate files.
+- The project-detail actions popover now uses a dedicated high z-index layer
+  so expanded options are not covered by neighboring cards or panels.
+
+Quality/Verification:
+
+- Frontend/accessibility/settings regression passed: `116 passed`.
+- Focused red-green regression passed: `5 passed`.
+- Local package target: `AI_Sub_Pro_v1.3.8.dmg`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.8.dmg` is the macOS package name for this release line.
+
 ## v1.3.7 - Network Video Metadata and Native Subtitle Translation
 
 Highlights:

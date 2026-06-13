@@ -427,7 +427,7 @@
               </span>
               <span x-show="!p.output_video"></span>
               <div class="flex gap-1.5 flex-wrap justify-end">
-                <button x-show="p.output_video"
+                <button x-show="canRevealProjectLocation(p)"
                         @click.stop="revealInFinder(p.id)"
                         :disabled="isProjectMutationPending('reveal', p.id)"
                         :aria-label="'打开项目位置 ' + (p.name || p.id)"
@@ -527,7 +527,7 @@
           </div>
 
           <!-- More actions dropdown -->
-          <div class="relative" x-data="{open:false}">
+          <div class="relative action-popover-host" x-data="{open:false}">
             <button @click="open=!open"
                     :disabled="projectActionsDisabled(currentProject)"
                     aria-label="更多操作"
@@ -536,7 +536,7 @@
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" /></svg>
               更多
             </button>
-            <div x-show="open" @click.away="open=false" class="absolute right-0 mt-2 glass rounded-xl shadow-xl py-1.5 z-30 w-44 slide-down">
+            <div x-show="open" @click.away="open=false" class="action-popover absolute right-0 mt-2 glass rounded-xl shadow-xl py-1.5 w-44 slide-down">
               <button @click="startASR(); open=false" :disabled="projectActionsDisabled(currentProject)" class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
                 <svg class="w-4 h-4 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" /></svg>
                 仅识别
@@ -1641,7 +1641,7 @@
   <div class="glass rounded-2xl p-5" role="dialog" aria-modal="true" aria-labelledby="app-confirm-title"
        style="width: min(23rem, calc(100vw - 2rem));">
     <h3 id="app-confirm-title" class="text-[14px] font-semibold mb-2" x-text="confirmTitle"></h3>
-    <p class="text-[13px] text-surface-500 leading-relaxed mb-5" x-text="confirmMessage"></p>
+    <p class="app-confirm-message text-[13px] text-surface-500 leading-relaxed mb-5" x-text="confirmMessage"></p>
     <div class="flex justify-end gap-2">
       <button x-ref="confirmCancelButton"
               @click="resolveConfirm(false)"
