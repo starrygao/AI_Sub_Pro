@@ -19,10 +19,10 @@ module.exports = {
           900: '#0f172a',
         },
         accent: {
-          DEFAULT: '#0f766e',
-          light: '#14b8a6',
-          dark: '#115e59',
-          glow: 'rgba(15,118,110,0.16)',
+          DEFAULT: '#007aff',
+          light: '#5ac8fa',
+          dark: '#0057d8',
+          glow: 'rgba(0,122,255,0.16)',
         },
         success: {
           DEFAULT: '#16a34a',

@@ -1,9 +1,21 @@
-/* AI_Sub_Pro — calm desktop tool styling
- * Extracted from app/static/index.html inline <style>, then overlaid with
- * Style B tokens per docs/superpowers/notes/2026-04-19-ui-style-decision.md
- */
+/* AI_Sub_Pro — macOS-style desktop app material system. */
 
 [x-cloak] { display: none !important; }
+
+:root {
+  --mac-bg: #f5f5f7;
+  --mac-bg-elevated: rgba(255, 255, 255, 0.82);
+  --mac-bg-toolbar: rgba(246, 247, 249, 0.78);
+  --mac-border: rgba(60, 60, 67, 0.14);
+  --mac-border-strong: rgba(60, 60, 67, 0.22);
+  --mac-text: #1d1d1f;
+  --mac-text-secondary: #64748b;
+  --mac-blue: #007aff;
+  --mac-blue-dark: #0057d8;
+  --mac-blue-tint: rgba(0, 122, 255, 0.10);
+  --mac-shadow: 0 12px 36px rgba(0, 0, 0, 0.07), 0 1px 2px rgba(0, 0, 0, 0.05);
+  --mac-shadow-soft: 0 6px 18px rgba(0, 0, 0, 0.055), 0 1px 2px rgba(0, 0, 0, 0.045);
+}
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -12,28 +24,68 @@
 ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25); }
 
 body {
-  background: #f8fafc;
-  color: #172033;
-  font-family: "PingFang SC", -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Helvetica", sans-serif;
+  background: var(--mac-bg);
+  color: var(--mac-text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Helvetica Neue", "Helvetica", sans-serif;
   -webkit-font-smoothing: antialiased;
   min-height: 100vh;
   user-select: none;
 }
 
-/* Headings — Style B serif display */
 h1, h2 {
-  font-family: "Iowan Old Style", "PingFang SC", Georgia, serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Helvetica Neue", sans-serif;
+  letter-spacing: 0;
+}
+
+.app-shell {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.62) 0%, rgba(245, 245, 247, 0) 34%),
+    var(--mac-bg);
+}
+
+.app-main {
+  background: transparent;
+}
+
+.app-sidebar {
+  background: rgba(246, 247, 249, 0.76) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(1.35);
+  backdrop-filter: blur(28px) saturate(1.35);
+  border-right-color: var(--mac-border) !important;
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.55);
+}
+
+.app-sidebar h1 {
+  color: var(--mac-text);
+  font-weight: 700;
+}
+
+.app-sidebar nav button {
+  border: 1px solid transparent;
+}
+
+.app-sidebar nav button:hover {
+  background: rgba(0, 0, 0, 0.045) !important;
+}
+
+.app-sidebar nav button[class*="text-accent"] {
+  background: rgba(0, 122, 255, 0.12) !important;
+  border-color: rgba(0, 122, 255, 0.12);
 }
 
 /* Solid panels (class name kept as .glass for layout compatibility) */
 .glass {
-  background: #ffffff;
-  border: 1px solid #dbe4ea;
-  box-shadow: 0 1px 3px rgba(15,23,42,0.06);
+  background: var(--mac-bg-elevated);
+  border: 1px solid var(--mac-border);
+  box-shadow: var(--mac-shadow-soft);
+  -webkit-backdrop-filter: blur(22px) saturate(1.22);
+  backdrop-filter: blur(22px) saturate(1.22);
 }
 .glass-dark {
-  background: #eef5f7;
-  border: 1px solid #dbe4ea;
+  background: var(--mac-bg-toolbar);
+  border: 1px solid var(--mac-border);
+  -webkit-backdrop-filter: blur(24px) saturate(1.25);
+  backdrop-filter: blur(24px) saturate(1.25);
 }
 
 /* Tailwind's lighter surface text tokens are too faint for 11-13px labels on white panels. */
@@ -44,23 +96,34 @@ h1, h2 {
 
 /* Buttons */
 .btn-primary {
-  background: #0f766e;
+  background: var(--mac-blue);
   color: white;
-  box-shadow: 0 1px 2px rgba(15,118,110,0.28);
+  border: 1px solid rgba(0, 87, 216, 0.08);
+  box-shadow: 0 1px 2px rgba(0, 122, 255, 0.24);
   transition: all 0.2s ease;
 }
-.btn-primary:hover { background: #115e59; }
+.btn-primary:hover { background: var(--mac-blue-dark); }
 .btn-primary:active { filter: brightness(0.95); transform: scale(0.98); }
 .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; filter: none; transform: none; }
 
 .btn-secondary {
-  background: #eef2f6;
-  color: #172033;
-  border: 1px solid #dbe4ea;
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--mac-text);
+  border: 1px solid var(--mac-border);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.035);
   transition: all 0.2s ease;
 }
-.btn-secondary:hover { background: #e2e8f0; }
-.btn-secondary:active { background: rgba(0,0,0,0.12); transform: scale(0.98); }
+.btn-secondary:hover { background: rgba(255, 255, 255, 0.95); border-color: var(--mac-border-strong); }
+.btn-secondary:active { background: rgba(230, 230, 235, 0.9); transform: scale(0.98); }
+
+.btn-tertiary {
+  background: transparent;
+  color: var(--mac-text);
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+}
+.btn-tertiary:hover { background: rgba(0, 0, 0, 0.045); }
+.btn-tertiary:active { background: rgba(0, 0, 0, 0.08); transform: scale(0.98); }
 
 .btn-success {
   background: linear-gradient(180deg, #36D05B 0%, #34c759 100%);
@@ -74,6 +137,7 @@ h1, h2 {
 .btn-danger {
   background: rgba(255,59,48,0.08);
   color: #ff3b30;
+  border: 1px solid rgba(255, 59, 48, 0.14);
   transition: all 0.2s ease;
 }
 .btn-danger:hover { background: rgba(255,59,48,0.15); }
@@ -156,7 +220,7 @@ textarea,
 }
 
 .home-recent-project:hover {
-  border-color: #dbe4ea;
+  border-color: var(--mac-border-strong);
 }
 
 .home-link-button {
@@ -168,7 +232,7 @@ textarea,
 }
 
 .home-link-button:hover {
-  background: rgba(15,118,110,0.08);
+  background: var(--mac-blue-tint);
 }
 
 .projects-filter-input {
@@ -182,6 +246,33 @@ textarea,
 .projects-recent-task {
   min-width: 12rem;
   max-width: 18rem;
+}
+
+.project-detail-header {
+  background: rgba(246, 247, 249, 0.82) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.25);
+  backdrop-filter: blur(24px) saturate(1.25);
+}
+
+.project-detail-actions {
+  align-items: center;
+}
+
+.project-detail-actions select {
+  background: rgba(255, 255, 255, 0.72) !important;
+}
+
+.project-detail-quick-actions {
+  border: 1px solid var(--mac-border);
+  border-radius: 1rem;
+  padding: 0.125rem;
+  background: rgba(255, 255, 255, 0.52);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.project-detail-quick-action {
+  white-space: nowrap;
+  min-height: 2rem;
 }
 
 .settings-section-nav a {
@@ -204,7 +295,7 @@ textarea,
 }
 
 .settings-login-button:hover {
-  background: rgba(15,118,110,0.08);
+  background: var(--mac-blue-tint);
 }
 
 .kb-new-button {
@@ -213,7 +304,8 @@ textarea,
 }
 
 .drop-zone {
-  border: 2px dashed rgba(0,0,0,0.12);
+  background: rgba(255, 255, 255, 0.58);
+  border: 1.5px dashed rgba(60, 60, 67, 0.24);
   transition: all 0.3s ease;
   position: relative;
   overflow: hidden;
@@ -222,17 +314,22 @@ textarea,
   content: '';
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at center, rgba(15,118,110,0.05) 0%, transparent 70%);
+  background: rgba(0, 122, 255, 0.055);
   opacity: 0;
   transition: opacity 0.3s;
 }
-.drop-zone.drag-active { border-color: #0f766e; background: rgba(15,118,110,0.06); }
+.drop-zone:hover {
+  border-color: rgba(0, 122, 255, 0.34);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: var(--mac-shadow-soft);
+}
+.drop-zone.drag-active { border-color: var(--mac-blue); background: var(--mac-blue-tint); }
 .drop-zone.drag-active::before { opacity: 1; }
 
 /* Progress ring */
 .progress-ring { transform: rotate(-90deg); }
 .progress-ring-bg { stroke: rgba(0,0,0,0.06); }
-.progress-ring-fill { stroke: #0f766e; transition: stroke-dashoffset 0.5s ease; }
+.progress-ring-fill { stroke: var(--mac-blue); transition: stroke-dashoffset 0.5s ease; }
 
 /* Animations */
 @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
@@ -251,17 +348,17 @@ textarea,
 
 /* Input */
 input, select, textarea {
-  background: rgba(255,255,255,0.6) !important;
-  border: 0.5px solid rgba(0,0,0,0.1) !important;
-  color: #2a2a28 !important;
+  background: rgba(255,255,255,0.82) !important;
+  border: 1px solid var(--mac-border) !important;
+  color: var(--mac-text) !important;
   font-family: inherit;
   transition: all 0.2s;
 }
 input:focus, select:focus, textarea:focus {
-  border-color: #0f766e !important;
+  border-color: var(--mac-blue) !important;
   outline: none;
-  box-shadow: 0 0 0 3px rgba(15,118,110,0.16);
-  background: rgba(255,255,255,0.85) !important;
+  box-shadow: 0 0 0 3px rgba(0,122,255,0.16);
+  background: rgba(255,255,255,0.96) !important;
 }
 
 .settings-secret-input {
@@ -278,13 +375,13 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 [role="button"]:focus-visible {
-  outline: 2px solid #0f766e;
+  outline: 2px solid var(--mac-blue);
   outline-offset: 2px;
 }
 
 /* Subtitle table row */
 .sub-row { transition: background 0.15s; }
-.sub-row:hover { background: rgba(15,118,110,0.04); }
+.sub-row:hover { background: rgba(0,122,255,0.045); }
 
 .subtitle-table-panel th:last-child {
   width: 9rem;
@@ -336,14 +433,14 @@ textarea:focus-visible,
   width: 100%;
   min-height: 0.25rem;
   border-radius: 999px;
-  background: #dbe4ea;
+  background: rgba(60, 60, 67, 0.16);
 }
 
 .subtitle-timeline-track {
   position: relative;
   height: 1.25rem;
   border-radius: 999px;
-  background: #eef2f6;
+  background: rgba(60, 60, 67, 0.12);
   overflow: hidden;
 }
 
@@ -353,7 +450,7 @@ textarea:focus-visible,
   height: 0.875rem;
   min-width: 0.35rem;
   border-radius: 999px;
-  background: #0f766e;
+  background: var(--mac-blue);
   border: 0;
   opacity: 0.9;
 }
@@ -361,7 +458,7 @@ textarea:focus-visible,
 .subtitle-timeline-segment:hover,
 .subtitle-timeline-segment:focus-visible {
   opacity: 1;
-  box-shadow: 0 0 0 2px rgba(15,118,110,0.18);
+  box-shadow: 0 0 0 2px rgba(0,122,255,0.18);
 }
 
 .subtitle-timeline-segment.is-filtered {
@@ -371,7 +468,7 @@ textarea:focus-visible,
 
 /* Checkbox */
 input[type="checkbox"] {
-  accent-color: #0f766e;
+  accent-color: var(--mac-blue);
   width: 16px;
   height: 16px;
   border-radius: 4px;
@@ -416,6 +513,16 @@ input[type="checkbox"] {
 
   .home-panel {
     max-width: none;
+  }
+
+  .project-detail-quick-actions {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+
+  .project-detail-quick-action {
+    flex: 1 1 calc(50% - 0.25rem);
+    justify-content: center;
   }
 }
 
@@ -587,6 +694,19 @@ input[type="checkbox"] {
 
   .project-detail-actions .btn-primary {
     flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .project-detail-quick-actions {
+    width: 100%;
+  }
+
+  .project-detail-actions > .relative {
+    flex: 1 1 auto;
+  }
+
+  .project-detail-actions > .relative > button {
+    width: 100%;
     justify-content: center;
   }
 

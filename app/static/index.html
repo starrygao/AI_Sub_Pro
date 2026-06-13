@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI Sub Pro</title>
-<link rel="stylesheet" href="/static/css/tailwind.css?v=20260530-ui2">
-<link rel="stylesheet" href="/static/css/app.css?v=20260530-ui9">
+<link rel="stylesheet" href="/static/css/tailwind.css?v=20260613-apple1">
+<link rel="stylesheet" href="/static/css/app.css?v=20260613-apple1">
 <script defer src="/static/vendor/alpinejs/alpine.min.js?v=3.14.9"></script>
 </head>
 <body x-data="app()" x-init="init()" x-cloak>
@@ -176,7 +176,7 @@
                 <svg class="w-5 h-5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg>
               </div>
               <div>
-                <h3 class="text-[15px] font-semibold mb-1" style="font-family: 'Iowan Old Style', 'PingFang SC', serif;">预告翻译</h3>
+                <h3 class="text-[15px] font-semibold mb-1">预告翻译</h3>
                 <p class="text-[12px] text-surface-500 leading-relaxed">输入剧名或 TMDB ID，自动下载并翻译预告片</p>
               </div>
             </div>
@@ -223,7 +223,7 @@
     <!-- ========== TRAILER WIZARD ========== -->
     <div x-show="view==='trailer'" class="max-w-3xl mx-auto py-10 px-6" x-cloak>
       <div class="flex items-center justify-between mb-6">
-        <h2 class="text-2xl font-semibold" style="font-family: 'Iowan Old Style', 'PingFang SC', serif;">预告翻译</h2>
+        <h2 class="text-2xl font-semibold">预告翻译</h2>
         <button @click="setView('home')" class="btn-secondary px-3 py-1.5 rounded-lg text-[13px]">返回首页</button>
       </div>
       <div class="glass-dark rounded-2xl p-4 mb-6">
@@ -251,7 +251,7 @@
 
       <!-- Step 1: Search -->
       <div x-show="trailerStep===1" x-cloak class="glass rounded-2xl p-6">
-        <h3 class="text-[16px] font-semibold mb-4" style="font-family: 'Iowan Old Style', 'PingFang SC', serif;">搜索剧集或电影</h3>
+        <h3 class="text-[16px] font-semibold mb-4">搜索剧集或电影</h3>
         <div class="flex items-center gap-4 mb-4 text-[13px]">
           <label class="flex items-center gap-2 cursor-pointer">
             <input type="radio" value="title" x-model="trailerSearchMode" aria-label="按名称搜索预告片" class="accent-accent">
@@ -325,7 +325,7 @@
       <div x-show="trailerStep===3" x-cloak class="glass rounded-2xl p-6">
         <div class="flex items-center justify-between mb-4">
           <div>
-            <h3 class="text-[16px] font-semibold" style="font-family: 'Iowan Old Style', 'PingFang SC', serif;">选择季</h3>
+            <h3 class="text-[16px] font-semibold">选择季</h3>
             <p class="text-[12px] text-surface-400 mt-0.5"
                x-text="trailerSelectedShow ? (trailerSelectedShow.name || trailerSelectedShow.title) : ''"></p>
           </div>
@@ -406,7 +406,7 @@
       <!-- Step 5: Confirmation -->
       <div x-show="trailerStep===5" x-cloak class="glass rounded-2xl p-10 text-center">
         <div class="w-14 h-14 mx-auto mb-4 rounded-full bg-accent/15 flex items-center justify-center text-accent text-2xl">✓</div>
-        <h3 class="text-[18px] font-semibold mb-2" style="font-family: 'Iowan Old Style', 'PingFang SC', serif;">
+        <h3 class="text-[18px] font-semibold mb-2">
           已创建 <span x-text="trailerCreatedCount"></span> 个预告项目
         </h3>
         <p class="text-[13px] text-surface-500 mb-6">正在后台下载并翻译，您可以在项目列表查看进度。</p>
@@ -588,14 +588,43 @@
                   class="btn-secondary px-3 py-1.5 rounded-xl text-[12px] font-medium text-danger disabled:opacity-40 disabled:cursor-not-allowed"
                   x-text="projectActionPending === 'cancel' ? '取消中...' : '取消'"></button>
 
+          <div class="project-detail-quick-actions flex items-center gap-1.5">
+            <button @click="startASR()"
+                    :disabled="projectActionsDisabled(currentProject)"
+                    class="project-detail-quick-action btn-secondary px-3 py-1.5 rounded-xl text-[12px] font-medium flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" /></svg>
+              识别
+            </button>
+            <button @click="startTranslate()"
+                    :disabled="projectActionsDisabled(currentProject)"
+                    class="project-detail-quick-action btn-secondary px-3 py-1.5 rounded-xl text-[12px] font-medium flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802" /></svg>
+              翻译
+            </button>
+            <button @click="startBurn()"
+                    :disabled="projectActionsDisabled(currentProject)"
+                    class="project-detail-quick-action btn-secondary px-3 py-1.5 rounded-xl text-[12px] font-medium flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" /><path stroke-linecap="round" stroke-linejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z" /></svg>
+              烧录
+            </button>
+            <button @click="exportSrt('translated')"
+                    :disabled="!canExportSrt('translated')"
+                    :title="canExportSrt('translated') ? '另存翻译字幕' : exportUnavailableMessage('translated')"
+                    class="project-detail-quick-action btn-secondary px-3 py-1.5 rounded-xl text-[12px] font-medium flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M7.5 12l4.5 4.5m0 0l4.5-4.5M12 16.5V3" /></svg>
+              <span x-text="exportSrtLabel('translated')"></span>
+            </button>
+          </div>
+
           <!-- More actions dropdown -->
           <div class="relative" x-data="{open:false}">
             <button @click="open=!open"
                     :disabled="projectActionsDisabled(currentProject)"
                     aria-label="更多操作"
                     title="更多操作"
-                    class="btn-secondary w-8 h-8 rounded-lg flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed">
+                    class="btn-secondary px-3 h-8 rounded-xl flex items-center gap-1.5 text-[12px] font-medium disabled:opacity-40 disabled:cursor-not-allowed">
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" /></svg>
+              更多
             </button>
             <div x-show="open" @click.away="open=false" class="absolute right-0 mt-2 glass rounded-xl shadow-xl py-1.5 z-30 w-44 slide-down">
               <button @click="startASR(); open=false" :disabled="projectActionsDisabled(currentProject)" class="w-full text-left px-3.5 py-2 text-[13px] hover:bg-black/[0.04] flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
@@ -1668,6 +1697,6 @@
        aria-label="选择视频文件"
        @change="handleFileSelect($event)">
 
-<script src="/static/js/app.js?v=20260530-ui40"></script>
+<script src="/static/js/app.js?v=20260613-apple1"></script>
 </body>
 </html>

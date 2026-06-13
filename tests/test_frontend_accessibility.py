@@ -147,6 +147,26 @@ def test_project_detail_export_actions_have_disabled_and_pending_states():
     assert "saveOutputVideo()" in js
 
 
+def test_project_detail_exposes_core_pipeline_actions_as_toolbar_buttons():
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+    css = (ROOT / "app/static/css/app.css").read_text(encoding="utf-8")
+
+    for snippet in (
+        "project-detail-quick-actions",
+        '@click="startASR()"',
+        '@click="startTranslate()"',
+        '@click="startBurn()"',
+        '@click="exportSrt(\'translated\')"',
+    ):
+        assert snippet in html
+
+    for snippet in (
+        ".project-detail-quick-actions",
+        ".project-detail-quick-action",
+    ):
+        assert snippet in css
+
+
 def test_click_navigation_uses_set_view_guard():
     html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
 
