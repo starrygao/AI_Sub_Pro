@@ -175,6 +175,33 @@ def test_srt_to_vtt_preserves_multiline_text_and_uses_dot_milliseconds():
     assert "你好\nHello" in content
 
 
+def test_parse_ass_accepts_format_dialogues_tags_and_commas():
+    from app.utils.srt import parse_ass
+
+    blocks = parse_ass(
+        """[Script Info]
+Title: Demo
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize
+Style: Default,Arial,20
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.23,0:00:03.45,Default,,0,0,0,,{\\an8}Hello\\Nworld
+Dialogue: 0,0:00:04.00,0:00:04.00,Default,,0,0,0,,zero duration
+Dialogue: 0,0:00:05.00,0:00:06.00,Default,,0,0,0,,A line, with comma
+"""
+    )
+
+    assert len(blocks) == 2
+    assert blocks[0].index == 1
+    assert blocks[0].text == "Hello world"
+    assert blocks[0].start.total_seconds() == 1.23
+    assert blocks[0].end.total_seconds() == 3.45
+    assert blocks[1].text == "A line, with comma"
+
+
 def test_apply_offset_drops_blocks_collapsed_at_zero():
     from app.utils.srt import SubtitleBlock, apply_offset
 

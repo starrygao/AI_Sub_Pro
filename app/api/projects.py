@@ -36,6 +36,7 @@ from app.utils.project_store import (
 from app.utils.media import get_tracks, get_duration, get_media_info, is_text_subtitle_codec
 from app.utils.srt import (
     fmt_time,
+    parse_ass,
     parse_srt,
     parse_srt_file,
     parse_time_strict,
@@ -57,7 +58,7 @@ MAX_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024
 MAX_SUBTITLE_UPLOAD_BYTES = 32 * 1024 * 1024
 MAX_AUDIO_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
 _VIDEO_UPLOAD_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".ts", ".m4v"}
-_SUBTITLE_UPLOAD_EXTS = {".srt", ".vtt"}
+_SUBTITLE_UPLOAD_EXTS = {".srt", ".vtt", ".ass", ".ssa"}
 _AUDIO_UPLOAD_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".webm"}
 
 
@@ -929,10 +930,10 @@ async def import_subtitle_project(
     content_notes: Optional[str] = Form(None),
     manual_terms: Optional[str] = Form(None),
 ):
-    """Create a subtitle-only project from an uploaded SRT or WebVTT file."""
+    """Create a subtitle-only project from an uploaded subtitle file."""
     safe_name = _safe_upload_name(file.filename, "subtitles.srt")
     if not _has_subtitle_extension(safe_name):
-        raise HTTPException(400, "Subtitle file must use an SRT or VTT extension")
+        raise HTTPException(400, "Subtitle file must use an SRT, VTT, ASS, or SSA extension")
 
     data = await _read_upload_limited(
         file,
@@ -940,7 +941,12 @@ async def import_subtitle_project(
         label="Subtitle file",
     )
     subtitle_ext = Path(safe_name).suffix.lower()
-    blocks = parse_vtt(data) if subtitle_ext == ".vtt" else parse_srt(data)
+    if subtitle_ext == ".vtt":
+        blocks = parse_vtt(data)
+    elif subtitle_ext in {".ass", ".ssa"}:
+        blocks = parse_ass(data)
+    else:
+        blocks = parse_srt(data)
     if not blocks:
         raise HTTPException(400, "Subtitle file must contain valid subtitle blocks")
 
@@ -989,7 +995,7 @@ async def import_subtitle_project(
         "source_title": display_name,
         "source_language": _text_default(original_language, ""),
         "source_has_subtitles": True,
-        "subtitle_source": "uploaded_vtt" if subtitle_ext == ".vtt" else "uploaded",
+        "subtitle_source": f"uploaded_{subtitle_ext.lstrip('.')}" if subtitle_ext != ".srt" else "uploaded",
         "native_subtitle_language": _text_default(original_language, ""),
         "asr_skipped": True,
         "content_type": resolved_content_type,

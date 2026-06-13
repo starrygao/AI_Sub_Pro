@@ -36,6 +36,7 @@ class SubtitleBlock:
 
 _TIME_RE = re.compile(r"^(\d+):(\d{2}):(\d{2})[,.](\d{3})$")
 _VTT_TIME_RE = re.compile(r"^(?:(\d+):)?(\d{2}):(\d{2})\.(\d{3})$")
+_ASS_TIME_RE = re.compile(r"^(\d+):(\d{2}):(\d{2})\.(\d{1,3})$")
 
 
 def parse_time_strict(s: str) -> Optional[timedelta]:
@@ -130,6 +131,27 @@ def fmt_vtt_time(td: timedelta) -> str:
     return f"{h:02d}:{mi:02d}:{sec:02d}.{ms:03d}"
 
 
+def parse_ass_time_strict(s: str) -> Optional[timedelta]:
+    """Parse an ASS/SSA time string such as '0:01:23.45'."""
+    if not isinstance(s, str):
+        return None
+    text = s.strip()
+    m = _ASS_TIME_RE.match(text)
+    if not m:
+        return None
+    try:
+        h, mi, sec = int(m[1]), int(m[2]), int(m[3])
+        ms = int((m[4] + "000")[:3])
+    except ValueError:
+        return None
+    if mi >= 60 or sec >= 60:
+        return None
+    try:
+        return timedelta(hours=h, minutes=mi, seconds=sec, milliseconds=ms)
+    except OverflowError:
+        return None
+
+
 def parse_srt(content: str) -> List[SubtitleBlock]:
     """Parse SRT content string into SubtitleBlock list."""
     if isinstance(content, bytes):
@@ -218,6 +240,83 @@ def parse_vtt(content: str) -> List[SubtitleBlock]:
 def _is_vtt_control_block(first_line: str) -> bool:
     marker = first_line.strip().upper()
     return marker == "STYLE" or marker == "REGION" or marker == "NOTE" or marker.startswith("NOTE ")
+
+
+def parse_ass(content: str) -> List[SubtitleBlock]:
+    """Parse ASS/SSA dialogue events into SubtitleBlock list.
+
+    Styling is intentionally flattened because the app stores an editable text
+    timeline before translation.
+    """
+    if isinstance(content, bytes):
+        content = content.decode("utf-8-sig", errors="ignore")
+    if not isinstance(content, str):
+        return []
+    text = content.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
+    if not text.strip():
+        return []
+
+    blocks: List[SubtitleBlock] = []
+    in_events = False
+    fields = _default_ass_fields()
+    for raw_line in text.split("\n"):
+        line = raw_line.strip()
+        if not line or line.startswith(";"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            in_events = line.strip("[]").strip().lower() == "events"
+            continue
+        if not in_events:
+            continue
+        kind, _, payload = line.partition(":")
+        kind = kind.strip().lower()
+        payload = payload.strip()
+        if kind == "format":
+            parsed_fields = [item.strip().lower() for item in payload.split(",") if item.strip()]
+            if {"start", "end", "text"}.issubset(parsed_fields):
+                fields = parsed_fields
+            continue
+        if kind != "dialogue":
+            continue
+        parts = [part.strip() for part in payload.split(",", max(0, len(fields) - 1))]
+        if len(parts) < len(fields):
+            continue
+        row = {field: parts[i] for i, field in enumerate(fields)}
+        start = parse_ass_time_strict(row.get("start", ""))
+        end = parse_ass_time_strict(row.get("end", ""))
+        if start is None or end is None or end <= start:
+            continue
+        cue_text = _flatten_ass_text(row.get("text", ""))
+        if cue_text:
+            blocks.append(
+                SubtitleBlock(index=len(blocks) + 1, start=start, end=end, text=cue_text)
+            )
+    return blocks
+
+
+def _default_ass_fields() -> list[str]:
+    return [
+        "layer",
+        "start",
+        "end",
+        "style",
+        "name",
+        "marginl",
+        "marginr",
+        "marginv",
+        "effect",
+        "text",
+    ]
+
+
+def _flatten_ass_text(value: str) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = re.sub(r"\{[^{}]*\}", "", value)
+    text = re.sub(r"\\[Nn]", " ", text)
+    text = text.replace(r"\h", " ")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 def srt_to_vtt(content: str) -> str:

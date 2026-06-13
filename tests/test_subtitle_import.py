@@ -93,6 +93,40 @@ def test_import_subtitle_accepts_webvtt_and_writes_editable_srt(client, tmp_proj
     assert len(subtitles.json()["blocks"]) == 2
 
 
+def test_import_subtitle_accepts_ass_and_writes_editable_srt(client, tmp_project_dir):
+    ass = (
+        "[Script Info]\n"
+        "Title: Lecture overlay\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:00.50,0:00:01.70,Default,,0,0,0,,{\\an8}Hello ASS.\\NNext line.\n"
+        "Dialogue: 0,0:00:02.00,0:00:03.25,Default,,0,0,0,,Machine learning, lecture.\n"
+    )
+
+    r = client.post(
+        "/api/projects/import-subtitle",
+        data={"target_language": "English", "original_language": "en"},
+        files={"file": ("Stanford.CS229.Lecture.ass", ass.encode("utf-8"), "text/x-ass")},
+    )
+
+    assert r.status_code == 200
+    project = r.json()
+    pid = project["id"]
+    pdir = tmp_project_dir / pid
+    raw = (pdir / "raw.srt").read_text(encoding="utf-8")
+
+    assert project["source_type"] == "subtitle"
+    assert project["name"] == "Stanford.CS229.Lecture.ass"
+    assert project["subtitle_source"] == "uploaded_ass"
+    assert "00:00:00,500 --> 00:00:01,700" in raw
+    assert "Hello ASS. Next line." in raw
+    assert "Machine learning, lecture." in raw
+
+    subtitles = client.get(f"/api/projects/{pid}/subtitles")
+    assert subtitles.status_code == 200
+    assert len(subtitles.json()["blocks"]) == 2
+
+
 def test_import_subtitle_rejects_non_srt_extension(client):
     r = client.post(
         "/api/projects/import-subtitle",

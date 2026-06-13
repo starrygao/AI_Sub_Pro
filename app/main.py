@@ -373,7 +373,7 @@ if __name__ == "__main__":
                             webview.SAVE_DIALOG,
                             save_filename=safe_name,
                             file_types=(
-                                "SubRip Subtitle (*.srt)",
+                                "Subtitle Files (*.srt;*.vtt)",
                                 "All Files (*.*)",
                             ),
                         )

@@ -365,8 +365,8 @@ def test_home_source_mode_routes_supported_sources_and_explains_pending_ones():
           if (subtitleOption?.disabled) {
             throw new Error('expected subtitle-only mode to be enabled for SRT import');
           }
-          if (!subtitleOption?.strategy.includes('SRT') || !subtitleOption?.strategy.includes('VTT')) {
-            throw new Error(`expected subtitle source to explain SRT/VTT import, got ${JSON.stringify(subtitleOption)}`);
+          if (!subtitleOption?.strategy.includes('SRT') || !subtitleOption?.strategy.includes('VTT') || !subtitleOption?.strategy.includes('ASS')) {
+            throw new Error(`expected subtitle source to explain SRT/VTT/ASS import, got ${JSON.stringify(subtitleOption)}`);
           }
           if (!state.homeSourceStrategy().includes('内嵌字幕')) {
             throw new Error(`expected local strategy to mention embedded subtitles, got ${state.homeSourceStrategy()}`);
@@ -391,10 +391,15 @@ def test_home_source_mode_routes_supported_sources_and_explains_pending_ones():
           await state.startHomeSourceAction();
           if (!trailerStarted) throw new Error('expected network source action to start URL job');
 
-          if (!state.isSubtitleFile({name: 'lecture.srt'}) || !state.isSubtitleFile({name: 'lecture.vtt'})) {
-            throw new Error('expected both SRT and VTT files to be accepted');
+          if (
+            !state.isSubtitleFile({name: 'lecture.srt'})
+            || !state.isSubtitleFile({name: 'lecture.vtt'})
+            || !state.isSubtitleFile({name: 'lecture.ass'})
+            || !state.isSubtitleFile({name: 'lecture.ssa'})
+          ) {
+            throw new Error('expected SRT, VTT, ASS, and SSA files to be accepted');
           }
-          if (state.isSubtitleFile({name: 'lecture.ass'})) {
+          if (state.isSubtitleFile({name: 'lecture.sub'})) {
             throw new Error('expected unsupported subtitle containers to be rejected');
           }
 
@@ -516,6 +521,57 @@ def test_selected_vtt_file_creates_project_and_starts_translation():
           }
           if (state.currentProject?.id !== 'subvtt1' || state.view !== 'detail') {
             throw new Error(`expected VTT project detail, got ${JSON.stringify(state.currentProject)}/${state.view}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_selected_ass_file_creates_project_and_starts_translation():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const calls = [];
+          state.sysCheck = {translation_ready: true};
+          state.targetLang = '简体中文';
+          state.toast = () => {};
+          state.setView = async (view) => { state.view = view; return true; };
+          state.connectWS = () => {};
+          state.uploadSubtitleFile = async (file) => {
+            calls.push(['upload', file.name]);
+            return {id: 'subass1', name: file.name, source_type: 'subtitle'};
+          };
+          state.api = async (url, method, body) => {
+            calls.push([method, url, body]);
+            if (url === '/api/projects/subass1/start-translate' && method === 'POST') {
+              return {status: 'started'};
+            }
+            throw new Error(`unexpected api call ${method} ${url}`);
+          };
+
+          await state.useSelectedSubtitleFile({name: 'anime.episode.ass'});
+
+          if (JSON.stringify(calls[0]) !== JSON.stringify(['upload', 'anime.episode.ass'])) {
+            throw new Error(`expected ASS upload first, got ${JSON.stringify(calls)}`);
+          }
+          const startCall = calls.find((call) => call[1] === '/api/projects/subass1/start-translate');
+          if (!startCall || startCall[2].target_language !== '简体中文') {
+            throw new Error(`expected start-translate with target language, got ${JSON.stringify(calls)}`);
+          }
+          if (state.currentProject?.id !== 'subass1' || state.view !== 'detail') {
+            throw new Error(`expected ASS project detail, got ${JSON.stringify(state.currentProject)}/${state.view}`);
           }
         })().catch((err) => {
           console.error(err.message);

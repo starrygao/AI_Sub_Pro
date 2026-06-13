@@ -819,8 +819,8 @@ function app() {
         {
           mode: 'subtitle',
           label: '字幕文件',
-          helper: 'SRT / VTT',
-          strategy: '直接读取 SRT 或 VTT 时间轴，创建字幕项目后马上翻译；无需 ASR 或视频下载。',
+          helper: 'SRT / VTT / ASS',
+          strategy: '直接读取 SRT、VTT、ASS/SSA 时间轴，创建字幕项目后马上翻译；ASS 样式会转为可编辑文本。',
           actionLabel: '选择字幕文件',
           disabled: false,
         },
@@ -923,7 +923,7 @@ function app() {
 
     isSubtitleFile(file) {
       const name = String(file?.name || '').toLowerCase();
-      return name.endsWith('.srt') || name.endsWith('.vtt');
+      return ['.srt', '.vtt', '.ass', '.ssa'].some((ext) => name.endsWith(ext));
     },
 
     isAudioFile(file) {
@@ -966,7 +966,7 @@ function app() {
     async useSelectedSubtitleFile(file) {
       if (!file) return;
       if (!this.isSubtitleFile(file)) {
-        this.toast('请选择 SRT 或 VTT 字幕文件', 'error');
+        this.toast('请选择 SRT、VTT、ASS 或 SSA 字幕文件', 'error');
         return;
       }
       if (this.fileImporting || this.projectCreating) return;

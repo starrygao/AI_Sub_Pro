@@ -179,8 +179,8 @@
 
             <div x-show="homeSourceMode === 'subtitle'" x-cloak class="home-subtitle-source mt-5 text-left">
               <div class="rounded-2xl px-4 py-4" style="background: rgba(255,255,255,0.58); border: 1px solid var(--mac-border);">
-                <p class="text-[13px] font-medium text-surface-700">导入 SRT / VTT 字幕文件</p>
-                <p class="text-[12px] text-surface-500 mt-1 leading-relaxed">保留原始时间轴，创建字幕项目后直接进入翻译；不下载视频，也不执行 ASR。</p>
+                <p class="text-[13px] font-medium text-surface-700">导入 SRT / VTT / ASS 字幕文件</p>
+                <p class="text-[12px] text-surface-500 mt-1 leading-relaxed">保留原始时间轴，创建字幕项目后直接进入翻译；ASS/SSA 样式会转为可编辑文本。</p>
                 <button @click="startHomeSourceAction()"
                         :disabled="homeSourceActionDisabled()"
                         class="btn-primary w-full mt-3 px-4 py-2.5 rounded-xl text-[13px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1798,8 +1798,8 @@
 <input type="file" x-ref="fileInput" class="hidden" accept="video/*,.mkv,.avi,.mov,.mp4,.wmv,.flv,.webm"
        aria-label="选择视频文件"
        @change="handleFileSelect($event)">
-<input type="file" x-ref="subtitleFileInput" class="hidden" accept=".srt,.vtt"
-       aria-label="选择 SRT/VTT 字幕文件"
+<input type="file" x-ref="subtitleFileInput" class="hidden" accept=".srt,.vtt,.ass,.ssa"
+       aria-label="选择 SRT/VTT/ASS 字幕文件"
        @change="handleSubtitleFileSelect($event)">
 <input type="file" x-ref="audioFileInput" class="hidden" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,.webm"
        aria-label="选择音频文件"

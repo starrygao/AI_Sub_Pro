@@ -274,9 +274,9 @@ def test_home_unified_source_modes_are_visible_and_accessible():
         "homeSourceMode === 'audio'",
         "aria-label=\"选择输入来源\"",
         ":aria-pressed=\"homeSourceMode === option.mode\"",
-        "aria-label=\"选择 SRT/VTT 字幕文件\"",
+        "aria-label=\"选择 SRT/VTT/ASS 字幕文件\"",
         "x-ref=\"subtitleFileInput\"",
-        "accept=\".srt,.vtt\"",
+        "accept=\".srt,.vtt,.ass,.ssa\"",
         "aria-label=\"选择音频文件\"",
         "x-ref=\"audioFileInput\"",
         "accept=\"audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,.webm\"",
@@ -308,6 +308,13 @@ def test_home_unified_source_modes_are_visible_and_accessible():
         "/start-transcribe-translate",
     ):
         assert snippet in js
+
+
+def test_desktop_native_save_dialog_advertises_subtitle_export_formats():
+    main_py = (ROOT / "app/main.py").read_text(encoding="utf-8")
+
+    assert "Subtitle Files (*.srt;*.vtt)" in main_py
+    assert "SubRip Subtitle (*.srt)" not in main_py
 
 
 def test_online_video_success_explains_download_and_subtitle_plan():
