@@ -1476,6 +1476,28 @@
           <p class="text-[11px] text-surface-400 mt-2">
             可选配置。普通翻译不依赖 TMDB；填写后会用文件名自动补全影视标题、语言、海报和预告片检索。在 <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" class="text-accent underline">themoviedb.org/settings/api</a> 免费获取；也可通过 AI_SUB_PRO_TMDB_API_KEY 环境变量提供
           </p>
+          <p class="text-[11px] text-surface-400 mt-2">
+            YouTube 或在线视频下载依赖 yt-dlp；下载文件会进入对应项目文件夹。
+          </p>
+
+          <div x-show="sysCheck && !sysCheckLoading && !sysCheckError"
+               class="mt-4 rounded-xl border px-3 py-2 text-[12px]"
+               :class="networkDownloaderStatusClass()"
+               style="background: rgba(255,255,255,0.55);">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0 space-y-1">
+                <p class="font-medium" x-text="networkDownloaderStatusTitle()"></p>
+                <p class="text-surface-500" x-text="networkDownloaderSummary()"></p>
+                <p x-show="networkDownloaderVersionLabel()" class="text-surface-400" x-text="networkDownloaderVersionLabel()"></p>
+                <p x-show="networkDownloaderNeedsInstall()" class="break-all font-mono text-[11px] text-surface-500" x-text="networkDownloaderInstallCommand()"></p>
+              </div>
+              <button type="button"
+                      x-show="networkDownloaderNeedsInstall()"
+                      @click="copyNetworkDownloaderInstallCommand()"
+                      aria-label="复制网络视频下载器安装命令"
+                      class="btn-secondary shrink-0 px-3 py-1.5 rounded-lg text-[12px] font-medium">复制安装命令</button>
+            </div>
+          </div>
 
           <hr class="my-4 border-surface-200">
 

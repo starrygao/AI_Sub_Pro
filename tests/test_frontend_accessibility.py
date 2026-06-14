@@ -98,6 +98,34 @@ def test_asr_mode_and_recommendation_are_visible_in_settings():
     assert "applyAsrRecommendation" in js
 
 
+def test_network_downloader_status_is_visible_in_settings():
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
+
+    expected_html = [
+        "网络视频下载器",
+        "networkDownloaderStatusTitle()",
+        "networkDownloaderSummary()",
+        "networkDownloaderVersionLabel()",
+        "networkDownloaderInstallCommand()",
+        "copyNetworkDownloaderInstallCommand()",
+        "复制网络视频下载器安装命令",
+        "yt-dlp",
+    ]
+    for snippet in expected_html:
+        assert snippet in html
+
+    expected_js = [
+        "networkDownloaderReady()",
+        "networkDownloaderStatusTitle()",
+        "networkDownloaderSummary()",
+        "networkDownloaderInstallCommand()",
+        "copyNetworkDownloaderInstallCommand()",
+    ]
+    for snippet in expected_js:
+        assert snippet in js
+
+
 def test_asr_setup_pills_use_packaged_css_classes():
     js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
     css = (ROOT / "app/static/css/app.css").read_text(encoding="utf-8")

@@ -655,6 +655,86 @@ def test_frontend_asr_setup_actions_are_actionable():
     assert result.returncode == 0, result.stderr
 
 
+def test_frontend_network_downloader_status_is_actionable_in_settings():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const clipboardWrites = [];
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          navigator: {
+            clipboard: {
+              writeText: async (value) => clipboardWrites.push(value),
+            },
+          },
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const toasts = [];
+          state.toast = (msg, type) => toasts.push({msg, type});
+
+          state.sysCheck = {
+            network_downloader_ready: false,
+            network_downloader_hint: '未检测到 yt-dlp。请安装后重试。',
+          };
+          if (state.networkDownloaderReady()) {
+            throw new Error('expected missing network downloader to be not ready');
+          }
+          if (state.networkDownloaderStatusTitle() !== '网络视频下载器需要安装') {
+            throw new Error(`unexpected missing title: ${state.networkDownloaderStatusTitle()}`);
+          }
+          if (!state.networkDownloaderSummary().includes('yt-dlp')) {
+            throw new Error(`expected yt-dlp hint, got ${state.networkDownloaderSummary()}`);
+          }
+          if (!state.networkDownloaderStatusClass().includes('border-warn')) {
+            throw new Error(`expected warning class, got ${state.networkDownloaderStatusClass()}`);
+          }
+          if (state.networkDownloaderVersionLabel() !== '') {
+            throw new Error(`expected no version label while missing, got ${state.networkDownloaderVersionLabel()}`);
+          }
+
+          await state.copyNetworkDownloaderInstallCommand();
+          if (clipboardWrites[0] !== 'python3 -m pip install -U yt-dlp') {
+            throw new Error(`expected yt-dlp install command copied, got ${JSON.stringify(clipboardWrites)}`);
+          }
+          if (!toasts.some((toast) => toast.msg.includes('已复制网络下载器安装命令'))) {
+            throw new Error(`expected copy success toast, got ${JSON.stringify(toasts)}`);
+          }
+
+          state.sysCheck = {
+            network_downloader_ready: true,
+            network_downloader_version: '2026.01.02',
+            network_downloader_hint: 'yt-dlp 可用，网络视频可直接下载到项目文件夹。',
+          };
+          if (!state.networkDownloaderReady()) {
+            throw new Error('expected network downloader to be ready');
+          }
+          if (state.networkDownloaderStatusTitle() !== '网络视频下载器可用') {
+            throw new Error(`unexpected ready title: ${state.networkDownloaderStatusTitle()}`);
+          }
+          if (state.networkDownloaderVersionLabel() !== 'yt-dlp 2026.01.02') {
+            throw new Error(`unexpected version label: ${state.networkDownloaderVersionLabel()}`);
+          }
+          if (!state.networkDownloaderStatusClass().includes('border-success')) {
+            throw new Error(`expected success class, got ${state.networkDownloaderStatusClass()}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_frontend_normalizes_asr_mode_and_backend_from_settings_payload():
     result = run_js(
         """

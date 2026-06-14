@@ -1415,6 +1415,69 @@ function app() {
       return `${this.asrModeLabel(rec.mode)}：${backend} / ${model}，${availability}`;
     },
 
+    networkDownloaderStatus() {
+      return this.isPlainObject(this.sysCheck) ? this.sysCheck : {};
+    },
+
+    networkDownloaderReady() {
+      return this.networkDownloaderStatus().network_downloader_ready === true;
+    },
+
+    networkDownloaderNeedsInstall() {
+      return this.networkDownloaderStatus().network_downloader_ready === false;
+    },
+
+    networkDownloaderStatusTitle() {
+      if (this.networkDownloaderReady()) return '网络视频下载器可用';
+      if (this.networkDownloaderNeedsInstall()) return '网络视频下载器需要安装';
+      return '网络视频下载器状态待检查';
+    },
+
+    networkDownloaderStatusClass() {
+      if (this.networkDownloaderReady()) return 'border-success/30 text-success';
+      if (this.networkDownloaderNeedsInstall()) return 'border-warn/30 text-warn';
+      return 'border-surface-200 text-surface-600';
+    },
+
+    networkDownloaderSummary() {
+      const status = this.networkDownloaderStatus();
+      const hint = typeof status.network_downloader_hint === 'string' && status.network_downloader_hint.trim()
+        ? status.network_downloader_hint.trim()
+        : '';
+      if (status.network_downloader_ready === true) {
+        return hint || 'yt-dlp 可用，网络视频可直接下载到项目文件夹。';
+      }
+      if (status.network_downloader_ready === false) {
+        return hint || '未检测到 yt-dlp。请安装后重试。';
+      }
+      return hint || '系统检查完成后会显示 yt-dlp 是否可用。';
+    },
+
+    networkDownloaderVersionLabel() {
+      if (!this.networkDownloaderReady()) return '';
+      const version = typeof this.networkDownloaderStatus().network_downloader_version === 'string'
+        ? this.networkDownloaderStatus().network_downloader_version.trim()
+        : '';
+      return version ? `yt-dlp ${version}` : '';
+    },
+
+    networkDownloaderInstallCommand() {
+      return 'python3 -m pip install -U yt-dlp';
+    },
+
+    async copyNetworkDownloaderInstallCommand() {
+      const command = this.networkDownloaderInstallCommand();
+      try {
+        if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+          throw new Error('clipboard unavailable');
+        }
+        await navigator.clipboard.writeText(command);
+        this.toast('已复制网络下载器安装命令', 'success');
+      } catch (e) {
+        this.toast('复制网络下载器安装命令失败，请手动复制', 'error');
+      }
+    },
+
     translationProviderLabel(provider) {
       return {
         openai: 'OpenAI',
