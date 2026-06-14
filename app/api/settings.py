@@ -633,6 +633,30 @@ def codex_cli_status():
     }
 
 
+def _network_downloader_status() -> dict:
+    try:
+        import importlib.metadata as importlib_metadata
+        import yt_dlp
+    except Exception as e:
+        return {
+            "network_downloader_ready": False,
+            "network_downloader_version": "",
+            "network_downloader_hint": f"未检测到 yt-dlp：{str(e)[:160]}。请安装 yt-dlp 以启用网络视频下载。",
+        }
+
+    version = getattr(yt_dlp.version, "__version__", "")
+    if not version:
+        try:
+            version = importlib_metadata.version("yt-dlp")
+        except Exception:
+            version = ""
+    return {
+        "network_downloader_ready": True,
+        "network_downloader_version": version,
+        "network_downloader_hint": "yt-dlp 可用，网络视频可直接下载到项目文件夹。",
+    }
+
+
 @router.get("/system-check")
 def system_check():
     """Check system readiness for other Macs."""
@@ -683,6 +707,7 @@ def system_check():
 
     return {
         "ffmpeg": has_ffmpeg,
+        **_network_downloader_status(),
         "whisper_model": has_model,
         "model_size": model_size,
         "model_name": model_name,

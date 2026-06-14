@@ -883,6 +883,17 @@ function app() {
           actionText: '去设置',
         };
       }
+      if (resolved.mode === 'network' && this.sysCheck?.network_downloader_ready === false) {
+        const hint = typeof this.sysCheck?.network_downloader_hint === 'string' && this.sysCheck.network_downloader_hint.trim()
+          ? this.sysCheck.network_downloader_hint.trim()
+          : '请安装 yt-dlp 以启用网络视频下载。';
+        return {
+          tone: 'error',
+          message: `网络视频下载器未就绪：${hint}`,
+          action: 'settings',
+          actionText: '去设置',
+        };
+      }
 
       const prompts = this.asrInstallPrompts();
       let asrMessage = '';

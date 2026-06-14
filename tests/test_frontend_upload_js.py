@@ -514,6 +514,21 @@ def test_home_source_readiness_points_to_settings_for_missing_translation_or_asr
           if (!modelReadiness.message.includes('ASR 模型未下载') || !modelReadiness.message.includes('large-v3-turbo') || !modelReadiness.message.includes('~1.6GB')) {
             throw new Error(`expected source warning for missing ASR model download, got ${JSON.stringify(modelReadiness)}`);
           }
+
+          state.sysCheck = {
+            translation_ready: true,
+            network_downloader_ready: false,
+            network_downloader_hint: '请安装 yt-dlp 以启用网络视频下载。',
+            asr_install_prompts: [],
+            asr_recommendation: {ready: true, download_required: false},
+          };
+          const downloaderReadiness = state.homeSourceReadiness({mode: 'network'});
+          if (!downloaderReadiness.message.includes('网络视频下载器') || !downloaderReadiness.message.includes('yt-dlp')) {
+            throw new Error(`expected network downloader warning, got ${JSON.stringify(downloaderReadiness)}`);
+          }
+          if (downloaderReadiness.actionText !== '去设置') {
+            throw new Error(`expected network downloader settings action, got ${JSON.stringify(downloaderReadiness)}`);
+          }
         })().catch((err) => {
           console.error(err.message);
           process.exit(1);

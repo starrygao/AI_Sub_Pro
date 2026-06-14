@@ -986,6 +986,37 @@ def test_system_check_includes_asr_capabilities_and_recommendation(monkeypatch):
     assert "ready" in data
 
 
+def test_system_check_includes_network_downloader_status(monkeypatch):
+    import app.api.settings as settings_api
+    from app.main import app
+    client = TestClient(app)
+
+    monkeypatch.setattr(settings_api, "detect_asr_capabilities", lambda cfg: {"backends": {}, "model_options": []})
+    monkeypatch.setattr(settings_api, "recommend_asr_settings", lambda mode, caps: {
+        "mode": mode,
+        "backend": "",
+        "ready": False,
+    })
+    monkeypatch.setattr(settings_api, "_network_downloader_status", lambda: {
+        "network_downloader_ready": False,
+        "network_downloader_version": "",
+        "network_downloader_hint": "请安装 yt-dlp 以启用网络视频下载。",
+    }, raising=False)
+
+    with patch("app.utils.media.check_ffmpeg", return_value=True), \
+         patch("app.api.settings.Config.to_dict", return_value=_system_check_config(
+             primary_provider="openai",
+             api_keys={"openai": "sk-test"},
+         )):
+        r = client.get("/api/system-check")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["network_downloader_ready"] is False
+    assert data["network_downloader_version"] == ""
+    assert "yt-dlp" in data["network_downloader_hint"]
+
+
 def test_system_check_warns_when_selected_asr_backend_is_missing(monkeypatch):
     import app.api.settings as settings_api
     from app.main import app
