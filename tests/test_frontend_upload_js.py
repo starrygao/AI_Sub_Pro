@@ -502,6 +502,18 @@ def test_home_source_readiness_points_to_settings_for_missing_translation_or_asr
           if (subtitleReadiness.message) {
             throw new Error(`subtitle-only source should not warn about ASR, got ${JSON.stringify(subtitleReadiness)}`);
           }
+
+          state.sysCheck.asr_install_prompts = [];
+          state.sysCheck.asr_recommendation = {
+            ready: false,
+            download_required: true,
+            download_hint: '~1.6GB',
+            model_size: 'large-v3-turbo',
+          };
+          const modelReadiness = state.homeSourceReadiness({mode: 'audio'});
+          if (!modelReadiness.message.includes('ASR 模型未下载') || !modelReadiness.message.includes('large-v3-turbo') || !modelReadiness.message.includes('~1.6GB')) {
+            throw new Error(`expected source warning for missing ASR model download, got ${JSON.stringify(modelReadiness)}`);
+          }
         })().catch((err) => {
           console.error(err.message);
           process.exit(1);

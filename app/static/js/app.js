@@ -885,15 +885,29 @@ function app() {
       }
 
       const prompts = this.asrInstallPrompts();
-      if (!prompts.length) return {tone: '', message: '', action: '', actionText: ''};
-      const firstPrompt = prompts[0] || {};
-      const promptMessage = typeof firstPrompt.message === 'string' && firstPrompt.message.trim()
-        ? firstPrompt.message.trim()
-        : '请先安装或配置 ASR 依赖。';
+      let asrMessage = '';
+      if (prompts.length) {
+        const firstPrompt = prompts[0] || {};
+        asrMessage = typeof firstPrompt.message === 'string' && firstPrompt.message.trim()
+          ? firstPrompt.message.trim()
+          : '请先安装或配置 ASR 依赖。';
+      } else {
+        const rec = this.asrRecommendation();
+        if (rec.download_required) {
+          const model = typeof rec.model_size === 'string' && rec.model_size.trim()
+            ? rec.model_size.trim()
+            : '当前模型';
+          const hint = typeof rec.download_hint === 'string' && rec.download_hint.trim()
+            ? `（${rec.download_hint.trim()}）`
+            : '';
+          asrMessage = `ASR 模型未下载：${model}${hint}`;
+        }
+      }
+      if (!asrMessage) return {tone: '', message: '', action: '', actionText: ''};
       if (resolved.mode === 'audio') {
         return {
           tone: 'warn',
-          message: `音频入口需要 ASR：${promptMessage}`,
+          message: `音频入口需要 ASR：${asrMessage}`,
           action: 'settings',
           actionText: '去设置',
         };
@@ -904,7 +918,7 @@ function app() {
           : '无内嵌/外挂字幕时需要 ASR';
         return {
           tone: 'warn',
-          message: `${prefix}：${promptMessage}`,
+          message: `${prefix}：${asrMessage}`,
           action: 'settings',
           actionText: '去设置',
         };
