@@ -75,8 +75,8 @@ DEFAULT_CONFIG = {
         "require_kb_suggestion_review": False,
         "missing_translation_retries": 2,
         "missing_translation_retry_batch_size": 5,
-        "qa_auto_repair": False,
-        "qa_auto_repair_rounds": 1,
+        "qa_auto_repair": True,
+        "qa_auto_repair_rounds": 2,
     },
     "providers": {
         "claude_cli": {

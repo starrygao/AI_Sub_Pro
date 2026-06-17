@@ -24,7 +24,7 @@ function app() {
         quality_mode: 'fast',
         use_translation_memory: true,
         use_phrase_library: true,
-        qa_auto_repair: false,
+        qa_auto_repair: true,
       },
       providers: {
         claude_cli: { enabled: true, model: 'claude-opus-4-7', timeout_sec: 180 },
@@ -1756,8 +1756,10 @@ function app() {
         ? src.issues.filter(item => this.isPlainObject(item))
         : [];
       const issueCount = Number.isFinite(Number(summary.issue_count)) ? Number(summary.issue_count) : issues.length;
-      const repairedBlocks = Number.isFinite(Number(summary.repaired_blocks)) ? Number(summary.repaired_blocks) : 0;
-      const unresolvedBlocks = Number.isFinite(Number(summary.unresolved_blocks)) ? Number(summary.unresolved_blocks) : 0;
+      const repairedSource = summary.repaired_blocks ?? (Array.isArray(src.repaired_blocks) ? src.repaired_blocks.length : 0);
+      const unresolvedSource = summary.unresolved_blocks ?? (Array.isArray(src.unresolved_blocks) ? src.unresolved_blocks.length : 0);
+      const repairedBlocks = Number.isFinite(Number(repairedSource)) ? Number(repairedSource) : 0;
+      const unresolvedBlocks = Number.isFinite(Number(unresolvedSource)) ? Number(unresolvedSource) : 0;
       return {
         ...src,
         status: typeof src.status === 'string' ? src.status : 'missing',
@@ -1829,6 +1831,8 @@ function app() {
       const warnings = issues.filter(item => String(item.severity || '') === 'warning').length;
       const repaired = report.summary.repaired_blocks || 0;
       const unresolved = report.summary.unresolved_blocks || 0;
+      const conclusion = typeof report.summary.conclusion === 'string' ? report.summary.conclusion.trim() : '';
+      if (conclusion) return conclusion;
       if (!issueCount) {
         return repaired ? `未发现遗留问题 · 已自动修复 ${repaired} 条` : '未发现确定性问题';
       }
@@ -1843,9 +1847,14 @@ function app() {
     qaReportNextAction() {
       const report = this.normalizeQualityReport(this.qaReport || {});
       if (!report || report.status === 'missing') return '';
+      const gate = this.isPlainObject(report.summary?.quality_gate) ? report.summary.quality_gate : {};
+      if (gate.passed === true) return '自动质检达标，可继续导出或烧录。';
       const issues = report.issues;
       const issueCount = report.summary.issue_count || issues.length;
       if (!issueCount) return '可继续导出或烧录。';
+      if (gate.auto_repair_enabled && Number(gate.auto_repaired_blocks || 0) > 0) {
+        return '系统已自动重点返工并复检；剩余问题建议抽查确认。';
+      }
       const hasErrors = issues.some(item => ['error', 'severe'].includes(String(item.severity || '')));
       if (hasErrors) return '先处理错误项，再导出或烧录。';
       if ((report.summary.unresolved_blocks || 0) > 0) return '建议抽查未解决警告，必要时在字幕表中手动修正。';

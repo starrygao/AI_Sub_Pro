@@ -1007,11 +1007,11 @@ def _project_kb_terms(project_kb) -> dict:
 
 def _repair_round_limit(cfg: dict) -> int:
     trans_cfg = cfg.get("translation", {}) if isinstance(cfg, dict) else {}
-    raw = trans_cfg.get("qa_auto_repair_rounds", 1) if isinstance(trans_cfg, dict) else 1
+    raw = trans_cfg.get("qa_auto_repair_rounds", 2) if isinstance(trans_cfg, dict) else 2
     try:
         value = int(raw)
     except (TypeError, ValueError, OverflowError):
-        value = 1
+        value = 2
     return max(1, min(value, 2))
 
 
@@ -1029,6 +1029,59 @@ def _repair_item_limit(cfg: dict) -> int:
     return max(0, min(value, 50))
 
 
+def _qa_auto_repair_enabled(cfg: dict) -> bool:
+    trans_cfg = cfg.get("translation", {}) if isinstance(cfg, dict) else {}
+    if not isinstance(trans_cfg, dict):
+        return True
+    return trans_cfg.get("qa_auto_repair") is not False
+
+
+def _quality_issue_counts(report) -> tuple[int, int, int]:
+    issues = list(getattr(report, "issues", []) or [])
+    error_count = sum(1 for issue in issues if getattr(issue, "severity", "") in {"error", "severe"})
+    warning_count = sum(1 for issue in issues if getattr(issue, "severity", "") == "warning")
+    return len(issues), error_count, warning_count
+
+
+def _quality_score(report) -> tuple[int, int, int]:
+    issue_count, error_count, _warning_count = _quality_issue_counts(report)
+    unresolved = len(getattr(report, "unresolved_blocks", []) or [])
+    return error_count, issue_count, unresolved
+
+
+def _finalize_quality_conclusion(report, repaired: list[dict], repair_enabled: bool) -> None:
+    issue_count, error_count, warning_count = _quality_issue_counts(report)
+    unresolved_count = len(getattr(report, "unresolved_blocks", []) or [])
+    repaired_count = len(repaired or [])
+    if error_count:
+        verdict = "failed"
+        conclusion = f"不达标：仍有 {error_count} 个错误、{unresolved_count} 个问题位置。"
+    elif issue_count:
+        verdict = "needs_review"
+        conclusion = f"未完全达标：自动返工后仍有 {warning_count} 个警告、{unresolved_count} 个问题位置。"
+    else:
+        verdict = "passed"
+        conclusion = "达标：自动检查通过。"
+        if repaired_count:
+            conclusion = f"达标：已自动重点返工 {repaired_count} 条并复检通过。"
+
+    report.summary.update({
+        "issue_count": issue_count,
+        "error_count": error_count,
+        "warning_count": warning_count,
+        "repaired_blocks": repaired_count,
+        "unresolved_blocks": unresolved_count,
+        "conclusion": conclusion,
+        "quality_gate": {
+            "verdict": verdict,
+            "passed": verdict == "passed",
+            "auto_repair_enabled": bool(repair_enabled),
+            "auto_repaired_blocks": repaired_count,
+            "unresolved_blocks": unresolved_count,
+        },
+    })
+
+
 def _auto_repair_quality_issues(
     cfg: dict,
     translator,
@@ -1038,8 +1091,7 @@ def _auto_repair_quality_issues(
     project_kb,
     repair_trace: dict | None = None,
 ) -> list[dict]:
-    trans_cfg = cfg.get("translation", {}) if isinstance(cfg, dict) else {}
-    if not isinstance(trans_cfg, dict) or not trans_cfg.get("qa_auto_repair", False):
+    if not _qa_auto_repair_enabled(cfg):
         return []
     if not report.issues:
         return []
@@ -1118,6 +1170,7 @@ def _persist_translation_quality_report(
     target_language: str,
     translator,
     cfg: dict,
+    progress_callback=None,
 ) -> list[dict]:
     """Run deterministic QA and persist report artifacts without failing translation."""
     try:
@@ -1137,13 +1190,26 @@ def _persist_translation_quality_report(
             trace=trace,
         )
         repaired = []
-        previous_hard_errors = sum(1 for issue in report.issues if issue.severity == "error")
-        trans_cfg = cfg.get("translation", {}) if isinstance(cfg, dict) else {}
-        repair_enabled = isinstance(trans_cfg, dict) and bool(trans_cfg.get("qa_auto_repair", False))
+        repair_enabled = _qa_auto_repair_enabled(cfg)
         if repair_enabled and report.issues:
             repair_rounds = trace.setdefault("auto_repair_rounds", [])
-            for _ in range(_repair_round_limit(cfg)):
-                round_trace = {}
+            previous_score = _quality_score(report)
+            round_limit = _repair_round_limit(cfg)
+            for round_index in range(round_limit):
+                if progress_callback is not None:
+                    try:
+                        progress_callback(92 + round_index, f"质量未达标，正在自动重点返工 ({round_index + 1}/{round_limit})...")
+                    except Exception:
+                        pass
+                issue_count, error_count, warning_count = _quality_issue_counts(report)
+                round_trace = {
+                    "round": round_index + 1,
+                    "reason": "quality_not_passed",
+                    "before_issue_count": issue_count,
+                    "before_error_count": error_count,
+                    "before_warning_count": warning_count,
+                    "before_unresolved_blocks": len(getattr(report, "unresolved_blocks", []) or []),
+                }
                 repair_rounds.append(round_trace)
                 round_repaired = _auto_repair_quality_issues(
                     cfg,
@@ -1155,6 +1221,7 @@ def _persist_translation_quality_report(
                     repair_trace=round_trace,
                 )
                 if not round_repaired:
+                    round_trace["result"] = "no_repair_applied"
                     break
                 repaired.extend(round_repaired)
                 report = run_quality_checks(
@@ -1164,14 +1231,24 @@ def _persist_translation_quality_report(
                     meta_info=project,
                     trace=trace,
                 )
-                current_hard_errors = sum(1 for issue in report.issues if issue.severity == "error")
-                if current_hard_errors >= previous_hard_errors:
+                current_score = _quality_score(report)
+                after_issue_count, after_error_count, after_warning_count = _quality_issue_counts(report)
+                round_trace.update({
+                    "after_issue_count": after_issue_count,
+                    "after_error_count": after_error_count,
+                    "after_warning_count": after_warning_count,
+                    "after_unresolved_blocks": len(getattr(report, "unresolved_blocks", []) or []),
+                    "result": "improved" if current_score < previous_score else "not_improved",
+                })
+                if current_score >= previous_score:
                     break
-                previous_hard_errors = current_hard_errors
-                if current_hard_errors == 0:
+                previous_score = current_score
+                if current_score == (0, 0, 0):
                     break
         if repaired:
             report.repaired_blocks = repaired
+        report.trace = trace
+        _finalize_quality_conclusion(report, repaired, repair_enabled)
 
         root = Path(pdir)
         save_quality_report(
@@ -1274,6 +1351,7 @@ def _run_translate_pipeline(pid: str, target_language: str, owns_registration: b
                 target_language,
                 translator,
                 cfg,
+                progress_callback=lambda pct, msg: _emit_progress(pid, "translate", pct, msg),
             )
             if repaired:
                 log.info("translation QA repaired %d block(s) for %s", len(repaired), pid)

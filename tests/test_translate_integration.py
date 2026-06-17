@@ -668,9 +668,7 @@ def test_translate_pipeline_can_auto_repair_quality_issues(tmp_path, monkeypatch
 
     monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
     monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
-    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
-        "translation": {"qa_auto_repair": True},
-    })
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {"translation": {}})
 
     class FakePrimary:
         def translate_batch(self, items, system_prompt):
@@ -703,6 +701,8 @@ def test_translate_pipeline_can_auto_repair_quality_issues(tmp_path, monkeypatch
     assert "你还好吗？" in translated
     assert report["status"] == "ok"
     assert report["repaired_blocks"] == [{"id": 1, "translation": "你还好吗？"}]
+    assert report["summary"]["quality_gate"]["passed"] is True
+    assert report["summary"]["conclusion"] == "达标：已自动重点返工 1 条并复检通过。"
 
 
 def test_translate_pipeline_auto_repair_preserves_omitted_rows(tmp_path, monkeypatch):
@@ -801,15 +801,15 @@ def test_translate_pipeline_caps_auto_repair_batch_and_records_trace(tmp_path, m
     monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
     monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
     monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
-        "translation": {"qa_auto_repair": True, "qa_auto_repair_max_blocks": 2},
+        "translation": {"qa_auto_repair": True, "qa_auto_repair_max_blocks": 2, "qa_auto_repair_rounds": 2},
     })
     attempted_batches = []
 
     class FakePrimary:
         def translate_batch(self, items, system_prompt):
             attempted_batches.append([item["id"] for item in items])
-            assert [item["id"] for item in items] == [1, 2]
-            assert "Line three." not in system_prompt
+            assert len(items) <= 2
+            assert "Line five." not in system_prompt
             return [
                 {"id": item["id"], "translation": f"译文{item['id']}"}
                 for item in items
@@ -837,26 +837,37 @@ def test_translate_pipeline_caps_auto_repair_batch_and_records_trace(tmp_path, m
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
-    round_trace = report["trace"]["auto_repair_rounds"][0]
-    assert attempted_batches == [[1, 2]]
+    rounds = report["trace"]["auto_repair_rounds"]
+    assert attempted_batches == [[1, 2], [3, 4]]
     assert project["status"] == "error"
-    assert round_trace == {
-        "candidate_blocks": 5,
-        "max_blocks": 2,
-        "attempted_blocks": 2,
-        "skipped_blocks": 3,
-        "skipped_reason": "too_many_failed_blocks",
-        "applied_blocks": 2,
-    }
+    assert rounds[0]["before_issue_count"] == 5
+    assert rounds[0]["after_issue_count"] == 3
+    assert rounds[0]["candidate_blocks"] == 5
+    assert rounds[0]["max_blocks"] == 2
+    assert rounds[0]["attempted_blocks"] == 2
+    assert rounds[0]["skipped_blocks"] == 3
+    assert rounds[0]["skipped_reason"] == "too_many_failed_blocks"
+    assert rounds[0]["applied_blocks"] == 2
+    assert rounds[0]["result"] == "improved"
+    assert rounds[1]["before_issue_count"] == 3
+    assert rounds[1]["after_issue_count"] == 1
+    assert rounds[1]["candidate_blocks"] == 3
+    assert rounds[1]["attempted_blocks"] == 2
+    assert rounds[1]["applied_blocks"] == 2
     assert report["repaired_blocks"] == [
         {"id": 1, "translation": "译文1"},
         {"id": 2, "translation": "译文2"},
+        {"id": 3, "translation": "译文3"},
+        {"id": 4, "translation": "译文4"},
     ]
+    assert report["summary"]["quality_gate"]["auto_repaired_blocks"] == 4
+    assert report["summary"]["quality_gate"]["passed"] is False
 
 
 def test_translate_pipeline_limits_auto_repair_rounds(tmp_path, monkeypatch):
     from app.api import translate as translate_api
 
+    assert translate_api._repair_round_limit({"translation": {}}) == 2
     assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 0}}) == 1
     assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 2}}) == 2
     assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 99}}) == 2

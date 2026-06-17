@@ -237,6 +237,14 @@ def test_project_quality_helpers_load_suggestions_and_report():
           if (!state.kbSuggestionSummaryText().includes('已接受 1')) {
             throw new Error(`expected accepted suggestion summary, got ${state.kbSuggestionSummaryText()}`);
           }
+          state.qaReport.summary.conclusion = '达标：已自动重点返工 2 条并复检通过。';
+          state.qaReport.summary.quality_gate = {passed: true, auto_repair_enabled: true, auto_repaired_blocks: 2};
+          if (state.qaReportSummaryText() !== '达标：已自动重点返工 2 条并复检通过。') {
+            throw new Error(`expected final conclusion first, got ${state.qaReportSummaryText()}`);
+          }
+          if (!state.qaReportNextAction().includes('自动质检达标')) {
+            throw new Error(`expected passed gate next action, got ${state.qaReportNextAction()}`);
+          }
         })().catch((err) => {
           console.error(err.message);
           process.exit(1);

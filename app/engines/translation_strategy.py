@@ -188,11 +188,11 @@ def build_translation_strategy(project: dict, config: dict | None = None) -> dic
         ),
     }
     qa = {
-        "auto_repair": _bool_setting(translation_cfg, "qa_auto_repair", False),
+        "auto_repair": _bool_setting(translation_cfg, "qa_auto_repair", True),
         "auto_repair_rounds": _int_setting(
             translation_cfg,
             "qa_auto_repair_rounds",
-            1,
+            2,
             min_value=0,
             max_value=2,
         ),
