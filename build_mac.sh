@@ -41,13 +41,17 @@ echo "  ffprobe: $FFPROBE_PATH"
 BUNDLE_LOCAL_ASR="${AISUBPRO_BUNDLE_LOCAL_ASR:-0}"
 BUNDLE_ASR_BACKENDS="${AISUBPRO_BUNDLE_ASR_BACKENDS:-1}"
 REQUIRE_ASR_BACKEND="${AISUBPRO_REQUIRE_ASR_BACKEND:-1}"
+CODESIGN_IDENTITY="${AISUBPRO_CODESIGN_IDENTITY:--}"
+CODESIGN_KEYCHAIN="${AISUBPRO_CODESIGN_KEYCHAIN:-}"
 if [ "$BUNDLE_LOCAL_ASR" = "1" ]; then
     BUNDLE_ASR_BACKENDS="1"
 fi
 ASR_MODEL_DATA_ARGS=()
 ASR_BACKEND_ARGS=()
+ASR_TORCH_EXCLUDE_ARGS=()
 LOCAL_ASR_EXCLUDE_ARGS=()
 ASR_BACKEND_FOUND=0
+OPENAI_WHISPER_FOUND=0
 if [ "$BUNDLE_LOCAL_ASR" = "1" ]; then
     if [ -d "$ROOT_DIR/models/asr" ]; then
         ASR_MODEL_DATA_ARGS+=(--add-data "${ROOT_DIR}/models/asr:models/asr")
@@ -78,9 +82,21 @@ if [ "$BUNDLE_ASR_BACKENDS" = "1" ]; then
     if python3 -c "import whisper" 2>/dev/null; then
         ASR_BACKEND_ARGS+=(--hidden-import whisper)
         ASR_BACKEND_FOUND=1
+        OPENAI_WHISPER_FOUND=1
         echo "  openai-whisper: available (will be bundled)"
     else
         echo "  openai-whisper: not installed (optional backend skipped)"
+    fi
+
+    if [ "$OPENAI_WHISPER_FOUND" = "0" ]; then
+        ASR_TORCH_EXCLUDE_ARGS=(
+            --exclude-module torch
+            --exclude-module torchaudio
+            --exclude-module torchvision
+            --exclude-module torch.utils.tensorboard
+            --exclude-module mlx_whisper.torch_whisper
+        )
+        echo "  torch: not required (excluded unless openai-whisper is installed)"
     fi
 
     if [ "$ASR_BACKEND_FOUND" = "0" ]; then
@@ -200,6 +216,7 @@ python3 -m PyInstaller \
     --exclude-module guessit.test.test_yml \
     --exclude-module tensorboard \
     --exclude-module torch.utils.tensorboard \
+    "${ASR_TORCH_EXCLUDE_ARGS[@]}" \
     "${LOCAL_ASR_EXCLUDE_ARGS[@]}" \
     --exclude-module webview.platforms.android \
     --exclude-module webview.platforms.win32 \
@@ -236,7 +253,11 @@ if [ -f "$PLIST_PATH" ]; then
     set_plist_string "CFBundleShortVersionString" "$APP_VERSION"
     set_plist_string "CFBundleVersion" "$APP_VERSION"
     if command -v codesign >/dev/null 2>&1; then
-        codesign --force --deep --sign - "$APP_PATH"
+        CODESIGN_ARGS=(--force --deep --sign "$CODESIGN_IDENTITY")
+        if [ -n "$CODESIGN_KEYCHAIN" ]; then
+            CODESIGN_ARGS+=(--keychain "$CODESIGN_KEYCHAIN")
+        fi
+        codesign "${CODESIGN_ARGS[@]}" "$APP_PATH"
     fi
 fi
 

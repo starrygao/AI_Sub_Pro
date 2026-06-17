@@ -181,11 +181,15 @@ def test_build_mac_stamps_bundle_version_from_app_version():
 
     assert "from app.version import APP_VERSION" in script
     assert 'BUNDLE_IDENTIFIER="com.aisubpro.app"' in script
+    assert 'CODESIGN_IDENTITY="${AISUBPRO_CODESIGN_IDENTITY:--}"' in script
+    assert 'CODESIGN_KEYCHAIN="${AISUBPRO_CODESIGN_KEYCHAIN:-}"' in script
     assert "CFBundleIdentifier" in script
     assert "CFBundleShortVersionString" in script
     assert "CFBundleVersion" in script
     assert "/usr/libexec/PlistBuddy" in script
-    assert 'codesign --force --deep --sign - "$APP_PATH"' in script
+    assert 'CODESIGN_ARGS=(--force --deep --sign "$CODESIGN_IDENTITY")' in script
+    assert 'CODESIGN_ARGS+=(--keychain "$CODESIGN_KEYCHAIN")' in script
+    assert 'codesign "${CODESIGN_ARGS[@]}" "$APP_PATH"' in script
     assert script.index("python3 -m PyInstaller") < script.index("CFBundleShortVersionString")
     assert script.index("CFBundleShortVersionString") < script.index('APP_SIZE=$(du -sh "$APP_PATH"')
 
