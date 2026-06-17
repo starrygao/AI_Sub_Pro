@@ -101,6 +101,66 @@ def test_processing_project_merges_runtime_progress(patched_projects_dir):
     assert loaded["pipeline_stage"] == "translate"
 
 
+def test_translated_project_merges_running_burn_progress(patched_projects_dir):
+    pid = "runtime2"
+    pdir = patched_projects_dir / pid
+    pdir.mkdir()
+    project = {
+        "id": pid,
+        "name": "runtime burn",
+        "video_path": "/old.mp4",
+        "status": "translated",
+        "progress": 100,
+        "progress_msg": "翻译完成: 10 条",
+        "pipeline_stage": None,
+    }
+    (pdir / "project.json").write_text(json.dumps(project), encoding="utf-8")
+    (pdir / "progress.json").write_text(json.dumps({
+        "progress": 87,
+        "stage": "burn",
+        "message": "正在烧录字幕到视频...",
+    }), encoding="utf-8")
+    (pdir / "workflow_state.json").write_text(json.dumps({
+        "version": 1,
+        "stages": {"burn": {"status": "running"}},
+    }), encoding="utf-8")
+
+    loaded = _load_project(pid)
+
+    assert loaded["status"] == "processing"
+    assert loaded["progress"] == 87
+    assert loaded["progress_msg"] == "正在烧录字幕到视频..."
+    assert loaded["pipeline_stage"] == "burn"
+
+
+def test_translated_project_ignores_stale_runtime_progress_without_running_workflow(patched_projects_dir):
+    pid = "runtime3"
+    pdir = patched_projects_dir / pid
+    pdir.mkdir()
+    project = {
+        "id": pid,
+        "name": "stale burn",
+        "video_path": "/old.mp4",
+        "status": "translated",
+        "progress": 100,
+        "progress_msg": "翻译完成: 10 条",
+        "pipeline_stage": None,
+    }
+    (pdir / "project.json").write_text(json.dumps(project), encoding="utf-8")
+    (pdir / "progress.json").write_text(json.dumps({
+        "progress": 87,
+        "stage": "burn",
+        "message": "正在烧录字幕到视频...",
+    }), encoding="utf-8")
+
+    loaded = _load_project(pid)
+
+    assert loaded["status"] == "translated"
+    assert loaded["progress"] == 100
+    assert loaded["progress_msg"] == "翻译完成: 10 条"
+    assert loaded["pipeline_stage"] is None
+
+
 def test_legacy_project_metadata_fields_are_sanitized(patched_projects_dir):
     pid = "badmeta1"
     pdir = patched_projects_dir / pid

@@ -181,9 +181,15 @@ def test_project_quality_helpers_load_suggestions_and_report():
             if (url === '/api/projects/p1/quality-report') {
               return {
                 status: 'needs_review',
-                summary: {issue_count: 2, by_type: {english_residue: 1, kb_term_missing: 1}},
+                summary: {
+                  issue_count: 3,
+                  by_type: {reading_speed_too_fast: 1, proper_name_inconsistent: 1, kb_term_missing: 1},
+                  repaired_blocks: 2,
+                  unresolved_blocks: 1,
+                },
                 issues: [
-                  {type: 'english_residue', severity: 'warning', block_id: 7, message: 'contains English'},
+                  {type: 'reading_speed_too_fast', severity: 'warning', block_id: 7, message: 'too fast'},
+                  {type: 'proper_name_inconsistent', severity: 'warning', block_id: 9, message: 'name drift'},
                   {type: 'kb_term_missing', severity: 'error', block_id: 8, message: 'Use 哈德逊奥克斯'},
                 ],
               };
@@ -202,7 +208,7 @@ def test_project_quality_helpers_load_suggestions_and_report():
             throw new Error(`suggestion not updated: ${JSON.stringify(state.kbSuggestions)}`);
           }
           await state.loadQualityReport();
-          if (state.qaReport.summary.issue_count !== 2) {
+          if (state.qaReport.summary.issue_count !== 3 || state.qaReport.summary.repaired_blocks !== 2) {
             throw new Error(`QA report not loaded: ${JSON.stringify(state.qaReport)}`);
           }
           const acceptedCall = calls.find((call) => call.method === 'POST' && call.body?.status === 'accepted');
@@ -213,8 +219,23 @@ def test_project_quality_helpers_load_suggestions_and_report():
             throw new Error(`expected inline target in status call, got ${JSON.stringify(acceptedCall.body)}`);
           }
           const topIssues = state.qaReportTopIssues();
-          if (topIssues.length !== 2 || topIssues[0].label !== '英文残留' || topIssues[1].severity_label !== '错误') {
+          if (topIssues.length !== 3 || topIssues[0].label !== '阅读速度过快' || topIssues[1].label !== '专名不一致' || topIssues[2].severity_label !== '错误') {
             throw new Error(`expected normalized QA issue list, got ${JSON.stringify(topIssues)}`);
+          }
+          if (!state.qaReportSummaryText().includes('未解决 1')) {
+            throw new Error(`expected QA summary to include unresolved count, got ${state.qaReportSummaryText()}`);
+          }
+          if (!state.qaReportNextAction().includes('错误项')) {
+            throw new Error(`expected next action to prioritize errors, got ${state.qaReportNextAction()}`);
+          }
+          let focused = null;
+          state.focusSubtitleById = (id) => { focused = id; };
+          state.focusFirstQaIssue();
+          if (focused !== 7) {
+            throw new Error(`expected first QA issue focus, got ${focused}`);
+          }
+          if (!state.kbSuggestionSummaryText().includes('已接受 1')) {
+            throw new Error(`expected accepted suggestion summary, got ${state.kbSuggestionSummaryText()}`);
           }
         })().catch((err) => {
           console.error(err.message);
@@ -404,6 +425,9 @@ def test_knowledge_frontend_loads_usage_trace_for_current_project():
                 {source_text: 'Shoot your shot.', target_text: '主动出击。'},
                 'bad phrase',
               ],
+              kb_hits: [
+                {scope: 'auto_kb_candidate', source: 'Southwick House', target: '索斯威克府'},
+              ],
               style_hits: [
                 {id: 'zh_cn_general', max_line_chars: 16, max_chars_per_second: 9},
               ],
@@ -431,14 +455,20 @@ def test_knowledge_frontend_loads_usage_trace_for_current_project():
           if (state.kbUsageTrace.phrase_hits.length !== 1 || state.kbUsageTrace.phrase_hits[0].source_text !== 'Shoot your shot.') {
             throw new Error(`expected normalized phrase hits, got ${JSON.stringify(state.kbUsageTrace.phrase_hits)}`);
           }
-          if (state.kbUsageTrace.display_hits.length !== 3) {
+          if (state.kbUsageTrace.display_hits.length !== 4) {
             throw new Error(`expected display hits from matches and quality context, got ${JSON.stringify(state.kbUsageTrace.display_hits)}`);
           }
           if (state.kbUsageTrace.display_hits[1].trace_group !== '例句库' || state.kbUsageTrace.display_hits[1].trace_target !== '主动出击。') {
             throw new Error(`expected phrase display hit, got ${JSON.stringify(state.kbUsageTrace.display_hits[1])}`);
           }
-          if (state.kbUsageTrace.display_hits[2].trace_group !== '字幕样式' || !state.kbUsageTrace.display_hits[2].trace_target.includes('16字/行')) {
-            throw new Error(`expected style display hit, got ${JSON.stringify(state.kbUsageTrace.display_hits[2])}`);
+          if (state.kbUsageTrace.display_hits[2].trace_group !== '自动候选' || state.kbUsageTrace.display_hits[2].trace_target !== '索斯威克府') {
+            throw new Error(`expected auto candidate display hit, got ${JSON.stringify(state.kbUsageTrace.display_hits[2])}`);
+          }
+          if (state.kbUsageTrace.display_hits[3].trace_group !== '字幕样式' || !state.kbUsageTrace.display_hits[3].trace_target.includes('16字/行')) {
+            throw new Error(`expected style display hit, got ${JSON.stringify(state.kbUsageTrace.display_hits[3])}`);
+          }
+          if (!state.kbUsageSummaryText().includes('自动候选参与 1')) {
+            throw new Error(`expected usage summary to include auto candidates, got ${state.kbUsageSummaryText()}`);
           }
 
           state.currentProject = null;

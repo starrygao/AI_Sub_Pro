@@ -241,6 +241,63 @@ def _extend_unique_trace_hits(target: list, hits: list[dict]) -> None:
         _append_unique_trace_hit(target, hit)
 
 
+def _clean_prompt_text(value) -> str:
+    if not isinstance(value, str):
+        return ""
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _build_auto_kb_candidate_snippet(kb_data: Dict, limit: int = 30) -> tuple[str, list[dict]]:
+    raw_items = kb_data.get("candidate_terms") if isinstance(kb_data, dict) else []
+    if not isinstance(raw_items, list):
+        return "", []
+
+    lines: list[str] = []
+    hits: list[dict] = []
+    seen: set[str] = set()
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        source = _clean_prompt_text(raw.get("source"))
+        if not source:
+            continue
+        key = source.casefold()
+        if key in seen:
+            continue
+        target = _clean_prompt_text(raw.get("target"))
+        category = _clean_prompt_text(raw.get("category"))
+        status = _clean_prompt_text(raw.get("status")) or "pending"
+        confidence = raw.get("confidence")
+        suffix = []
+        if target:
+            suffix.append(f"suggested target: {target}")
+        if category:
+            suffix.append(f"category: {category}")
+        if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+            suffix.append(f"confidence: {float(confidence):.2f}")
+        detail = f" ({'; '.join(suffix)})" if suffix else ""
+        lines.append(f"  - {source}{detail}")
+        hits.append({
+            "scope": "auto_kb_candidate",
+            "source": source,
+            "target": target,
+            "category": category,
+            "status": status,
+        })
+        seen.add(key)
+        if len(lines) >= limit:
+            break
+
+    if not lines:
+        return "", []
+    snippet = "\n".join([
+        "自动知识库候选（未审定，低于正式项目知识库、手动术语和用户修订记忆）:",
+        *lines,
+        "使用方式: 将这些源词视为本片可能出现的专名/地点/术语，在语境匹配时保持译名一致；没有译名时请自行给出自然译法，不要把候选当作必须照抄的硬约束。",
+    ])
+    return snippet, hits
+
+
 def _is_retryable_translation_result(result: dict, item: dict) -> bool:
     if not isinstance(result, dict):
         return False
@@ -945,6 +1002,11 @@ class SubtitleTranslator:
                 terms_str = json.dumps(legacy_terms, ensure_ascii=False)
                 parts.append(f"术语表(严格遵守): {terms_str}")
 
+        candidate_snippet, candidate_hits = _build_auto_kb_candidate_snippet(kb_data)
+        if candidate_snippet:
+            parts.append(candidate_snippet)
+            _extend_unique_trace_hits(self.last_quality_trace.kb_hits, candidate_hits)
+
         metadata_snippet, metadata_hits = build_project_metadata_prompt_snippet(meta_info)
         if metadata_snippet:
             parts.append(metadata_snippet)
@@ -1181,6 +1243,9 @@ class SubtitleTranslator:
                 parts.append(f"风格要求: {kb_data['style']}")
             if kb_data.get("terms"):
                 parts.append(f"术语表: {json.dumps(kb_data['terms'], ensure_ascii=False)}")
+        candidate_snippet, _candidate_hits = _build_auto_kb_candidate_snippet(kb_data)
+        if candidate_snippet:
+            parts.append(candidate_snippet)
         parts.extend([
             "",
             "规则:",

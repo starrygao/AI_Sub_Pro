@@ -693,7 +693,9 @@ def _run_asr_pipeline(pid: str, audio_track: int, language: str, owns_registrati
         error_msg = _safe_error_message(e)
         try:
             mutate_project(pid, lambda p: p.update({"status": "error",
-                                                     "error": error_msg}),
+                                                     "error": error_msg,
+                                                     "pipeline_stage": None,
+                                                     "progress_msg": f"错误: {_safe_error_message(e, 100)}"}),
                            normalize=_apply_safe_defaults)
         except Exception:
             pass
@@ -883,10 +885,7 @@ def _requires_kb_suggestion_review(config: Optional[dict] = None) -> bool:
     translation = cfg.get("translation") if isinstance(cfg, dict) else {}
     return (
         isinstance(translation, dict)
-        and (
-            translation.get("require_kb_suggestion_review") is True
-            or translation.get("quality_mode") == "professional"
-        )
+        and translation.get("require_kb_suggestion_review") is True
     )
 
 
@@ -944,6 +943,53 @@ def _ensure_kb_review_ready(
     if as_http:
         raise HTTPException(status_code=409, detail=detail)
     raise RuntimeError(detail["message"])
+
+
+def _auto_kb_candidate_terms(pid: str, limit: int = 40) -> list[dict]:
+    """Return generated KB suggestions as soft translation context.
+
+    These are not hard terminology constraints. Accepted project KB entries
+    still win through the v2 KB snippet; pending suggestions only help the
+    translator keep likely names/places consistent during the current run.
+    """
+    try:
+        from app.engines.kb_suggestions import load_suggestions
+
+        suggestions = load_suggestions(_kb_suggestions_path(pid))
+    except Exception as exc:
+        log.warning("failed to load auto KB candidates for %s: %s", pid, exc)
+        return []
+
+    rejected = _load_rejected_kb_suggestion_sources(pid)
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for item in suggestions:
+        source = getattr(item, "source", "")
+        if not isinstance(source, str) or not source.strip():
+            continue
+        source = source.strip()
+        source_key = source.casefold()
+        if source_key in rejected or source_key in seen:
+            continue
+        status = (getattr(item, "status", "") or "pending").strip().casefold()
+        if status == "rejected":
+            continue
+        target = getattr(item, "target", "")
+        category = getattr(item, "category", "") or getattr(item, "type", "")
+        confidence = getattr(item, "confidence", None)
+        row = {
+            "source": source,
+            "target": target.strip() if isinstance(target, str) else "",
+            "category": category.strip() if isinstance(category, str) else "",
+            "status": status if status in {"pending", "accepted"} else "pending",
+        }
+        if isinstance(confidence, (int, float)) and not isinstance(confidence, bool) and math.isfinite(confidence):
+            row["confidence"] = round(float(confidence), 3)
+        rows.append(row)
+        seen.add(source_key)
+        if len(rows) >= limit:
+            break
+    return rows
 
 
 def _project_kb_terms(project_kb) -> dict:
@@ -1192,11 +1238,11 @@ def _run_translate_pipeline(pid: str, target_language: str, owns_registration: b
                         b.filtered = filtered if isinstance(filtered, bool) else False
                         b.filter_reason = reason if isinstance(reason, str) else ""
 
-            # KB v2: the translator now reads the shared KnowledgeBase
-            # singleton directly via `select_for_project` + `build_prompt_snippet`
-            # (see `app/engines/translator.py`). Legacy kb_data is passed as
-            # None so the v2 injection path is the only one that fires.
-            kb_data = None
+            # KB v2 still supplies hard constraints from the shared project KB.
+            # Generated suggestions are passed as soft session hints so the
+            # automatic path can use likely names/places before manual review.
+            candidate_terms = _auto_kb_candidate_terms(pid)
+            kb_data = {"candidate_terms": candidate_terms} if candidate_terms else None
 
             # Initialize translator
             _emit_progress(pid, "translate", 5, "正在初始化翻译引擎...")
@@ -1282,7 +1328,9 @@ def _run_translate_pipeline(pid: str, target_language: str, owns_registration: b
         error_msg = _safe_error_message(e)
         try:
             mutate_project(pid, lambda p: p.update({"status": "error",
-                                                     "error": error_msg}),
+                                                     "error": error_msg,
+                                                     "pipeline_stage": None,
+                                                     "progress_msg": f"错误: {_safe_error_message(e, 100)}"}),
                            normalize=_apply_safe_defaults)
         except Exception:
             pass
@@ -1349,15 +1397,47 @@ def _build_upload_legacy_track(srt_path: str) -> "SubtitleTrack":
     )
 
 
+def _mark_stage_running(pid: str, stage: str, *, message: str = "", progress: Optional[int] = None) -> None:
+    def _update(project: dict) -> None:
+        payload = {
+            "status": "processing",
+            "pipeline_stage": stage,
+            "error": None,
+        }
+        if isinstance(progress, int) and not isinstance(progress, bool):
+            payload["progress"] = max(0, min(100, progress))
+        if isinstance(message, str) and message:
+            payload["progress_msg"] = message
+        project.update(payload)
+
+    mutate_project(pid, _update, normalize=_apply_safe_defaults)
+
+
+def _mark_burn_completed(pid: str, output_video: str, message: str) -> None:
+    mutate_project(pid, lambda p: p.update({"status": "completed",
+                                             "output_video": output_video,
+                                             "error": None,
+                                             "progress": 100,
+                                             "progress_msg": message,
+                                             "pipeline_stage": None}),
+                   normalize=_apply_safe_defaults)
+
+
 def _mark_burn_unavailable(pid: str, reason: str = "无字幕文件可烧录") -> None:
     mutate_project(pid, lambda p: p.update({"status": "translated",
-                                             "error": f"字幕烧录失败: {reason}"}),
+                                             "error": f"字幕烧录失败: {reason}",
+                                             "progress": 100,
+                                             "progress_msg": "翻译完成，但字幕烧录失败",
+                                             "pipeline_stage": None}),
                    normalize=_apply_safe_defaults)
 
 
 def _mark_burn_failed(pid: str, reason: str) -> None:
     mutate_project(pid, lambda p: p.update({"status": "translated",
-                                             "error": reason}),
+                                             "error": reason,
+                                             "progress": 100,
+                                             "progress_msg": "翻译完成，但字幕烧录失败",
+                                             "pipeline_stage": None}),
                    normalize=_apply_safe_defaults)
 
 
@@ -1377,6 +1457,7 @@ def _run_burn_pipeline(pid: str):
             pdir = str(PROJECTS_DIR / pid)
             video_path = project["video_path"]
             _best_effort_start_stage(pid, "burn", input_artifact=video_path)
+            _mark_stage_running(pid, "burn", message="正在烧录字幕到视频...", progress=75)
 
             _emit_progress(pid, "burn", 0, "正在烧录字幕到视频...")
             _check_cancel(pid)
@@ -1415,11 +1496,7 @@ def _run_burn_pipeline(pid: str):
                 callback=lambda msg: _emit_progress(pid, "burn", 50, msg),
             )
             if success:
-                _out = output_video
-                mutate_project(pid, lambda p: p.update({"status": "completed",
-                                                         "output_video": _out,
-                                                         "error": None}),
-                               normalize=_apply_safe_defaults)
+                _mark_burn_completed(pid, output_video, "全部完成! 字幕已烧录到视频")
                 _best_effort_finish_stage(
                     pid,
                     "burn",
@@ -1432,9 +1509,7 @@ def _run_burn_pipeline(pid: str):
             else:
                 # Burning failed but translation succeeded - still usable
                 reason = "字幕烧录失败，但翻译已完成"
-                mutate_project(pid, lambda p: p.update({"status": "translated",
-                                                         "error": reason}),
-                               normalize=_apply_safe_defaults)
+                _mark_burn_failed(pid, reason)
                 _best_effort_fail_stage(pid, "burn", reason)
                 _emit_progress(pid, "burn", 100, "翻译完成，但字幕烧录失败")
     except Exception as e:
@@ -1466,7 +1541,9 @@ def _run_full_pipeline(pid: str, audio_track: int, language: str, target_languag
         error_msg = _safe_error_message(e)
         try:
             mutate_project(pid, lambda p: p.update({"status": "error",
-                                                     "error": error_msg}),
+                                                     "error": error_msg,
+                                                     "pipeline_stage": None,
+                                                     "progress_msg": f"错误: {_safe_error_message(e, 100)}"}),
                            normalize=_apply_safe_defaults)
         except Exception:
             pass
@@ -1490,7 +1567,10 @@ def _run_asr_translate_pipeline(pid: str, audio_track: int, language: str, targe
         try:
             mutate_project(
                 pid,
-                lambda p: p.update({"status": "error", "error": error_msg}),
+                lambda p: p.update({"status": "error",
+                                    "error": error_msg,
+                                    "pipeline_stage": None,
+                                    "progress_msg": f"错误: {_safe_error_message(e, 100)}"}),
                 normalize=_apply_safe_defaults,
             )
         except Exception:
@@ -1718,6 +1798,7 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                 pdir = str(PROJECTS_DIR / pid)
                 video_path = project["video_path"]
                 _best_effort_start_stage(pid, "burn", input_artifact=video_path)
+                _mark_stage_running(pid, "burn", message="正在烧录字幕到视频...", progress=75)
 
                 _emit_progress(pid, "burn", 0, "正在烧录字幕到视频...")
                 _check_cancel(pid)
@@ -1754,11 +1835,7 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                     callback=lambda msg: _emit_progress(pid, "burn", 50, msg),
                 )
                 if success:
-                    _out = output_video
-                    mutate_project(pid, lambda p: p.update({"status": "completed",
-                                                             "output_video": _out,
-                                                             "error": None}),
-                                   normalize=_apply_safe_defaults)
+                    _mark_burn_completed(pid, output_video, "字幕烧录完成!")
                     _best_effort_finish_stage(
                         pid,
                         "burn",
@@ -1773,9 +1850,7 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                     # _run_burn_pipeline so the UI sees a real failure state
                     # instead of stale 'translated' with no error note.
                     reason = "字幕烧录失败，但翻译已完成"
-                    mutate_project(pid, lambda p: p.update({"status": "translated",
-                                                             "error": reason}),
-                                   normalize=_apply_safe_defaults)
+                    _mark_burn_failed(pid, reason)
                     _best_effort_fail_stage(pid, "burn", reason)
                     _emit_progress(pid, "burn", 0, "字幕烧录失败")
         except Exception as e:
@@ -1783,7 +1858,9 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
             error_msg = _safe_error_message(e, 120)
             try:
                 mutate_project(pid, lambda p: p.update({"status": "translated",
-                                                         "error": f"字幕烧录异常: {error_msg}"}),
+                                                         "error": f"字幕烧录异常: {error_msg}",
+                                                         "pipeline_stage": None,
+                                                         "progress_msg": f"错误: {_safe_error_message(e, 100)}"}),
                                normalize=_apply_safe_defaults)
             except Exception:
                 pass

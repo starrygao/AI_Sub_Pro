@@ -312,8 +312,8 @@ function app() {
       if (status === 'completed') return {bg: '#dcfce7', text: '#166534', hex: '#16a34a'};
       if (stage === 'download') return {bg: '#ffedd5', text: '#9a3412', hex: '#f97316'};
       if (stage === 'asr' || status === 'asr_done') return {bg: '#f3e8ff', text: '#6b21a8', hex: '#a855f7'};
-      if (stage === 'translate' || status === 'translated') return {bg: '#dbeafe', text: '#1e40af', hex: '#3b82f6'};
       if (stage === 'burn') return {bg: '#dcfce7', text: '#166534', hex: '#22c55e'};
+      if (stage === 'translate' || status === 'translated') return {bg: '#dbeafe', text: '#1e40af', hex: '#3b82f6'};
       // created / processing / default
       return {bg: '#ccfbf1', text: '#115e59', hex: '#0f766e'};
     },
@@ -1755,14 +1755,19 @@ function app() {
       const issues = Array.isArray(src.issues)
         ? src.issues.filter(item => this.isPlainObject(item))
         : [];
+      const issueCount = Number.isFinite(Number(summary.issue_count)) ? Number(summary.issue_count) : issues.length;
+      const repairedBlocks = Number.isFinite(Number(summary.repaired_blocks)) ? Number(summary.repaired_blocks) : 0;
+      const unresolvedBlocks = Number.isFinite(Number(summary.unresolved_blocks)) ? Number(summary.unresolved_blocks) : 0;
       return {
         ...src,
         status: typeof src.status === 'string' ? src.status : 'missing',
         issues,
         summary: {
-          issue_count: Number.isFinite(Number(summary.issue_count)) ? Number(summary.issue_count) : issues.length,
-          by_type: this.isPlainObject(summary.by_type) ? summary.by_type : {},
           ...summary,
+          issue_count: Math.max(0, issueCount),
+          by_type: this.isPlainObject(summary.by_type) ? summary.by_type : {},
+          repaired_blocks: Math.max(0, repairedBlocks),
+          unresolved_blocks: Math.max(0, unresolvedBlocks),
         },
       };
     },
@@ -1781,10 +1786,13 @@ function app() {
         line_too_long: '字幕过长',
         too_many_lines: '行数过多',
         reading_speed: '阅读速度过快',
+        reading_speed_too_fast: '阅读速度过快',
         bad_line_break: '断行需审校',
         sound_description_translated: '环境音误译',
         punctuation_style: '标点风格',
         inferred_name_inconsistent: '专名不一致',
+        proper_name_inconsistent: '专名不一致',
+        repetition_not_compressed: '重复表达需压缩',
       };
       return labels[type] || type || '质量问题';
     },
@@ -1804,6 +1812,49 @@ function app() {
         label: this.qaIssueLabel(issue),
         severity_label: this.qaIssueSeverityLabel(issue),
       }));
+    },
+
+    qaReportHasIssues() {
+      const report = this.normalizeQualityReport(this.qaReport || {});
+      return (report.summary?.issue_count || 0) > 0 || report.issues.length > 0;
+    },
+
+    qaReportSummaryText() {
+      if (this.qaReportLoading) return '加载中...';
+      const report = this.normalizeQualityReport(this.qaReport || {});
+      if (report.status === 'missing') return '暂无报告';
+      const issues = report.issues;
+      const issueCount = report.summary.issue_count || issues.length;
+      const errors = issues.filter(item => ['error', 'severe'].includes(String(item.severity || ''))).length;
+      const warnings = issues.filter(item => String(item.severity || '') === 'warning').length;
+      const repaired = report.summary.repaired_blocks || 0;
+      const unresolved = report.summary.unresolved_blocks || 0;
+      if (!issueCount) {
+        return repaired ? `未发现遗留问题 · 已自动修复 ${repaired} 条` : '未发现确定性问题';
+      }
+      const parts = [`问题 ${issueCount} 个`];
+      if (errors) parts.push(`错误 ${errors}`);
+      if (warnings) parts.push(`警告 ${warnings}`);
+      if (repaired) parts.push(`已修复 ${repaired}`);
+      if (unresolved) parts.push(`未解决 ${unresolved}`);
+      return parts.join(' · ');
+    },
+
+    qaReportNextAction() {
+      const report = this.normalizeQualityReport(this.qaReport || {});
+      if (!report || report.status === 'missing') return '';
+      const issues = report.issues;
+      const issueCount = report.summary.issue_count || issues.length;
+      if (!issueCount) return '可继续导出或烧录。';
+      const hasErrors = issues.some(item => ['error', 'severe'].includes(String(item.severity || '')));
+      if (hasErrors) return '先处理错误项，再导出或烧录。';
+      if ((report.summary.unresolved_blocks || 0) > 0) return '建议抽查未解决警告，必要时在字幕表中手动修正。';
+      return '当前为警告级问题，可抽查后继续交付。';
+    },
+
+    focusFirstQaIssue() {
+      const first = this.qaReportTopIssues(1)[0];
+      if (first?.block_id) this.focusSubtitleById(first.block_id);
     },
 
     normalizeTranslationStrategy(data) {
@@ -1980,9 +2031,11 @@ function app() {
         })),
         ...kbHits.map((item) => ({
           ...item,
-          trace_group: item.scope === 'manual_terms' ? '手动术语' : '上下文',
+          trace_group: item.scope === 'manual_terms'
+            ? '手动术语'
+            : (item.scope === 'auto_kb_candidate' ? '自动候选' : '上下文'),
           trace_source: textOf(item.source, item.matched_source, item.source_title, item.id, item.scope),
-          trace_target: textOf(item.target, item.notes, item.content_type, item.academic_field),
+          trace_target: textOf(item.target, item.notes, item.content_type, item.academic_field, item.status),
         })),
         ...profileHits.map((item) => ({
           ...item,
@@ -2020,6 +2073,51 @@ function app() {
         conflict_hits: conflictHits,
         display_hits: displayHits,
       };
+    },
+
+    kbSuggestionCounts() {
+      const counts = {total: 0, pending: 0, accepted: 0, rejected: 0};
+      for (const item of this.kbSuggestions || []) {
+        if (!this.isPlainObject(item)) continue;
+        counts.total += 1;
+        const status = String(item.status || 'pending').trim();
+        if (status === 'accepted') counts.accepted += 1;
+        else if (status === 'rejected') counts.rejected += 1;
+        else counts.pending += 1;
+      }
+      return counts;
+    },
+
+    kbSuggestionSummaryText() {
+      if (this.kbSuggestionLoading) return '加载中...';
+      const counts = this.kbSuggestionCounts();
+      if (!counts.total) return '暂无建议';
+      const parts = [`候选 ${counts.total} 条`];
+      if (counts.pending) parts.push(`待处理 ${counts.pending}`);
+      if (counts.accepted) parts.push(`已接受 ${counts.accepted}`);
+      if (counts.rejected) parts.push(`已拒绝 ${counts.rejected}`);
+      return parts.join(' · ');
+    },
+
+    kbUsageSummaryText() {
+      if (this.kbTraceLoading) return '正在读取本次命中...';
+      if (this.kbTraceError) return this.kbTraceError;
+      const trace = this.normalizeKbUsageTrace(this.kbUsageTrace || {});
+      const projectMatches = trace.matches.length;
+      const autoCandidates = trace.kb_hits.filter(item => item.scope === 'auto_kb_candidate').length;
+      const manualTerms = trace.kb_hits.filter(item => item.scope === 'manual_terms').length;
+      const memoryHits = trace.memory_hits.length;
+      const phraseHits = trace.phrase_hits.length;
+      const parts = [];
+      if (projectMatches) parts.push(`项目知识库命中 ${projectMatches}`);
+      if (autoCandidates) parts.push(`自动候选参与 ${autoCandidates}`);
+      if (manualTerms) parts.push(`手动术语 ${manualTerms}`);
+      if (memoryHits) parts.push(`修订记忆 ${memoryHits}`);
+      if (phraseHits) parts.push(`本地例句 ${phraseHits}`);
+      if (parts.length) return parts.join(' · ');
+      const counts = this.kbSuggestionCounts();
+      if (counts.pending) return `待处理候选 ${counts.pending} 条；未审候选会作为软提示参与翻译。`;
+      return '本次暂无知识库或例句命中。';
     },
 
     async loadKbUsageTrace() {

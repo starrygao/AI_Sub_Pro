@@ -92,12 +92,29 @@ def test_build_translation_strategy_explains_profiles_retrieval_and_qa():
     assert strategy["retrieval"]["max_phrase_examples"] == 4
     assert strategy["quality_mode"]["id"] == "professional"
     assert strategy["quality_mode"]["label"] == "专业模式"
-    assert strategy["quality_mode"]["requires_kb_review"] is True
+    assert strategy["quality_mode"]["requires_kb_review"] is False
     assert strategy["quality_mode"]["quality_gate"] is True
     assert strategy["qa"]["auto_repair"] is True
     assert strategy["qa"]["auto_repair_rounds"] == 1
     assert strategy["source"]["native_subtitle_language"] == "en"
     assert any(item["id"] == "native_subtitles" for item in strategy["recommendations"])
+
+
+def test_build_translation_strategy_allows_explicit_kb_review_gate():
+    from app.engines.translation_strategy import build_translation_strategy
+
+    strategy = build_translation_strategy(
+        {"id": "p1", "name": "Show S01E01"},
+        {
+            "translation": {
+                "quality_mode": "professional",
+                "require_kb_suggestion_review": True,
+            }
+        },
+    )
+
+    assert strategy["quality_mode"]["id"] == "professional"
+    assert strategy["quality_mode"]["requires_kb_review"] is True
 
 
 def test_build_translation_strategy_warns_when_auto_has_no_profile_or_terms():

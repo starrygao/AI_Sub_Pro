@@ -203,7 +203,7 @@ def test_start_translate_can_require_kb_suggestion_review(tmp_project_dir, monke
     assert translate_api.active_tasks == {}
 
 
-def test_start_translate_professional_mode_requires_kb_suggestion_review(tmp_project_dir, monkeypatch):
+def test_start_translate_professional_mode_generates_suggestions_without_blocking(tmp_project_dir, monkeypatch):
     from app.api import translate as translate_api
 
     _isolate_kb(tmp_project_dir, monkeypatch)
@@ -216,18 +216,18 @@ def test_start_translate_professional_mode_requires_kb_suggestion_review(tmp_pro
         lambda: {"translation": {"quality_mode": "professional"}},
     )
 
-    def fail_register(*args, **kwargs):
-        raise AssertionError("professional mode must review KB suggestions before starting")
+    class DummyThread:
+        def start(self):
+            pass
 
-    monkeypatch.setattr(translate_api, "try_register_task", fail_register)
+    monkeypatch.setattr(translate_api, "try_register_task", lambda *args, **kwargs: DummyThread())
 
     r = client.post(f"/api/projects/{pid}/start-translate", json={"target_language": "English"})
 
-    assert r.status_code == 409
-    detail = r.json()["detail"]
-    assert detail["code"] == "kb_review_required"
-    assert detail["suggestions_count"] > 0
-    assert translate_api.active_tasks == {}
+    assert r.status_code == 200
+    assert r.json()["status"] == "started"
+    saved = json.loads((tmp_project_dir / pid / "kb_suggestions.json").read_text(encoding="utf-8"))
+    assert len(saved["suggestions"]) > 0
 
 
 def test_start_translate_allows_after_kb_suggestions_are_rejected(tmp_project_dir, monkeypatch):

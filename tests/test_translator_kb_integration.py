@@ -88,6 +88,43 @@ def test_build_prompt_ignores_malformed_cast_entries(monkeypatch):
     assert "{'name': 'bad'}" not in prompt
 
 
+def test_build_prompt_includes_auto_kb_candidates_as_soft_context(monkeypatch):
+    from app.engines import translator as tmod
+    from app.engines.knowledge import KnowledgeBase
+
+    monkeypatch.setattr(tmod, "_shared_kb", KnowledgeBase(), raising=False)
+    cfg = {
+        "translation": {
+            "primary_provider": "openai", "primary_model": "gpt-4o",
+            "polish_provider": "", "batch_size": 10, "context_window": 3,
+        },
+        "api_keys": {"openai": "sk-test"},
+    }
+    t = tmod.SubtitleTranslator(cfg)
+
+    prompt = t._build_prompt(
+        target_lang="简体中文",
+        meta_info={"name": "Random", "tmdb_id": None},
+        kb_data={"candidate_terms": [
+            {"source": "James Stagg", "target": "", "category": "characters"},
+            {"source": "Southwick House", "target": "索斯威克府", "category": "places"},
+        ]},
+        context_before=[],
+        context_after=[],
+    )
+
+    assert "自动知识库候选" in prompt
+    assert "未审定" in prompt
+    assert "James Stagg" in prompt
+    assert "Southwick House" in prompt
+    assert "索斯威克府" in prompt
+    trace = t.last_quality_trace.to_dict()
+    assert any(
+        hit.get("scope") == "auto_kb_candidate" and hit.get("source") == "Southwick House"
+        for hit in trace["kb_hits"]
+    )
+
+
 def test_build_polish_prompt_includes_kb_snippet(monkeypatch):
     """Polish prompt must also get the KB snippet."""
     from app.engines import translator as tmod

@@ -580,6 +580,26 @@ def _load_project(pid: str) -> dict:
         raise HTTPException(400, str(e))
 
 
+_RUNNING_PIPELINE_STAGES = {"download", "asr", "translate", "burn"}
+_RUNNING_STAGE_PRIORITY = ("burn", "translate", "asr", "download")
+
+
+def _running_workflow_stage(pid: str) -> Optional[str]:
+    try:
+        state_path = PROJECTS_DIR / pid / "workflow_state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.is_file() else {}
+    except Exception:
+        return None
+    stages = state.get("stages") if isinstance(state, dict) else {}
+    if not isinstance(stages, dict):
+        return None
+    for stage in _RUNNING_STAGE_PRIORITY:
+        item = stages.get(stage)
+        if isinstance(item, dict) and item.get("status") == "running":
+            return stage
+    return None
+
+
 def _merge_runtime_progress(pid: str, project: dict) -> dict:
     """Overlay persisted scheduler progress while a project is actively running.
 
@@ -588,10 +608,17 @@ def _merge_runtime_progress(pid: str, project: dict) -> dict:
     also backs the frontend polling fallback, so merge the live progress there
     instead of letting stale project.json progress overwrite the websocket view.
     """
-    if not (
-        isinstance(project, dict)
-        and (project.get("status") == "processing" or project.get("pipeline_stage"))
-    ):
+    if not isinstance(project, dict):
+        return project
+
+    terminal_status = project.get("status") in {"completed", "error"}
+    runtime_stage = None if terminal_status else _running_workflow_stage(pid)
+    should_merge = (
+        project.get("status") == "processing"
+        or bool(project.get("pipeline_stage"))
+        or bool(runtime_stage)
+    )
+    if not should_merge:
         return project
 
     try:
@@ -604,8 +631,11 @@ def _merge_runtime_progress(pid: str, project: dict) -> dict:
         return project
 
     stage = progress.get("stage")
-    if stage in {"download", "asr", "translate", "burn"}:
-        project["pipeline_stage"] = stage
+    effective_stage = runtime_stage or (stage if stage in _RUNNING_PIPELINE_STAGES else None)
+    if effective_stage:
+        project["pipeline_stage"] = effective_stage
+        if project.get("status") not in {"processing", "completed", "error"}:
+            project["status"] = "processing"
     if isinstance(progress.get("progress"), int) and not isinstance(progress.get("progress"), bool):
         project["progress"] = max(0, min(100, progress["progress"]))
     message = progress.get("message")

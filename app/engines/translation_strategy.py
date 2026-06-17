@@ -81,7 +81,7 @@ def _recommendations(
         recommendations.append({
             "id": "professional_mode_available",
             "severity": "info",
-            "message": "当前为快速自动模式；专业交付可开启专业模式，翻译前先审校知识库建议并使用质量门。",
+            "message": "当前为快速自动模式；专业交付可开启专业模式，自动使用知识库候选并启用质量门。",
         })
     if content_type == "auto" and not profiles:
         recommendations.append({
@@ -131,7 +131,7 @@ def _summary(profiles: list[ContentProfile], content_type_label: str, manual_ter
 def _quality_mode_summary(translation_cfg: dict) -> dict:
     mode = _choice_setting(translation_cfg, "quality_mode", {"fast", "professional"}, "fast")
     professional = mode == "professional"
-    requires_kb_review = professional or _bool_setting(
+    requires_kb_review = _bool_setting(
         translation_cfg,
         "require_kb_suggestion_review",
         False,
@@ -141,9 +141,9 @@ def _quality_mode_summary(translation_cfg: dict) -> dict:
             "id": "professional",
             "label": "专业模式",
             "professional": True,
-            "requires_kb_review": True,
+            "requires_kb_review": requires_kb_review,
             "quality_gate": True,
-            "summary": "翻译前要求审校自动知识库建议，翻译后使用质量报告作为交付检查。",
+            "summary": "自动应用知识库候选、术语和质量报告；仅在显式开启审校门槛时才阻塞翻译。",
         }
     return {
         "id": "fast",
