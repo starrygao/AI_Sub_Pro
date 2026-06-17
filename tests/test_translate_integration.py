@@ -584,6 +584,68 @@ def test_translate_done_message_ignores_blank_sound_descriptions(tmp_path, monke
     assert project["pipeline_stage"] is None
 
 
+def test_translate_pipeline_marks_partial_translation_as_error(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transpartial"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n"
+        "2\n00:00:02,000 --> 00:00:03,000\nWorld\n\n",
+        encoding="utf-8",
+    )
+    (pdir / "translated.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n旧译文\n\n",
+        encoding="utf-8",
+    )
+    (pdir / "bilingual.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n旧译文\n\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {"translation": {}})
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            pass
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "你好"
+            return blocks
+
+        def get_kb_usage_trace(self):
+            return {"project": {}, "matches": []}
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    state = json.loads((pdir / "workflow_state.json").read_text(encoding="utf-8"))
+    assert project["status"] == "error"
+    assert "翻译未完成: 1/2 条成功，1 条缺失" in project["error"]
+    assert state["stages"]["translate"]["status"] == "failed"
+    assert not (pdir / "translated.srt").exists()
+    assert not (pdir / "bilingual.srt").exists()
+    assert (pdir / "partial_translated.srt").exists()
+    assert (pdir / "partial_bilingual.srt").exists()
+    assert (pdir / "translation_qa_report.json").exists()
+
+
 def test_translate_pipeline_can_auto_repair_quality_issues(tmp_path, monkeypatch):
     from app.api import translate as api_translate
     from app.utils import project_store

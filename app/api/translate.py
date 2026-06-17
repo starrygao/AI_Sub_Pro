@@ -198,6 +198,23 @@ def _first_safe_project_artifact(pid: str, filenames: list[str]) -> tuple[Option
     return None, None
 
 
+def _remove_safe_project_files(pid: str, filenames: list[str]) -> None:
+    pdir = project_dir(pid)
+    for filename in filenames:
+        rel = Path(filename)
+        if rel.is_absolute() or ".." in rel.parts:
+            continue
+        path = pdir / rel
+        try:
+            if path.is_symlink():
+                log.warning("refusing to remove symlink artifact pid=%s file=%s", pid, filename)
+                continue
+            if path.is_file():
+                path.unlink()
+        except OSError as e:
+            log.warning("failed to remove stale artifact pid=%s file=%s: %s", pid, filename, e)
+
+
 def _project_source_type(project: dict) -> str:
     value = project.get("source_type") if isinstance(project, dict) else None
     return value.strip() if isinstance(value, str) and value.strip() else "upload"
@@ -701,6 +718,24 @@ def _translation_failed_completely(blocks) -> Optional[str]:
     return next((b.translation_error for b in active if b.translation_error), None)
 
 
+def _translation_completion_counts(blocks) -> tuple[int, int, int]:
+    active = [b for b in blocks if _is_translatable_block(b)]
+    translated = sum(1 for b in active if b.translation)
+    return len(active), translated, len(active) - translated
+
+
+def _incomplete_translation_message(blocks) -> Optional[str]:
+    active_count, translated_count, failed_count = _translation_completion_counts(blocks)
+    if not active_count or failed_count == 0:
+        return None
+
+    total_failure = _translation_failed_completely(blocks)
+    if total_failure:
+        return f"翻译失败: {total_failure}"
+
+    return f"翻译未完成: {translated_count}/{active_count} 条成功，{failed_count} 条缺失"
+
+
 def _is_translatable_block(block) -> bool:
     """Return False for filtered/blank/sound-description rows that may stay empty."""
     if getattr(block, "filtered", False):
@@ -951,12 +986,6 @@ def _run_translate_pipeline(pid: str, target_language: str, owns_registration: b
             )
             _check_cancel(pid)
 
-            # Surface total failure instead of reporting a false success
-            # (e.g. wrong API key / model — every block fails silently).
-            fail_msg = _translation_failed_completely(blocks)
-            if fail_msg:
-                raise RuntimeError(f"翻译失败: {fail_msg}")
-
             _emit_progress(pid, "translate", 92, "正在检查翻译质量...")
             repaired = _persist_translation_quality_report(
                 pid,
@@ -970,20 +999,27 @@ def _run_translate_pipeline(pid: str, target_language: str, owns_registration: b
             if repaired:
                 log.info("translation QA repaired %d block(s) for %s", len(repaired), pid)
 
+            active_count, translated_count, failed_count = _translation_completion_counts(blocks)
+            incomplete_msg = _incomplete_translation_message(blocks)
+
             # Save results
             _emit_progress(pid, "translate", 95, "正在保存结果...")
-            write_srt(blocks, os.path.join(pdir, "translated.srt"), use_translation=True)
-
             from app.utils.srt import write_bilingual_srt
-            write_bilingual_srt(blocks, os.path.join(pdir, "bilingual.srt"))
+            if incomplete_msg:
+                _remove_safe_project_files(pid, ["translated.srt", "bilingual.srt"])
+                write_srt(blocks, os.path.join(pdir, "partial_translated.srt"), use_translation=True)
+                write_bilingual_srt(blocks, os.path.join(pdir, "partial_bilingual.srt"))
+            else:
+                write_srt(blocks, os.path.join(pdir, "translated.srt"), use_translation=True)
+                write_bilingual_srt(blocks, os.path.join(pdir, "bilingual.srt"))
             try:
                 write_kb_usage_trace(Path(pdir), translator.get_kb_usage_trace())
             except Exception as e:
                 log.warning("failed to persist KB usage trace for %s: %s", pid, e)
 
-            active_count = sum(1 for b in blocks if _is_translatable_block(b))
-            translated_count = sum(1 for b in blocks if _is_translatable_block(b) and b.translation)
-            failed_count = active_count - translated_count
+            if incomplete_msg:
+                raise RuntimeError(incomplete_msg)
+
             done_msg = f"翻译完成: {translated_count} 条"
             if failed_count > 0:
                 done_msg += f"(失败 {failed_count} 条)"
