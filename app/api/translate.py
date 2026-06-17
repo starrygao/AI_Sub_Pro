@@ -57,6 +57,7 @@ active_tasks: Dict[str, threading.Thread] = {}
 _tasks_lock = threading.Lock()
 _SOUND_DESCRIPTION_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
 _KB_REVIEW_REQUIRED_CODE = "kb_review_required"
+_QA_AUTO_REPAIR_MAX_BLOCKS = 20
 
 
 def _safe_error_message(exc, limit: int = 200) -> str:
@@ -936,6 +937,20 @@ def _repair_round_limit(cfg: dict) -> int:
     return max(1, min(value, 2))
 
 
+def _repair_item_limit(cfg: dict) -> int:
+    trans_cfg = cfg.get("translation", {}) if isinstance(cfg, dict) else {}
+    raw = (
+        trans_cfg.get("qa_auto_repair_max_blocks", _QA_AUTO_REPAIR_MAX_BLOCKS)
+        if isinstance(trans_cfg, dict)
+        else _QA_AUTO_REPAIR_MAX_BLOCKS
+    )
+    try:
+        value = int(raw)
+    except (TypeError, ValueError, OverflowError):
+        value = _QA_AUTO_REPAIR_MAX_BLOCKS
+    return max(0, min(value, 50))
+
+
 def _auto_repair_quality_issues(
     cfg: dict,
     translator,
@@ -943,6 +958,7 @@ def _auto_repair_quality_issues(
     report,
     target_language: str,
     project_kb,
+    repair_trace: dict | None = None,
 ) -> list[dict]:
     trans_cfg = cfg.get("translation", {}) if isinstance(cfg, dict) else {}
     if not isinstance(trans_cfg, dict) or not trans_cfg.get("qa_auto_repair", False):
@@ -953,7 +969,20 @@ def _auto_repair_quality_issues(
         from app.engines.providers.result_contract import reconcile_translation_results
         from app.engines.translation_qa import build_repair_items, build_repair_prompt
 
-        repair_items = build_repair_items(blocks, report.issues)
+        all_repair_items = build_repair_items(blocks, report.issues)
+        if not all_repair_items:
+            return []
+        max_blocks = _repair_item_limit(cfg)
+        repair_items = all_repair_items[:max_blocks]
+        if repair_trace is not None:
+            repair_trace.update({
+                "candidate_blocks": len(all_repair_items),
+                "max_blocks": max_blocks,
+                "attempted_blocks": len(repair_items),
+                "skipped_blocks": max(0, len(all_repair_items) - len(repair_items)),
+            })
+            if len(all_repair_items) > len(repair_items):
+                repair_trace["skipped_reason"] = "too_many_failed_blocks"
         if not repair_items:
             return []
         prompt = build_repair_prompt(
@@ -974,6 +1003,8 @@ def _auto_repair_quality_issues(
             result for result in results
             if isinstance(result, dict) and result.get("translation")
         ]
+        if repair_trace is not None:
+            repair_trace["applied_blocks"] = len(applied_results)
         if not applied_results:
             return []
         if hasattr(translator, "_apply_results"):
@@ -1018,6 +1049,8 @@ def _persist_translation_quality_report(
         project_kb = _get_singleton().select_for_project(project)
         trace_obj = getattr(translator, "last_quality_trace", None)
         trace = trace_obj.to_dict() if hasattr(trace_obj, "to_dict") else {}
+        if not isinstance(trace, dict):
+            trace = {}
         report = run_quality_checks(
             blocks,
             project_kb=project_kb,
@@ -1027,31 +1060,38 @@ def _persist_translation_quality_report(
         )
         repaired = []
         previous_hard_errors = sum(1 for issue in report.issues if issue.severity == "error")
-        for _ in range(_repair_round_limit(cfg)):
-            round_repaired = _auto_repair_quality_issues(
-                cfg,
-                translator,
-                blocks,
-                report,
-                target_language,
-                project_kb,
-            )
-            if not round_repaired:
-                break
-            repaired.extend(round_repaired)
-            report = run_quality_checks(
-                blocks,
-                project_kb=project_kb,
-                target_language=target_language,
-                meta_info=project,
-                trace=trace,
-            )
-            current_hard_errors = sum(1 for issue in report.issues if issue.severity == "error")
-            if current_hard_errors >= previous_hard_errors:
-                break
-            previous_hard_errors = current_hard_errors
-            if current_hard_errors == 0:
-                break
+        trans_cfg = cfg.get("translation", {}) if isinstance(cfg, dict) else {}
+        repair_enabled = isinstance(trans_cfg, dict) and bool(trans_cfg.get("qa_auto_repair", False))
+        if repair_enabled and report.issues:
+            repair_rounds = trace.setdefault("auto_repair_rounds", [])
+            for _ in range(_repair_round_limit(cfg)):
+                round_trace = {}
+                repair_rounds.append(round_trace)
+                round_repaired = _auto_repair_quality_issues(
+                    cfg,
+                    translator,
+                    blocks,
+                    report,
+                    target_language,
+                    project_kb,
+                    repair_trace=round_trace,
+                )
+                if not round_repaired:
+                    break
+                repaired.extend(round_repaired)
+                report = run_quality_checks(
+                    blocks,
+                    project_kb=project_kb,
+                    target_language=target_language,
+                    meta_info=project,
+                    trace=trace,
+                )
+                current_hard_errors = sum(1 for issue in report.issues if issue.severity == "error")
+                if current_hard_errors >= previous_hard_errors:
+                    break
+                previous_hard_errors = current_hard_errors
+                if current_hard_errors == 0:
+                    break
         if repaired:
             report.repaired_blocks = repaired
 

@@ -1871,10 +1871,82 @@ function app() {
       const matches = Array.isArray(src.matches)
         ? src.matches.filter(item => this.isPlainObject(item))
         : [];
+      const list = (key) => Array.isArray(src[key])
+        ? src[key].filter(item => this.isPlainObject(item))
+        : [];
+      const textOf = (...values) => {
+        for (const value of values) {
+          if (typeof value === 'string' && value.trim()) return value.trim();
+          if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+        }
+        return '';
+      };
+      const memoryHits = list('memory_hits');
+      const phraseHits = list('phrase_hits');
+      const kbHits = list('kb_hits');
+      const profileHits = list('profile_hits');
+      const styleHits = list('style_hits');
+      const conflictHits = list('conflict_hits');
+      const displayHits = [
+        ...matches.map((item) => ({
+          ...item,
+          trace_group: item.category ? this.kbCategoryLabel(item.category) : '项目知识库',
+          trace_source: textOf(item.source, item.text, item.term),
+          trace_target: textOf(item.target, item.translation, item.notes),
+        })),
+        ...memoryHits.map((item) => ({
+          ...item,
+          trace_group: '翻译记忆',
+          trace_source: textOf(item.source_text, item.source, item.original, item.text),
+          trace_target: textOf(item.final_translation, item.target_text, item.translation, item.target),
+        })),
+        ...phraseHits.map((item) => ({
+          ...item,
+          trace_group: '例句库',
+          trace_source: textOf(item.source_text, item.source, item.original, item.text),
+          trace_target: textOf(item.target_text, item.translation, item.target, item.source_name),
+        })),
+        ...kbHits.map((item) => ({
+          ...item,
+          trace_group: item.scope === 'manual_terms' ? '手动术语' : '上下文',
+          trace_source: textOf(item.source, item.matched_source, item.source_title, item.id, item.scope),
+          trace_target: textOf(item.target, item.notes, item.content_type, item.academic_field),
+        })),
+        ...profileHits.map((item) => ({
+          ...item,
+          trace_group: '内容策略',
+          trace_source: textOf(item.label, item.id, item.scope),
+          trace_target: Array.isArray(item.signals) && item.signals.length
+            ? item.signals.join(' / ')
+            : textOf(item.example_count),
+        })),
+        ...styleHits.map((item) => ({
+          ...item,
+          trace_group: '字幕样式',
+          trace_source: textOf(item.id, item.scope),
+          trace_target: [
+            textOf(item.max_line_chars) ? `${item.max_line_chars}字/行` : '',
+            textOf(item.max_chars_per_second) ? `${item.max_chars_per_second}cps` : '',
+          ].filter(Boolean).join(' · '),
+        })),
+        ...conflictHits.map((item) => ({
+          ...item,
+          trace_group: '术语冲突',
+          trace_source: textOf(item.source, item.term, item.id),
+          trace_target: textOf(item.message, item.category, item.scope),
+        })),
+      ].filter(item => item.trace_source || item.trace_target);
       return {
         ...src,
         project,
         matches,
+        memory_hits: memoryHits,
+        phrase_hits: phraseHits,
+        kb_hits: kbHits,
+        profile_hits: profileHits,
+        style_hits: styleHits,
+        conflict_hits: conflictHits,
+        display_hits: displayHits,
       };
     },
 

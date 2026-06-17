@@ -383,6 +383,13 @@ def test_knowledge_frontend_loads_usage_trace_for_current_project():
                 {source: 'Alice', target: '爱丽丝', category: 'characters'},
                 'bad row',
               ],
+              phrase_hits: [
+                {source_text: 'Shoot your shot.', target_text: '主动出击。'},
+                'bad phrase',
+              ],
+              style_hits: [
+                {id: 'zh_cn_general', max_line_chars: 16, max_chars_per_second: 9},
+              ],
               extra: 'kept',
             };
           };
@@ -403,6 +410,18 @@ def test_knowledge_frontend_loads_usage_trace_for_current_project():
           }
           if (state.kbUsageTrace.matches.length !== 1 || state.kbUsageTrace.matches[0].source !== 'Alice') {
             throw new Error(`expected normalized matches, got ${JSON.stringify(state.kbUsageTrace.matches)}`);
+          }
+          if (state.kbUsageTrace.phrase_hits.length !== 1 || state.kbUsageTrace.phrase_hits[0].source_text !== 'Shoot your shot.') {
+            throw new Error(`expected normalized phrase hits, got ${JSON.stringify(state.kbUsageTrace.phrase_hits)}`);
+          }
+          if (state.kbUsageTrace.display_hits.length !== 3) {
+            throw new Error(`expected display hits from matches and quality context, got ${JSON.stringify(state.kbUsageTrace.display_hits)}`);
+          }
+          if (state.kbUsageTrace.display_hits[1].trace_group !== '例句库' || state.kbUsageTrace.display_hits[1].trace_target !== '主动出击。') {
+            throw new Error(`expected phrase display hit, got ${JSON.stringify(state.kbUsageTrace.display_hits[1])}`);
+          }
+          if (state.kbUsageTrace.display_hits[2].trace_group !== '字幕样式' || !state.kbUsageTrace.display_hits[2].trace_target.includes('16字/行')) {
+            throw new Error(`expected style display hit, got ${JSON.stringify(state.kbUsageTrace.display_hits[2])}`);
           }
 
           state.currentProject = null;

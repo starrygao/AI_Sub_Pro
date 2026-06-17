@@ -527,12 +527,38 @@ def _is_useful_term(source: str, origin: str) -> bool:
         return False
     folded = source.casefold()
     is_high_confidence_origin = origin in {"cast", "character", "title", "name", "show_title", "original_title"}
+    if _is_single_word_subtitle_noise(source, origin):
+        return False
     if folded in _NOISE_TERMS and (not is_high_confidence_origin or len(folded) == 1):
         return False
     letters = [char for char in source if char.isalpha()]
     if len(letters) <= 2 and not is_high_confidence_origin:
         return False
     return True
+
+
+def _is_single_word_subtitle_noise(source: str, origin: str) -> bool:
+    if origin != "subtitle":
+        return False
+    if _suggested_target(source) or _suggested_notes(source):
+        return False
+    words = _WORD_RE.findall(source)
+    if len(words) != 1:
+        return False
+    return not _is_acronym_word(words[0])
+
+
+def _is_legacy_pending_subtitle_noise_suggestion(suggestion: KbSuggestion) -> bool:
+    if getattr(suggestion, "status", "pending") != "pending":
+        return False
+    evidence = getattr(suggestion, "evidence", [])
+    if not isinstance(evidence, list):
+        return False
+    has_subtitle_evidence = any(
+        isinstance(item, str) and item.startswith("subtitle")
+        for item in evidence
+    )
+    return has_subtitle_evidence and _is_single_word_subtitle_noise(suggestion.source, "subtitle")
 
 
 def extract_kb_suggestions(
@@ -573,7 +599,10 @@ def load_suggestions(path: Path) -> list[KbSuggestion]:
     suggestions = []
     for row in rows:
         if isinstance(row, dict):
-            suggestions.append(KbSuggestion(**row))
+            suggestion = KbSuggestion(**row)
+            if _is_legacy_pending_subtitle_noise_suggestion(suggestion):
+                continue
+            suggestions.append(suggestion)
     return suggestions
 
 

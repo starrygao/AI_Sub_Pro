@@ -283,6 +283,43 @@ def test_kb_usage_trace_endpoint_returns_existing_trace(tmp_project_dir, patched
     }
 
 
+def test_kb_usage_trace_endpoint_merges_translation_quality_context(tmp_project_dir, patched_kb_file):
+    import json
+
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_trace_quality"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case"})
+    (pdir / "kb_usage_trace.json").write_text(json.dumps({
+        "project": {"show_title": "Moonlit Case"},
+        "matches": [{"category": "characters", "source": "Maya Chen", "target": "玛雅·陈"}],
+    }), encoding="utf-8")
+    (pdir / "translation_qa_report.json").write_text(json.dumps({
+        "status": "needs_review",
+        "trace": {
+            "phrase_hits": [{"source_text": "Shoot your shot.", "target_text": "主动出击。"}],
+            "profile_hits": [{"id": "medical_drama", "label": "Medical drama"}],
+            "style_hits": [{"scope": "subtitle_style", "id": "zh_cn_general"}],
+            "auto_repair_rounds": [{"candidate_blocks": 5, "attempted_blocks": 2}],
+        },
+    }), encoding="utf-8")
+
+    response = client.get(f"/api/knowledge/projects/{pid}/usage-trace")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["matches"] == [
+        {"category": "characters", "source": "Maya Chen", "target": "玛雅·陈"},
+    ]
+    assert data["phrase_hits"] == [{"source_text": "Shoot your shot.", "target_text": "主动出击。"}]
+    assert data["profile_hits"] == [{"id": "medical_drama", "label": "Medical drama"}]
+    assert data["style_hits"] == [{"scope": "subtitle_style", "id": "zh_cn_general"}]
+    assert data["auto_repair_rounds"] == [{"candidate_blocks": 5, "attempted_blocks": 2}]
+
+
 def test_kb_usage_trace_endpoint_missing_file_returns_empty_trace(tmp_project_dir, patched_kb_file):
     from app.main import app
     from app.utils.project_store import atomic_write_json

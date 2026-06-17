@@ -772,12 +772,97 @@ def test_translate_pipeline_auto_repair_preserves_omitted_rows(tmp_path, monkeyp
     assert report["repaired_blocks"] == [{"id": 1, "translation": "你还好吗？"}]
 
 
+def test_translate_pipeline_caps_auto_repair_batch_and_records_trace(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transrepaircap"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "\n".join([
+            "1", "00:00:00,000 --> 00:00:01,000", "Line one.", "",
+            "2", "00:00:01,000 --> 00:00:02,000", "Line two.", "",
+            "3", "00:00:02,000 --> 00:00:03,000", "Line three.", "",
+            "4", "00:00:03,000 --> 00:00:04,000", "Line four.", "",
+            "5", "00:00:04,000 --> 00:00:05,000", "Line five.", "",
+        ]),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {"qa_auto_repair": True, "qa_auto_repair_max_blocks": 2},
+    })
+    attempted_batches = []
+
+    class FakePrimary:
+        def translate_batch(self, items, system_prompt):
+            attempted_batches.append([item["id"] for item in items])
+            assert [item["id"] for item in items] == [1, 2]
+            assert "Line three." not in system_prompt
+            return [
+                {"id": item["id"], "translation": f"译文{item['id']}"}
+                for item in items
+            ]
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            self.primary = FakePrimary()
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            return blocks
+
+        def _apply_results(self, blocks, results):
+            by_id = {str(result["id"]): result["translation"] for result in results}
+            for block in blocks:
+                translation = by_id.get(str(block.index))
+                if translation:
+                    block.translation = translation
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
+    round_trace = report["trace"]["auto_repair_rounds"][0]
+    assert attempted_batches == [[1, 2]]
+    assert project["status"] == "error"
+    assert round_trace == {
+        "candidate_blocks": 5,
+        "max_blocks": 2,
+        "attempted_blocks": 2,
+        "skipped_blocks": 3,
+        "skipped_reason": "too_many_failed_blocks",
+        "applied_blocks": 2,
+    }
+    assert report["repaired_blocks"] == [
+        {"id": 1, "translation": "译文1"},
+        {"id": 2, "translation": "译文2"},
+    ]
+
+
 def test_translate_pipeline_limits_auto_repair_rounds(tmp_path, monkeypatch):
     from app.api import translate as translate_api
 
     assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 0}}) == 1
     assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 2}}) == 2
     assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 99}}) == 2
+    assert translate_api._repair_item_limit({"translation": {"qa_auto_repair_max_blocks": -1}}) == 0
+    assert translate_api._repair_item_limit({"translation": {"qa_auto_repair_max_blocks": 2}}) == 2
+    assert translate_api._repair_item_limit({"translation": {"qa_auto_repair_max_blocks": 99}}) == 50
 
 
 def test_translate_pipeline_redacts_exception_details_in_project_error(tmp_path, monkeypatch):

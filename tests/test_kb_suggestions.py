@@ -414,6 +414,47 @@ def test_suggest_kb_entries_keeps_uppercase_acronyms_but_ignores_noise():
     assert "TV" not in sources
 
 
+def test_suggest_kb_entries_drops_single_word_subtitle_noise_but_keeps_entities():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {},
+        [{
+            "index": 9,
+            "text": "Here. Right? Are you ready? Thank you. James Stagg briefs NASA. Sofia arrives.",
+        }],
+        None,
+    )
+
+    sources = {item.source for item in suggestions}
+    assert {"James Stagg", "NASA", "Sofia"} <= sources
+    assert "Here" not in sources
+    assert "Right" not in sources
+    assert "Are" not in sources
+    assert "Thank" not in sources
+
+
+def test_load_suggestions_filters_legacy_pending_single_word_subtitle_noise(tmp_path):
+    from app.engines.kb_suggestions import KbSuggestion, load_suggestions, save_suggestions
+
+    path = tmp_path / "kb_suggestions.json"
+    save_suggestions(path, [
+        KbSuggestion(source="Here", evidence=["subtitle:1"]),
+        KbSuggestion(source="Right", evidence=["subtitle:1"], status="accepted"),
+        KbSuggestion(source="Sofia", evidence=["subtitle:1"]),
+        KbSuggestion(source="James Stagg", evidence=["subtitle:1"]),
+        KbSuggestion(source="Here", evidence=["title"]),
+    ])
+
+    loaded = load_suggestions(path)
+    rows = [(item.source, item.evidence, item.status) for item in loaded]
+    assert ("Here", ["subtitle:1"], "pending") not in rows
+    assert ("Right", ["subtitle:1"], "accepted") in rows
+    assert ("Sofia", ["subtitle:1"], "pending") in rows
+    assert ("James Stagg", ["subtitle:1"], "pending") in rows
+    assert ("Here", ["title"], "pending") in rows
+
+
 def test_suggest_kb_entries_prefills_curated_science_terms():
     from app.engines.kb_suggestions import suggest_kb_entries
 

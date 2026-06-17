@@ -1682,18 +1682,18 @@
               <div x-show="kbTraceError" x-cloak class="mb-3 rounded-lg border border-danger/30 px-3 py-2 text-[12px] text-danger" style="background: rgba(220,38,38,0.06);">
                 <p x-text="'加载失败：' + kbTraceError"></p>
               </div>
-              <div x-show="kbUsageTrace?.matches?.length" class="divide-y divide-surface-200">
-                <template x-for="(match, i) in kbUsageTrace?.matches || []" :key="i">
+              <div x-show="kbUsageTrace?.display_hits?.length" class="divide-y divide-surface-200">
+                <template x-for="(match, i) in kbUsageTrace?.display_hits || []" :key="(match.trace_group || '') + ':' + i">
                   <div class="py-3 grid grid-cols-[1fr_auto] gap-3 items-start">
                     <div class="min-w-0">
-                      <div class="text-[12px] font-medium truncate" x-text="match.source || match.text || match.term || '-'"></div>
-                      <div class="text-[11px] text-surface-400 truncate" x-text="match.target || match.translation || ''"></div>
+                      <div class="text-[12px] font-medium truncate" x-text="match.trace_source || match.source || match.text || match.term || '-'"></div>
+                      <div class="text-[11px] text-surface-400 truncate" x-text="match.trace_target || match.target || match.translation || ''"></div>
                     </div>
-                    <span class="text-[11px] text-surface-400" x-text="match.category ? kbCategoryLabel(match.category) : ''"></span>
+                    <span class="text-[11px] text-surface-400" x-text="match.trace_group || (match.category ? kbCategoryLabel(match.category) : '')"></span>
                   </div>
                 </template>
               </div>
-              <div x-show="!kbTraceLoading && !kbTraceError && !(kbUsageTrace?.matches?.length)" class="py-4 text-center text-[12px] text-surface-400">
+              <div x-show="!kbTraceLoading && !kbTraceError && !(kbUsageTrace?.display_hits?.length)" class="py-4 text-center text-[12px] text-surface-400">
                 暂无命中
               </div>
             </div>

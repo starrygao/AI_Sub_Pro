@@ -21,6 +21,15 @@ from app.utils.srt import parse_srt_file
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
+_QUALITY_TRACE_KEYS = (
+    "memory_hits",
+    "phrase_hits",
+    "kb_hits",
+    "profile_hits",
+    "style_hits",
+    "conflict_hits",
+    "auto_repair_rounds",
+)
 
 
 class TermEntryIn(BaseModel):
@@ -219,6 +228,34 @@ def _normalize_usage_trace(data: dict) -> dict:
     return normalized
 
 
+def _load_quality_context_trace(pdir) -> dict:
+    report_path = pdir / "translation_qa_report.json"
+    if not report_path.is_file():
+        return {}
+    try:
+        data = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        log.warning("translation QA trace file is invalid for %s: %s", pdir, exc)
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    trace = data.get("trace")
+    return trace if isinstance(trace, dict) else {}
+
+
+def _merge_quality_context_trace(usage_trace: dict, quality_trace: dict) -> dict:
+    merged = dict(usage_trace)
+    if not isinstance(quality_trace, dict):
+        return merged
+    for key in _QUALITY_TRACE_KEYS:
+        value = quality_trace.get(key)
+        if value is None:
+            continue
+        if key not in merged or not merged.get(key):
+            merged[key] = value
+    return merged
+
+
 def _project_suggestions_path(pdir) -> object:
     return pdir / "kb_suggestions.json"
 
@@ -345,17 +382,18 @@ def update_kb_project_suggestion_status(pid: str, suggestion_id: str, body: Sugg
 def get_kb_project_usage_trace(pid: str):
     pdir, _project = _load_project_or_http(pid)
     trace_path = pdir / "kb_usage_trace.json"
-    if not trace_path.is_file():
-        return {"project": {}, "matches": []}
+    data = {"project": {}, "matches": []}
+    if trace_path.is_file():
+        try:
+            data = json.loads(trace_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise HTTPException(status_code=400, detail="KB usage trace file is invalid")
 
-    try:
-        data = json.loads(trace_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        raise HTTPException(status_code=400, detail="KB usage trace file is invalid")
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=400, detail="KB usage trace file is invalid")
 
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail="KB usage trace file is invalid")
-    return _normalize_usage_trace(data)
+    quality_trace = _load_quality_context_trace(pdir)
+    return _normalize_usage_trace(_merge_quality_context_trace(data, quality_trace))
 
 
 @router.post("/projects/{pid}/suggestions/accept")
