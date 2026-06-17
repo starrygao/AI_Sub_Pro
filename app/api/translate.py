@@ -56,6 +56,7 @@ router = APIRouter(prefix="/api/projects", tags=["pipeline"])
 active_tasks: Dict[str, threading.Thread] = {}
 _tasks_lock = threading.Lock()
 _SOUND_DESCRIPTION_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
+_KB_REVIEW_REQUIRED_CODE = "kb_review_required"
 
 
 def _safe_error_message(exc, limit: int = 200) -> str:
@@ -754,6 +755,164 @@ def _find_subtitle_source(pid: str) -> tuple[Optional[str], Optional[str]]:
     return source_name, str(source_path) if source_path is not None else None
 
 
+def _kb_suggestions_path(pid: str) -> Path:
+    return project_dir(pid) / "kb_suggestions.json"
+
+
+def _load_rejected_kb_suggestion_sources(pid: str) -> set[str]:
+    path = project_dir(pid) / "kb_suggestion_decisions.json"
+    if not path.is_file():
+        return set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    if not isinstance(data, dict) or not isinstance(data.get("rejected_sources"), list):
+        return set()
+    return {
+        source.strip().casefold()
+        for source in data.get("rejected_sources", [])
+        if isinstance(source, str) and source.strip()
+    }
+
+
+def _subtitle_dicts_for_kb_preflight(source_path: str) -> list[dict]:
+    from app.utils.srt import parse_srt_file
+
+    blocks = parse_srt_file(source_path)
+    return [
+        {
+            "index": getattr(block, "index", None),
+            "text": getattr(block, "text", ""),
+        }
+        for block in blocks
+        if getattr(block, "text", "")
+    ]
+
+
+def _merge_generated_kb_suggestions(generated, persisted):
+    persisted_by_id = {
+        getattr(item, "id", ""): item
+        for item in persisted
+        if getattr(item, "id", "")
+    }
+    seen_ids = set()
+    merged = []
+    for item in generated:
+        previous = persisted_by_id.get(getattr(item, "id", ""))
+        if previous is not None:
+            item.status = getattr(previous, "status", "pending") or "pending"
+            if getattr(previous, "target", ""):
+                item.target = previous.target
+            if getattr(previous, "notes", ""):
+                item.notes = previous.notes
+        merged.append(item)
+        seen_ids.add(getattr(item, "id", ""))
+
+    for item in persisted:
+        if getattr(item, "id", "") not in seen_ids:
+            merged.append(item)
+    return merged
+
+
+def _has_existing_kb_target(suggestion) -> bool:
+    entries = getattr(suggestion, "existing_entries", []) or []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        source = entry.get("source")
+        target = entry.get("target")
+        if isinstance(source, str) and source.strip() and isinstance(target, str) and target.strip():
+            return True
+    return False
+
+
+def _suggestion_has_translation_value(suggestion) -> bool:
+    source = getattr(suggestion, "source", "")
+    target = getattr(suggestion, "target", "")
+    notes = getattr(suggestion, "notes", "")
+    if isinstance(target, str) and target.strip():
+        return True
+    if isinstance(notes, str) and notes.strip():
+        return True
+
+    evidence = [
+        item
+        for item in (getattr(suggestion, "evidence", []) or [])
+        if isinstance(item, str)
+    ]
+    if any(item.startswith("subtitle:") for item in evidence):
+        return isinstance(source, str) and len(source.split()) >= 2
+    return any(item in {"cast", "character", "overview", "domain_term"} for item in evidence)
+
+
+def _suggestion_needs_kb_review(suggestion, rejected_sources: set[str]) -> bool:
+    source = getattr(suggestion, "source", "")
+    if not isinstance(source, str) or not source.strip():
+        return False
+    if source.strip().casefold() in rejected_sources:
+        return False
+    if _has_existing_kb_target(suggestion):
+        return False
+
+    status = (getattr(suggestion, "status", "") or "").strip().casefold()
+    if status == "rejected":
+        return False
+    if status == "accepted":
+        target = getattr(suggestion, "target", "")
+        return not (isinstance(target, str) and target.strip())
+    return _suggestion_has_translation_value(suggestion)
+
+
+def _kb_review_required_detail(pid: str, count: int, total: int) -> dict:
+    return {
+        "code": _KB_REVIEW_REQUIRED_CODE,
+        "project_id": pid,
+        "suggestions_count": count,
+        "total_suggestions": total,
+        "message": (
+            f"翻译前需要先审校自动知识库建议：发现 {count} 条候选。"
+            "请在项目的“自动知识库建议”或知识库页面接受/填写译文，或拒绝这些建议后再翻译。"
+        ),
+    }
+
+
+def _ensure_kb_review_ready(pid: str, project: dict, *, as_http: bool) -> None:
+    _, source_path = _find_subtitle_source(pid)
+    if not source_path:
+        return
+
+    try:
+        subtitles = _subtitle_dicts_for_kb_preflight(source_path)
+    except Exception as exc:
+        log.warning("KB preflight could not parse subtitle source pid=%s: %s", pid, exc)
+        return
+    if not subtitles:
+        return
+
+    from app.engines.knowledge import _get_singleton
+    from app.engines.kb_suggestions import extract_kb_suggestions, load_suggestions, save_suggestions
+
+    path = _kb_suggestions_path(pid)
+    existing_kb = _get_singleton().select_for_project(project)
+    generated = extract_kb_suggestions(project, subtitles, existing_kb)
+    suggestions = _merge_generated_kb_suggestions(generated, load_suggestions(path))
+    save_suggestions(path, suggestions)
+
+    rejected = _load_rejected_kb_suggestion_sources(pid)
+    review_needed = [
+        item for item in suggestions
+        if _suggestion_needs_kb_review(item, rejected)
+    ]
+    if not review_needed:
+        return
+
+    detail = _kb_review_required_detail(pid, len(review_needed), len(suggestions))
+    if as_http:
+        raise HTTPException(status_code=409, detail=detail)
+    raise RuntimeError(detail["message"])
+
+
 def _project_kb_terms(project_kb) -> dict:
     terms = {}
     if project_kb is None:
@@ -938,6 +1097,8 @@ def _run_translate_pipeline(pid: str, target_language: str, owns_registration: b
 
             if not blocks:
                 raise RuntimeError("No subtitle file found. Run ASR first.")
+
+            _ensure_kb_review_ready(pid, project, as_http=False)
 
             # Restore filter state only for unfiltered timelines. filtered.srt
             # has already removed filtered rows and re-numbered entries, so
@@ -1302,6 +1463,7 @@ def start_translate(pid: str = PathParam(pattern=PID_PATTERN), req: TranslateReq
         "target_language",
     )
     require_translation_ready()
+    _ensure_kb_review_ready(pid, project, as_http=True)
     try:
         t = try_register_task(pid, lambda: threading.Thread(
             target=_run_translate_pipeline, args=(pid, target_lang), daemon=True),

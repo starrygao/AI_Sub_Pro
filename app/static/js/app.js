@@ -661,7 +661,8 @@ function app() {
       if (body) opts.body = JSON.stringify(body);
       const r = await fetch(url, opts);
       if (!r.ok) {
-        throw new Error(await this.apiErrorMessage(r));
+        const error = await this.buildApiError(r);
+        throw error;
       }
       return r.json();
     },
@@ -676,6 +677,18 @@ function app() {
         || fallback
         || response.statusText
         || `HTTP ${response.status}`;
+    },
+
+    async buildApiError(response, fallback = '') {
+      const errorBody = await response.json().catch(() => ({}));
+      const message = this.formatApiErrorDetail(errorBody.detail)
+        || fallback
+        || response.statusText
+        || `HTTP ${response.status}`;
+      const error = new Error(message);
+      error.status = response.status;
+      if (this.isPlainObject(errorBody.detail)) error.detail = errorBody.detail;
+      return error;
     },
 
     formatApiErrorDetail(detail) {
@@ -697,7 +710,12 @@ function app() {
           .filter(Boolean)
           .join('; ');
       }
-      if (this.isPlainObject(detail)) return JSON.stringify(detail);
+      if (this.isPlainObject(detail)) {
+        if (typeof detail.message === 'string' && detail.message.trim()) {
+          return detail.message.trim();
+        }
+        return JSON.stringify(detail);
+      }
       return '';
     },
 
@@ -2719,10 +2737,27 @@ function app() {
         this.currentProject.status = 'processing';
         this.toast(message);
       } catch(e) {
-        this.toast(e.message, 'error');
+        await this.handleProjectActionError(e);
       } finally {
         if (this.projectActionPending === action) this.projectActionPending = '';
       }
+    },
+
+    isKbReviewRequiredError(error) {
+      return this.isPlainObject(error?.detail)
+        && error.detail.code === 'kb_review_required';
+    },
+
+    async handleProjectActionError(error) {
+      const message = error?.message || '启动失败';
+      if (this.isKbReviewRequiredError(error)) {
+        this.kbSuggestionError = message;
+        this.kbSuggestionsError = message;
+        await this.loadKbSuggestions();
+        this.toast(message, 'error');
+        return;
+      }
+      this.toast(message, 'error');
     },
 
     async startASR() {

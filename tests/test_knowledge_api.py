@@ -368,6 +368,32 @@ def test_kb_reject_suggestions_persists_project_decision(tmp_project_dir, patche
     assert data["rejected_sources"] == ["Noisy Phrase", "Unused Name"]
 
 
+def test_kb_suggestion_status_rejects_accept_without_target(tmp_project_dir, patched_kb_file):
+    import json
+
+    from app.engines.kb_suggestions import KbSuggestion, save_suggestions
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_status_blank"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case"})
+    save_suggestions(pdir / "kb_suggestions.json", [
+        KbSuggestion(id="character:maya-chen", source="Maya Chen", target="", category="characters")
+    ])
+
+    response = client.post(
+        f"/api/knowledge/projects/{pid}/suggestions/character%3Amaya-chen/status",
+        json={"status": "accepted"},
+    )
+
+    assert response.status_code == 400
+    assert "译文" in response.json()["detail"]
+    saved = json.loads((pdir / "kb_suggestions.json").read_text(encoding="utf-8"))
+    assert saved["suggestions"][0]["status"] == "pending"
+
+
 def test_kb_accept_suggestions_skips_duplicate_blank_target_and_invalid_category(
     tmp_project_dir,
     patched_kb_file,

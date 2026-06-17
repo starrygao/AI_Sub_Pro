@@ -41,6 +41,41 @@ def _allow_translation(monkeypatch):
     )
 
 
+def _isolate_kb(tmp_project_dir, monkeypatch):
+    from app.engines import knowledge as kb_mod
+
+    monkeypatch.setattr(kb_mod, "KB_FILE", tmp_project_dir / "knowledge.json")
+    kb_mod._reset_singleton()
+    try:
+        import app.engines.translator as tmod
+        monkeypatch.setattr(tmod, "_shared_kb", kb_mod.KnowledgeBase(), raising=False)
+    except ImportError:
+        pass
+
+
+def _seed_subtitle_project(tmp_project_dir, pid="subkb01"):
+    pdir = tmp_project_dir / pid
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / "raw.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\nOliver Wolf visits Hudson Oaks.\n\n",
+        encoding="utf-8",
+    )
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "Brilliant Minds S02E15 translation",
+        "show_title": "Brilliant Minds",
+        "video_path": None,
+        "source_type": "subtitle",
+        "status": "created",
+        "selected_audio_track": 0,
+        "audio_tracks": [],
+        "target_language": "简体中文",
+        "asr_skipped": True,
+        "cast": [{"name": "Oliver Wolf"}],
+    }), encoding="utf-8")
+    return pid
+
+
 def test_start_asr_rejects_invalid_audio_track(tmp_project_dir, monkeypatch):
     client = _client(tmp_project_dir, monkeypatch)
     pid = _seed_project(tmp_project_dir)
@@ -115,6 +150,67 @@ def test_translation_dependent_starts_reject_missing_provider_before_launch(tmp_
         assert "OpenAI" in r.json()["detail"]
 
     assert translate_api.active_tasks == {}
+
+
+def test_start_translate_generates_and_blocks_unreviewed_kb_suggestions(tmp_project_dir, monkeypatch):
+    from app.api import translate as translate_api
+
+    _isolate_kb(tmp_project_dir, monkeypatch)
+    client = _client(tmp_project_dir, monkeypatch)
+    _allow_translation(monkeypatch)
+    pid = _seed_subtitle_project(tmp_project_dir)
+
+    def fail_register(*args, **kwargs):
+        raise AssertionError("task should not start while KB suggestions need review")
+
+    monkeypatch.setattr(translate_api, "try_register_task", fail_register)
+
+    r = client.post(f"/api/projects/{pid}/start-translate", json={"target_language": "English"})
+
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["code"] == "kb_review_required"
+    assert detail["suggestions_count"] > 0
+    assert "知识库建议" in detail["message"]
+    saved = json.loads((tmp_project_dir / pid / "kb_suggestions.json").read_text(encoding="utf-8"))
+    sources = {item["source"] for item in saved["suggestions"]}
+    assert {"Brilliant Minds", "Oliver Wolf"} <= sources
+    assert translate_api.active_tasks == {}
+
+
+def test_start_translate_allows_after_kb_suggestions_are_rejected(tmp_project_dir, monkeypatch):
+    from app.api import translate as translate_api
+
+    _isolate_kb(tmp_project_dir, monkeypatch)
+    client = _client(tmp_project_dir, monkeypatch)
+    _allow_translation(monkeypatch)
+    pid = _seed_subtitle_project(tmp_project_dir, pid="subkb02")
+
+    monkeypatch.setattr(
+        translate_api,
+        "try_register_task",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("first launch should be blocked")),
+    )
+    first = client.post(f"/api/projects/{pid}/start-translate", json={"target_language": "English"})
+    assert first.status_code == 409
+
+    saved = json.loads((tmp_project_dir / pid / "kb_suggestions.json").read_text(encoding="utf-8"))
+    sources = [item["source"] for item in saved["suggestions"]]
+    (tmp_project_dir / pid / "kb_suggestion_decisions.json").write_text(
+        json.dumps({"rejected_sources": sources}),
+        encoding="utf-8",
+    )
+
+    class DummyThread:
+        def start(self):
+            pass
+
+    monkeypatch.setattr(translate_api, "try_register_task", lambda *args, **kwargs: DummyThread())
+
+    r = client.post(f"/api/projects/{pid}/start-translate", json={"target_language": "English"})
+
+    assert r.status_code == 200
+    assert r.json()["status"] == "started"
 
 
 def test_start_full_persists_requested_workflow_options_before_launch(tmp_project_dir, monkeypatch):

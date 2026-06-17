@@ -1142,6 +1142,63 @@ def test_translation_required_project_actions_block_when_not_ready():
     )
 
 
+def test_project_start_action_refreshes_kb_suggestions_when_review_required():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const calls = [];
+          const toasts = [];
+          state.currentProject = {id: 'p1', status: 'created'};
+          state.sysCheck = {translation_ready: true};
+          state.toast = (msg, type) => { toasts.push([msg, type || 'success']); };
+          state.api = async (url, method, body) => {
+            calls.push([method || 'GET', url, body || null]);
+            if (url === '/api/projects/p1/start-translate' && method === 'POST') {
+              const err = new Error('翻译前需要先审校自动知识库建议：发现 2 条候选。');
+              err.status = 409;
+              err.detail = {code: 'kb_review_required', suggestions_count: 2};
+              throw err;
+            }
+            if (url === '/api/knowledge/projects/p1/suggestions') {
+              return {suggestions: [{id: 'character:oliver-wolf', source: 'Oliver Wolf', target: '奥利弗·沃尔夫'}]};
+            }
+            throw new Error(`unexpected API call ${method} ${url}`);
+          };
+
+          await state.startTranslate();
+
+          const urls = calls.map((call) => `${call[0]} ${call[1]}`);
+          if (!urls.includes('POST /api/projects/p1/start-translate')) {
+            throw new Error(`expected translation start, got ${JSON.stringify(calls)}`);
+          }
+          if (!urls.includes('GET /api/knowledge/projects/p1/suggestions')) {
+            throw new Error(`expected suggestions refresh, got ${JSON.stringify(calls)}`);
+          }
+          if (state.kbSuggestions.length !== 1 || state.kbSuggestions[0].source !== 'Oliver Wolf') {
+            throw new Error(`expected refreshed suggestions, got ${JSON.stringify(state.kbSuggestions)}`);
+          }
+          if (state.currentProject.status !== 'created') {
+            throw new Error(`expected project not to be processing, got ${state.currentProject.status}`);
+          }
+          if (!toasts.some((item) => item[1] === 'error' && item[0].includes('知识库建议'))) {
+            throw new Error(`expected KB review toast, got ${JSON.stringify(toasts)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_project_start_actions_ignore_duplicate_submits_while_pending():
     _run_node(
         """

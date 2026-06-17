@@ -318,6 +318,14 @@ def generate_kb_project_suggestions(pid: str):
 @router.post("/projects/{pid}/suggestions/{suggestion_id}/status")
 def update_kb_project_suggestion_status(pid: str, suggestion_id: str, body: SuggestionStatusIn):
     pdir, project = _load_project_or_http(pid)
+    cleaned_status = _clean_text(body.status).casefold()
+    if cleaned_status == "accepted":
+        existing = next(
+            (item for item in load_suggestions(_project_suggestions_path(pdir)) if item.id == suggestion_id),
+            None,
+        )
+        if existing is not None and not _clean_text(getattr(existing, "target", "")):
+            raise HTTPException(status_code=400, detail="接受 KB 建议前需要填写译文")
     try:
         suggestion = update_suggestion_status(
             _project_suggestions_path(pdir),
