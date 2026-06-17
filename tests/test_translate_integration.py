@@ -772,7 +772,7 @@ def test_translate_pipeline_auto_repair_preserves_omitted_rows(tmp_path, monkeyp
     assert report["repaired_blocks"] == [{"id": 1, "translation": "你还好吗？"}]
 
 
-def test_translate_pipeline_caps_auto_repair_batch_and_records_trace(tmp_path, monkeypatch):
+def test_translate_pipeline_batches_auto_repair_and_records_trace(tmp_path, monkeypatch):
     from app.api import translate as api_translate
     from app.utils import project_store
 
@@ -809,7 +809,6 @@ def test_translate_pipeline_caps_auto_repair_batch_and_records_trace(tmp_path, m
         def translate_batch(self, items, system_prompt):
             attempted_batches.append([item["id"] for item in items])
             assert len(items) <= 2
-            assert "Line five." not in system_prompt
             return [
                 {"id": item["id"], "translation": f"译文{item['id']}"}
                 for item in items
@@ -838,37 +837,39 @@ def test_translate_pipeline_caps_auto_repair_batch_and_records_trace(tmp_path, m
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
     rounds = report["trace"]["auto_repair_rounds"]
-    assert attempted_batches == [[1, 2], [3, 4]]
-    assert project["status"] == "error"
+    assert attempted_batches == [[1, 2], [3, 4], [5]]
+    assert project["status"] == "translated"
     assert rounds[0]["before_issue_count"] == 5
-    assert rounds[0]["after_issue_count"] == 3
+    assert rounds[0]["after_issue_count"] == 0
     assert rounds[0]["candidate_blocks"] == 5
     assert rounds[0]["max_blocks"] == 2
-    assert rounds[0]["attempted_blocks"] == 2
-    assert rounds[0]["skipped_blocks"] == 3
-    assert rounds[0]["skipped_reason"] == "too_many_failed_blocks"
-    assert rounds[0]["applied_blocks"] == 2
+    assert rounds[0]["attempted_blocks"] == 5
+    assert rounds[0]["skipped_blocks"] == 0
+    assert rounds[0]["applied_blocks"] == 5
+    assert rounds[0]["batches"] == [
+        {"batch": 1, "attempted_blocks": 2, "applied_blocks": 2},
+        {"batch": 2, "attempted_blocks": 2, "applied_blocks": 2},
+        {"batch": 3, "attempted_blocks": 1, "applied_blocks": 1},
+    ]
     assert rounds[0]["result"] == "improved"
-    assert rounds[1]["before_issue_count"] == 3
-    assert rounds[1]["after_issue_count"] == 1
-    assert rounds[1]["candidate_blocks"] == 3
-    assert rounds[1]["attempted_blocks"] == 2
-    assert rounds[1]["applied_blocks"] == 2
+    assert len(rounds) == 1
     assert report["repaired_blocks"] == [
         {"id": 1, "translation": "译文1"},
         {"id": 2, "translation": "译文2"},
         {"id": 3, "translation": "译文3"},
         {"id": 4, "translation": "译文4"},
+        {"id": 5, "translation": "译文5"},
     ]
-    assert report["summary"]["quality_gate"]["auto_repaired_blocks"] == 4
-    assert report["summary"]["quality_gate"]["passed"] is False
+    assert report["summary"]["quality_gate"]["auto_repaired_blocks"] == 5
+    assert report["summary"]["quality_gate"]["passed"] is True
 
 
 def test_translate_pipeline_limits_auto_repair_rounds(tmp_path, monkeypatch):
     from app.api import translate as translate_api
 
     assert translate_api._repair_round_limit({"translation": {}}) == 2
-    assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 0}}) == 1
+    assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 0}}) == 2
+    assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 1}}) == 2
     assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 2}}) == 2
     assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 99}}) == 2
     assert translate_api._repair_item_limit({"translation": {"qa_auto_repair_max_blocks": -1}}) == 0

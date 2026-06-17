@@ -1012,7 +1012,7 @@ def _repair_round_limit(cfg: dict) -> int:
         value = int(raw)
     except (TypeError, ValueError, OverflowError):
         value = 2
-    return max(1, min(value, 2))
+    return max(2, min(value, 2))
 
 
 def _repair_item_limit(cfg: dict) -> int:
@@ -1103,37 +1103,57 @@ def _auto_repair_quality_issues(
         if not all_repair_items:
             return []
         max_blocks = _repair_item_limit(cfg)
-        repair_items = all_repair_items[:max_blocks]
         if repair_trace is not None:
             repair_trace.update({
                 "candidate_blocks": len(all_repair_items),
                 "max_blocks": max_blocks,
-                "attempted_blocks": len(repair_items),
-                "skipped_blocks": max(0, len(all_repair_items) - len(repair_items)),
+                "attempted_blocks": 0,
+                "skipped_blocks": len(all_repair_items),
+                "batches": [],
             })
-            if len(all_repair_items) > len(repair_items):
-                repair_trace["skipped_reason"] = "too_many_failed_blocks"
-        if not repair_items:
+        if max_blocks <= 0:
+            if repair_trace is not None:
+                repair_trace["skipped_reason"] = "repair_disabled_by_zero_limit"
             return []
-        prompt = build_repair_prompt(
-            target_language,
-            repair_items,
-            report.issues,
-            kb_terms=_project_kb_terms(project_kb),
-        )
         primary = getattr(translator, "primary", None)
         if primary is None or not hasattr(primary, "translate_batch"):
+            if repair_trace is not None:
+                repair_trace["skipped_reason"] = "repair_provider_unavailable"
             return []
-        raw_results = primary.translate_batch(repair_items, prompt)
-        results = reconcile_translation_results(
-            raw_results if isinstance(raw_results, list) else [],
-            repair_items,
-        )
-        applied_results = [
-            result for result in results
-            if isinstance(result, dict) and result.get("translation")
-        ]
+
+        applied_results = []
+        attempted_blocks = 0
+        batch_traces = repair_trace.get("batches") if isinstance(repair_trace, dict) else None
+        for start in range(0, len(all_repair_items), max_blocks):
+            repair_items = all_repair_items[start:start + max_blocks]
+            if not repair_items:
+                continue
+            attempted_blocks += len(repair_items)
+            prompt = build_repair_prompt(
+                target_language,
+                repair_items,
+                report.issues,
+                kb_terms=_project_kb_terms(project_kb),
+            )
+            raw_results = primary.translate_batch(repair_items, prompt)
+            results = reconcile_translation_results(
+                raw_results if isinstance(raw_results, list) else [],
+                repair_items,
+            )
+            batch_results = [
+                result for result in results
+                if isinstance(result, dict) and result.get("translation")
+            ]
+            applied_results.extend(batch_results)
+            if isinstance(batch_traces, list):
+                batch_traces.append({
+                    "batch": len(batch_traces) + 1,
+                    "attempted_blocks": len(repair_items),
+                    "applied_blocks": len(batch_results),
+                })
         if repair_trace is not None:
+            repair_trace["attempted_blocks"] = attempted_blocks
+            repair_trace["skipped_blocks"] = max(0, len(all_repair_items) - attempted_blocks)
             repair_trace["applied_blocks"] = len(applied_results)
         if not applied_results:
             return []
