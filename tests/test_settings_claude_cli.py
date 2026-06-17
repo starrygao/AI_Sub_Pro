@@ -512,6 +512,7 @@ def test_update_settings_rejects_invalid_boolean_values(monkeypatch):
         ({"translation": {"full_doc_mode": 1}}, "full_doc_mode"),
         ({"translation": {"use_translation_memory": "true"}}, "use_translation_memory"),
         ({"translation": {"use_phrase_library": 1}}, "use_phrase_library"),
+        ({"translation": {"require_kb_suggestion_review": "true"}}, "require_kb_suggestion_review"),
         ({"translation": {"qa_auto_repair": "false"}}, "qa_auto_repair"),
         ({"translation": {"max_memory_examples": True}}, "max_memory_examples"),
         ({"translation": {"max_phrase_examples": False}}, "max_phrase_examples"),
@@ -602,6 +603,7 @@ def test_update_settings_accepts_and_normalizes_translation_retrieval_fields():
                 "phrase_retrieval_backend": " NGRAM ",
                 "max_memory_examples": 20,
                 "max_phrase_examples": 0,
+                "require_kb_suggestion_review": True,
                 "qa_auto_repair_rounds": 2,
             }
         })
@@ -612,6 +614,7 @@ def test_update_settings_accepts_and_normalizes_translation_retrieval_fields():
     assert payload["translation"]["phrase_retrieval_backend"] == "ngram"
     assert payload["translation"]["max_memory_examples"] == 20
     assert payload["translation"]["max_phrase_examples"] == 0
+    assert payload["translation"]["require_kb_suggestion_review"] is True
     assert payload["translation"]["qa_auto_repair_rounds"] == 2
 
 

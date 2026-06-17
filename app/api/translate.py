@@ -878,7 +878,22 @@ def _kb_review_required_detail(pid: str, count: int, total: int) -> dict:
     }
 
 
-def _ensure_kb_review_ready(pid: str, project: dict, *, as_http: bool) -> None:
+def _requires_kb_suggestion_review(config: Optional[dict] = None) -> bool:
+    cfg = config if isinstance(config, dict) else Config.to_dict()
+    translation = cfg.get("translation") if isinstance(cfg, dict) else {}
+    return (
+        isinstance(translation, dict)
+        and translation.get("require_kb_suggestion_review") is True
+    )
+
+
+def _ensure_kb_review_ready(
+    pid: str,
+    project: dict,
+    *,
+    as_http: bool,
+    config: Optional[dict] = None,
+) -> None:
     _, source_path = _find_subtitle_source(pid)
     if not source_path:
         return
@@ -899,8 +914,22 @@ def _ensure_kb_review_ready(pid: str, project: dict, *, as_http: bool) -> None:
     generated = extract_kb_suggestions(project, subtitles, existing_kb)
     suggestions = _merge_generated_kb_suggestions(generated, load_suggestions(path))
     save_suggestions(path, suggestions)
-
     rejected = _load_rejected_kb_suggestion_sources(pid)
+    if not _requires_kb_suggestion_review(config):
+        review_count = sum(
+            1 for item in suggestions
+            if _suggestion_needs_kb_review(item, rejected)
+        )
+        if review_count:
+            log.info(
+                "KB suggestions generated for %s but translation is not blocked "
+                "(review_required=false, reviewable=%d, total=%d)",
+                pid,
+                review_count,
+                len(suggestions),
+        )
+        return
+
     review_needed = [
         item for item in suggestions
         if _suggestion_needs_kb_review(item, rejected)
@@ -1138,7 +1167,7 @@ def _run_translate_pipeline(pid: str, target_language: str, owns_registration: b
             if not blocks:
                 raise RuntimeError("No subtitle file found. Run ASR first.")
 
-            _ensure_kb_review_ready(pid, project, as_http=False)
+            _ensure_kb_review_ready(pid, project, as_http=False, config=cfg)
 
             # Restore filter state only for unfiltered timelines. filtered.srt
             # has already removed filtered rows and re-numbered entries, so
@@ -1503,7 +1532,7 @@ def start_translate(pid: str = PathParam(pattern=PID_PATTERN), req: TranslateReq
         "target_language",
     )
     require_translation_ready()
-    _ensure_kb_review_ready(pid, project, as_http=True)
+    _ensure_kb_review_ready(pid, project, as_http=True, config=Config.to_dict())
     try:
         t = try_register_task(pid, lambda: threading.Thread(
             target=_run_translate_pipeline, args=(pid, target_lang), daemon=True),

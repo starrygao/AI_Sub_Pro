@@ -467,6 +467,7 @@ def _validate_settings_update(data: dict) -> None:
         _require_bool("translation", translation, "full_doc_mode")
         _require_bool("translation", translation, "use_translation_memory")
         _require_bool("translation", translation, "use_phrase_library")
+        _require_bool("translation", translation, "require_kb_suggestion_review")
         _require_bool("translation", translation, "qa_auto_repair")
 
     asr = data.get("asr") if isinstance(data, dict) else None

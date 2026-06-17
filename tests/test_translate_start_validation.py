@@ -152,13 +152,41 @@ def test_translation_dependent_starts_reject_missing_provider_before_launch(tmp_
     assert translate_api.active_tasks == {}
 
 
-def test_start_translate_generates_and_blocks_unreviewed_kb_suggestions(tmp_project_dir, monkeypatch):
+def test_start_translate_generates_kb_suggestions_without_blocking_by_default(tmp_project_dir, monkeypatch):
     from app.api import translate as translate_api
 
     _isolate_kb(tmp_project_dir, monkeypatch)
     client = _client(tmp_project_dir, monkeypatch)
     _allow_translation(monkeypatch)
     pid = _seed_subtitle_project(tmp_project_dir)
+
+    class DummyThread:
+        def start(self):
+            pass
+
+    monkeypatch.setattr(translate_api, "try_register_task", lambda *args, **kwargs: DummyThread())
+
+    r = client.post(f"/api/projects/{pid}/start-translate", json={"target_language": "English"})
+
+    assert r.status_code == 200
+    assert r.json()["status"] == "started"
+    saved = json.loads((tmp_project_dir / pid / "kb_suggestions.json").read_text(encoding="utf-8"))
+    sources = {item["source"] for item in saved["suggestions"]}
+    assert {"Brilliant Minds", "Oliver Wolf"} <= sources
+
+
+def test_start_translate_can_require_kb_suggestion_review(tmp_project_dir, monkeypatch):
+    from app.api import translate as translate_api
+
+    _isolate_kb(tmp_project_dir, monkeypatch)
+    client = _client(tmp_project_dir, monkeypatch)
+    _allow_translation(monkeypatch)
+    pid = _seed_subtitle_project(tmp_project_dir)
+    monkeypatch.setattr(
+        translate_api.Config,
+        "to_dict",
+        lambda: {"translation": {"require_kb_suggestion_review": True}},
+    )
 
     def fail_register(*args, **kwargs):
         raise AssertionError("task should not start while KB suggestions need review")
@@ -172,9 +200,6 @@ def test_start_translate_generates_and_blocks_unreviewed_kb_suggestions(tmp_proj
     assert detail["code"] == "kb_review_required"
     assert detail["suggestions_count"] > 0
     assert "知识库建议" in detail["message"]
-    saved = json.loads((tmp_project_dir / pid / "kb_suggestions.json").read_text(encoding="utf-8"))
-    sources = {item["source"] for item in saved["suggestions"]}
-    assert {"Brilliant Minds", "Oliver Wolf"} <= sources
     assert translate_api.active_tasks == {}
 
 
@@ -185,6 +210,11 @@ def test_start_translate_allows_after_kb_suggestions_are_rejected(tmp_project_di
     client = _client(tmp_project_dir, monkeypatch)
     _allow_translation(monkeypatch)
     pid = _seed_subtitle_project(tmp_project_dir, pid="subkb02")
+    monkeypatch.setattr(
+        translate_api.Config,
+        "to_dict",
+        lambda: {"translation": {"require_kb_suggestion_review": True}},
+    )
 
     monkeypatch.setattr(
         translate_api,
