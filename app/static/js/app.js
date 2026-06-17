@@ -20,7 +20,12 @@ function app() {
       tmdb: {api_key:'', language:'zh-CN'},
       trailer: {max_video_height: 1080},
       asr: {mode: 'speed', backend: 'auto'},
-      translation: { use_translation_memory: true, use_phrase_library: true, qa_auto_repair: false },
+      translation: {
+        quality_mode: 'fast',
+        use_translation_memory: true,
+        use_phrase_library: true,
+        qa_auto_repair: false,
+      },
       providers: {
         claude_cli: { enabled: true, model: 'claude-opus-4-7', timeout_sec: 180 },
         codex_cli: { enabled: true, model: 'gpt-5.5', timeout_sec: 180 },
@@ -1707,6 +1712,18 @@ function app() {
     async setKbSuggestionStatus(item, status) {
       const suggestionId = typeof item === 'string' ? item : String(item?.id || '');
       if (!this.currentProject?.id || !suggestionId || this.kbSuggestionActionPending) return;
+      const localSuggestion = this.kbSuggestions.find(suggestion => suggestion?.id === suggestionId);
+      const body = {status};
+      if (status === 'accepted' && this.isPlainObject(localSuggestion)) {
+        const target = typeof localSuggestion.target === 'string' ? localSuggestion.target.trim() : '';
+        if (!target) {
+          this.kbSuggestionError = '接受 KB 建议前需要填写译文';
+          this.toast(this.kbSuggestionError, 'error');
+          return;
+        }
+        body.target = target;
+        body.notes = typeof localSuggestion.notes === 'string' ? localSuggestion.notes.trim() : '';
+      }
       const projectId = String(this.currentProject.id);
       const pendingKey = `${status}:${suggestionId}`;
       this.kbSuggestionActionPending = pendingKey;
@@ -1715,7 +1732,7 @@ function app() {
         const data = await this.api(
           `/api/knowledge/projects/${encodeURIComponent(projectId)}/suggestions/${encodeURIComponent(suggestionId)}/status`,
           'POST',
-          {status},
+          body,
         );
         if (String(this.currentProject?.id || '') !== projectId) return;
         const updated = this.isPlainObject(data?.suggestion) ? data.suggestion : null;
@@ -1750,6 +1767,45 @@ function app() {
       };
     },
 
+    qaIssueLabel(issue) {
+      const type = typeof issue?.type === 'string' && issue.type.trim()
+        ? issue.type.trim()
+        : (typeof issue?.code === 'string' ? issue.code.trim() : '');
+      const labels = {
+        missing_translation: '漏译',
+        english_residue: '英文残留',
+        kb_term_missing: '知识库术语缺失',
+        manual_term_missing: '手动术语缺失',
+        domain_term_missing: '领域术语缺失',
+        duplicate_id: '重复编号',
+        line_too_long: '字幕过长',
+        too_many_lines: '行数过多',
+        reading_speed: '阅读速度过快',
+        bad_line_break: '断行需审校',
+        sound_description_translated: '环境音误译',
+        punctuation_style: '标点风格',
+        inferred_name_inconsistent: '专名不一致',
+      };
+      return labels[type] || type || '质量问题';
+    },
+
+    qaIssueSeverityLabel(issue) {
+      const severity = typeof issue?.severity === 'string' ? issue.severity : '';
+      if (severity === 'error' || severity === 'severe') return '错误';
+      if (severity === 'warning') return '警告';
+      return '提示';
+    },
+
+    qaReportTopIssues(limit = 4) {
+      const report = this.normalizeQualityReport(this.qaReport || {});
+      const max = Number.isFinite(Number(limit)) ? Math.max(0, Number(limit)) : 4;
+      return report.issues.slice(0, max).map(issue => ({
+        ...issue,
+        label: this.qaIssueLabel(issue),
+        severity_label: this.qaIssueSeverityLabel(issue),
+      }));
+    },
+
     normalizeTranslationStrategy(data) {
       const src = this.isPlainObject(data) ? data : {};
       const activeProfiles = Array.isArray(src.active_profiles)
@@ -1763,6 +1819,10 @@ function app() {
         : [];
       const retrieval = this.isPlainObject(src.retrieval) ? src.retrieval : {};
       const qa = this.isPlainObject(src.qa) ? src.qa : {};
+      const qualityMode = this.isPlainObject(src.quality_mode) ? src.quality_mode : {};
+      const qualityModeId = typeof qualityMode.id === 'string' && qualityMode.id.trim()
+        ? qualityMode.id.trim()
+        : 'fast';
       const status = typeof src.status === 'string' && src.status.trim()
         ? src.status.trim()
         : 'needs_context';
@@ -1782,6 +1842,17 @@ function app() {
         manual_terms_count: manualTermsCount,
         retrieval,
         qa,
+        quality_mode: {
+          ...qualityMode,
+          id: qualityModeId,
+          label: typeof qualityMode.label === 'string' && qualityMode.label.trim()
+            ? qualityMode.label.trim()
+            : (qualityModeId === 'professional' ? '专业模式' : '快速自动'),
+          professional: qualityMode.professional === true || qualityModeId === 'professional',
+          requires_kb_review: qualityMode.requires_kb_review === true,
+          quality_gate: qualityMode.quality_gate === true,
+          summary: typeof qualityMode.summary === 'string' ? qualityMode.summary : '',
+        },
         recommendations,
       };
     },
@@ -1826,6 +1897,7 @@ function app() {
     translationStrategyCapabilityPills() {
       const strategy = this.normalizeTranslationStrategy(this.translationStrategy || {});
       const pills = [];
+      if (strategy.quality_mode?.label) pills.push(strategy.quality_mode.label);
       if (strategy.manual_terms_count > 0) pills.push(`术语 ${strategy.manual_terms_count}`);
       if (strategy.retrieval?.translation_memory) pills.push('用户修订记忆');
       if (strategy.retrieval?.phrase_library) pills.push('本地例句');
@@ -2909,7 +2981,30 @@ function app() {
     startEdit(idx, text) {
       this.editingIdx = idx;
       this.editText = text || '';
-      this.$nextTick(() => { if (this.$refs.editArea) this.$refs.editArea.focus(); });
+      const nextTick = typeof this.$nextTick === 'function' ? this.$nextTick.bind(this) : (fn) => fn();
+      nextTick(() => { if (this.$refs?.editArea) this.$refs.editArea.focus(); });
+    },
+
+    focusSubtitleById(blockId) {
+      const numericId = Number(blockId);
+      if (!Number.isFinite(numericId)) return false;
+      const idx = this.subtitles.findIndex(item => Number(item?.index) === numericId);
+      if (idx < 0) {
+        this.toast(`未找到第 ${numericId} 条字幕`, 'error');
+        return false;
+      }
+      const item = this.subtitles[idx] || {};
+      this.startEdit(idx, item.translation || '');
+      const nextTick = typeof this.$nextTick === 'function' ? this.$nextTick.bind(this) : (fn) => fn();
+      nextTick(() => {
+        if (typeof document === 'undefined') return;
+        const safeId = String(numericId).replace(/"/g, '\\"');
+        const row = document.querySelector(`[data-subtitle-index="${safeId}"]`);
+        if (row && typeof row.scrollIntoView === 'function') {
+          row.scrollIntoView({block: 'center', behavior: 'smooth'});
+        }
+      });
+      return true;
     },
 
     async saveEdit(idx) {

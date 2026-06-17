@@ -70,6 +70,7 @@ def test_build_translation_strategy_explains_profiles_retrieval_and_qa():
             "translation": {
                 "use_translation_memory": True,
                 "use_phrase_library": True,
+                "quality_mode": "professional",
                 "qa_auto_repair": True,
                 "qa_auto_repair_rounds": 1,
                 "max_memory_examples": 6,
@@ -89,6 +90,10 @@ def test_build_translation_strategy_explains_profiles_retrieval_and_qa():
     assert strategy["retrieval"]["translation_memory"] is True
     assert strategy["retrieval"]["phrase_library"] is True
     assert strategy["retrieval"]["max_phrase_examples"] == 4
+    assert strategy["quality_mode"]["id"] == "professional"
+    assert strategy["quality_mode"]["label"] == "专业模式"
+    assert strategy["quality_mode"]["requires_kb_review"] is True
+    assert strategy["quality_mode"]["quality_gate"] is True
     assert strategy["qa"]["auto_repair"] is True
     assert strategy["qa"]["auto_repair_rounds"] == 1
     assert strategy["source"]["native_subtitle_language"] == "en"
@@ -106,5 +111,8 @@ def test_build_translation_strategy_warns_when_auto_has_no_profile_or_terms():
     assert strategy["status"] == "needs_context"
     assert strategy["active_profiles"] == []
     assert strategy["manual_terms_count"] == 0
+    assert strategy["quality_mode"]["id"] == "fast"
+    assert strategy["quality_mode"]["requires_kb_review"] is False
+    assert any(item["id"] == "professional_mode_available" for item in strategy["recommendations"])
     assert any(item["id"] == "choose_content_type" for item in strategy["recommendations"])
     assert any(item["id"] == "add_terms" for item in strategy["recommendations"])

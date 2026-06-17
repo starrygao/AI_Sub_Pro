@@ -539,6 +539,7 @@ def test_update_settings_rejects_invalid_string_values(monkeypatch):
         ({"api_keys": {"openai": 123}}, "api_keys.openai"),
         ({"tmdb": {"api_key": {"bad": "value"}}}, "tmdb.api_key"),
         ({"translation": {"primary_model": ["gpt-4o"]}}, "primary_model"),
+        ({"translation": {"quality_mode": "studio"}}, "quality_mode"),
         ({"translation": {"memory_retrieval_backend": 7}}, "memory_retrieval_backend"),
         ({"translation": {"phrase_retrieval_backend": ["ngram"]}}, "phrase_retrieval_backend"),
         ({"translation": {"qa_auto_repair_rounds": "1"}}, "qa_auto_repair_rounds"),
@@ -603,6 +604,7 @@ def test_update_settings_accepts_and_normalizes_translation_retrieval_fields():
                 "phrase_retrieval_backend": " NGRAM ",
                 "max_memory_examples": 20,
                 "max_phrase_examples": 0,
+                "quality_mode": " PROFESSIONAL ",
                 "require_kb_suggestion_review": True,
                 "qa_auto_repair_rounds": 2,
             }
@@ -614,6 +616,7 @@ def test_update_settings_accepts_and_normalizes_translation_retrieval_fields():
     assert payload["translation"]["phrase_retrieval_backend"] == "ngram"
     assert payload["translation"]["max_memory_examples"] == 20
     assert payload["translation"]["max_phrase_examples"] == 0
+    assert payload["translation"]["quality_mode"] == "professional"
     assert payload["translation"]["require_kb_suggestion_review"] is True
     assert payload["translation"]["qa_auto_repair_rounds"] == 2
 

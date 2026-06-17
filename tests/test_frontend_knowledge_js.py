@@ -179,7 +179,14 @@ def test_project_quality_helpers_load_suggestions_and_report():
               return {suggestion: {id: 'place:hudson-oaks', type: 'place', source: 'Hudson Oaks', target: '哈德逊奥克斯', status: 'accepted'}};
             }
             if (url === '/api/projects/p1/quality-report') {
-              return {status: 'needs_review', summary: {issue_count: 2, by_type: {english_residue: 1, kb_term_missing: 1}}, issues: []};
+              return {
+                status: 'needs_review',
+                summary: {issue_count: 2, by_type: {english_residue: 1, kb_term_missing: 1}},
+                issues: [
+                  {type: 'english_residue', severity: 'warning', block_id: 7, message: 'contains English'},
+                  {type: 'kb_term_missing', severity: 'error', block_id: 8, message: 'Use 哈德逊奥克斯'},
+                ],
+              };
             }
             throw new Error(`unexpected API ${method} ${url}`);
           };
@@ -189,7 +196,8 @@ def test_project_quality_helpers_load_suggestions_and_report():
             throw new Error(`suggestions not loaded: ${JSON.stringify(state.kbSuggestions)}`);
           }
           await state.generateKbSuggestions();
-          await state.setKbSuggestionStatus('place:hudson-oaks', 'accepted');
+          state.kbSuggestions[0].target = ' 哈德逊奥克斯 ';
+          await state.setKbSuggestionStatus(state.kbSuggestions[0], 'accepted');
           if (state.kbSuggestions[0].status !== 'accepted') {
             throw new Error(`suggestion not updated: ${JSON.stringify(state.kbSuggestions)}`);
           }
@@ -197,8 +205,16 @@ def test_project_quality_helpers_load_suggestions_and_report():
           if (state.qaReport.summary.issue_count !== 2) {
             throw new Error(`QA report not loaded: ${JSON.stringify(state.qaReport)}`);
           }
-          if (!calls.some((call) => call.method === 'POST' && call.body?.status === 'accepted')) {
+          const acceptedCall = calls.find((call) => call.method === 'POST' && call.body?.status === 'accepted');
+          if (!acceptedCall) {
             throw new Error(`expected accepted status call, got ${JSON.stringify(calls)}`);
+          }
+          if (acceptedCall.body.target !== '哈德逊奥克斯') {
+            throw new Error(`expected inline target in status call, got ${JSON.stringify(acceptedCall.body)}`);
+          }
+          const topIssues = state.qaReportTopIssues();
+          if (topIssues.length !== 2 || topIssues[0].label !== '英文残留' || topIssues[1].severity_label !== '错误') {
+            throw new Error(`expected normalized QA issue list, got ${JSON.stringify(topIssues)}`);
           }
         })().catch((err) => {
           console.error(err.message);
@@ -234,6 +250,7 @@ def test_project_translation_strategy_helpers_load_and_format_status():
                 manual_terms_count: 2,
                 retrieval: {translation_memory: true, phrase_library: false},
                 qa: {auto_repair: true, auto_repair_rounds: 1},
+                quality_mode: {id: 'professional', label: '专业模式', requires_kb_review: true, quality_gate: true},
                 recommendations: [{id: 'native_subtitles', message: '优先翻译原生字幕'}],
               };
             }
@@ -250,7 +267,7 @@ def test_project_translation_strategy_helpers_load_and_format_status():
             throw new Error(`bad profile pills ${JSON.stringify(profiles)}`);
           }
           const capabilities = state.translationStrategyCapabilityPills();
-          for (const expected of ['术语 2', '用户修订记忆', '自动修复 1 轮']) {
+          for (const expected of ['专业模式', '术语 2', '用户修订记忆', '自动修复 1 轮']) {
             if (!capabilities.includes(expected)) {
               throw new Error(`missing capability ${expected}: ${JSON.stringify(capabilities)}`);
             }

@@ -911,6 +911,9 @@
                 <span class="px-2 py-1 rounded-lg bg-accent/10 text-[11px] text-accent" x-text="label"></span>
               </template>
             </div>
+            <p x-show="translationStrategy?.quality_mode?.summary"
+               class="mt-2 text-[11px] text-surface-500"
+               x-text="translationStrategy?.quality_mode?.summary || ''"></p>
             <p x-show="translationStrategy?.recommendations?.length"
                class="mt-2 text-[11px] text-surface-400 line-clamp-2"
                x-text="translationStrategy?.recommendations?.[0]?.message || ''"></p>
@@ -931,6 +934,18 @@
                 <span class="px-2 py-1 rounded-lg bg-white/70 border border-surface-200 text-[11px] text-surface-600" x-text="`${type}: ${count}`"></span>
               </template>
               <span x-show="qaReport?.summary?.issue_count === 0" class="text-[12px] text-accent">未发现确定性问题</span>
+            </div>
+            <div x-show="qaReportTopIssues().length" class="mt-3 space-y-1.5 max-h-28 overflow-y-auto">
+              <template x-for="issue in qaReportTopIssues()" :key="`${issue.type || issue.code}:${issue.block_id || 'global'}:${issue.message}`">
+                <button type="button"
+                        @click="issue.block_id ? focusSubtitleById(issue.block_id) : null"
+                        :disabled="!issue.block_id"
+                        class="w-full text-left px-2 py-1.5 rounded-lg bg-white/60 border border-surface-200 text-[11px] disabled:cursor-default">
+                  <span class="font-medium text-surface-700" x-text="issue.label"></span>
+                  <span class="text-surface-400" x-text="` · ${issue.severity_label}${issue.block_id ? ' · #' + issue.block_id : ''}`"></span>
+                  <span class="block truncate text-surface-500" x-text="issue.message || issue.translation || issue.source_text || ''"></span>
+                </button>
+              </template>
             </div>
           </section>
 
@@ -953,16 +968,23 @@
             <div x-show="kbSuggestionError" class="text-[12px] text-danger" x-text="kbSuggestionError"></div>
             <div class="space-y-2 max-h-36 overflow-y-auto">
               <template x-for="item in kbSuggestions" :key="item.id">
-                <div class="grid grid-cols-[1fr_auto] gap-2 items-center text-[12px]">
+                <div class="grid grid-cols-[1fr_auto] gap-2 items-start text-[12px]">
                   <div class="min-w-0">
-                    <div class="font-medium truncate" x-text="`${item.source} → ${item.target}`"></div>
+                    <div class="font-medium truncate" x-text="item.source"></div>
                     <div class="text-[11px] text-surface-400" x-text="`${item.type}${item.collision ? ' · 冲突: ' + item.collision : ''}`"></div>
+                    <input x-show="item.status !== 'accepted'"
+                           x-model="item.target"
+                           type="text"
+                           placeholder="填写译文后接受"
+                           :aria-label="'填写 ' + item.source + ' 的知识库建议译文'"
+                           class="mt-1 w-full px-2 py-1 rounded-lg text-[12px] border border-surface-200 bg-white/70">
+                    <div x-show="item.status === 'accepted'" class="mt-1 text-[11px] text-accent truncate" x-text="`已接受：${item.target}`"></div>
                   </div>
                   <div class="flex gap-1">
-                    <button @click="setKbSuggestionStatus(item.id, 'accepted')"
+                    <button @click="setKbSuggestionStatus(item, 'accepted')"
                             :disabled="item.status === 'accepted' || !!kbSuggestionActionPending"
                             class="btn-secondary px-2 py-1 rounded-lg text-[11px] disabled:opacity-40">接受</button>
-                    <button @click="setKbSuggestionStatus(item.id, 'rejected')"
+                    <button @click="setKbSuggestionStatus(item, 'rejected')"
                             :disabled="item.status === 'rejected' || !!kbSuggestionActionPending"
                             class="btn-secondary px-2 py-1 rounded-lg text-[11px] disabled:opacity-40">拒绝</button>
                   </div>
@@ -1055,6 +1077,7 @@
             <tbody>
               <template x-for="(s, idx) in subtitles" :key="idx">
                 <tr class="sub-row border-b border-black/[0.03] last:border-0"
+                    :data-subtitle-index="s.index"
                     :class="s.filtered ? 'opacity-25' : ''"
                     @keydown="handleSubtitleShortcut($event, idx)">
                   <td class="px-4 py-2.5 text-[12px] text-surface-300 tabular-nums" x-text="s.index"></td>
@@ -1407,6 +1430,14 @@
           <!-- Full-document mode is provider-agnostic; the translator falls back to batching when needed. -->
           <div class="mt-4 pt-4 border-t border-black/[0.05]">
             <div class="space-y-3">
+            <div>
+              <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">翻译质量模式</label>
+              <select x-model="settings.translation.quality_mode" aria-label="翻译质量模式" class="w-full px-3 py-2 rounded-xl text-[13px]">
+                <option value="fast">快速自动：生成建议但不阻塞翻译</option>
+                <option value="professional">专业交付：翻译前审校知识库建议</option>
+              </select>
+              <p class="text-[12px] text-surface-400 mt-1">专业模式会使用同一套翻译流程，只增加术语审校和质量门。</p>
+            </div>
             <label class="flex items-start gap-3 cursor-pointer">
               <input type="checkbox" x-model="settings.translation.full_doc_mode" aria-label="启用一次性全量翻译" class="mt-1 w-4 h-4">
               <div>

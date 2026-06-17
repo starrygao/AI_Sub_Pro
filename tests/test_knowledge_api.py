@@ -431,6 +431,38 @@ def test_kb_suggestion_status_rejects_accept_without_target(tmp_project_dir, pat
     assert saved["suggestions"][0]["status"] == "pending"
 
 
+def test_kb_suggestion_status_accepts_with_inline_target(tmp_project_dir, patched_kb_file):
+    import json
+
+    from app.engines.kb_suggestions import KbSuggestion, save_suggestions
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_status_inline_target"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case"})
+    save_suggestions(pdir / "kb_suggestions.json", [
+        KbSuggestion(id="character:maya-chen", source="Maya Chen", target="", category="characters")
+    ])
+
+    response = client.post(
+        f"/api/knowledge/projects/{pid}/suggestions/character%3Amaya-chen/status",
+        json={"status": "accepted", "target": " 玛雅·陈 ", "notes": " 主角 "},
+    )
+
+    assert response.status_code == 200
+    suggestion = response.json()["suggestion"]
+    assert suggestion["status"] == "accepted"
+    assert suggestion["target"] == "玛雅·陈"
+    assert suggestion["notes"] == "主角"
+    saved = json.loads((pdir / "kb_suggestions.json").read_text(encoding="utf-8"))
+    assert saved["suggestions"][0]["target"] == "玛雅·陈"
+    kb = client.get("/api/knowledge/projects/moonlit-case").json()
+    assert kb["characters"][0]["source"] == "Maya Chen"
+    assert kb["characters"][0]["target"] == "玛雅·陈"
+
+
 def test_kb_accept_suggestions_skips_duplicate_blank_target_and_invalid_category(
     tmp_project_dir,
     patched_kb_file,

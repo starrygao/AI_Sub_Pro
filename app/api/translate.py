@@ -883,7 +883,10 @@ def _requires_kb_suggestion_review(config: Optional[dict] = None) -> bool:
     translation = cfg.get("translation") if isinstance(cfg, dict) else {}
     return (
         isinstance(translation, dict)
-        and translation.get("require_kb_suggestion_review") is True
+        and (
+            translation.get("require_kb_suggestion_review") is True
+            or translation.get("quality_mode") == "professional"
+        )
     )
 
 

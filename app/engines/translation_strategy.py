@@ -21,6 +21,15 @@ def _bool_setting(section: dict, key: str, default: bool = False) -> bool:
     return value if isinstance(value, bool) else default
 
 
+def _choice_setting(section: dict, key: str, allowed: set[str], default: str) -> str:
+    value = section.get(key) if isinstance(section, dict) else None
+    if isinstance(value, str):
+        cleaned = value.strip().casefold()
+        if cleaned in allowed:
+            return cleaned
+    return default
+
+
 def _int_setting(section: dict, key: str, default: int, *, min_value: int, max_value: int) -> int:
     value = section.get(key) if isinstance(section, dict) else None
     if isinstance(value, bool):
@@ -65,8 +74,15 @@ def _recommendations(
     profiles: list[ContentProfile],
     manual_terms: list[tuple[str, str]],
     qa: dict,
+    quality_mode: dict,
 ) -> list[dict]:
     recommendations: list[dict] = []
+    if not quality_mode.get("professional"):
+        recommendations.append({
+            "id": "professional_mode_available",
+            "severity": "info",
+            "message": "当前为快速自动模式；专业交付可开启专业模式，翻译前先审校知识库建议并使用质量门。",
+        })
     if content_type == "auto" and not profiles:
         recommendations.append({
             "id": "choose_content_type",
@@ -112,6 +128,33 @@ def _summary(profiles: list[ContentProfile], content_type_label: str, manual_ter
     return "尚未识别明确内容策略；可手动选择类型并补充术语。"
 
 
+def _quality_mode_summary(translation_cfg: dict) -> dict:
+    mode = _choice_setting(translation_cfg, "quality_mode", {"fast", "professional"}, "fast")
+    professional = mode == "professional"
+    requires_kb_review = professional or _bool_setting(
+        translation_cfg,
+        "require_kb_suggestion_review",
+        False,
+    )
+    if professional:
+        return {
+            "id": "professional",
+            "label": "专业模式",
+            "professional": True,
+            "requires_kb_review": True,
+            "quality_gate": True,
+            "summary": "翻译前要求审校自动知识库建议，翻译后使用质量报告作为交付检查。",
+        }
+    return {
+        "id": "fast",
+        "label": "快速自动",
+        "professional": False,
+        "requires_kb_review": requires_kb_review,
+        "quality_gate": False,
+        "summary": "自动生成知识库建议并继续翻译，适合快速产出可审校初稿。",
+    }
+
+
 def build_translation_strategy(project: dict, config: dict | None = None) -> dict:
     """Explain which translation aids will apply to one project.
 
@@ -154,6 +197,7 @@ def build_translation_strategy(project: dict, config: dict | None = None) -> dic
             max_value=2,
         ),
     }
+    quality_mode = _quality_mode_summary(translation_cfg)
     profile_dicts = [_profile_to_dict(profile) for profile in profiles]
     status = "ready" if profiles or manual_terms or content_type != "auto" else "needs_context"
     terms = [{"source": source, "target": target} for source, target in manual_terms]
@@ -170,6 +214,7 @@ def build_translation_strategy(project: dict, config: dict | None = None) -> dic
         "manual_terms_count": len(terms),
         "retrieval": retrieval,
         "qa": qa,
+        "quality_mode": quality_mode,
         "source": _source_context(source_project),
         "recommendations": _recommendations(
             project=source_project,
@@ -177,5 +222,6 @@ def build_translation_strategy(project: dict, config: dict | None = None) -> dic
             profiles=profiles,
             manual_terms=manual_terms,
             qa=qa,
+            quality_mode=quality_mode,
         ),
     }

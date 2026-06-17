@@ -75,6 +75,8 @@ class SuggestionRejectIn(BaseModel):
 
 class SuggestionStatusIn(BaseModel):
     status: str
+    target: Optional[str] = None
+    notes: Optional[str] = None
 
 
 def _get_kb() -> KnowledgeBase:
@@ -355,17 +357,30 @@ def generate_kb_project_suggestions(pid: str):
 @router.post("/projects/{pid}/suggestions/{suggestion_id}/status")
 def update_kb_project_suggestion_status(pid: str, suggestion_id: str, body: SuggestionStatusIn):
     pdir, project = _load_project_or_http(pid)
+    path = _project_suggestions_path(pdir)
     cleaned_status = _clean_text(body.status).casefold()
+    existing = next(
+        (item for item in load_suggestions(path) if item.id == suggestion_id),
+        None,
+    )
+    if existing is not None and (body.target is not None or body.notes is not None):
+        suggestions = load_suggestions(path)
+        for item in suggestions:
+            if item.id != suggestion_id:
+                continue
+            if body.target is not None:
+                item.target = _clean_text(body.target)
+            if body.notes is not None:
+                item.notes = _clean_text(body.notes)
+            existing = item
+            break
+        save_suggestions(path, suggestions)
     if cleaned_status == "accepted":
-        existing = next(
-            (item for item in load_suggestions(_project_suggestions_path(pdir)) if item.id == suggestion_id),
-            None,
-        )
         if existing is not None and not _clean_text(getattr(existing, "target", "")):
             raise HTTPException(status_code=400, detail="接受 KB 建议前需要填写译文")
     try:
         suggestion = update_suggestion_status(
-            _project_suggestions_path(pdir),
+            path,
             suggestion_id,
             body.status,
         )

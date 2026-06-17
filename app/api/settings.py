@@ -458,6 +458,12 @@ def _validate_settings_update(data: dict) -> None:
             "phrase_retrieval_backend",
             allowed={"auto", "fts5", "ngram"},
         )
+        _validate_choice_field(
+            "translation",
+            translation,
+            "quality_mode",
+            allowed={"fast", "professional"},
+        )
         _require_int("translation", translation, "max_memory_examples", min_value=0, max_value=20)
         _require_int("translation", translation, "max_phrase_examples", min_value=0, max_value=20)
         _require_int("translation", translation, "repetitive_threshold", min_value=1, max_value=100)

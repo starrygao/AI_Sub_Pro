@@ -1962,6 +1962,40 @@ def test_subtitle_quality_summary_flags_timing_translation_and_reading_speed():
     )
 
 
+def test_focus_subtitle_by_id_opens_matching_row_for_edit():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        const toasts = [];
+        state.toast = (message, type) => { toasts.push({message, type}); };
+        state.subtitles = [
+          {index: 1, text: 'Hello', translation: '你好'},
+          {index: 12, text: 'Hudson Oaks', translation: '哈德森橡树'},
+        ];
+
+        if (!state.focusSubtitleById(12)) {
+          throw new Error('expected focus to succeed');
+        }
+        if (state.editingIdx !== 1 || state.editText !== '哈德森橡树') {
+          throw new Error(`expected row 12 edit state, got ${state.editingIdx}/${state.editText}`);
+        }
+        if (state.focusSubtitleById(99)) {
+          throw new Error('expected missing row focus to fail');
+        }
+        if (!toasts.some((item) => item.type === 'error' && item.message.includes('99'))) {
+          throw new Error(`expected missing row toast, got ${JSON.stringify(toasts)}`);
+        }
+        """
+    )
+
+
 def test_subtitle_replace_preview_counts_without_mutating_rows():
     _run_node(
         """
