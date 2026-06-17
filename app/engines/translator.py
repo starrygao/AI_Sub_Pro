@@ -25,6 +25,7 @@ from app.engines.providers.openai_compat import (  # noqa: F401
 import app.engines.providers  # noqa: F401  (registration side-effect)
 from app.engines.providers.factory import get_provider, list_providers
 from app.engines.providers.result_contract import (
+    MISSING_ID_ERROR,
     MISSING_TRANSLATION_ERROR,
     reconcile_translation_results,
 )
@@ -56,6 +57,11 @@ except Exception as _e:  # pragma: no cover — best-effort load
 # but we need to fall back to the batched path (e.g. document too large for
 # the primary provider's context window).
 _FULL_DOC_FALLBACK_BATCH_SIZE = 10
+_SOUND_DESCRIPTION_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
+_MISSING_TRANSLATION_RETRY_NOTE = (
+    "补翻要求: 上一轮这些字幕缺失或格式无效。本轮只翻译当前输入 JSON 中的条目，"
+    "普通对白必须为每个 id 返回一个非空 translation；环境音/纯声音描述可按规则留空但仍必须返回 id。"
+)
 
 _PHRASE_CONTEXT_KEYWORDS = {
     "medical": {
@@ -214,6 +220,49 @@ def _is_legal_adult_phrase_hit(hit) -> bool:
     return "domain_legal_adult" in pack_id or bool(tags & _ADULT_PHRASE_TAGS)
 
 
+def _trace_hit_key(hit: dict) -> str:
+    try:
+        return json.dumps(hit, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        return repr(hit)
+
+
+def _append_unique_trace_hit(target: list, hit: dict) -> None:
+    if not isinstance(hit, dict):
+        return
+    key = _trace_hit_key(hit)
+    if any(_trace_hit_key(existing) == key for existing in target if isinstance(existing, dict)):
+        return
+    target.append(hit)
+
+
+def _extend_unique_trace_hits(target: list, hits: list[dict]) -> None:
+    for hit in hits or []:
+        _append_unique_trace_hit(target, hit)
+
+
+def _is_retryable_translation_result(result: dict, item: dict) -> bool:
+    if not isinstance(result, dict):
+        return False
+    translation = result.get("translation")
+    if isinstance(translation, str) and translation:
+        return False
+    error = result.get("error") if isinstance(result.get("error"), str) else ""
+    if (
+        error in {MISSING_ID_ERROR, MISSING_TRANSLATION_ERROR}
+        or error.startswith("invalid translation type:")
+    ):
+        return True
+    original = item.get("original") if isinstance(item, dict) else ""
+    return bool(
+        isinstance(translation, str)
+        and translation == ""
+        and isinstance(original, str)
+        and original.strip()
+        and not _SOUND_DESCRIPTION_RE.match(original)
+    )
+
+
 class SubtitleTranslator:
     """Main translation orchestrator with context window support."""
 
@@ -273,7 +322,20 @@ class SubtitleTranslator:
             min_value=0,
             max_value=20,
         )
+        self.missing_translation_retries = _coerce_bounded_int_setting(
+            trans_cfg.get("missing_translation_retries", 2),
+            2,
+            min_value=0,
+            max_value=3,
+        )
+        self.missing_translation_retry_batch_size = _coerce_bounded_int_setting(
+            trans_cfg.get("missing_translation_retry_batch_size", 5),
+            5,
+            min_value=1,
+            max_value=50,
+        )
         self.last_quality_trace = TranslationContextTrace()
+        self._accumulate_quality_trace = False
 
         # Primary provider — routed through the factory.
         primary_name = _coerce_provider_name(trans_cfg.get("primary_provider"), "openai")
@@ -363,6 +425,17 @@ class SubtitleTranslator:
             )
         return self._translate_batched(blocks, target_lang, meta_info, kb_data, callback)
 
+    def _quality_trace_for_prompt(self) -> TranslationContextTrace:
+        if self._accumulate_quality_trace:
+            trace = self.last_quality_trace
+            if not isinstance(trace, TranslationContextTrace):
+                trace = TranslationContextTrace()
+                self.last_quality_trace = trace
+            return trace
+        trace = TranslationContextTrace()
+        self.last_quality_trace = trace
+        return trace
+
     def get_kb_usage_trace(self) -> dict:
         """Return a defensive copy of the latest KB usage trace."""
         trace = self._kb_usage_trace if isinstance(self._kb_usage_trace, dict) else {}
@@ -418,20 +491,39 @@ class SubtitleTranslator:
             log.warning("No blocks to translate")
             return blocks
 
-        items = [{"id": b.index, "original": b.text} for b in active]
-        # Reuse the existing batch prompt builder with empty context windows —
-        # in full-doc mode every block is visible in the single payload.
-        system_prompt = self._build_prompt(target_lang, meta_info, kb_data, [], [], items=items)
+        self.last_quality_trace = TranslationContextTrace()
+        previous_accumulate = self._accumulate_quality_trace
+        self._accumulate_quality_trace = True
+        try:
+            items = [{"id": b.index, "original": b.text} for b in active]
+            # Reuse the existing batch prompt builder with empty context windows —
+            # in full-doc mode every block is visible in the single payload.
+            system_prompt = self._build_prompt(target_lang, meta_info, kb_data, [], [], items=items)
 
-        log.info("full_doc translate: %d blocks in one call", len(items))
-        if callback:
-            callback(5, f"全文翻译中: 1 批次 ({len(items)} 条)")
+            log.info("full_doc translate: %d blocks in one call", len(items))
+            if callback:
+                callback(5, f"全文翻译中: 1 批次 ({len(items)} 条)")
 
-        raw_results = self.primary.translate_batch(items, system_prompt)
-        results = reconcile_translation_results(
-            raw_results if isinstance(raw_results, list) else [],
-            items,
-        )
+            raw_results = self.primary.translate_batch(items, system_prompt)
+            normalized_results = reconcile_translation_results(
+                raw_results if isinstance(raw_results, list) else [],
+                items,
+            )
+            result_map = self._result_map_from_results(normalized_results)
+            self._retry_missing_primary_results(
+                result_map,
+                items,
+                target_lang,
+                meta_info,
+                kb_data,
+                [],
+                [],
+                callback=callback,
+                progress_pct=90,
+            )
+            results = self._results_from_map(items, result_map)
+        finally:
+            self._accumulate_quality_trace = previous_accumulate
 
         # Optional polish pass over the full doc too.
         if self.polish and results:
@@ -516,6 +608,10 @@ class SubtitleTranslator:
             log.warning("No blocks to translate")
             return blocks
 
+        self.last_quality_trace = TranslationContextTrace()
+        previous_accumulate = self._accumulate_quality_trace
+        self._accumulate_quality_trace = True
+
         log.info(
             "Translating %d blocks (batch_size=%d, context=%d)",
             total,
@@ -523,111 +619,207 @@ class SubtitleTranslator:
             self.context_window,
         )
 
-        # Process in batches
-        for batch_start in range(0, total, effective_batch_size):
-            batch_end = min(batch_start + effective_batch_size, total)
-            batch_indices = active_indices[batch_start:batch_end]
+        try:
+            # Process in batches
+            for batch_start in range(0, total, effective_batch_size):
+                batch_end = min(batch_start + effective_batch_size, total)
+                batch_indices = active_indices[batch_start:batch_end]
 
-            # Build context
-            context_before = []
-            if batch_start > 0:
-                ctx_start = max(0, batch_start - self.context_window)
-                for ci in active_indices[ctx_start:batch_start]:
-                    b = blocks[ci]
-                    if b.translation:
-                        context_before.append({"original": b.text, "translated": b.translation})
+                # Build context
+                context_before = []
+                if batch_start > 0:
+                    ctx_start = max(0, batch_start - self.context_window)
+                    for ci in active_indices[ctx_start:batch_start]:
+                        b = blocks[ci]
+                        if b.translation:
+                            context_before.append({"original": b.text, "translated": b.translation})
 
-            context_after = []
-            if batch_end < total:
-                ctx_end = min(total, batch_end + self.context_window)
-                for ci in active_indices[batch_end:ctx_end]:
-                    context_after.append(blocks[ci].text)
+                context_after = []
+                if batch_end < total:
+                    ctx_end = min(total, batch_end + self.context_window)
+                    for ci in active_indices[batch_end:ctx_end]:
+                        context_after.append(blocks[ci].text)
 
-            # Build batch items
-            items = []
-            for ci in batch_indices:
-                b = blocks[ci]
-                items.append({"id": b.index, "original": b.text})
-
-            # Build system prompt
-            system_prompt = self._build_prompt(
-                target_lang, meta_info, kb_data, context_before, context_after, items=items
-            )
-
-            # Primary translation
-            if callback:
-                pct = int((batch_start / total) * 100)
-                callback(
-                    pct,
-                    f"翻译中: 批次 {batch_start // effective_batch_size + 1}/"
-                    f"{(total + effective_batch_size - 1) // effective_batch_size}",
-                )
-
-            results = self.primary.translate_batch(items, system_prompt)
-            normalized_results = reconcile_translation_results(
-                results if isinstance(results, list) else [],
-                items,
-            )
-            # Map id -> (translation, error). Error is propagated from B3 error items.
-            result_map: Dict[str, Dict[str, str]] = {}
-            for r in normalized_results:
-                rid = str(r.get("id", ""))
-                result_map[rid] = {
-                    "translation": r.get("translation", ""),
-                    "error": r.get("error", ""),
-                }
-
-            # Polish pass (optional) — only polish entries with a non-empty draft.
-            if self.polish and result_map:
-                polish_items = []
+                # Build batch items
+                items = []
                 for ci in batch_indices:
                     b = blocks[ci]
-                    entry = result_map.get(str(b.index), {})
-                    draft = entry.get("translation", "")
-                    if draft:
-                        polish_items.append({"id": b.index, "original": b.text, "draft": draft})
+                    items.append({"id": b.index, "original": b.text})
 
-                if polish_items:
-                    polish_prompt = self._build_polish_prompt(target_lang, meta_info, kb_data)
-                    polish_results = self.polish.translate_batch(polish_items, polish_prompt)
-                    if polish_results:
-                        polish_payload = []
-                        for r in polish_results:
-                            if isinstance(r, dict):
-                                if "translation" not in r and "final" in r:
-                                    r = {**r, "translation": r.get("final")}
-                                polish_payload.append(r)
-                        for r in reconcile_translation_results(polish_payload, polish_items):
-                            rid = str(r.get("id", ""))
-                            polished = r.get("translation", "")
-                            perr = r.get("error", "")
-                            if polished:
-                                # Polish succeeded — overwrite draft, clear any prior error.
-                                result_map[rid] = {"translation": polished, "error": ""}
-                            elif perr and rid in result_map and not result_map[rid].get("translation"):
-                                # Polish failed AND primary had no draft — record polish error.
-                                result_map[rid] = {"translation": "", "error": perr}
+                # Build system prompt
+                system_prompt = self._build_prompt(
+                    target_lang, meta_info, kb_data, context_before, context_after, items=items
+                )
 
-            # Apply results to this batch's blocks.
-            batch_blocks = [blocks[ci] for ci in batch_indices]
-            # Flatten result_map back to a list for _apply_results().
-            flat_results = [
-                {"id": bid, "translation": v.get("translation", ""), "error": v.get("error", "")}
-                for bid, v in result_map.items()
-            ]
-            self._apply_results(batch_blocks, flat_results)
+                # Primary translation
+                if callback:
+                    pct = int((batch_start / total) * 100)
+                    callback(
+                        pct,
+                        f"翻译中: 批次 {batch_start // effective_batch_size + 1}/"
+                        f"{(total + effective_batch_size - 1) // effective_batch_size}",
+                    )
 
-            # Report progress AFTER the batch completes (the pre-batch callback
-            # above reflects work already done and doubles as the cancel
-            # checkpoint; this one advances the bar as each batch finishes).
-            if callback:
-                callback(int((batch_end / total) * 100), f"翻译中: {batch_end}/{total} 条")
+                results = self.primary.translate_batch(items, system_prompt)
+                normalized_results = reconcile_translation_results(
+                    results if isinstance(results, list) else [],
+                    items,
+                )
+                result_map = self._result_map_from_results(normalized_results)
+                self._retry_missing_primary_results(
+                    result_map,
+                    items,
+                    target_lang,
+                    meta_info,
+                    kb_data,
+                    context_before,
+                    context_after,
+                    callback=callback,
+                    progress_pct=int((batch_start / total) * 100),
+                )
+
+                # Polish pass (optional) — only polish entries with a non-empty draft.
+                if self.polish and result_map:
+                    polish_items = []
+                    for ci in batch_indices:
+                        b = blocks[ci]
+                        entry = result_map.get(str(b.index), {})
+                        draft = entry.get("translation", "")
+                        if draft:
+                            polish_items.append({"id": b.index, "original": b.text, "draft": draft})
+
+                    if polish_items:
+                        polish_prompt = self._build_polish_prompt(target_lang, meta_info, kb_data)
+                        polish_results = self.polish.translate_batch(polish_items, polish_prompt)
+                        if polish_results:
+                            polish_payload = []
+                            for r in polish_results:
+                                if isinstance(r, dict):
+                                    if "translation" not in r and "final" in r:
+                                        r = {**r, "translation": r.get("final")}
+                                    polish_payload.append(r)
+                            for r in reconcile_translation_results(polish_payload, polish_items):
+                                rid = str(r.get("id", ""))
+                                polished = r.get("translation", "")
+                                perr = r.get("error", "")
+                                if polished:
+                                    # Polish succeeded — overwrite draft, clear any prior error.
+                                    result_map[rid] = {"translation": polished, "error": ""}
+                                elif perr and rid in result_map and not result_map[rid].get("translation"):
+                                    # Polish failed AND primary had no draft — record polish error.
+                                    result_map[rid] = {"translation": "", "error": perr}
+
+                # Apply results to this batch's blocks.
+                batch_blocks = [blocks[ci] for ci in batch_indices]
+                self._apply_results(batch_blocks, self._results_from_map(items, result_map))
+
+                # Report progress AFTER the batch completes (the pre-batch callback
+                # above reflects work already done and doubles as the cancel
+                # checkpoint; this one advances the bar as each batch finishes).
+                if callback:
+                    callback(int((batch_end / total) * 100), f"翻译中: {batch_end}/{total} 条")
+        finally:
+            self._accumulate_quality_trace = previous_accumulate
 
         if callback:
             translated_count = sum(1 for b in blocks if b.translation)
             callback(100, f"翻译完成: {translated_count}/{total} 条")
 
         return blocks
+
+    @staticmethod
+    def _result_map_from_results(results: List[Dict]) -> Dict[str, Dict[str, str]]:
+        result_map: Dict[str, Dict[str, str]] = {}
+        for r in results or []:
+            if not isinstance(r, dict):
+                continue
+            rid = str(r.get("id", ""))
+            result_map[rid] = {
+                "translation": r.get("translation", "") if isinstance(r.get("translation", ""), str) else "",
+                "error": r.get("error", "") if isinstance(r.get("error", ""), str) else "",
+            }
+        return result_map
+
+    @staticmethod
+    def _results_from_map(items: List[Dict], result_map: Dict[str, Dict[str, str]]) -> List[Dict]:
+        return [
+            {
+                "id": item.get("id"),
+                "translation": result_map.get(str(item.get("id")), {}).get("translation", ""),
+                "error": result_map.get(str(item.get("id")), {}).get("error", ""),
+            }
+            for item in items
+        ]
+
+    def _retry_missing_primary_results(
+        self,
+        result_map: Dict[str, Dict[str, str]],
+        items: List[Dict],
+        target_lang: str,
+        meta_info: Dict,
+        kb_data: Dict,
+        context_before: List[Dict],
+        context_after: List[str],
+        *,
+        callback: Optional[Callable] = None,
+        progress_pct: int = 0,
+    ) -> None:
+        if self.missing_translation_retries <= 0:
+            return
+        for round_index in range(self.missing_translation_retries):
+            retry_items = [
+                item for item in items
+                if _is_retryable_translation_result(result_map.get(str(item.get("id")), {}), item)
+            ]
+            if not retry_items:
+                return
+            log.info(
+                "retrying %d missing/invalid translation result(s), round %d/%d",
+                len(retry_items),
+                round_index + 1,
+                self.missing_translation_retries,
+            )
+            if callback:
+                callback(
+                    progress_pct,
+                    f"补翻缺失: 第 {round_index + 1}/{self.missing_translation_retries} 轮 "
+                    f"({len(retry_items)} 条)",
+                )
+            for start in range(0, len(retry_items), self.missing_translation_retry_batch_size):
+                retry_batch = retry_items[start:start + self.missing_translation_retry_batch_size]
+                retry_prompt = self._build_prompt(
+                    target_lang,
+                    meta_info,
+                    kb_data,
+                    context_before,
+                    context_after,
+                    items=retry_batch,
+                )
+                retry_prompt = f"{retry_prompt}\n\n{_MISSING_TRANSLATION_RETRY_NOTE}"
+                raw_retry_results = self.primary.translate_batch(retry_batch, retry_prompt)
+                normalized_retry_results = reconcile_translation_results(
+                    raw_retry_results if isinstance(raw_retry_results, list) else [],
+                    retry_batch,
+                )
+                for result in normalized_retry_results:
+                    if not isinstance(result, dict):
+                        continue
+                    rid = str(result.get("id", ""))
+                    current = result_map.get(rid, {})
+                    if current.get("translation"):
+                        continue
+                    result_map[rid] = {
+                        "translation": (
+                            result.get("translation", "")
+                            if isinstance(result.get("translation", ""), str)
+                            else ""
+                        ),
+                        "error": (
+                            result.get("error", "")
+                            if isinstance(result.get("error", ""), str)
+                            else ""
+                        ),
+                    }
 
     # -------------------------------------------------------------- result apply
     @staticmethod
@@ -756,22 +948,22 @@ class SubtitleTranslator:
         metadata_snippet, metadata_hits = build_project_metadata_prompt_snippet(meta_info)
         if metadata_snippet:
             parts.append(metadata_snippet)
-            self.last_quality_trace.kb_hits.extend(metadata_hits)
+            _extend_unique_trace_hits(self.last_quality_trace.kb_hits, metadata_hits)
 
         domain_snippet, domain_hits = self._build_domain_terminology_snippet(items or [], project_kb)
         if domain_snippet:
             parts.append(domain_snippet)
-            self.last_quality_trace.kb_hits.extend(domain_hits)
+            _extend_unique_trace_hits(self.last_quality_trace.kb_hits, domain_hits)
 
         style_snippet, style_hits = build_subtitle_style_prompt_snippet(target_lang, meta_info)
         if style_snippet:
             parts.append(style_snippet)
-            self.last_quality_trace.style_hits.extend(style_hits)
+            _extend_unique_trace_hits(self.last_quality_trace.style_hits, style_hits)
 
         profile_snippet, profile_hits = build_content_profile_prompt_snippet(meta_info)
         if profile_snippet:
             parts.append(profile_snippet)
-            self.last_quality_trace.profile_hits.extend(profile_hits)
+            _extend_unique_trace_hits(self.last_quality_trace.profile_hits, profile_hits)
 
         if phrase_snippet:
             parts.append(phrase_snippet)
@@ -827,8 +1019,7 @@ class SubtitleTranslator:
         meta_info: Dict,
         items: List[Dict],
     ) -> tuple[str, str]:
-        trace = TranslationContextTrace()
-        self.last_quality_trace = trace
+        trace = self._quality_trace_for_prompt()
         if not items:
             return "", ""
 
@@ -856,7 +1047,7 @@ class SubtitleTranslator:
                         if key in seen_memory:
                             continue
                         seen_memory.add(key)
-                        trace.memory_hits.append({
+                        _append_unique_trace_hit(trace.memory_hits, {
                             "source_text": hit.source_text,
                             "final_translation": hit.final_translation,
                             "project_name": hit.project_name,
@@ -900,7 +1091,7 @@ class SubtitleTranslator:
                         if key in seen_phrases:
                             continue
                         seen_phrases.add(key)
-                        trace.phrase_hits.append({
+                        _append_unique_trace_hit(trace.phrase_hits, {
                             "source_text": hit.source_text,
                             "target_text": hit.target_text,
                             "source_name": hit.source_name,

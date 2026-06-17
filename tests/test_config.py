@@ -41,6 +41,8 @@ def test_default_config_translation_has_retrieval_settings():
     assert translation["phrase_retrieval_backend"] == "auto"
     assert translation["max_memory_examples"] == 6
     assert translation["max_phrase_examples"] == 6
+    assert translation["missing_translation_retries"] == 2
+    assert translation["missing_translation_retry_batch_size"] == 5
     assert translation["qa_auto_repair_rounds"] == 1
 
 
@@ -85,6 +87,8 @@ def test_config_loads_and_merges_partial_saved_config(tmp_path, monkeypatch):
     assert loaded["translation"]["phrase_retrieval_backend"] == "auto"
     assert loaded["translation"]["max_memory_examples"] == 6
     assert loaded["translation"]["max_phrase_examples"] == 6
+    assert loaded["translation"]["missing_translation_retries"] == 2
+    assert loaded["translation"]["missing_translation_retry_batch_size"] == 5
     assert loaded["translation"]["qa_auto_repair_rounds"] == 1
     assert loaded["asr"]["backend"] == "auto"
 

@@ -444,6 +444,55 @@ def test_build_prompt_injects_curated_domain_terms_below_project_kb(monkeypatch,
     assert translator.last_quality_trace.kb_hits[0]["scope"] == "curated_domain"
 
 
+def test_translate_accumulates_quality_trace_across_batches(monkeypatch):
+    from app.engines import translator as tmod
+    from app.engines.knowledge import KnowledgeBase
+    from app.utils.srt import SubtitleBlock
+    from datetime import timedelta
+
+    monkeypatch.setattr(tmod, "_shared_kb", KnowledgeBase(), raising=False)
+    config = _translator_config()
+    config["translation"]["batch_size"] = 1
+    config["translation"]["use_translation_memory"] = False
+    config["translation"]["use_phrase_library"] = False
+    translator = tmod.SubtitleTranslator(config)
+    monkeypatch.setattr(
+        translator.primary,
+        "translate_batch",
+        lambda items, system_prompt, retries=3: [
+            {"id": item["id"], "translation": f"译文{item['id']}"}
+            for item in items
+        ],
+    )
+    blocks = [
+        SubtitleBlock(
+            index=1,
+            start=timedelta(seconds=1),
+            end=timedelta(seconds=2),
+            text="These little climbers are Suminia.",
+        ),
+        SubtitleBlock(
+            index=2,
+            start=timedelta(seconds=2),
+            end=timedelta(seconds=3),
+            text="Called proto-Pterosaurs, head for the sand.",
+        ),
+    ]
+
+    translator.translate(
+        blocks,
+        target_lang="简体中文",
+        meta_info={"name": "Surviving Earth", "original_language": "en"},
+    )
+
+    sources = {
+        hit.get("source")
+        for hit in translator.last_quality_trace.kb_hits
+        if isinstance(hit, dict)
+    }
+    assert {"Suminia", "proto-Pterosaurs"} <= sources
+
+
 def test_build_prompt_injects_content_profiles_before_phrase_examples(monkeypatch, tmp_path):
     from app.engines import translator as tmod
     from app.engines.knowledge import KnowledgeBase

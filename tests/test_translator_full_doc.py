@@ -302,6 +302,51 @@ def test_full_doc_mode_sends_all_blocks_in_one_call(monkeypatch):
     assert captured[0] == 20
 
 
+def test_full_doc_retries_missing_results_in_smaller_batches(monkeypatch):
+    from app.engines.translator import SubtitleTranslator
+    from app.utils.srt import SubtitleBlock
+
+    cfg = {
+        "translation": {
+            "primary_provider": "openai",
+            "primary_model": "gpt-4o",
+            "polish_provider": "",
+            "batch_size": 0,
+            "context_window": 3,
+            "full_doc_mode": True,
+            "missing_translation_retries": 2,
+            "missing_translation_retry_batch_size": 2,
+            "use_translation_memory": False,
+            "use_phrase_library": False,
+        },
+        "api_keys": {"openai": "sk-test"},
+    }
+    calls = []
+
+    def fake_translate_batch(items, system_prompt, retries=3):
+        ids = [item["id"] for item in items]
+        calls.append(ids)
+        if len(calls) == 1:
+            return [
+                {"id": 1, "translation": "一"},
+                {"id": 2, "translation": "二"},
+            ]
+        assert "补翻要求" in system_prompt
+        return [{"id": item["id"], "translation": f"补{item['id']}"} for item in items]
+
+    t = SubtitleTranslator(cfg)
+    monkeypatch.setattr(t.primary, "translate_batch", fake_translate_batch)
+    blocks = [
+        SubtitleBlock(index=i, start=timedelta(seconds=i), end=timedelta(seconds=i + 1), text=f"line {i}")
+        for i in range(1, 6)
+    ]
+
+    t.translate(blocks, target_lang="简体中文")
+
+    assert calls == [[1, 2, 3, 4, 5], [3, 4], [5]]
+    assert [block.translation for block in blocks] == ["一", "二", "补3", "补4", "补5"]
+
+
 def test_full_doc_falls_back_to_batched_if_too_large(monkeypatch):
     """Estimated tokens > 80% of context_window -> fall back to batched mode (multiple calls)."""
     from app.engines.translator import SubtitleTranslator

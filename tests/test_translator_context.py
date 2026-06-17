@@ -94,3 +94,132 @@ def test_translate_tolerates_malformed_meta_and_kb_data(monkeypatch):
 
     assert blocks[0].translation == "ok"
     assert "输出JSON数组" in polish_prompt
+
+
+def test_batched_translate_retries_missing_result_ids(monkeypatch):
+    from app.engines.translator import SubtitleTranslator
+    from app.utils.srt import SubtitleBlock
+
+    config = {
+        "translation": {
+            "primary_provider": "openai",
+            "primary_model": "gpt-4o",
+            "batch_size": 3,
+            "context_window": 1,
+            "polish_provider": "",
+            "missing_translation_retries": 2,
+            "missing_translation_retry_batch_size": 1,
+            "use_translation_memory": False,
+            "use_phrase_library": False,
+        },
+        "api_keys": {"openai": "sk-test"},
+    }
+    calls = []
+
+    def fake_translate_batch(items, system_prompt, retries=3):
+        calls.append([item["id"] for item in items])
+        if len(calls) == 1:
+            return [
+                {"id": 1, "translation": "一"},
+                {"id": 3, "translation": "三"},
+            ]
+        assert "补翻要求" in system_prompt
+        return [{"id": 2, "translation": "二"}]
+
+    t = SubtitleTranslator(config)
+    monkeypatch.setattr(t.primary, "translate_batch", fake_translate_batch)
+    blocks = [
+        SubtitleBlock(index=1, start=timedelta(seconds=1), end=timedelta(seconds=2), text="one"),
+        SubtitleBlock(index=2, start=timedelta(seconds=2), end=timedelta(seconds=3), text="two"),
+        SubtitleBlock(index=3, start=timedelta(seconds=3), end=timedelta(seconds=4), text="three"),
+    ]
+
+    t.translate(blocks, target_lang="简体中文")
+
+    assert calls == [[1, 2, 3], [2]]
+    assert [block.translation for block in blocks] == ["一", "二", "三"]
+    assert [block.translation_error for block in blocks] == ["", "", ""]
+
+
+def test_batched_translate_retries_empty_dialogue_translation(monkeypatch):
+    from app.engines.translator import SubtitleTranslator
+    from app.utils.srt import SubtitleBlock
+
+    config = {
+        "translation": {
+            "primary_provider": "openai",
+            "primary_model": "gpt-4o",
+            "batch_size": 2,
+            "context_window": 1,
+            "polish_provider": "",
+            "missing_translation_retries": 1,
+            "missing_translation_retry_batch_size": 5,
+            "use_translation_memory": False,
+            "use_phrase_library": False,
+        },
+        "api_keys": {"openai": "sk-test"},
+    }
+    calls = []
+
+    def fake_translate_batch(items, system_prompt, retries=3):
+        calls.append([item["id"] for item in items])
+        if len(calls) == 1:
+            return [
+                {"id": 1, "translation": ""},
+                {"id": 2, "translation": "二"},
+            ]
+        assert "补翻要求" in system_prompt
+        return [{"id": 1, "translation": "一"}]
+
+    t = SubtitleTranslator(config)
+    monkeypatch.setattr(t.primary, "translate_batch", fake_translate_batch)
+    blocks = [
+        SubtitleBlock(index=1, start=timedelta(seconds=1), end=timedelta(seconds=2), text="one"),
+        SubtitleBlock(index=2, start=timedelta(seconds=2), end=timedelta(seconds=3), text="two"),
+    ]
+
+    t.translate(blocks, target_lang="简体中文")
+
+    assert calls == [[1, 2], [1]]
+    assert [block.translation for block in blocks] == ["一", "二"]
+
+
+def test_batched_translate_allows_empty_sound_description(monkeypatch):
+    from app.engines.translator import SubtitleTranslator
+    from app.utils.srt import SubtitleBlock
+
+    config = {
+        "translation": {
+            "primary_provider": "openai",
+            "primary_model": "gpt-4o",
+            "batch_size": 2,
+            "context_window": 1,
+            "polish_provider": "",
+            "missing_translation_retries": 1,
+            "missing_translation_retry_batch_size": 5,
+            "use_translation_memory": False,
+            "use_phrase_library": False,
+        },
+        "api_keys": {"openai": "sk-test"},
+    }
+    calls = []
+
+    def fake_translate_batch(items, system_prompt, retries=3):
+        calls.append([item["id"] for item in items])
+        return [
+            {"id": 1, "translation": ""},
+            {"id": 2, "translation": "二"},
+        ]
+
+    t = SubtitleTranslator(config)
+    monkeypatch.setattr(t.primary, "translate_batch", fake_translate_batch)
+    blocks = [
+        SubtitleBlock(index=1, start=timedelta(seconds=1), end=timedelta(seconds=2), text="[music]"),
+        SubtitleBlock(index=2, start=timedelta(seconds=2), end=timedelta(seconds=3), text="two"),
+    ]
+
+    t.translate(blocks, target_lang="简体中文")
+
+    assert calls == [[1, 2]]
+    assert [block.translation for block in blocks] == ["", "二"]
+    assert [block.translation_error for block in blocks] == ["", ""]

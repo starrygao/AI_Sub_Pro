@@ -71,6 +71,8 @@ DEFAULT_CONFIG = {
         "phrase_retrieval_backend": "auto",
         "max_memory_examples": 6,
         "max_phrase_examples": 6,
+        "missing_translation_retries": 2,
+        "missing_translation_retry_batch_size": 5,
         "qa_auto_repair": False,
         "qa_auto_repair_rounds": 1,
     },
