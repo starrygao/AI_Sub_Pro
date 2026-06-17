@@ -336,6 +336,50 @@ def test_full_doc_falls_back_to_batched_if_too_large(monkeypatch):
     assert len(captured) > 1, f"expected fallback to multiple batches, got {captured}"
 
 
+def test_full_doc_falls_back_when_provider_item_cap_is_exceeded(monkeypatch):
+    """CLI providers can have large token windows but still need a request-count cap."""
+    from app.engines.translator import SubtitleTranslator
+    from app.utils.srt import SubtitleBlock
+
+    cfg = {
+        "translation": {
+            "primary_provider": "codex_cli",
+            "primary_model": "gpt-5.5",
+            "polish_provider": "",
+            "batch_size": 10,
+            "context_window": 3,
+            "target_language": "简体中文",
+            "full_doc_mode": True,
+        },
+        "providers": {"codex_cli": {"model": "gpt-5.5", "timeout_sec": 180}},
+    }
+    captured = []
+
+    def fake_get_provider(name, config):
+        provider = MagicMock()
+        provider.supports_full_document_mode = True
+        provider.context_window_tokens = 1_000_000
+        provider.full_document_max_items = 400
+        provider.translate_batch.side_effect = lambda items, system_prompt, retries=3: (
+            captured.append(len(items))
+            or [{"id": it["id"], "translation": "t", "error": ""} for it in items]
+        )
+        return provider
+
+    monkeypatch.setattr("app.engines.translator.get_provider", fake_get_provider)
+
+    t = SubtitleTranslator(cfg)
+    blocks = [
+        SubtitleBlock(index=i, start=timedelta(seconds=i), end=timedelta(seconds=i + 1), text=f"line {i}")
+        for i in range(401)
+    ]
+
+    t.translate(blocks, target_lang="简体中文")
+
+    assert len(captured) > 1
+    assert max(captured) == 10
+
+
 def test_full_doc_ignores_non_finite_provider_context_window(monkeypatch):
     from app.engines.translator import SubtitleTranslator
     from app.utils.srt import SubtitleBlock

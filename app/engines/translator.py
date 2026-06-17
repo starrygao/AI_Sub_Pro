@@ -97,6 +97,13 @@ def _provider_context_window(provider, default: int = 32_000) -> int:
     return parsed if parsed > 0 else default
 
 
+def _provider_full_document_max_items(provider) -> Optional[int]:
+    raw = getattr(provider, "full_document_max_items", None)
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return None
+    return raw if raw > 0 else None
+
+
 def _coerce_int_setting(value, default: int, *, min_value: int, max_value: int) -> int:
     if isinstance(value, bool):
         return default
@@ -349,9 +356,10 @@ class SubtitleTranslator:
                     blocks, target_lang, meta_info, kb_data, callback
                 )
             log.info(
-                "full_doc fallback to batched: estimated tokens exceed 80%% of "
-                "context window (%s)",
+                "full_doc fallback to batched: document exceeds safe full-doc "
+                "limits (context window=%s, max_items=%s)",
                 getattr(self.primary, "context_window_tokens", "?"),
+                _provider_full_document_max_items(self.primary) or "unbounded",
             )
         return self._translate_batched(blocks, target_lang, meta_info, kb_data, callback)
 
@@ -384,6 +392,9 @@ class SubtitleTranslator:
 
     def _fits_full_doc(self, blocks: List[SubtitleBlock]) -> bool:
         active = [b for b in blocks if not b.filtered and b.text.strip()]
+        max_items = _provider_full_document_max_items(self.primary)
+        if max_items is not None and len(active) > max_items:
+            return False
         # Rough token estimate: ~2 chars per token for mixed text.
         est_tokens = sum(len(b.text) for b in active) // 2
         # Add a little overhead for the system prompt and JSON envelope.

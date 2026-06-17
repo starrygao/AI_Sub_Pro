@@ -1,4 +1,8 @@
+import subprocess
+import signal
 from unittest.mock import patch
+
+import pytest
 
 
 def test_codex_cli_provider_cli_not_installed():
@@ -39,6 +43,7 @@ def test_codex_cli_provider_supports_full_document():
 
     assert p.supports_full_document_mode is True
     assert p.context_window_tokens >= 200_000
+    assert p.full_document_max_items == 400
 
 
 def test_codex_cli_provider_normalizes_bad_timeout():
@@ -97,3 +102,43 @@ def test_codex_cli_provider_redacts_cli_error_secrets():
     assert "token123" not in error
     assert "api_key=<redacted>" in error
     assert "Authorization: <redacted>" in error
+
+
+def test_codex_cli_provider_kills_process_group_on_timeout(monkeypatch):
+    from app.engines.providers import codex_cli as codex_mod
+    from app.engines.providers.codex_cli import CodexCliProvider
+
+    class FakeProcess:
+        pid = 12345
+        returncode = None
+
+        def communicate(self, input=None, timeout=None):
+            raise subprocess.TimeoutExpired(["codex"], timeout)
+
+        def wait(self, timeout=None):
+            self.returncode = -signal.SIGTERM
+
+        def kill(self):
+            self.returncode = -signal.SIGKILL
+
+    killed = []
+    fake_process = FakeProcess()
+
+    def fake_popen(cmd, **kwargs):
+        assert kwargs.get("start_new_session") is True
+        return fake_process
+
+    monkeypatch.setattr(codex_mod.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        codex_mod.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("use Popen for cancellable invocation")),
+    )
+    monkeypatch.setattr(codex_mod.os, "killpg", lambda pid, sig: killed.append((pid, sig)))
+
+    p = CodexCliProvider({"model": "gpt-5.5", "timeout_sec": 5})
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        p._invoke([{"id": 1, "original": "hi"}], "sys")
+
+    assert killed == [(12345, signal.SIGTERM)]

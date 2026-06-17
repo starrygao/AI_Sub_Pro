@@ -385,8 +385,13 @@ def test_action_popover_layers_above_surrounding_cards():
 
     assert "action-popover-host" in html
     assert "action-popover" in html
+    header_rule = re.search(r"\.project-detail-header\s*\{(?P<body>[^}]+)\}", css)
+    assert header_rule is not None
+    header_css = header_rule.group("body")
+    assert "position: relative" in header_css
+    assert "z-index: 300" in header_css
+    assert "overflow: visible" in header_css
     assert ".action-popover-host" in css
-    assert "overflow: visible" in css
     assert "z-index: 200" in css
     assert ".action-popover" in css
     assert "z-index: 220" in css

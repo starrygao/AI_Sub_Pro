@@ -165,14 +165,25 @@ def test_codex_cli_invoke_passes_prompt_via_stdin_and_last_message_file(tmp_path
     items = [{"id": 1, "original": big}]
     captured = {}
 
-    def fake_run(cmd, **kw):
-        captured["cmd"] = cmd
-        captured["input"] = kw.get("input")
-        output_path = cmd[cmd.index("--output-last-message") + 1]
-        Path(output_path).write_text('[{"id": 1, "translation": "y"}]', encoding="utf-8")
-        return MagicMock(returncode=0, stdout="ignored progress output", stderr="")
+    class FakeProcess:
+        returncode = 0
 
-    with patch.object(subprocess, "run", side_effect=fake_run):
+        def __init__(self, cmd, **kw):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kw
+
+        def communicate(self, input=None, timeout=None):
+            captured["input"] = input
+            captured["timeout"] = timeout
+            output_path = captured["cmd"][captured["cmd"].index("--output-last-message") + 1]
+            Path(output_path).write_text('[{"id": 1, "translation": "y"}]', encoding="utf-8")
+            return ("ignored progress output", "")
+
+    def fake_popen(cmd, **kw):
+        captured["cmd"] = cmd
+        return FakeProcess(cmd, **kw)
+
+    with patch.object(subprocess, "Popen", side_effect=fake_popen):
         text = p._invoke(items, "SYSPROMPT")
 
     assert text == '[{"id": 1, "translation": "y"}]'
@@ -180,6 +191,7 @@ def test_codex_cli_invoke_passes_prompt_via_stdin_and_last_message_file(tmp_path
     assert captured["cmd"].index("--ask-for-approval") < captured["cmd"].index("exec")
     assert "--output-last-message" in captured["cmd"]
     assert "--sandbox" in captured["cmd"]
+    assert captured["kwargs"]["start_new_session"] is True
     assert captured["input"] and "SYSPROMPT" in captured["input"]
     assert big in captured["input"]
     assert not any(big in str(a) for a in captured["cmd"])

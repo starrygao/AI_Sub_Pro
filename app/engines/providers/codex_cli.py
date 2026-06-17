@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import tempfile
 import time
@@ -44,6 +45,8 @@ def _coerce_model(value) -> str:
 
 class CodexCliProvider(BaseProvider):
     """Translation via local `codex` CLI; uses the user's Codex login."""
+
+    full_document_max_items = 400
 
     def __init__(self, config: dict):
         config = config if isinstance(config, dict) else {}
@@ -139,23 +142,59 @@ class CodexCliProvider(BaseProvider):
             "-",
         ]
         try:
-            r = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                input=prompt,
-                capture_output=True,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=self.timeout_sec,
+                start_new_session=True,
             )
-            if r.returncode != 0:
-                raise RuntimeError(f"codex CLI exit {r.returncode}: {r.stderr[:200]}")
+            try:
+                stdout, stderr = proc.communicate(
+                    input=prompt,
+                    timeout=self.timeout_sec,
+                )
+            except subprocess.TimeoutExpired:
+                self._terminate_process_group(proc)
+                raise
+            if proc.returncode != 0:
+                raise RuntimeError(f"codex CLI exit {proc.returncode}: {(stderr or '')[:200]}")
 
             text = path.read_text(encoding="utf-8", errors="replace").strip()
-            return text or r.stdout
+            return text or stdout
         finally:
             try:
                 path.unlink()
             except FileNotFoundError:
                 pass
+
+    @staticmethod
+    def _terminate_process_group(proc) -> None:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except (AttributeError, ProcessLookupError, PermissionError, OSError):
+            try:
+                proc.kill()
+            except (ProcessLookupError, OSError):
+                return
+        try:
+            proc.wait(timeout=5)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (AttributeError, ProcessLookupError, PermissionError, OSError):
+            try:
+                proc.kill()
+            except (ProcessLookupError, OSError):
+                return
+        try:
+            proc.wait(timeout=5)
+        except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
+            pass
 
     @staticmethod
     def _err(item, msg: str) -> dict:

@@ -371,6 +371,9 @@ textarea,
 }
 
 .project-detail-header {
+  position: relative;
+  z-index: 300;
+  overflow: visible;
   background: rgba(246, 247, 249, 0.82) !important;
   -webkit-backdrop-filter: blur(24px) saturate(1.25);
   backdrop-filter: blur(24px) saturate(1.25);

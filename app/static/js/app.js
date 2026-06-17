@@ -2411,6 +2411,7 @@ function app() {
         this.currentProject = project;
         await this.loadWorkflowState();
         if (this.openProjectRequestSeq !== requestId || this.currentProject?.id !== project.id) return;
+        this.loadKbSuggestions();
         this.loadKbUsageTrace();
         this.loadQualityReport();
         this.loadTranslationStrategy();
@@ -2652,6 +2653,10 @@ function app() {
           else if (p.status === 'completed') this.toast('带字幕的视频已就绪！');
           else this.toast('处理完成');
           await this.loadWorkflowState();
+          this.loadKbSuggestions();
+          this.loadKbUsageTrace();
+          this.loadQualityReport();
+          this.loadTranslationStrategy();
         }
       } catch(e) {
         if (this.progressPollRequestSeq !== requestId || this.currentProject?.id !== projectId) return;

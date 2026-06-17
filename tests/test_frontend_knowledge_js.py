@@ -424,6 +424,72 @@ def test_knowledge_frontend_loads_usage_trace_for_current_project():
     assert result.returncode == 0, result.stderr
 
 
+def test_open_project_auto_loads_kb_suggestions_without_generating():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const calls = [];
+          let suggestionsSawCurrentProject = false;
+          state.toast = () => {};
+          state.api = async (url, method = 'GET') => {
+            calls.push({url, method});
+            if (url === '/api/projects/project-open') {
+              return {id: 'project-open', name: 'Opened'};
+            }
+            if (url === '/api/projects/project-open/subtitles') {
+              return {blocks: [{index: 1, text: 'hello'}]};
+            }
+            if (url === '/api/projects/project-open/workflow-state') {
+              return {stages: {}};
+            }
+            if (url === '/api/knowledge/projects/project-open/suggestions' && method === 'GET') {
+              suggestionsSawCurrentProject = state.currentProject?.id === 'project-open';
+              return {suggestions: [{source: 'Alice', target: '爱丽丝', category: 'characters'}]};
+            }
+            if (url === '/api/knowledge/projects/project-open/usage-trace') {
+              return {project: {show_title: 'Opened'}, matches: []};
+            }
+            if (url === '/api/projects/project-open/quality-report') {
+              return {status: 'missing'};
+            }
+            if (url === '/api/projects/project-open/translation-strategy') {
+              return {status: 'ready'};
+            }
+            throw new Error(`unexpected API call ${method} ${url}`);
+          };
+
+          await state.openProject('project-open');
+          await new Promise((resolve) => setTimeout(resolve, 0));
+
+          if (!suggestionsSawCurrentProject) {
+            throw new Error('expected suggestion request after current project was assigned');
+          }
+          if (state.kbSuggestions.length !== 1 || state.kbSuggestions[0].source !== 'Alice') {
+            throw new Error(`expected suggestions to auto-load, got ${JSON.stringify(state.kbSuggestions)}`);
+          }
+          const generated = calls.some((call) => call.method === 'POST' && call.url.endsWith('/suggestions/generate'));
+          if (generated) {
+            throw new Error(`openProject should not auto-generate suggestions, got ${JSON.stringify(calls)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_knowledge_frontend_ignores_stale_usage_trace_response():
     result = run_js(
         """
