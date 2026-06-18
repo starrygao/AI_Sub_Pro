@@ -97,6 +97,35 @@ def test_repair_prompt_contains_only_failing_blocks():
     assert "哈德逊奥克斯" in prompt
 
 
+def test_repair_prompt_gives_reading_speed_compression_guidance():
+    from app.engines.translation_qa import QualityIssue, build_repair_prompt
+
+    items = [
+        {
+            "id": 7,
+            "original": "-Bracken Mountain, North Carolina? -Yes, sir.",
+            "draft": "-北卡州布拉肯山？ -是，长官。",
+        }
+    ]
+    issues = [
+        QualityIssue(
+            type="reading_speed_too_fast",
+            severity="warning",
+            block_id=7,
+            message="reading speed 11.2 chars/sec exceeds 9.0",
+            source_text="-Bracken Mountain, North Carolina? -Yes, sir.",
+            translation="-北卡州布拉肯山？ -是，长官。",
+            expected="9.0",
+        )
+    ]
+
+    prompt = build_repair_prompt("简体中文", items, issues)
+
+    assert "读速超标时必须压缩译文" in prompt
+    assert "删除可省略称呼" in prompt
+    assert "双人对话" in prompt
+
+
 def test_quality_checks_flag_inferred_proper_name_inconsistency():
     from app.engines.translation_qa import run_quality_checks
 

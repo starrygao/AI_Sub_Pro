@@ -560,6 +560,16 @@ def build_repair_prompt(
         parts.append("必须遵守术语:")
         for source, target in kb_terms.items():
             parts.append(f"- {source} → {target}")
+    issue_types = {issue.type for issue in issues}
+    if "reading_speed_too_fast" in issue_types:
+        parts.append(
+            "读速超标时必须压缩译文：保留核心信息，删除可省略称呼、语气词和重复表达；"
+            "双人对话要保留问答关系，但优先压到读速阈值以内。"
+        )
+    if "line_too_long" in issue_types:
+        parts.append("行长超标时优先在语义边界换行或压缩，不要为了换行添加新信息。")
+    if "proper_name_inconsistent" in issue_types:
+        parts.append("专名不一致时统一同一英文专名的中文译法，不要改动无关句意。")
     parts.append("")
     parts.append("待修复字幕:")
     for item in items:

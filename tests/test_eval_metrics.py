@@ -294,6 +294,62 @@ def test_proper_name_consistency_score_allows_same_long_name_in_natural_contexts
     assert result["issues"] == []
 
 
+def test_proper_name_consistency_score_ignores_prepositional_region_phrase():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "In North Africa, I proved that.",
+            "2": "In North Africa he was never wrong.",
+        },
+        {
+            "1": "在北非，我证明过这一点。",
+            "2": "在北非，他从未出错。",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
+def test_proper_name_consistency_score_keeps_real_name_after_preposition():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "In Hudson Oaks, the lights stayed on.",
+            "2": "I still remember Hudson Oaks.",
+        },
+        {
+            "1": "在哈德逊奥克斯，灯还亮着。",
+            "2": "我还记得哈德森橡树。",
+        },
+    )
+
+    assert result["issue_count"] == 1
+    assert result["issues"][0]["source"] == "Hudson Oaks"
+
+
+def test_proper_name_consistency_score_allows_region_synonym_translation():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "This is Northern Europe.",
+            "2": "Every chart in Northern Europe since 1900.",
+            "3": "A storm threatening Northern Europe.",
+        },
+        {
+            "1": "这是欧洲北部。",
+            "2": "1900年以来欧洲北部的每张天气图。",
+            "3": "威胁北欧的风暴。",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
 def test_proper_name_consistency_score_allows_temporal_prefix_context():
     from app.evaluation.metrics import proper_name_consistency_score
 

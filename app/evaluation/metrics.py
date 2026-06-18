@@ -13,6 +13,49 @@ _PROPER_NAME_RE = re.compile(
 )
 _CJK_RE = re.compile(r"[\u3400-\u9fff]+")
 _LEADING_NAME_STOPWORDS = {"A", "An", "The", "This", "That", "These", "Those"}
+_LEADING_CONTEXT_PREPOSITIONS = {
+    "At",
+    "By",
+    "For",
+    "From",
+    "In",
+    "Into",
+    "Near",
+    "On",
+    "Over",
+    "To",
+}
+_DIRECTIONAL_REGION_MODIFIERS = {
+    "Central",
+    "East",
+    "Eastern",
+    "North",
+    "Northeast",
+    "Northeastern",
+    "Northern",
+    "Northwest",
+    "Northwestern",
+    "South",
+    "Southeast",
+    "Southeastern",
+    "Southern",
+    "Southwest",
+    "Southwestern",
+    "West",
+    "Western",
+}
+_BROAD_REGION_TERMS = {
+    "Africa",
+    "America",
+    "Americas",
+    "Arctic",
+    "Asia",
+    "Atlantic",
+    "Caribbean",
+    "Europe",
+    "Mediterranean",
+    "Pacific",
+}
 _COMMON_TITLE_PHRASES = {
     "Are You",
     "Good Morning",
@@ -255,12 +298,32 @@ def _is_supported_proper_name(source_text: str, start: int, name: str) -> bool:
     return True
 
 
+def _strip_leading_context_preposition(name: str, start: int) -> tuple[str, int]:
+    tokens = name.split()
+    if len(tokens) >= 3 and tokens[0] in _LEADING_CONTEXT_PREPOSITIONS:
+        stripped = " ".join(tokens[1:])
+        return stripped, start + len(tokens[0]) + 1
+    return name, start
+
+
+def _looks_like_broad_region_phrase(name: str) -> bool:
+    tokens = name.split()
+    return (
+        len(tokens) == 2
+        and tokens[0] in _DIRECTIONAL_REGION_MODIFIERS
+        and tokens[1] in _BROAD_REGION_TERMS
+    )
+
+
 def _extract_proper_names(source_text: str) -> list[str]:
-    return [
-        match.group(0)
-        for match in _PROPER_NAME_RE.finditer(_clean_text(source_text))
-        if _is_supported_proper_name(source_text, match.start(), match.group(0))
-    ]
+    names = []
+    for match in _PROPER_NAME_RE.finditer(_clean_text(source_text)):
+        name, start = _strip_leading_context_preposition(match.group(0), match.start())
+        if _looks_like_broad_region_phrase(name):
+            continue
+        if _is_supported_proper_name(source_text, start, name):
+            names.append(name)
+    return names
 
 
 def _repeated_proper_names(source_by_id: dict[str, str]) -> list[str]:
