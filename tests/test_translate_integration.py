@@ -932,11 +932,12 @@ def test_translate_pipeline_batches_auto_repair_and_records_trace(tmp_path, monk
 def test_translate_pipeline_limits_auto_repair_rounds(tmp_path, monkeypatch):
     from app.api import translate as translate_api
 
-    assert translate_api._repair_round_limit({"translation": {}}) == 2
-    assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 0}}) == 2
-    assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 1}}) == 2
-    assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 2}}) == 2
-    assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 99}}) == 2
+    assert translate_api._repair_round_limit({"translation": {}}) == 3
+    assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 0}}) == 3
+    assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 1}}) == 3
+    assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 3}}) == 3
+    assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 4}}) == 4
+    assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 99}}) == 4
     assert translate_api._repair_item_limit({"translation": {"qa_auto_repair_max_blocks": -1}}) == 0
     assert translate_api._repair_item_limit({"translation": {"qa_auto_repair_max_blocks": 2}}) == 2
     assert translate_api._repair_item_limit({"translation": {"qa_auto_repair_max_blocks": 99}}) == 50

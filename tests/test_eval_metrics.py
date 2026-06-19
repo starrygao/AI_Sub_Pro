@@ -356,6 +356,46 @@ def test_proper_name_consistency_score_allows_titled_context_for_core_person_nam
     assert result["issues"] == []
 
 
+def test_proper_name_consistency_score_allows_titled_context_with_intro_prefix():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "15": "Group Captain Dr. James Stagg,",
+            "95": "Group Captain Dr. James Stagg,",
+            "103": "Sir, may I introduce Group Captain James Stagg,",
+            "434": "Hello. Uh, James Stagg.",
+        },
+        {
+            "15": "詹姆斯·斯塔格博士，空军上校，",
+            "95": "詹姆斯·斯塔格博士，空军上校，",
+            "103": "长官，介绍一下 斯塔格空军上校，",
+            "434": "您好，我是詹姆斯·斯塔格。",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
+def test_proper_name_consistency_score_allows_org_unit_greeting_prefixes():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "83": "Hello. Signals Department.",
+            "1302": "Hello. Signals Department.",
+        },
+        {
+            "83": "喂，通信处。",
+            "1302": "您好，通信处。",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
 def test_proper_name_consistency_score_ignores_prepositional_region_phrase():
     from app.evaluation.metrics import proper_name_consistency_score
 

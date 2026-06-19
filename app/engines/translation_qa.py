@@ -625,6 +625,11 @@ def build_repair_prompt(
             "如果待修复项包含 max_compact_chars，修复后的 compact 字数"
             "（去掉空格、换行和 HTML 标签后）必须小于等于该值。"
         )
+        parts.append(
+            "这是硬性验收条件，超过 max_compact_chars 会再次判失败；"
+            "称谓或职衔密集时优先保留姓名/姓氏和必要头衔，删除可省略的重复头衔；"
+            "争吵、追问等双人对话优先改成短句。"
+        )
     if "line_too_long" in issue_types:
         parts.append("行长超标时优先在语义边界换行或压缩，不要为了换行添加新信息。")
     if "proper_name_inconsistent" in issue_types:

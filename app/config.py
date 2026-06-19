@@ -76,7 +76,7 @@ DEFAULT_CONFIG = {
         "missing_translation_retries": 2,
         "missing_translation_retry_batch_size": 5,
         "qa_auto_repair": True,
-        "qa_auto_repair_rounds": 2,
+        "qa_auto_repair_rounds": 3,
     },
     "providers": {
         "claude_cli": {

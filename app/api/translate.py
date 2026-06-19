@@ -1007,12 +1007,12 @@ def _project_kb_terms(project_kb) -> dict:
 
 def _repair_round_limit(cfg: dict) -> int:
     trans_cfg = cfg.get("translation", {}) if isinstance(cfg, dict) else {}
-    raw = trans_cfg.get("qa_auto_repair_rounds", 2) if isinstance(trans_cfg, dict) else 2
+    raw = trans_cfg.get("qa_auto_repair_rounds", 3) if isinstance(trans_cfg, dict) else 3
     try:
         value = int(raw)
     except (TypeError, ValueError, OverflowError):
-        value = 2
-    return max(2, min(value, 2))
+        value = 3
+    return max(3, min(value, 4))
 
 
 def _repair_item_limit(cfg: dict) -> int:

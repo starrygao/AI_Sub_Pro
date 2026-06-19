@@ -470,7 +470,7 @@ def test_update_settings_rejects_invalid_numeric_values(monkeypatch):
         ({"translation": {"batch_size": -1}}, "batch_size"),
         ({"translation": {"max_memory_examples": -1}}, "max_memory_examples"),
         ({"translation": {"max_phrase_examples": 21}}, "max_phrase_examples"),
-        ({"translation": {"qa_auto_repair_rounds": 3}}, "qa_auto_repair_rounds"),
+        ({"translation": {"qa_auto_repair_rounds": 5}}, "qa_auto_repair_rounds"),
         ({"concurrency": {"translate": 0}}, "translate"),
         ({"providers": {"claude_cli": {"timeout_sec": 0}}}, "timeout_sec"),
     ]
@@ -606,7 +606,7 @@ def test_update_settings_accepts_and_normalizes_translation_retrieval_fields():
                 "max_phrase_examples": 0,
                 "quality_mode": " PROFESSIONAL ",
                 "require_kb_suggestion_review": True,
-                "qa_auto_repair_rounds": 2,
+                "qa_auto_repair_rounds": 4,
             }
         })
 
@@ -618,7 +618,7 @@ def test_update_settings_accepts_and_normalizes_translation_retrieval_fields():
     assert payload["translation"]["max_phrase_examples"] == 0
     assert payload["translation"]["quality_mode"] == "professional"
     assert payload["translation"]["require_kb_suggestion_review"] is True
-    assert payload["translation"]["qa_auto_repair_rounds"] == 2
+    assert payload["translation"]["qa_auto_repair_rounds"] == 4
 
 
 def test_update_settings_rejects_invalid_asr_mode(monkeypatch):

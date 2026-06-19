@@ -75,6 +75,20 @@ _SOURCE_PERSON_TITLE_TOKENS = {
     "Prof",
     "Sergeant",
 }
+_SOURCE_ORG_UNIT_TOKENS = {
+    "Agency",
+    "Bureau",
+    "Command",
+    "Committee",
+    "Department",
+    "Desk",
+    "Division",
+    "Headquarters",
+    "Office",
+    "Section",
+    "Service",
+    "Unit",
+}
 _COMMON_TITLE_PHRASES = {
     "Are You",
     "Good Morning",
@@ -215,6 +229,14 @@ _LONG_NAME_CONTEXT_PREFIX_HINTS = (
     "了",
 )
 _LONG_NAME_CONTEXT_PREFIX_TOKENS = (
+    "喂",
+    "你好",
+    "您好",
+    "长官",
+    "先生",
+    "女士",
+    "介绍",
+    "介绍一下",
     "喜欢",
     "讨厌",
     "昨天",
@@ -336,6 +358,10 @@ def _looks_like_broad_region_phrase(name: str) -> bool:
 
 def _has_source_person_title(proper_name: str) -> bool:
     return any(token.strip(".") in _SOURCE_PERSON_TITLE_TOKENS for token in proper_name.split())
+
+
+def _has_source_org_unit(proper_name: str) -> bool:
+    return any(token.strip(".") in _SOURCE_ORG_UNIT_TOKENS for token in proper_name.split())
 
 
 def _has_source_person_title_context(proper_name: str, source_texts: list[str]) -> bool:
@@ -497,8 +523,28 @@ def _has_conflicting_name_prefixes(
     )
 
 
-def _has_competing_name_prefix_chunks(anchor: str, translations: list[str]) -> bool:
+def _looks_like_ordinary_context_prefix(prefix: str) -> bool:
+    if not prefix:
+        return True
+    if len(prefix) <= 2 and _contains_context_chars(prefix):
+        return True
+    return any(
+        prefix == token or prefix.endswith(token)
+        for token in _LONG_NAME_CONTEXT_PREFIX_TOKENS
+    )
+
+
+def _has_competing_name_prefix_chunks(
+    anchor: str,
+    translations: list[str],
+    allow_context_prefixes: bool = False,
+) -> bool:
     prefixes = [_prefix_before_anchor(text, anchor) for text in translations]
+    if allow_context_prefixes:
+        prefixes = [
+            "" if _looks_like_ordinary_context_prefix(prefix) else prefix
+            for prefix in prefixes
+        ]
     chunks = [_anchor_adjacent_name_prefix(prefix) for prefix in prefixes]
     nonempty = [chunk for chunk in chunks if chunk]
     if len(nonempty) != len(chunks):
@@ -553,7 +599,12 @@ def _is_valid_long_name_anchor(
     # or shared subparts of competing prefix/suffix transliterations.
     if _is_context_anchor(anchor):
         return False
-    if _has_competing_name_prefix_chunks(anchor, translations):
+    allow_context_prefixes = has_title_context or _has_source_org_unit(proper_name)
+    if _has_competing_name_prefix_chunks(
+        anchor,
+        translations,
+        allow_context_prefixes=allow_context_prefixes,
+    ):
         return False
     if proper_name and _has_competing_name_suffixes(
         anchor,
@@ -686,6 +737,8 @@ def _long_name_signature(
     start = _consume_identity_prefixes(cjk_text, anchor_start)
     end = anchor_start + len(shared_anchor)
     end = _consume_identity_suffixes(cjk_text, end)
+    if _has_source_org_unit(proper_name) and len(shared_anchor) >= 2:
+        return shared_anchor
     if len(shared_anchor) < 4:
         return cjk_text or _compact_whitespace(translation)
     return cjk_text[start:end] or shared_anchor

@@ -130,6 +130,8 @@ def test_repair_prompt_gives_reading_speed_compression_guidance():
     assert "双人对话" in prompt
     assert "max_compact_chars" in prompt
     assert "必须小于等于该值" in prompt
+    assert "超过 max_compact_chars 会再次判失败" in prompt
+    assert "删除可省略的重复头衔" in prompt
 
 
 def test_repair_prompt_gives_core_term_consistency_guidance():
