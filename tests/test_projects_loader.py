@@ -207,6 +207,8 @@ def test_legacy_project_metadata_fields_are_sanitized(patched_projects_dir):
     assert loaded["selected_subtitle_track"] is None
     assert loaded["duration"] == 0
     assert loaded["output_video"] is None
+    assert loaded["translated_srt"] is None
+    assert loaded["bilingual_srt"] is None
 
 
 def test_legacy_project_filters_malformed_track_entries_before_subtitle_pick(patched_projects_dir):

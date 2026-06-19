@@ -393,6 +393,8 @@ def test_translate_pipeline_ignores_malformed_filter_entries_per_block(tmp_path,
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     assert project["status"] == "translated"
+    assert project["translated_srt"] == str(pdir / "translated.srt")
+    assert project["bilingual_srt"] == str(pdir / "bilingual.srt")
     assert seen["meta_info"]["name"] == "movie"
     assert seen["meta_info"]["tmdb_id"] == 123
     translated = (pdir / "translated.srt").read_text(encoding="utf-8")
@@ -658,6 +660,8 @@ def test_translate_pipeline_marks_partial_translation_as_error(tmp_path, monkeyp
         "status": "asr_done",
         "target_language": "简体中文",
         "original_language": "en",
+        "translated_srt": str(pdir / "translated.srt"),
+        "bilingual_srt": str(pdir / "bilingual.srt"),
     }), encoding="utf-8")
     (pdir / "filtered.srt").write_text(
         "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n"
@@ -697,6 +701,8 @@ def test_translate_pipeline_marks_partial_translation_as_error(tmp_path, monkeyp
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     state = json.loads((pdir / "workflow_state.json").read_text(encoding="utf-8"))
     assert project["status"] == "error"
+    assert project["translated_srt"] is None
+    assert project["bilingual_srt"] is None
     assert "翻译未完成: 1/2 条成功，1 条缺失" in project["error"]
     assert state["stages"]["translate"]["status"] == "failed"
     assert not (pdir / "translated.srt").exists()

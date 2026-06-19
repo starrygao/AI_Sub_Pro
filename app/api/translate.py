@@ -1440,9 +1440,11 @@ def _run_translate_pipeline(
                 _remove_safe_project_files(pid, ["translated.srt", "bilingual.srt"])
                 write_srt(blocks, os.path.join(pdir, "partial_translated.srt"), use_translation=True)
                 write_bilingual_srt(blocks, os.path.join(pdir, "partial_bilingual.srt"))
+                _mark_translation_artifacts(pid)
             else:
                 write_srt(blocks, os.path.join(pdir, "translated.srt"), use_translation=True)
                 write_bilingual_srt(blocks, os.path.join(pdir, "bilingual.srt"))
+                _mark_translation_artifacts(pid)
             try:
                 write_kb_usage_trace(Path(pdir), translator.get_kb_usage_trace())
             except Exception as e:
@@ -1469,6 +1471,7 @@ def _run_translate_pipeline(
                     "progress": 100,
                     "progress_msg": done_msg,
                     "pipeline_stage": None,
+                    **_translation_artifact_fields(pid),
                 }),
                 normalize=_apply_safe_defaults,
             )
@@ -1570,13 +1573,35 @@ def _mark_stage_running(pid: str, stage: str, *, message: str = "", progress: Op
     mutate_project(pid, _update, normalize=_apply_safe_defaults)
 
 
+def _translation_artifact_fields(pid: str) -> dict[str, Optional[str]]:
+    fields: dict[str, Optional[str]] = {
+        "translated_srt": None,
+        "bilingual_srt": None,
+    }
+    for key, artifact in (
+        ("translated_srt", "translated.srt"),
+        ("bilingual_srt", "bilingual.srt"),
+    ):
+        path = _safe_project_artifact_path(pid, artifact)
+        if path is not None and path.is_file():
+            fields[key] = str(path)
+    return fields
+
+
+def _mark_translation_artifacts(pid: str) -> None:
+    fields = _translation_artifact_fields(pid)
+    mutate_project(pid, lambda p: p.update(fields), normalize=_apply_safe_defaults)
+
+
 def _mark_burn_completed(pid: str, output_video: str, message: str) -> None:
+    artifact_fields = _translation_artifact_fields(pid)
     mutate_project(pid, lambda p: p.update({"status": "completed",
                                              "output_video": output_video,
                                              "error": None,
                                              "progress": 100,
                                              "progress_msg": message,
-                                             "pipeline_stage": None}),
+                                             "pipeline_stage": None,
+                                             **artifact_fields}),
                    normalize=_apply_safe_defaults)
 
 

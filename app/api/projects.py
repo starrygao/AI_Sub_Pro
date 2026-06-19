@@ -100,6 +100,8 @@ _PROJECT_SAFE_DEFAULTS = {
     "content_notes": "",
     "manual_terms": "",
     "metadata_source": "",
+    "translated_srt": None,
+    "bilingual_srt": None,
 }
 
 
@@ -179,7 +181,7 @@ def _apply_safe_defaults(project: dict) -> dict:
             project[field] = []
         else:
             project[field] = [t for t in project[field] if isinstance(t, dict)]
-    for field in ("video_path", "output_video"):
+    for field in ("video_path", "output_video", "translated_srt", "bilingual_srt"):
         if project.get(field) is not None and not isinstance(project.get(field), str):
             project[field] = None
     for field in (
