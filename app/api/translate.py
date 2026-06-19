@@ -1082,6 +1082,55 @@ def _finalize_quality_conclusion(report, repaired: list[dict], repair_enabled: b
     })
 
 
+def _translation_quality_gate_status(pid: str) -> tuple[bool, str]:
+    report_path = _safe_project_artifact_path(pid, "translation_qa_report.json")
+    if report_path is None:
+        return False, "翻译质量检查未生成报告，已停止烧录。"
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False, "翻译质量检查报告无效，已停止烧录。"
+    if not isinstance(report, dict):
+        return False, "翻译质量检查报告无效，已停止烧录。"
+
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    gate = summary.get("quality_gate") if isinstance(summary.get("quality_gate"), dict) else {}
+    issues = report.get("issues") if isinstance(report.get("issues"), list) else []
+    passed = gate.get("passed") is True or (report.get("status") == "ok" and not issues)
+    conclusion = summary.get("conclusion")
+    if not isinstance(conclusion, str) or not conclusion.strip():
+        conclusion = "翻译质量检查通过。" if passed else ""
+    if passed:
+        return True, conclusion.strip()
+
+    issue_count = summary.get("issue_count")
+    if not isinstance(issue_count, int) or isinstance(issue_count, bool):
+        issue_count = len(issues)
+    unresolved_count = summary.get("unresolved_blocks")
+    if not isinstance(unresolved_count, int) or isinstance(unresolved_count, bool):
+        unresolved_count = len(report.get("unresolved_blocks") or [])
+    if conclusion:
+        return False, f"翻译质量未达标：{conclusion.strip()} 已停止烧录。"
+    return False, f"翻译质量未达标：仍有 {issue_count} 个问题、{unresolved_count} 个问题位置，已停止烧录。"
+
+
+def _mark_translation_quality_failed(pid: str, message: str) -> None:
+    detail = message.strip() or "翻译质量未达标，已停止烧录。"
+    _best_effort_fail_stage(pid, "translate", detail)
+    mutate_project(
+        pid,
+        lambda p: p.update({
+            "status": "error",
+            "error": detail,
+            "progress": 100,
+            "progress_msg": detail,
+            "pipeline_stage": None,
+        }),
+        normalize=_apply_safe_defaults,
+    )
+    _emit_progress(pid, "translate", 100, detail)
+
+
 def _auto_repair_quality_issues(
     cfg: dict,
     translator,
@@ -1282,7 +1331,12 @@ def _persist_translation_quality_report(
         return []
 
 
-def _run_translate_pipeline(pid: str, target_language: str, owns_registration: bool = True):
+def _run_translate_pipeline(
+    pid: str,
+    target_language: str,
+    owns_registration: bool = True,
+    strict_quality_gate: bool = False,
+):
     """Run translation pipeline in background thread.
 
     `owns_registration` is False when invoked as a sub-step of the full
@@ -1396,6 +1450,11 @@ def _run_translate_pipeline(pid: str, target_language: str, owns_registration: b
 
             if incomplete_msg:
                 raise RuntimeError(incomplete_msg)
+
+            quality_passed, quality_message = _translation_quality_gate_status(pid)
+            if strict_quality_gate and not quality_passed:
+                _mark_translation_quality_failed(pid, quality_message)
+                return
 
             done_msg = f"翻译完成: {translated_count} 条"
             if failed_count > 0:
@@ -1624,7 +1683,12 @@ def _run_full_pipeline(pid: str, audio_track: int, language: str, target_languag
         if project["status"] == "error":
             return
         _check_cancel(pid)
-        _run_translate_pipeline(pid, target_language, owns_registration=False)
+        _run_translate_pipeline(
+            pid,
+            target_language,
+            owns_registration=False,
+            strict_quality_gate=True,
+        )
 
         # Check if translation succeeded
         project = _load_project(pid)

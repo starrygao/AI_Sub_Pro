@@ -531,6 +531,66 @@ def test_translate_pipeline_writes_quality_report(tmp_path, monkeypatch):
     assert (pdir / "translation_qa_report.md").exists()
 
 
+def test_full_pipeline_stops_before_burn_when_quality_gate_fails(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "fullqagate"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "created",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {"qa_auto_repair": False},
+    })
+    monkeypatch.setattr(api_translate, "_ensure_kb_review_ready", lambda *args, **kwargs: None)
+
+    def fake_asr(pid_, audio_track, language, owns_registration=True):
+        api_translate.mutate_project(
+            pid_,
+            lambda p: p.update({"status": "asr_done", "error": None}),
+            normalize=api_translate._apply_safe_defaults,
+        )
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            pass
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "Hello"
+            return blocks
+
+    burn_called = []
+    monkeypatch.setattr(api_translate, "_run_asr_pipeline", fake_asr)
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+    monkeypatch.setattr(api_translate, "_run_burn_pipeline", lambda pid_: burn_called.append(pid_))
+
+    api_translate._run_full_pipeline(pid, 0, "auto", "简体中文")
+
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
+    assert burn_called == []
+    assert project["status"] == "error"
+    assert "翻译质量未达标" in project["error"]
+    assert report["summary"]["quality_gate"]["passed"] is False
+    assert (pdir / "translated.srt").exists()
+
+
 def test_translate_done_message_ignores_blank_sound_descriptions(tmp_path, monkeypatch):
     from app.api import translate as api_translate
     from app.utils import project_store
@@ -672,7 +732,12 @@ def test_translate_pipeline_can_auto_repair_quality_issues(tmp_path, monkeypatch
 
     class FakePrimary:
         def translate_batch(self, items, system_prompt):
-            assert items == [{"id": 1, "original": "Are you okay?", "draft": "Are you okay?"}]
+            assert len(items) == 1
+            assert {
+                "id": items[0]["id"],
+                "original": items[0]["original"],
+                "draft": items[0]["draft"],
+            } == {"id": 1, "original": "Are you okay?", "draft": "Are you okay?"}
             assert "Are you okay?" in system_prompt
             return [{"id": 1, "translation": "你还好吗？"}]
 

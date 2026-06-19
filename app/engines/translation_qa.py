@@ -560,16 +560,37 @@ def save_quality_report(
 
 def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dict]:
     failing_ids = {issue.block_id for issue in issues if isinstance(issue.block_id, int)}
+    reading_speed_by_id = {
+        issue.block_id: issue
+        for issue in issues
+        if issue.type == "reading_speed_too_fast" and isinstance(issue.block_id, int)
+    }
     items = []
     for block in blocks or []:
         block_id = getattr(block, "index", None)
         if block_id not in failing_ids:
             continue
-        items.append({
+        translation = _clean_text(getattr(block, "translation", ""))
+        item = {
             "id": block_id,
             "original": _clean_text(getattr(block, "text", "")),
-            "draft": _clean_text(getattr(block, "translation", "")),
-        })
+            "draft": translation,
+        }
+        reading_issue = reading_speed_by_id.get(block_id)
+        duration = _duration_seconds(block)
+        if reading_issue is not None and duration > 0:
+            try:
+                max_cps = float(reading_issue.expected)
+            except (TypeError, ValueError, OverflowError):
+                max_cps = 0.0
+            if max_cps > 0:
+                item.update({
+                    "duration_seconds": round(duration, 2),
+                    "current_compact_chars": len(_compact_subtitle_text(translation)),
+                    "max_compact_chars": max(1, int(duration * max_cps)),
+                    "max_chars_per_second": round(max_cps, 1),
+                })
+        items.append(item)
     return items
 
 
@@ -599,6 +620,10 @@ def build_repair_prompt(
         parts.append(
             "读速超标时必须压缩译文：保留核心信息，删除可省略称呼、语气词和重复表达；"
             "双人对话要保留问答关系，但优先压到读速阈值以内。"
+        )
+        parts.append(
+            "如果待修复项包含 max_compact_chars，修复后的 compact 字数"
+            "（去掉空格、换行和 HTML 标签后）必须小于等于该值。"
         )
     if "line_too_long" in issue_types:
         parts.append("行长超标时优先在语义边界换行或压缩，不要为了换行添加新信息。")

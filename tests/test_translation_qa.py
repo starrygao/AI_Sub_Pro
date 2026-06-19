@@ -98,14 +98,14 @@ def test_repair_prompt_contains_only_failing_blocks():
 
 
 def test_repair_prompt_gives_reading_speed_compression_guidance():
-    from app.engines.translation_qa import QualityIssue, build_repair_prompt
+    from app.engines.translation_qa import QualityIssue, build_repair_items, build_repair_prompt
 
-    items = [
-        {
-            "id": 7,
-            "original": "-Bracken Mountain, North Carolina? -Yes, sir.",
-            "draft": "-北卡州布拉肯山？ -是，长官。",
-        }
+    blocks = [
+        _block(
+            7,
+            "-Bracken Mountain, North Carolina? -Yes, sir.",
+            "-北卡州布拉肯山？ -是，长官。",
+        )
     ]
     issues = [
         QualityIssue(
@@ -118,12 +118,18 @@ def test_repair_prompt_gives_reading_speed_compression_guidance():
             expected="9.0",
         )
     ]
+    items = build_repair_items(blocks, issues)
 
     prompt = build_repair_prompt("简体中文", items, issues)
 
+    assert items[0]["duration_seconds"] == 1.0
+    assert items[0]["max_compact_chars"] == 9
+    assert items[0]["current_compact_chars"] > items[0]["max_compact_chars"]
     assert "读速超标时必须压缩译文" in prompt
     assert "删除可省略称呼" in prompt
     assert "双人对话" in prompt
+    assert "max_compact_chars" in prompt
+    assert "必须小于等于该值" in prompt
 
 
 def test_repair_prompt_gives_core_term_consistency_guidance():
