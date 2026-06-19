@@ -294,6 +294,68 @@ def test_proper_name_consistency_score_allows_same_long_name_in_natural_contexts
     assert result["issues"] == []
 
 
+def test_proper_name_consistency_score_allows_rank_name_with_sentence_context():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "36": "Colonel Krick, he requested them.",
+            "62": "It's just, Colonel Krick instructed us otherwise, sir.",
+            "507": "whether Colonel Krick attends or not.",
+            "924": "what Colonel Krick's just said, that it's going to be safe",
+        },
+        {
+            "36": "克里克上校要的。",
+            "62": "只是克里克上校另有指示，长官。",
+            "507": "克里克来不来，预报不变。",
+            "924": "信克里克上校说的：",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
+def test_proper_name_consistency_score_still_flags_rank_name_variant():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "1": "Colonel Krick requested it.",
+            "2": "Colonel Krick is here.",
+        },
+        {
+            "1": "克里克上校要的。",
+            "2": "克莱克上校到了。",
+        },
+    )
+
+    assert result["issue_count"] == 1
+    assert result["issues"][0]["source"] == "Colonel Krick"
+
+
+def test_proper_name_consistency_score_allows_titled_context_for_core_person_name():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "15": "Group Captain Dr. James Stagg,",
+            "95": "Group Captain Dr. James Stagg,",
+            "103": "Sir, may I introduce Group Captain James Stagg,",
+            "434": "Good afternoon. My name is James Stagg.",
+        },
+        {
+            "15": "斯塔格博士，空军上校，",
+            "95": "斯塔格博士，空军上校，",
+            "103": "长官，这位是\n詹姆斯·斯塔格空军上校，",
+            "434": "您好，我是詹姆斯·斯塔格。",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
 def test_proper_name_consistency_score_ignores_prepositional_region_phrase():
     from app.evaluation.metrics import proper_name_consistency_score
 

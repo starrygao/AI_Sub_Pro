@@ -86,6 +86,13 @@ _SOUND_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _REPEATED_CJK_RE = re.compile(r"([\u4e00-\u9fff])(?:[，,、\s]*\1){2,}")
 _ASCII_PUNCT_RE = re.compile(r"[?!,;:]")
+_CORE_TERM_RULES = (
+    {
+        "source": "D-Day",
+        "pattern": re.compile(r"\bD[- ]?Day\b", re.IGNORECASE),
+        "target": "D日",
+    },
+)
 _TECH_ALLOWED_ENGLISH_TOKENS = {
     "api",
     "cli",
@@ -218,6 +225,7 @@ _FAR_CATEGORY_BY_TYPE = {
     "kb_term_missing": "functional",
     "manual_term_missing": "functional",
     "canonical_term_missing": "functional",
+    "core_term_inconsistent": "functional",
     "proper_name_inconsistent": "functional",
     "english_residue": "acceptability",
     "sound_description_translated": "acceptability",
@@ -237,6 +245,27 @@ def _far_counts(issues: list[QualityIssue]) -> dict:
         if category:
             counts[category] += 1
     return counts
+
+
+def _core_term_issues(source: str, translation: str, block_id: int | None) -> list[QualityIssue]:
+    issues: list[QualityIssue] = []
+    for rule in _CORE_TERM_RULES:
+        pattern = rule["pattern"]
+        target = rule["target"]
+        if not pattern.search(source):
+            continue
+        if target in translation:
+            continue
+        issues.append(QualityIssue(
+            type="core_term_inconsistent",
+            severity="warning",
+            block_id=block_id,
+            message=f"expected {rule['source']} → {target}",
+            source_text=source,
+            translation=translation,
+            expected=target,
+        ))
+    return issues
 
 
 def _compact_subtitle_text(value: str) -> str:
@@ -459,6 +488,11 @@ def run_quality_checks(
                 ))
 
         if chinese_target and source and translation:
+            issues.extend(_core_term_issues(
+                source,
+                translation,
+                block_id if isinstance(block_id, int) else None,
+            ))
             for match in find_domain_terms(source):
                 if match_is_overridden_by_project_kb(match, project_kb):
                     continue
@@ -570,6 +604,8 @@ def build_repair_prompt(
         parts.append("行长超标时优先在语义边界换行或压缩，不要为了换行添加新信息。")
     if "proper_name_inconsistent" in issue_types:
         parts.append("专名不一致时统一同一英文专名的中文译法，不要改动无关句意。")
+    if "core_term_inconsistent" in issue_types:
+        parts.append("核心术语不一致时必须使用 Issue 中 expected 指定的译法，并统一同一源术语。")
     parts.append("")
     parts.append("待修复字幕:")
     for item in items:

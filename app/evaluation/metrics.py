@@ -56,6 +56,25 @@ _BROAD_REGION_TERMS = {
     "Mediterranean",
     "Pacific",
 }
+_SOURCE_PERSON_TITLE_TOKENS = {
+    "Admiral",
+    "Captain",
+    "Colonel",
+    "Commander",
+    "Doctor",
+    "Dr",
+    "Flight",
+    "General",
+    "Group",
+    "Lieutenant",
+    "Major",
+    "Marshal",
+    "Officer",
+    "Private",
+    "Professor",
+    "Prof",
+    "Sergeant",
+}
 _COMMON_TITLE_PHRASES = {
     "Are You",
     "Good Morning",
@@ -315,6 +334,23 @@ def _looks_like_broad_region_phrase(name: str) -> bool:
     )
 
 
+def _has_source_person_title(proper_name: str) -> bool:
+    return any(token.strip(".") in _SOURCE_PERSON_TITLE_TOKENS for token in proper_name.split())
+
+
+def _has_source_person_title_context(proper_name: str, source_texts: list[str]) -> bool:
+    if _has_source_person_title(proper_name):
+        return True
+    matcher = re.compile(rf"\b{re.escape(proper_name)}\b")
+    for source_text in source_texts:
+        for match in matcher.finditer(_clean_text(source_text)):
+            prefix = source_text[:match.start()]
+            prefix_tokens = re.findall(r"[A-Za-z]+", prefix[-80:])
+            if any(token in _SOURCE_PERSON_TITLE_TOKENS for token in prefix_tokens[-6:]):
+                return True
+    return False
+
+
 def _extract_proper_names(source_text: str) -> list[str]:
     names = []
     for match in _PROPER_NAME_RE.finditer(_clean_text(source_text)):
@@ -472,8 +508,12 @@ def _has_competing_name_prefix_chunks(anchor: str, translations: list[str]) -> b
     return all(_looks_like_name_prefix_chunk(chunk) for chunk in nonempty)
 
 
-def _estimated_cjk_name_length_floor(proper_name: str) -> int:
+def _estimated_cjk_name_length_floor(
+    proper_name: str, has_title_context: bool = False
+) -> int:
     letter_count = sum(len(re.sub(r"[^A-Za-z]", "", token)) for token in proper_name.split())
+    if has_title_context or _has_source_person_title(proper_name):
+        return 3
     return max(4, (letter_count + 2) // 3)
 
 
@@ -486,9 +526,12 @@ def _looks_like_ordinary_context_suffix(suffix: str) -> bool:
 
 
 def _has_competing_name_suffixes(
-    anchor: str, translations: list[str], proper_name: str
+    anchor: str,
+    translations: list[str],
+    proper_name: str,
+    has_title_context: bool = False,
 ) -> bool:
-    if len(anchor) >= _estimated_cjk_name_length_floor(proper_name):
+    if len(anchor) >= _estimated_cjk_name_length_floor(proper_name, has_title_context):
         return False
     suffixes = [_suffix_after_anchor(text, anchor) for text in translations]
     if len(set(suffixes)) < 2:
@@ -500,7 +543,10 @@ def _has_competing_name_suffixes(
 
 
 def _is_valid_long_name_anchor(
-    anchor: str, translations: list[str], proper_name: str = ""
+    anchor: str,
+    translations: list[str],
+    proper_name: str = "",
+    has_title_context: bool = False,
 ) -> bool:
     # Safe anchors are plausible full target-name cores that may appear with
     # different sentence context. Unsafe anchors are repeated context phrases
@@ -509,7 +555,12 @@ def _is_valid_long_name_anchor(
         return False
     if _has_competing_name_prefix_chunks(anchor, translations):
         return False
-    if proper_name and _has_competing_name_suffixes(anchor, translations, proper_name):
+    if proper_name and _has_competing_name_suffixes(
+        anchor,
+        translations,
+        proper_name,
+        has_title_context,
+    ):
         return False
     return not _has_conflicting_name_prefixes(anchor, translations)
 
@@ -539,18 +590,26 @@ def _shared_cjk_anchor(translations: list[str]) -> str:
     return ""
 
 
-def _long_name_cjk_anchor(translations: list[str], proper_name: str = "") -> str:
+def _long_name_cjk_anchor(
+    translations: list[str],
+    proper_name: str = "",
+    has_title_context: bool = False,
+) -> str:
     common = _common_cjk_substrings(translations, min_length=4)
     for anchor in common:
-        if _is_valid_long_name_anchor(anchor, translations, proper_name):
+        if _is_valid_long_name_anchor(anchor, translations, proper_name, has_title_context):
             return anchor
     return ""
 
 
-def _fallback_long_name_anchor(translations: list[str], proper_name: str = "") -> str:
+def _fallback_long_name_anchor(
+    translations: list[str],
+    proper_name: str = "",
+    has_title_context: bool = False,
+) -> str:
     common = _common_cjk_substrings(translations, min_length=2)
     for anchor in common:
-        if _is_valid_long_name_anchor(anchor, translations, proper_name):
+        if _is_valid_long_name_anchor(anchor, translations, proper_name, has_title_context):
             return anchor
     return ""
 
@@ -598,7 +657,12 @@ def _consume_identity_prefixes(text: str, start: int) -> int:
         begin -= len(marker)
 
 
-def _long_name_signature(translation: str, shared_anchor: str) -> str:
+def _long_name_signature(
+    translation: str,
+    shared_anchor: str,
+    proper_name: str = "",
+    has_title_context: bool = False,
+) -> str:
     """Return a plausible translated-name chunk for long CJK names.
 
     Examples:
@@ -613,6 +677,11 @@ def _long_name_signature(translation: str, shared_anchor: str) -> str:
         # separate, while same-rendering context cases continue to rely on the
         # shared-anchor path above.
         return cjk_text or _compact_whitespace(translation)
+    if (has_title_context or _has_source_person_title(proper_name)) and len(shared_anchor) >= 3:
+        # Rank/title-led names often appear as `克里克上校`, `克里克说的`,
+        # or `克里克来不来` across subtitle context. Compare the stable
+        # translated name core instead of the whole sentence.
+        return shared_anchor
     anchor_start = cjk_text.find(shared_anchor)
     start = _consume_identity_prefixes(cjk_text, anchor_start)
     end = anchor_start + len(shared_anchor)
@@ -740,6 +809,10 @@ def proper_name_consistency_score(
         if len(observations) < 2:
             continue
 
+        has_title_context = _has_source_person_title_context(
+            proper_name,
+            [item["source_text"] for item in observations],
+        )
         cjk_translations = [
             cjk_text
             for cjk_text in (_cjk_compact_text(item["translation"]) for item in observations)
@@ -749,16 +822,29 @@ def proper_name_consistency_score(
         if _is_short_source_name(proper_name):
             shared_anchor = _short_name_cjk_anchor(cjk_translations)
         else:
-            shared_anchor = _long_name_cjk_anchor(cjk_translations, proper_name)
+            shared_anchor = _long_name_cjk_anchor(
+                cjk_translations,
+                proper_name,
+                has_title_context,
+            )
         if not shared_anchor and not _is_short_source_name(proper_name):
-            shared_anchor = _fallback_long_name_anchor(cjk_translations, proper_name)
+            shared_anchor = _fallback_long_name_anchor(
+                cjk_translations,
+                proper_name,
+                has_title_context,
+            )
 
         target_forms = []
         for item in observations:
             if _is_short_source_name(proper_name):
                 signature = _target_signature(item["translation"], shared_anchor)
             else:
-                signature = _long_name_signature(item["translation"], shared_anchor)
+                signature = _long_name_signature(
+                    item["translation"],
+                    shared_anchor,
+                    proper_name,
+                    has_title_context,
+                )
             item["target_signature"] = signature
             item["target_anchor"] = shared_anchor
             if signature not in target_forms:

@@ -126,6 +126,29 @@ def test_repair_prompt_gives_reading_speed_compression_guidance():
     assert "双人对话" in prompt
 
 
+def test_repair_prompt_gives_core_term_consistency_guidance():
+    from app.engines.translation_qa import QualityIssue, build_repair_prompt
+
+    prompt = build_repair_prompt(
+        "简体中文",
+        [{"id": 5, "original": "The proposed D-Day is Monday.", "draft": "拟定登陆日是星期一。"}],
+        [
+            QualityIssue(
+                type="core_term_inconsistent",
+                severity="warning",
+                block_id=5,
+                message="expected D-Day → D日",
+                source_text="The proposed D-Day is Monday.",
+                translation="拟定登陆日是星期一。",
+                expected="D日",
+            )
+        ],
+    )
+
+    assert "核心术语不一致" in prompt
+    assert "expected D-Day → D日" in prompt
+
+
 def test_quality_checks_flag_inferred_proper_name_inconsistency():
     from app.engines.translation_qa import run_quality_checks
 
@@ -143,6 +166,36 @@ def test_quality_checks_flag_inferred_proper_name_inconsistency():
     assert report.unresolved_blocks == [1, 2]
     assert all(issue.severity == "warning" for issue in flagged)
     assert all(issue.source_text == "Hudson Oaks" for issue in flagged)
+
+
+def test_quality_checks_do_not_flag_rank_name_context_as_name_inconsistency():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(36, "Colonel Krick, he requested them.", "克里克上校要的。"),
+        _block(62, "It's just, Colonel Krick instructed us otherwise, sir.", "只是克里克上校\n另有指示，长官。"),
+        _block(507, "whether Colonel Krick attends or not.", "克里克来不来，预报不变。"),
+        _block(924, "what Colonel Krick's just said, that it's going to be safe", "信克里克上校说的："),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
+
+    assert "proper_name_inconsistent" not in report.summary["by_type"]
+
+
+def test_quality_checks_allow_titled_context_for_core_person_name():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(15, "Group Captain Dr. James Stagg,", "斯塔格博士，空军上校，"),
+        _block(95, "Group Captain Dr. James Stagg,", "斯塔格博士，空军上校，"),
+        _block(103, "Sir, may I introduce Group Captain James Stagg,", "长官，这位是\n詹姆斯·斯塔格空军上校，"),
+        _block(434, "Good afternoon. My name is James Stagg.", "您好，我是詹姆斯·斯塔格。"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
+
+    assert "proper_name_inconsistent" not in report.summary["by_type"]
 
 
 def test_quality_checks_flag_divergent_long_names_without_shared_anchor():
@@ -276,6 +329,35 @@ def test_quality_checks_project_kb_overrides_curated_science_terms():
 
     assert "canonical_term_missing" not in report.summary["by_type"]
     assert "kb_term_missing" not in report.summary["by_type"]
+
+
+def test_quality_checks_flag_core_term_inconsistency():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "D-Day is approaching.", "D日快到了。"),
+        _block(2, "The proposed D-Day is Monday.", "拟定登陆日是星期一。"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
+
+    flagged = [issue for issue in report.issues if issue.type == "core_term_inconsistent"]
+    assert len(flagged) == 1
+    assert flagged[0].block_id == 2
+    assert flagged[0].expected == "D日"
+
+
+def test_quality_checks_allow_consistent_core_term():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "D-Day is approaching.", "D日快到了。"),
+        _block(2, "The proposed D-Day is Monday.", "拟定D日是星期一。"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
+
+    assert "core_term_inconsistent" not in report.summary["by_type"]
 
 
 def test_quality_checks_apply_subtitle_style_profile_rules():
