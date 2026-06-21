@@ -103,6 +103,16 @@ def test_parse_srt_skips_out_of_range_time_fields():
     assert parse_time("00:60:00,000") == timedelta(0)
 
 
+def test_fmt_time_rounds_milliseconds_without_truncating_float_artifacts():
+    from app.utils.srt import SubtitleBlock, fmt_time, parse_time
+
+    start = parse_time("00:04:17,758")
+    end = parse_time("00:04:21,328")
+
+    assert fmt_time(start) == "00:04:17,758"
+    assert SubtitleBlock(index=1, start=start, end=end, text="Hello").to_dict()["start_ms"] == 257758
+
+
 def test_srt_helpers_tolerate_malformed_inputs(tmp_path):
     from app.utils.srt import fmt_time, parse_srt, write_bilingual_srt, write_mono_srt, write_srt
 

@@ -287,6 +287,25 @@ def test_get_subtitles_reports_actual_source_file(client, tmp_project_dir):
     assert data["blocks"][0]["text"] == "Hello"
 
 
+def test_get_subtitles_matches_translations_with_millisecond_tolerance(client, tmp_project_dir):
+    pid = _seed_project(tmp_project_dir)
+    pdir = tmp_project_dir / pid
+    (pdir / "filtered.srt").write_text(
+        "1\n00:04:17,758 --> 00:04:21,328\n-Hey, my name is Oliver.\n\n",
+        encoding="utf-8",
+    )
+    (pdir / "translated.srt").write_text(
+        "1\n00:04:17,757 --> 00:04:21,327\n嗨，我叫奥利弗。\n\n",
+        encoding="utf-8",
+    )
+
+    r = client.get(f"/api/projects/{pid}/subtitles")
+
+    assert r.status_code == 200
+    blocks = r.json()["blocks"]
+    assert blocks[0]["translation"] == "嗨，我叫奥利弗。"
+
+
 def test_get_subtitles_skips_unreadable_source_and_bad_translation(client, tmp_project_dir):
     pid = _seed_project(tmp_project_dir)
     pdir = tmp_project_dir / pid

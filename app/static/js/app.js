@@ -3342,7 +3342,37 @@ function app() {
         .join('\n');
     },
 
-    subtitleQualityIssues() {
+    isSoundDescriptionText(value) {
+      const text = String(value || '').trim();
+      return /^\s*[-–—]?\s*\[[^\]]+\]\s*$/.test(text)
+        || /^\s*[-–—]?\s*\([^)]+\)\s*$/.test(text)
+        || /^\s*[♪♫]+(?:\s*[♪♫]+)*\s*$/.test(text);
+    },
+
+    normalizeSubtitleQualityFormat(format) {
+      return ['original', 'translated', 'bilingual'].includes(format) ? format : 'translated';
+    },
+
+    subtitleQualityLinesForFormat(format, sourceText, translationText) {
+      const normalizedFormat = this.normalizeSubtitleQualityFormat(format);
+      const source = String(sourceText || '').trim();
+      const translation = String(translationText || '').trim();
+      const parts = [];
+      if (normalizedFormat === 'original') {
+        parts.push(source);
+      } else if (normalizedFormat === 'translated') {
+        parts.push(translation || (this.isSoundDescriptionText(source) ? source : ''));
+      } else {
+        parts.push(source, translation);
+      }
+      return parts
+        .flatMap((value) => String(value || '').split(/\r?\n/))
+        .map((line) => line.trim())
+        .filter(Boolean);
+    },
+
+    subtitleQualityIssues(format = 'translated') {
+      const normalizedFormat = this.normalizeSubtitleQualityFormat(format);
       const issues = [];
       const lineLimit = 42;
       const readingSpeedLimit = 22;
@@ -3364,6 +3394,7 @@ function app() {
         const durationMs = endMs - startMs;
         const sourceText = typeof item.text === 'string' ? item.text.trim() : '';
         const translationText = typeof item.translation === 'string' ? item.translation.trim() : '';
+        const sourceIsSoundDescription = this.isSoundDescriptionText(sourceText);
 
         if (hasTiming && previous && startMs < previous.endMs) {
           addIssue(item, idx, 'overlap', 'severe', `第 ${idx + 1} 行与上一行时间重叠`);
@@ -3374,15 +3405,20 @@ function app() {
         if (!sourceText) {
           addIssue(item, idx, 'empty_source', 'severe', `第 ${idx + 1} 行缺少原文`);
         }
-        if (sourceText && !translationText) {
+        if (normalizedFormat !== 'original' && sourceText && !translationText && !sourceIsSoundDescription) {
           addIssue(item, idx, 'missing_translation', 'severe', `第 ${idx + 1} 行缺少译文`);
         }
+        if (normalizedFormat !== 'original' && sourceIsSoundDescription && translationText && translationText !== sourceText) {
+          addIssue(item, idx, 'sound_description_translated', 'warning', `第 ${idx + 1} 行音效字幕不应翻译`);
+        }
 
-        const lines = `${sourceText}\n${translationText}`.split(/\r?\n/);
+        const lines = sourceIsSoundDescription && !translationText
+          ? []
+          : this.subtitleQualityLinesForFormat(normalizedFormat, sourceText, translationText);
         if (lines.some((line) => line.trim().length > lineLimit)) {
           addIssue(item, idx, 'long_line', 'warning', `第 ${idx + 1} 行过长`);
         }
-        const readableChars = Math.max(sourceText.length, translationText.length);
+        const readableChars = lines.reduce((max, line) => Math.max(max, line.length), 0);
         const seconds = durationMs / 1000;
         if (hasTiming && readableChars > 0 && (seconds <= 0 || readableChars / seconds > readingSpeedLimit)) {
           addIssue(item, idx, 'reading_speed', 'warning', `第 ${idx + 1} 行阅读速度过快`);
@@ -3394,8 +3430,8 @@ function app() {
       return issues;
     },
 
-    subtitleQualitySummary() {
-      const issues = this.subtitleQualityIssues();
+    subtitleQualitySummary(format = 'translated') {
+      const issues = this.subtitleQualityIssues(format);
       return issues.reduce((summary, issue) => {
         summary.total += 1;
         if (issue.severity === 'severe') summary.severe += 1;
@@ -3404,8 +3440,8 @@ function app() {
       }, { total: 0, severe: 0, warning: 0, issues });
     },
 
-    hasSevereSubtitleIssues() {
-      return this.subtitleQualitySummary().severe > 0;
+    hasSevereSubtitleIssues(format = 'translated') {
+      return this.subtitleQualitySummary(format).severe > 0;
     },
 
     subtitleReplaceFields() {
@@ -3497,7 +3533,7 @@ function app() {
     },
 
     subtitleExportWarningMessage(format) {
-      const summary = this.subtitleQualitySummary();
+      const summary = this.subtitleQualitySummary(format);
       if (!summary.total) return '';
       const firstSevere = summary.issues.find((issue) => issue.severity === 'severe');
       const issueText = firstSevere?.message || summary.issues[0]?.message || '字幕存在质量提示';
@@ -3718,7 +3754,7 @@ function app() {
         return;
       }
       const warningMessage = this.subtitleExportWarningMessage(format);
-      if (this.hasSevereSubtitleIssues() && warningMessage) {
+      if (this.hasSevereSubtitleIssues(format) && warningMessage) {
         const confirmed = await this.askConfirm({
           title: '继续导出字幕？',
           message: warningMessage,

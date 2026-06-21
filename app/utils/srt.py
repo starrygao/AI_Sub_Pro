@@ -24,8 +24,8 @@ class SubtitleBlock:
             "index": self.index,
             "start": fmt_time(self.start),
             "end": fmt_time(self.end),
-            "start_ms": int(self.start.total_seconds() * 1000),
-            "end_ms": int(self.end.total_seconds() * 1000),
+            "start_ms": _timedelta_ms(self.start),
+            "end_ms": _timedelta_ms(self.end),
             "text": self.text,
             "translation": self.translation,
             "filtered": self.filtered,
@@ -37,6 +37,20 @@ class SubtitleBlock:
 _TIME_RE = re.compile(r"^(\d+):(\d{2}):(\d{2})[,.](\d{3})$")
 _VTT_TIME_RE = re.compile(r"^(?:(\d+):)?(\d{2}):(\d{2})\.(\d{3})$")
 _ASS_TIME_RE = re.compile(r"^(\d+):(\d{2}):(\d{2})\.(\d{1,3})$")
+
+
+def _timedelta_ms(td: timedelta) -> int:
+    try:
+        total = td.total_seconds()
+    except (AttributeError, TypeError, OverflowError, ValueError):
+        total = 0
+    try:
+        finite = isfinite(total)
+    except (OverflowError, TypeError, ValueError):
+        finite = False
+    if not finite:
+        total = 0
+    return int(round(max(0, total) * 1000))
 
 
 def parse_time_strict(s: str) -> Optional[timedelta]:
@@ -69,21 +83,10 @@ def parse_time(s: str) -> timedelta:
 
 def fmt_time(td: timedelta) -> str:
     """Format timedelta to SRT time string '00:01:23,456'."""
-    try:
-        total = td.total_seconds()
-    except (AttributeError, TypeError, OverflowError, ValueError):
-        total = 0
-    try:
-        finite = isfinite(total)
-    except (OverflowError, TypeError, ValueError):
-        finite = False
-    if not finite:
-        total = 0
-    total = max(0, total)
-    h = int(total // 3600)
-    mi = int((total % 3600) // 60)
-    s = int(total % 60)
-    ms = int((total * 1000) % 1000)
+    total_ms = _timedelta_ms(td)
+    h, rem = divmod(total_ms, 3600 * 1000)
+    mi, rem = divmod(rem, 60 * 1000)
+    s, ms = divmod(rem, 1000)
     return f"{h:02d}:{mi:02d}:{s:02d},{ms:03d}"
 
 
@@ -114,17 +117,7 @@ def parse_vtt_time_strict(s: str) -> Optional[timedelta]:
 
 def fmt_vtt_time(td: timedelta) -> str:
     """Format timedelta to WebVTT time string '00:01:23.456'."""
-    try:
-        total = td.total_seconds()
-    except (AttributeError, TypeError, OverflowError, ValueError):
-        total = 0
-    try:
-        finite = isfinite(total)
-    except (OverflowError, TypeError, ValueError):
-        finite = False
-    if not finite:
-        total = 0
-    total_ms = int(max(0, total) * 1000)
+    total_ms = _timedelta_ms(td)
     h, rem = divmod(total_ms, 3600 * 1000)
     mi, rem = divmod(rem, 60 * 1000)
     sec, ms = divmod(rem, 1000)

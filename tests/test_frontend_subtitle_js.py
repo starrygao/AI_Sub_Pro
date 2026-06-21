@@ -1942,6 +1942,15 @@ def test_subtitle_quality_summary_flags_timing_translation_and_reading_speed():
             filtered: false,
             filter_reason: '',
           },
+          {
+            index: 4,
+            start: '00:00:04,000',
+            end: '00:00:06,000',
+            text: 'Normal source',
+            translation: '这是一条故意写得非常非常非常非常非常非常非常非常非常非常非常非常长的译文，用来触发长行检测',
+            filtered: false,
+            filter_reason: '',
+          },
         ];
 
         const issues = state.subtitleQualityIssues();
@@ -1957,6 +1966,75 @@ def test_subtitle_quality_summary_flags_timing_translation_and_reading_speed():
         }
         if (!state.hasSevereSubtitleIssues()) {
           throw new Error('expected severe subtitle issues');
+        }
+        """
+    )
+
+
+def test_translated_export_quality_ignores_sound_cues_and_source_only_length():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.subtitles = [
+          {
+            index: 18,
+            start: '00:00:45,012',
+            end: '00:00:47,114',
+            text: '[ Thunder crashes ]',
+            translation: '',
+            filtered: false,
+            filter_reason: '',
+          },
+          {
+            index: 19,
+            start: '00:00:47,180',
+            end: '00:00:50,417',
+            text: 'This English source line is deliberately long enough that it would be noisy if translated export checked source line length.',
+            translation: '译文合格。',
+            filtered: false,
+            filter_reason: '',
+          },
+          {
+            index: 20,
+            start: '00:00:50,500',
+            end: '00:00:54,000',
+            text: '♪♪',
+            translation: '♪♪',
+            filtered: false,
+            filter_reason: '',
+          },
+          {
+            index: 21,
+            start: '00:00:54,500',
+            end: '00:00:59,000',
+            text: '♪ I know ♪',
+            translation: '♪ 我知道 ♪',
+            filtered: false,
+            filter_reason: '',
+          },
+        ];
+
+        const translated = state.subtitleQualitySummary('translated');
+        if (translated.severe !== 0 || translated.warning !== 0) {
+          throw new Error(`translated export should ignore sound cue blanks and source-only length: ${JSON.stringify(translated)}`);
+        }
+        if (state.hasSevereSubtitleIssues('translated')) {
+          throw new Error('translated export should not have severe issues');
+        }
+        if (state.subtitleExportWarningMessage('translated') !== '') {
+          throw new Error(`unexpected translated export warning: ${state.subtitleExportWarningMessage('translated')}`);
+        }
+
+        const bilingual = state.subtitleQualitySummary('bilingual');
+        if (!bilingual.issues.some((issue) => issue.code === 'long_line')) {
+          throw new Error(`bilingual export should still check source line length: ${JSON.stringify(bilingual)}`);
         }
         """
     )

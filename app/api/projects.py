@@ -405,6 +405,29 @@ def _editable_source_srt_path(pdir: Path) -> Path:
     return pdir / "raw.srt"
 
 
+def _subtitle_time_ms(value) -> int:
+    try:
+        total = value.total_seconds()
+    except (AttributeError, TypeError, OverflowError, ValueError):
+        return 0
+    try:
+        if not math.isfinite(total):
+            return 0
+    except (OverflowError, TypeError, ValueError):
+        return 0
+    return int(round(max(0, total) * 1000))
+
+
+def _lookup_subtitle_time(mapping: dict[int, str], start_ms: int, tolerance_ms: int = 2) -> Optional[str]:
+    if start_ms in mapping:
+        return mapping[start_ms]
+    for delta in range(1, max(0, tolerance_ms) + 1):
+        for candidate in (start_ms - delta, start_ms + delta):
+            if candidate in mapping:
+                return mapping[candidate]
+    return None
+
+
 def _write_editable_source_srt(
     blocks: list[SubtitleBlock],
     path: Path,
@@ -1585,12 +1608,12 @@ def get_subtitles(pid: str = PathParam(pattern=PID_PATTERN)):
             trans_blocks = []
         trans_by_time = {}
         for tb in trans_blocks:
-            key = int(tb.start.total_seconds() * 1000)
+            key = _subtitle_time_ms(tb.start)
             trans_by_time[key] = tb.text
         for b in blocks:
-            key = int(b.start.total_seconds() * 1000)
-            if key in trans_by_time:
-                b.translation = trans_by_time[key]
+            translation = _lookup_subtitle_time(trans_by_time, _subtitle_time_ms(b.start))
+            if translation is not None:
+                b.translation = translation
 
     # Load filter state only for unfiltered source timelines. filtered.srt has
     # already removed filtered rows and re-numbered entries, so reapplying the
