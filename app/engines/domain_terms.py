@@ -35,6 +35,18 @@ class DomainTermMatch:
     end: int
 
 
+@dataclass(frozen=True)
+class ScientificTermMatch:
+    source: str
+    matched_source: str
+    start: int
+    end: int
+    category: str = "slang"
+    notes: str = "auto-detected scientific/Latinized term; keep one target form consistent"
+    confidence: float = 0.72
+    tags: tuple[str, ...] = ("auto_detected", "terminology")
+
+
 _SCIENCE_TERMS: tuple[DomainTerm, ...] = (
     DomainTerm(
         source="Pangaea",
@@ -113,6 +125,72 @@ _SCIENCE_TERMS: tuple[DomainTerm, ...] = (
     ),
 )
 
+_SCIENTIFIC_SOURCE_RE = re.compile(r"\b[A-Z][A-Za-z-]{4,}(?:'s)?\b")
+_SCIENTIFIC_SUFFIXES = (
+    "aetus",
+    "aspis",
+    "astia",
+    "ceratops",
+    "dactylus",
+    "draco",
+    "gnathus",
+    "ichthys",
+    "ichthus",
+    "inia",
+    "lestes",
+    "mimus",
+    "odon",
+    "odus",
+    "opsian",
+    "opsians",
+    "phagia",
+    "pithecus",
+    "pondylus",
+    "pteryx",
+    "pterus",
+    "raptor",
+    "sauria",
+    "saurus",
+    "suchus",
+    "therium",
+    "venator",
+    "oidium",
+)
+_SCIENTIFIC_STOPWORDS = {
+    "auditorium",
+    "calcium",
+    "english",
+    "helium",
+    "lithium",
+    "magnesium",
+    "medium",
+    "millennium",
+    "museum",
+    "premium",
+    "potassium",
+    "sodium",
+    "stadium",
+}
+_SCIENTIFIC_CONTEXT_WORDS = {
+    "a",
+    "an",
+    "and",
+    "as",
+    "baby",
+    "but",
+    "female",
+    "male",
+    "of",
+    "old",
+    "or",
+    "the",
+    "to",
+    "unlike",
+    "while",
+    "without",
+    "young",
+}
+
 
 def curated_domain_terms() -> tuple[DomainTerm, ...]:
     return _SCIENCE_TERMS
@@ -177,6 +255,98 @@ def find_domain_terms_in_texts(texts: Iterable[str]) -> list[DomainTermMatch]:
     return list(collected.values())
 
 
+def _normalize_scientific_source(value: str) -> str:
+    source = re.sub(r"\s+", " ", value.strip()).strip(" \t\r\n.,:;!?()[]{}\"'")
+    if source.endswith("'s"):
+        source = source[:-2]
+    return source
+
+
+def is_scientific_term_source(source: str) -> bool:
+    """Return True for curated terms or auto-detected Latin/scientific-looking terms."""
+    source = _normalize_scientific_source(source) if isinstance(source, str) else ""
+    if not source:
+        return False
+    if lookup_domain_term(source) is not None:
+        return True
+    folded = source.casefold()
+    if folded in _SCIENTIFIC_STOPWORDS:
+        return False
+    letters = re.sub(r"[^A-Za-z]", "", source)
+    if len(letters) < 6:
+        return False
+    if not source[0].isupper() or source.upper() == source:
+        return False
+    return any(folded.endswith(suffix) for suffix in _SCIENTIFIC_SUFFIXES)
+
+
+def find_scientific_terms(text: str) -> list[ScientificTermMatch]:
+    """Find non-curated scientific/Latinized term candidates in free text.
+
+    The detector intentionally favors high-signal Latinized names and genus-like
+    terms. Curated terms are handled by find_domain_terms() so they are not
+    returned here.
+    """
+    if not isinstance(text, str) or not text:
+        return []
+    matches: list[ScientificTermMatch] = []
+    seen: set[str] = set()
+    for match in _SCIENTIFIC_SOURCE_RE.finditer(text):
+        source = _normalize_scientific_source(match.group(0))
+        if not source or lookup_domain_term(source) is not None:
+            continue
+        if not is_scientific_term_source(source):
+            continue
+        key = source.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        matches.append(ScientificTermMatch(
+            source=source,
+            matched_source=text[match.start():match.end()],
+            start=match.start(),
+            end=match.end(),
+        ))
+    return matches
+
+
+def find_scientific_terms_in_texts(texts: Iterable[str]) -> list[ScientificTermMatch]:
+    collected: dict[str, ScientificTermMatch] = {}
+    for text in texts or []:
+        for match in find_scientific_terms(text):
+            collected.setdefault(match.source.casefold(), match)
+    return list(collected.values())
+
+
+def is_scientific_context_phrase(source: str) -> bool:
+    """Return True for noisy phrases like 'Without the Dicroidium'.
+
+    The clean scientific term is still emitted separately by find_scientific_terms().
+    """
+    if not isinstance(source, str) or not source.strip():
+        return False
+    matches = find_scientific_terms(source)
+    domain_matches = find_domain_terms(source)
+    if not matches:
+        if not domain_matches:
+            return False
+    if any(source.strip().casefold() == match.source.casefold() for match in matches):
+        return False
+    if any(source.strip().casefold() == match.term.source.casefold() for match in domain_matches):
+        return False
+    candidate_words = {
+        word.casefold()
+        for match in matches
+        for word in re.findall(r"[A-Za-z]+", match.source)
+    }
+    for match in domain_matches:
+        for word in re.findall(r"[A-Za-z]+", match.term.source):
+            candidate_words.add(word.casefold())
+    words = [word.casefold() for word in re.findall(r"[A-Za-z]+", source)]
+    extras = [word for word in words if word not in candidate_words]
+    return bool(extras) and all(word in _SCIENTIFIC_CONTEXT_WORDS for word in extras)
+
+
 def project_kb_source_keys(project_kb) -> set[str]:
     keys: set[str] = set()
     if project_kb is None:
@@ -194,6 +364,13 @@ def match_is_overridden_by_project_kb(match: DomainTermMatch, project_kb) -> boo
     if not keys:
         return False
     return any(_normalize_source(source) in keys for source in match.term.sources)
+
+
+def scientific_match_is_overridden_by_project_kb(match: ScientificTermMatch, project_kb) -> bool:
+    keys = project_kb_source_keys(project_kb)
+    if not keys:
+        return False
+    return _normalize_source(match.source) in keys
 
 
 def build_domain_prompt_snippet(matches: list[DomainTermMatch], project_kb=None) -> tuple[str, list[dict]]:
@@ -216,5 +393,38 @@ def build_domain_prompt_snippet(matches: list[DomainTermMatch], project_kb=None)
         return "", []
     return "\n".join([
         "Curated domain terminology (lower priority than project KB; use when source appears):",
+        *lines,
+    ]), hits
+
+
+def build_auto_scientific_prompt_snippet(
+    matches: list[ScientificTermMatch],
+    project_kb=None,
+    *,
+    limit: int = 16,
+) -> tuple[str, list[dict]]:
+    lines: list[str] = []
+    hits: list[dict] = []
+    for match in matches:
+        if scientific_match_is_overridden_by_project_kb(match, project_kb):
+            continue
+        if len(lines) >= limit:
+            break
+        lines.append(
+            f"  - {match.source}: preserve the standard source form when conventional; "
+            "otherwise choose one concise Chinese rendering and reuse it consistently"
+        )
+        hits.append({
+            "source": match.source,
+            "target": "",
+            "matched_source": match.matched_source,
+            "notes": match.notes,
+            "scope": "auto_scientific_term",
+            "tags": list(match.tags),
+        })
+    if not lines:
+        return "", []
+    return "\n".join([
+        "Auto-detected terminology (lower priority than project KB; no approved target yet):",
         *lines,
     ]), hits

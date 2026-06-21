@@ -308,11 +308,15 @@ function app() {
       // Returns {bg, text, hex} for badge + progress bar
       const stage = p.pipeline_stage;
       const status = p.status;
+      const qualityStatus = typeof p.translation_quality_status === 'string'
+        ? p.translation_quality_status.trim()
+        : '';
       if (status === 'error') return {bg: '#fee2e2', text: '#991b1b', hex: '#dc2626'};
       if (status === 'completed') return {bg: '#dcfce7', text: '#166534', hex: '#16a34a'};
       if (stage === 'download') return {bg: '#ffedd5', text: '#9a3412', hex: '#f97316'};
       if (stage === 'asr' || status === 'asr_done') return {bg: '#f3e8ff', text: '#6b21a8', hex: '#a855f7'};
       if (stage === 'burn') return {bg: '#dcfce7', text: '#166534', hex: '#22c55e'};
+      if (status === 'translated' && !stage && qualityStatus === 'needs_review') return {bg: '#fef3c7', text: '#92400e', hex: '#d97706'};
       if (stage === 'translate' || status === 'translated') return {bg: '#dbeafe', text: '#1e40af', hex: '#3b82f6'};
       // created / processing / default
       return {bg: '#ccfbf1', text: '#115e59', hex: '#0f766e'};
@@ -518,12 +522,16 @@ function app() {
     statusLabel(p) {
       const stage = p.pipeline_stage;
       const status = p.status;
+      const qualityStatus = typeof p.translation_quality_status === 'string'
+        ? p.translation_quality_status.trim()
+        : '';
       if (status === 'error') return '失败';
       if (status === 'completed') return '已完成';
       if (stage === 'download') return '下载中';
       if (stage === 'asr') return '识别中';
       if (status === 'asr_done' && !stage) return '识别完成';
       if (stage === 'translate') return '翻译中';
+      if (status === 'translated' && !stage && qualityStatus === 'needs_review') return '待质量确认';
       if (status === 'translated' && !stage) return '翻译完成';
       if (stage === 'burn') return '烧录中';
       if (status === 'processing') return '处理中';
@@ -1794,6 +1802,7 @@ function app() {
         punctuation_style: '标点风格',
         inferred_name_inconsistent: '专名不一致',
         proper_name_inconsistent: '专名不一致',
+        scientific_term_inconsistent: '科学术语不一致',
         repetition_not_compressed: '重复表达需压缩',
       };
       return labels[type] || type || '质量问题';
@@ -1853,12 +1862,12 @@ function app() {
       const issueCount = report.summary.issue_count || issues.length;
       if (!issueCount) return '可继续导出或烧录。';
       if (gate.auto_repair_enabled && Number(gate.auto_repaired_blocks || 0) > 0) {
-        return '系统已自动重点返工并复检；剩余问题建议抽查确认。';
+        return '系统已自动重点返工并复检；剩余问题需人工确认后再交付。';
       }
       const hasErrors = issues.some(item => ['error', 'severe'].includes(String(item.severity || '')));
       if (hasErrors) return '先处理错误项，再导出或烧录。';
-      if ((report.summary.unresolved_blocks || 0) > 0) return '建议抽查未解决警告，必要时在字幕表中手动修正。';
-      return '当前为警告级问题，可抽查后继续交付。';
+      if ((report.summary.unresolved_blocks || 0) > 0) return '需人工确认未解决警告，必要时在字幕表中手动修正后再交付。';
+      return '仍有警告级问题，需人工确认后再交付。';
     },
 
     focusFirstQaIssue() {
@@ -1907,7 +1916,7 @@ function app() {
           id: qualityModeId,
           label: typeof qualityMode.label === 'string' && qualityMode.label.trim()
             ? qualityMode.label.trim()
-            : (qualityModeId === 'professional' ? '专业模式' : '快速自动'),
+            : (qualityModeId === 'professional' ? '专业辅助' : '快速自动'),
           professional: qualityMode.professional === true || qualityModeId === 'professional',
           requires_kb_review: qualityMode.requires_kb_review === true,
           quality_gate: qualityMode.quality_gate === true,

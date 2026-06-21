@@ -476,3 +476,60 @@ def test_suggest_kb_entries_prefills_curated_science_terms():
     assert "curated science terminology" in by_source["Suminia"].notes
     assert by_source["Dongusuchus"].target == "顿古兹鳄"
     assert by_source["proto-Pterosaurs"].target == "原翼龙类"
+
+
+def test_suggest_kb_entries_extracts_auto_scientific_terms_without_context_fragments():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"name": "Surviving Earth"},
+        [
+            {"index": 1, "text": "Without the Dicroidium, the forest thins."},
+            {"index": 2, "text": "As the Ischigualastia feeds, a predator waits."},
+            {"index": 3, "text": "[baby Ischigualastia cries]"},
+            {"index": 4, "text": "A Saurosuchus watches from the riverbank."},
+        ],
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert {"Dicroidium", "Ischigualastia", "Saurosuchus"} <= set(by_source)
+    assert "Without the Dicroidium" not in by_source
+    assert "As the Ischigualastia" not in by_source
+    assert "The Ischigualastia" not in by_source
+    assert by_source["Ischigualastia"].target == ""
+    assert by_source["Ischigualastia"].confidence >= 0.72
+    assert "auto-detected scientific" in by_source["Ischigualastia"].notes
+    assert set(by_source["Ischigualastia"].evidence) == {"subtitle:2", "subtitle:3"}
+
+
+def test_suggest_kb_entries_filters_curated_science_context_fragments():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {},
+        [
+            {"index": 1, "text": "Without the Permian climate shift, life would be different."},
+            {"index": 2, "text": "As the Triassic begins, new species spread."},
+        ],
+        None,
+    )
+
+    by_source = {item.source: item for item in suggestions}
+    assert {"Permian", "Triassic"} <= set(by_source)
+    assert "Without the Permian" not in by_source
+    assert "As the Triassic" not in by_source
+
+
+def test_suggest_kb_entries_does_not_treat_common_ium_technical_names_as_science_terms():
+    from app.engines.kb_suggestions import suggest_kb_entries
+
+    suggestions = suggest_kb_entries(
+        {"name": "Browser Automation Tutorial", "tags": ["tutorial", "programming"]},
+        [{"index": 1, "text": "Chromium renders the page while Selenium drives the browser."}],
+        None,
+    )
+
+    sources = {item.source for item in suggestions}
+    assert "Chromium" not in sources
+    assert "Selenium" not in sources

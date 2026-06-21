@@ -36,7 +36,12 @@ from app.engines.content_profiles import (
     build_content_profile_prompt_snippet,
     infer_content_profiles,
 )
-from app.engines.domain_terms import build_domain_prompt_snippet, find_domain_terms_in_texts
+from app.engines.domain_terms import (
+    build_auto_scientific_prompt_snippet,
+    build_domain_prompt_snippet,
+    find_domain_terms_in_texts,
+    find_scientific_terms_in_texts,
+)
 from app.engines.project_metadata import build_project_metadata_prompt_snippet
 from app.engines.subtitle_style_profiles import build_subtitle_style_prompt_snippet
 from app.engines.terminology_conflicts import collect_terminology_conflicts
@@ -208,6 +213,13 @@ def _phrase_context_tags(meta_info: dict) -> set[str]:
 
 def _allows_legal_adult_phrase_examples(meta_info: dict) -> bool:
     return any(profile.id == "legal_adult" for profile in infer_content_profiles(meta_info))
+
+
+def _has_technical_tutorial_profile(meta_info: Optional[Dict]) -> bool:
+    return any(
+        profile.id == "technical_tutorial"
+        for profile in infer_content_profiles(meta_info if isinstance(meta_info, dict) else {})
+    )
 
 
 def _is_legal_adult_phrase_hit(hit) -> bool:
@@ -1012,7 +1024,11 @@ class SubtitleTranslator:
             parts.append(metadata_snippet)
             _extend_unique_trace_hits(self.last_quality_trace.kb_hits, metadata_hits)
 
-        domain_snippet, domain_hits = self._build_domain_terminology_snippet(items or [], project_kb)
+        domain_snippet, domain_hits = self._build_domain_terminology_snippet(
+            items or [],
+            project_kb,
+            meta_info,
+        )
         if domain_snippet:
             parts.append(domain_snippet)
             _extend_unique_trace_hits(self.last_quality_trace.kb_hits, domain_hits)
@@ -1066,14 +1082,22 @@ class SubtitleTranslator:
     def _build_domain_terminology_snippet(
         items: List[Dict],
         project_kb,
+        meta_info: Optional[Dict] = None,
     ) -> tuple[str, list[dict]]:
         texts = [
             item.get("original", "")
             for item in items
             if isinstance(item, dict) and isinstance(item.get("original"), str)
         ]
-        matches = find_domain_terms_in_texts(texts)
-        return build_domain_prompt_snippet(matches, project_kb)
+        curated_matches = find_domain_terms_in_texts(texts)
+        curated_snippet, curated_hits = build_domain_prompt_snippet(curated_matches, project_kb)
+        auto_snippet = ""
+        auto_hits: list[dict] = []
+        if not _has_technical_tutorial_profile(meta_info):
+            auto_matches = find_scientific_terms_in_texts(texts)
+            auto_snippet, auto_hits = build_auto_scientific_prompt_snippet(auto_matches, project_kb)
+        snippets = [snippet for snippet in (curated_snippet, auto_snippet) if snippet]
+        return "\n".join(snippets), [*curated_hits, *auto_hits]
 
     def _build_retrieval_snippets(
         self,

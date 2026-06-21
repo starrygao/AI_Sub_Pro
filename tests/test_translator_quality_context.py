@@ -444,6 +444,74 @@ def test_build_prompt_injects_curated_domain_terms_below_project_kb(monkeypatch,
     assert translator.last_quality_trace.kb_hits[0]["scope"] == "curated_domain"
 
 
+def test_build_prompt_injects_auto_scientific_terms_for_consistency(monkeypatch):
+    from app.engines import translator as tmod
+    from app.engines.knowledge import KnowledgeBase
+
+    monkeypatch.setattr(tmod, "_shared_kb", KnowledgeBase(), raising=False)
+
+    config = _translator_config()
+    config["translation"]["use_translation_memory"] = False
+    config["translation"]["use_phrase_library"] = False
+    translator = tmod.SubtitleTranslator(config)
+    prompt = translator._build_prompt(
+        "简体中文",
+        {"name": "Surviving Earth S01E02", "original_language": "en"},
+        None,
+        [],
+        [],
+        items=[
+            {"id": 1, "original": "The Ischigualastia keeps moving."},
+            {"id": 2, "original": "Without the Dicroidium, food is scarce."},
+        ],
+    )
+
+    assert "Auto-detected terminology" in prompt
+    assert "Ischigualastia" in prompt
+    assert "Dicroidium" in prompt
+    assert "preserve the standard source form" in prompt
+    scopes = {
+        hit.get("scope")
+        for hit in translator.last_quality_trace.kb_hits
+        if isinstance(hit, dict)
+    }
+    assert "auto_scientific_term" in scopes
+
+
+def test_build_prompt_does_not_inject_auto_scientific_terms_for_technical_tutorial(monkeypatch):
+    from app.engines import translator as tmod
+    from app.engines.knowledge import KnowledgeBase
+
+    monkeypatch.setattr(tmod, "_shared_kb", KnowledgeBase(), raising=False)
+
+    config = _translator_config()
+    config["translation"]["use_translation_memory"] = False
+    config["translation"]["use_phrase_library"] = False
+    translator = tmod.SubtitleTranslator(config)
+    prompt = translator._build_prompt(
+        "简体中文",
+        {
+            "name": "Browser Automation Tutorial",
+            "original_language": "en",
+            "tags": ["tutorial", "programming"],
+        },
+        None,
+        [],
+        [],
+        items=[
+            {"id": 1, "original": "Chromium renders the page while Selenium drives the browser."},
+        ],
+    )
+
+    assert "Auto-detected terminology" not in prompt
+    scopes = {
+        hit.get("scope")
+        for hit in translator.last_quality_trace.kb_hits
+        if isinstance(hit, dict)
+    }
+    assert "auto_scientific_term" not in scopes
+
+
 def test_translate_accumulates_quality_trace_across_batches(monkeypatch):
     from app.engines import translator as tmod
     from app.engines.knowledge import KnowledgeBase

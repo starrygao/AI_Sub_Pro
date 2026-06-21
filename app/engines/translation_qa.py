@@ -11,6 +11,7 @@ from app.evaluation.metrics import proper_name_consistency_score
 from app.engines.content_profiles import infer_content_profiles
 from app.engines.domain_terms import (
     find_domain_terms,
+    find_scientific_terms,
     match_is_overridden_by_project_kb,
 )
 from app.engines.kb_models import ProjectKb
@@ -84,8 +85,36 @@ def _clean_text(value) -> str:
 _ENGLISH_RE = re.compile(r"[A-Za-z]{3,}")
 _SOUND_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+_CJK_TEXT_RE = re.compile(r"[\u3400-\u9fff]+")
 _REPEATED_CJK_RE = re.compile(r"([\u4e00-\u9fff])(?:[，,、\s]*\1){2,}")
 _ASCII_PUNCT_RE = re.compile(r"[?!,;:]")
+_SCIENTIFIC_TARGET_SUFFIXES = (
+    "兽",
+    "獸",
+    "龙",
+    "龍",
+    "鳄",
+    "鱷",
+    "蕨",
+    "类",
+    "類",
+    "属",
+    "屬",
+    "种",
+    "種",
+    "纪",
+    "紀",
+    "鱼",
+    "魚",
+    "鸟",
+    "鳥",
+    "虫",
+    "蟲",
+    "亚",
+    "亞",
+)
+_SCIENTIFIC_CONTEXT_ANCHOR_CHARS = set("一只个個头頭群在从從到有没沒无無不是和与與及它他她我你")
+_SCIENTIFIC_CHUNK_PREFIX_NOISE = set("一只个個头頭群")
 _CORE_TERM_RULES = (
     {
         "source": "D-Day",
@@ -151,6 +180,10 @@ _TECH_ALLOWED_ENGLISH_TOKENS = {
     "xcode",
     "xml",
     "yaml",
+}
+_AUTO_REPAIR_REPORT_ONLY_ISSUE_TYPES = {
+    "proper_name_inconsistent",
+    "scientific_term_inconsistent",
 }
 
 
@@ -226,6 +259,7 @@ _FAR_CATEGORY_BY_TYPE = {
     "manual_term_missing": "functional",
     "canonical_term_missing": "functional",
     "core_term_inconsistent": "functional",
+    "scientific_term_inconsistent": "functional",
     "proper_name_inconsistent": "functional",
     "english_residue": "acceptability",
     "sound_description_translated": "acceptability",
@@ -265,6 +299,172 @@ def _core_term_issues(source: str, translation: str, block_id: int | None) -> li
             translation=translation,
             expected=target,
         ))
+    return issues
+
+
+def _cjk_compact_text(value: str) -> str:
+    return "".join(_CJK_TEXT_RE.findall(_compact_subtitle_text(value)))
+
+
+def _scientific_target_length_limit(source: str) -> int:
+    letter_count = len(re.sub(r"[^A-Za-z]", "", source or ""))
+    return max(4, min(10, (letter_count + 1) // 2 + 2))
+
+
+def _cjk_substrings(text: str, min_length: int = 3, max_length: int = 10) -> set[str]:
+    if len(text) < min_length:
+        return set()
+    result: set[str] = set()
+    for start in range(len(text)):
+        max_end = min(len(text), start + max_length)
+        for end in range(start + min_length, max_end + 1):
+            result.add(text[start:end])
+    return result
+
+
+def _looks_like_scientific_context_anchor(anchor: str) -> bool:
+    return any(char in _SCIENTIFIC_CONTEXT_ANCHOR_CHARS for char in anchor)
+
+
+def _common_scientific_anchor(cjk_translations: list[str]) -> str:
+    if not cjk_translations:
+        return ""
+    for min_length in (3, 2):
+        shared = _cjk_substrings(cjk_translations[0], min_length=min_length)
+        for text in cjk_translations[1:]:
+            shared &= _cjk_substrings(text, min_length=min_length)
+            if not shared:
+                break
+        if not shared:
+            continue
+        for anchor in sorted(shared, key=lambda item: (-len(item), item)):
+            if _looks_like_scientific_context_anchor(anchor):
+                continue
+            return anchor
+    return ""
+
+
+def _ends_with_scientific_target_suffix(text: str) -> bool:
+    return any(text.endswith(suffix) for suffix in _SCIENTIFIC_TARGET_SUFFIXES)
+
+
+def _scientific_signature_from_anchor(cjk_text: str, anchor: str, source: str) -> str:
+    start = cjk_text.find(anchor)
+    if start < 0:
+        return ""
+    max_end = min(len(cjk_text), start + _scientific_target_length_limit(source))
+    min_end = min(max_end, start + max(2, len(anchor)))
+    for end in range(start + 2, min_end + 1):
+        chunk = cjk_text[start:end]
+        if _ends_with_scientific_target_suffix(chunk):
+            return chunk
+    for end in range(min_end, max_end + 1):
+        chunk = cjk_text[start:end]
+        if _ends_with_scientific_target_suffix(chunk):
+            return chunk
+    return cjk_text[start:max_end] or anchor
+
+
+def _scientific_suffix_chunks(cjk_text: str) -> list[str]:
+    chunks: set[str] = set()
+    for end in range(len(cjk_text)):
+        prefix = cjk_text[:end + 1]
+        if not _ends_with_scientific_target_suffix(prefix):
+            continue
+        for length in range(2, min(10, end + 1) + 1):
+            if length <= end + 1:
+                chunks.add(cjk_text[end - length + 1:end + 1])
+    return sorted(chunks, key=_scientific_suffix_chunk_sort_key)
+
+
+def _scientific_suffix_chunk_sort_key(chunk: str) -> tuple[int, int, int, str]:
+    noise = 1 if chunk and chunk[0] in _SCIENTIFIC_CHUNK_PREFIX_NOISE and len(chunk) > 2 else 0
+    if len(chunk) == 3:
+        length_rank = 0
+    elif len(chunk) == 2:
+        length_rank = 1
+    else:
+        length_rank = 2 + len(chunk)
+    return noise, length_rank, len(chunk), chunk
+
+
+def _scientific_target_signature(translation: str, source: str, shared_anchor: str = "") -> str:
+    cjk_text = _cjk_compact_text(translation)
+    if not cjk_text:
+        return _compact_subtitle_text(translation)
+    if shared_anchor and shared_anchor in cjk_text:
+        signature = _scientific_signature_from_anchor(cjk_text, shared_anchor, source)
+        if signature:
+            return signature
+    chunks = _scientific_suffix_chunks(cjk_text)
+    if chunks:
+        return chunks[0]
+    limit = _scientific_target_length_limit(source)
+    return cjk_text[:limit]
+
+
+def _scientific_term_consistency_issues(
+    source_by_id: dict[str, str],
+    translation_by_id: dict[str, str],
+) -> list[QualityIssue]:
+    observations_by_source: dict[str, list[dict]] = {}
+    canonical_source: dict[str, str] = {}
+    for block_id, source_text in source_by_id.items():
+        seen_in_block: set[str] = set()
+        for match in find_scientific_terms(source_text):
+            key = match.source.casefold()
+            if key in seen_in_block:
+                continue
+            seen_in_block.add(key)
+            translation = translation_by_id.get(block_id, "")
+            if not translation.strip():
+                continue
+            canonical_source.setdefault(key, match.source)
+            observations_by_source.setdefault(key, []).append({
+                "block_id": block_id,
+                "source_text": source_text,
+                "translation": translation,
+            })
+
+    issues: list[QualityIssue] = []
+    for key, observations in observations_by_source.items():
+        if len(observations) < 2:
+            continue
+        source = canonical_source.get(key, key)
+        cjk_translations = [
+            _cjk_compact_text(item["translation"])
+            for item in observations
+            if _cjk_compact_text(item["translation"])
+        ]
+        shared_anchor = _common_scientific_anchor(cjk_translations)
+        target_forms: list[str] = []
+        for item in observations:
+            signature = _scientific_target_signature(
+                item["translation"],
+                source,
+                shared_anchor,
+            )
+            item["target_signature"] = signature
+            if signature and signature not in target_forms:
+                target_forms.append(signature)
+
+        if len(target_forms) <= 1:
+            continue
+        message = (
+            f"auto-detected scientific term {source} uses inconsistent target forms: "
+            f"{', '.join(target_forms)}"
+        )
+        for item in observations:
+            block_value = item.get("block_id")
+            block_id = int(block_value) if str(block_value).isdigit() else None
+            issues.append(QualityIssue(
+                type="scientific_term_inconsistent",
+                severity="warning",
+                block_id=block_id,
+                message=message,
+                source_text=item.get("source_text", ""),
+                translation=_clean_text(item.get("translation", "")),
+            ))
     return issues
 
 
@@ -510,6 +710,7 @@ def run_quality_checks(
                 ))
 
     if chinese_target:
+        issues.extend(_scientific_term_consistency_issues(source_by_id, translation_by_id))
         proper_name_issues = proper_name_consistency_score(source_by_id, translation_by_id)
         for item in proper_name_issues["issues"]:
             target_forms = [form for form in item.get("target_forms", []) if form]
@@ -594,6 +795,15 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
     return items
 
 
+def repairable_quality_issues(issues: list[QualityIssue]) -> list[QualityIssue]:
+    repairable: list[QualityIssue] = []
+    for issue in issues or []:
+        if issue.type in _AUTO_REPAIR_REPORT_ONLY_ISSUE_TYPES:
+            continue
+        repairable.append(issue)
+    return repairable
+
+
 def build_repair_prompt(
     target_language: str,
     items: list[dict],
@@ -632,8 +842,6 @@ def build_repair_prompt(
         )
     if "line_too_long" in issue_types:
         parts.append("行长超标时优先在语义边界换行或压缩，不要为了换行添加新信息。")
-    if "proper_name_inconsistent" in issue_types:
-        parts.append("专名不一致时统一同一英文专名的中文译法，不要改动无关句意。")
     if "core_term_inconsistent" in issue_types:
         parts.append("核心术语不一致时必须使用 Issue 中 expected 指定的译法，并统一同一源术语。")
     parts.append("")
@@ -642,5 +850,6 @@ def build_repair_prompt(
         block_id = item.get("id")
         parts.append(json.dumps(item, ensure_ascii=False))
         for issue in by_id.get(block_id, []):
-            parts.append(f"  Issue: {issue.type} - {issue.message}")
+            expected = f" | expected: {issue.expected}" if _clean_text(issue.expected) else ""
+            parts.append(f"  Issue: {issue.type} - {issue.message}{expected}")
     return "\n".join(parts)

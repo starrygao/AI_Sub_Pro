@@ -47,6 +47,16 @@ _PROFILES: tuple[ContentProfile, ...] = (
         signals=("documentary", "unscripted", "non-fiction"),
     ),
     ContentProfile(
+        id="science_documentary",
+        label="Science / nature documentary",
+        rules=(
+            "Preserve Latin scientific names, species names, geological periods, measurements, and factual uncertainty precisely.",
+            "Use established Chinese terminology when available; otherwise choose one concise rendering for each new scientific term and reuse it consistently.",
+            "Keep causal explanations and chronology neutral and evidence-based; do not dramatize or simplify scientific claims beyond the source.",
+        ),
+        signals=("science", "nature", "paleontology", "wildlife", "earth history"),
+    ),
+    ContentProfile(
         id="academic_lecture",
         label="Academic lecture / research talk",
         rules=(
@@ -183,6 +193,11 @@ def _metadata_token_set(meta_info: dict) -> set[str]:
     return {token for token in re.split(r"[^a-z0-9+-]+", blob) if token}
 
 
+def _metadata_tokens(meta_info: dict) -> list[str]:
+    blob = _metadata_blob(meta_info)
+    return [token for token in re.split(r"[^a-z0-9+-]+", blob) if token]
+
+
 def _language_code(meta_info: dict) -> str:
     if not isinstance(meta_info, dict):
         return ""
@@ -208,6 +223,24 @@ def _has_token(meta_info: dict, *tokens: str) -> bool:
 def _has_phrase(meta_info: dict, *phrases: str) -> bool:
     blob = _metadata_blob(meta_info)
     return any(phrase.casefold() in blob for phrase in phrases)
+
+
+def _has_token_sequence(meta_info: dict, *phrases: str) -> bool:
+    tokens = _metadata_tokens(meta_info)
+    if not tokens:
+        return False
+    for phrase in phrases:
+        expected = [
+            token
+            for token in re.split(r"[^a-z0-9+-]+", phrase.casefold())
+            if token
+        ]
+        if not expected:
+            continue
+        size = len(expected)
+        if any(tokens[index:index + size] == expected for index in range(len(tokens) - size + 1)):
+            return True
+    return False
 
 
 def _looks_episode_like(meta_info: dict) -> bool:
@@ -247,6 +280,66 @@ def _is_documentary_unscripted(meta_info: dict) -> bool:
         "纪录片",
         "紀錄片",
         "真人秀",
+    )
+
+
+def _has_science_nature_signal(meta_info: dict) -> bool:
+    return _has_token(
+        meta_info,
+        "biology",
+        "climate",
+        "dinosaur",
+        "dinosaurs",
+        "earth",
+        "ecology",
+        "evolution",
+        "extinction",
+        "fossil",
+        "fossils",
+        "geology",
+        "nature",
+        "paleontology",
+        "planet",
+        "prehistoric",
+        "science",
+        "species",
+        "wildlife",
+    ) or _has_phrase(
+        meta_info,
+        "blue planet",
+        "earth history",
+        "life on earth",
+        "natural history",
+        "nature documentary",
+        "our planet",
+        "planet earth",
+        "prehistoric planet",
+        "surviving earth",
+        "科学纪录片",
+        "自然纪录片",
+    )
+
+
+def _is_science_documentary(meta_info: dict) -> bool:
+    if _has_token_sequence(
+        meta_info,
+        "blue planet",
+        "frozen planet",
+        "green planet",
+        "life on earth",
+        "our planet",
+        "planet earth",
+        "prehistoric planet",
+        "surviving earth",
+    ):
+        return True
+    if _is_documentary_unscripted(meta_info) and _has_science_nature_signal(meta_info):
+        return True
+    return _has_phrase(
+        meta_info,
+        "natural history documentary",
+        "science documentary",
+        "wildlife documentary",
     )
 
 
@@ -378,6 +471,7 @@ _PREDICATES = {
     "us_series": _is_english_series,
     "interview": _is_interview,
     "documentary_unscripted": _is_documentary_unscripted,
+    "science_documentary": _is_science_documentary,
     "academic_lecture": _is_academic_lecture,
     "sitcom_comedy": _is_sitcom_comedy,
     "korean_drama": _is_korean_drama,

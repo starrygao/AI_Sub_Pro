@@ -1058,7 +1058,7 @@ def _finalize_quality_conclusion(report, repaired: list[dict], repair_enabled: b
         conclusion = f"不达标：仍有 {error_count} 个错误、{unresolved_count} 个问题位置。"
     elif issue_count:
         verdict = "needs_review"
-        conclusion = f"未完全达标：自动返工后仍有 {warning_count} 个警告、{unresolved_count} 个问题位置。"
+        conclusion = f"未达专业交付标准：自动返工后仍有 {warning_count} 个警告、{unresolved_count} 个问题位置，需人工确认。"
     else:
         verdict = "passed"
         conclusion = "达标：自动检查通过。"
@@ -1146,11 +1146,14 @@ def _auto_repair_quality_issues(
         return []
     try:
         from app.engines.providers.result_contract import reconcile_translation_results
-        from app.engines.translation_qa import build_repair_items, build_repair_prompt
+        from app.engines.translation_qa import (
+            build_repair_items,
+            build_repair_prompt,
+            repairable_quality_issues,
+        )
 
-        all_repair_items = build_repair_items(blocks, report.issues)
-        if not all_repair_items:
-            return []
+        repair_issues = repairable_quality_issues(report.issues)
+        all_repair_items = build_repair_items(blocks, repair_issues)
         max_blocks = _repair_item_limit(cfg)
         if repair_trace is not None:
             repair_trace.update({
@@ -1160,6 +1163,8 @@ def _auto_repair_quality_issues(
                 "skipped_blocks": len(all_repair_items),
                 "batches": [],
             })
+        if not all_repair_items:
+            return []
         if max_blocks <= 0:
             if repair_trace is not None:
                 repair_trace["skipped_reason"] = "repair_disabled_by_zero_limit"
@@ -1181,7 +1186,7 @@ def _auto_repair_quality_issues(
             prompt = build_repair_prompt(
                 target_language,
                 repair_items,
-                report.issues,
+                repair_issues,
                 kb_terms=_project_kb_terms(project_kb),
             )
             raw_results = primary.translate_batch(repair_items, prompt)
@@ -1461,6 +1466,8 @@ def _run_translate_pipeline(
             done_msg = f"翻译完成: {translated_count} 条"
             if failed_count > 0:
                 done_msg += f"(失败 {failed_count} 条)"
+            if not quality_passed:
+                done_msg += "，需人工确认质量报告后再交付"
             _emit_progress(pid, "translate", 100, done_msg)
 
             mutate_project(
@@ -1470,6 +1477,8 @@ def _run_translate_pipeline(
                     "error": None,
                     "progress": 100,
                     "progress_msg": done_msg,
+                    "translation_quality_status": "passed" if quality_passed else "needs_review",
+                    "translation_quality_message": quality_message,
                     "pipeline_stage": None,
                     **_translation_artifact_fields(pid),
                 }),

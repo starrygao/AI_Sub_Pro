@@ -228,10 +228,24 @@ def test_project_quality_helpers_load_suggestions_and_report():
           if (!state.qaReportNextAction().includes('错误项')) {
             throw new Error(`expected next action to prioritize errors, got ${state.qaReportNextAction()}`);
           }
+          state.qaReport.issues = [
+            {type: 'proper_name_inconsistent', severity: 'warning', block_id: 9, message: 'name drift'},
+          ];
+          state.qaReport.summary.issue_count = 1;
+          state.qaReport.summary.repaired_blocks = 0;
+          state.qaReport.summary.unresolved_blocks = 1;
+          if (!state.qaReportNextAction().includes('人工确认') || state.qaReportNextAction().includes('继续交付')) {
+            throw new Error(`expected warning next action to require human review, got ${state.qaReportNextAction()}`);
+          }
+          state.qaReport.summary.repaired_blocks = 2;
+          state.qaReport.summary.quality_gate = {passed: false, auto_repair_enabled: true, auto_repaired_blocks: 2};
+          if (!state.qaReportNextAction().includes('人工确认') || state.qaReportNextAction().includes('抽查确认')) {
+            throw new Error(`expected repaired warning next action to require human review, got ${state.qaReportNextAction()}`);
+          }
           let focused = null;
           state.focusSubtitleById = (id) => { focused = id; };
           state.focusFirstQaIssue();
-          if (focused !== 7) {
+          if (focused !== 9) {
             throw new Error(`expected first QA issue focus, got ${focused}`);
           }
           if (!state.kbSuggestionSummaryText().includes('已接受 1')) {
@@ -279,7 +293,7 @@ def test_project_translation_strategy_helpers_load_and_format_status():
                 manual_terms_count: 2,
                 retrieval: {translation_memory: true, phrase_library: false},
                 qa: {auto_repair: true, auto_repair_rounds: 1},
-                quality_mode: {id: 'professional', label: '专业模式', requires_kb_review: true, quality_gate: true},
+                quality_mode: {id: 'professional', label: '专业辅助', requires_kb_review: true, quality_gate: true},
                 recommendations: [{id: 'native_subtitles', message: '优先翻译原生字幕'}],
               };
             }
@@ -296,7 +310,7 @@ def test_project_translation_strategy_helpers_load_and_format_status():
             throw new Error(`bad profile pills ${JSON.stringify(profiles)}`);
           }
           const capabilities = state.translationStrategyCapabilityPills();
-          for (const expected of ['专业模式', '术语 2', '用户修订记忆', '自动修复 1 轮']) {
+          for (const expected of ['专业辅助', '术语 2', '用户修订记忆', '自动修复 1 轮']) {
             if (!capabilities.includes(expected)) {
               throw new Error(`missing capability ${expected}: ${JSON.stringify(capabilities)}`);
             }

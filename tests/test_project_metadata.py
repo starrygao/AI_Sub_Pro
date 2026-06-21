@@ -91,7 +91,7 @@ def test_build_translation_strategy_explains_profiles_retrieval_and_qa():
     assert strategy["retrieval"]["phrase_library"] is True
     assert strategy["retrieval"]["max_phrase_examples"] == 4
     assert strategy["quality_mode"]["id"] == "professional"
-    assert strategy["quality_mode"]["label"] == "专业模式"
+    assert strategy["quality_mode"]["label"] == "专业辅助"
     assert strategy["quality_mode"]["requires_kb_review"] is False
     assert strategy["quality_mode"]["quality_gate"] is True
     assert strategy["qa"]["auto_repair"] is True

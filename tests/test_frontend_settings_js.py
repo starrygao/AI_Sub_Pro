@@ -2359,7 +2359,7 @@ def test_project_filter_recent_tasks_and_next_action_helpers():
           {id: 'p1', name: 'Alpha Cut', status: 'error', error: 'OpenAI API key sk-secret missing', created_at: '2026-06-04T08:00:00Z', archived: false},
           {id: 'p2', name: 'Beta Daily', status: 'processing', pipeline_stage: 'translate', created_at: '2026-06-04T09:00:00Z', archived: false},
           {id: 'p3', name: 'Gamma Done', status: 'completed', created_at: '2026-06-02T09:00:00Z', archived: true},
-          {id: 'p4', name: 'Delta Cut', status: 'translated', created_at: '2026-06-03T09:00:00Z', archived: false},
+          {id: 'p4', name: 'Delta Cut', status: 'translated', translation_quality_status: 'needs_review', created_at: '2026-06-03T09:00:00Z', archived: false},
         ];
 
         state.showArchived = false;
@@ -2381,6 +2381,12 @@ def test_project_filter_recent_tasks_and_next_action_helpers():
 
         const recentTasks = state.recentTaskProjects(3).map((p) => p.id).join(',');
         if (recentTasks !== 'p2,p1,p4') throw new Error(`unexpected recent task order ${recentTasks}`);
+        if (state.statusLabel(state.projects[3]) !== '待质量确认') {
+          throw new Error(`expected quality review status label, got ${state.statusLabel(state.projects[3])}`);
+        }
+        if (state.statusColor(state.projects[3]).hex !== '#d97706') {
+          throw new Error(`expected quality review status color, got ${JSON.stringify(state.statusColor(state.projects[3]))}`);
+        }
 
         const providerAction = state.projectErrorNextAction(state.projects[0]);
         if (!providerAction.includes('设置') || providerAction.includes('sk-secret')) {

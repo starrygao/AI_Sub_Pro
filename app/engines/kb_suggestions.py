@@ -5,7 +5,13 @@ import re
 from pathlib import Path
 from dataclasses import asdict, dataclass, field
 
-from app.engines.domain_terms import find_domain_terms, lookup_domain_term
+from app.engines.domain_terms import (
+    find_domain_terms,
+    find_scientific_terms,
+    is_scientific_context_phrase,
+    is_scientific_term_source,
+    lookup_domain_term,
+)
 from app.engines.kb_models import ProjectKb
 from app.utils.project_store import atomic_write_json
 
@@ -146,11 +152,19 @@ def _suggested_target(source: str) -> str:
 
 def _suggested_notes(source: str) -> str:
     term = lookup_domain_term(source)
-    return term.notes if term is not None else ""
+    if term is not None:
+        return term.notes
+    if is_scientific_term_source(source):
+        return "auto-detected scientific/Latinized term; verify translation and keep consistent"
+    return ""
 
 
 def _suggested_confidence(source: str, confidence: float) -> float:
-    return max(confidence, 0.85) if lookup_domain_term(source) is not None else confidence
+    if lookup_domain_term(source) is not None:
+        return max(confidence, 0.85)
+    if is_scientific_term_source(source):
+        return max(confidence, 0.72)
+    return confidence
 
 
 @dataclass
@@ -242,6 +256,8 @@ def _iter_candidates(project: dict, subtitles: list[dict] | None):
         yield phrase, _category_for_phrase(phrase), "overview", 0.6, "overview"
     for match in find_domain_terms(project.get("overview", "")):
         yield match.term.source, match.term.category, "overview", 0.85, "domain_term"
+    for match in find_scientific_terms(project.get("overview", "")):
+        yield match.source, match.category, "overview", match.confidence, "scientific_term"
 
     for subtitle in subtitles or []:
         if not isinstance(subtitle, dict):
@@ -253,6 +269,8 @@ def _iter_candidates(project: dict, subtitles: list[dict] | None):
             yield phrase, _category_for_phrase(phrase), evidence, 0.55, "subtitle"
         for match in find_domain_terms(text):
             yield match.term.source, match.term.category, evidence, 0.85, "domain_term"
+        for match in find_scientific_terms(text):
+            yield match.source, match.category, evidence, match.confidence, "scientific_term"
 
 
 def _cast_names(cast):
@@ -525,6 +543,10 @@ def _clean_text(value) -> str:
 def _is_useful_term(source: str, origin: str) -> bool:
     if not source:
         return False
+    if origin == "scientific_term":
+        return True
+    if origin in {"overview", "subtitle"} and is_scientific_context_phrase(source):
+        return False
     folded = source.casefold()
     is_high_confidence_origin = origin in {"cast", "character", "title", "name", "show_title", "original_title"}
     if _is_single_word_subtitle_noise(source, origin):
@@ -558,7 +580,10 @@ def _is_legacy_pending_subtitle_noise_suggestion(suggestion: KbSuggestion) -> bo
         isinstance(item, str) and item.startswith("subtitle")
         for item in evidence
     )
-    return has_subtitle_evidence and _is_single_word_subtitle_noise(suggestion.source, "subtitle")
+    return has_subtitle_evidence and (
+        _is_single_word_subtitle_noise(suggestion.source, "subtitle")
+        or is_scientific_context_phrase(suggestion.source)
+    )
 
 
 def extract_kb_suggestions(

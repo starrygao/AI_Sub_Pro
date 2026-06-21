@@ -843,6 +843,133 @@ def test_translate_pipeline_auto_repair_preserves_omitted_rows(tmp_path, monkeyp
     assert report["repaired_blocks"] == [{"id": 1, "translation": "你还好吗？"}]
 
 
+def test_translate_pipeline_does_not_auto_repair_scientific_terms_without_expected(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transscientificnorepair"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "Surviving Earth S01E01",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "\n".join([
+            "1",
+            "00:00:00,000 --> 00:00:04,000",
+            "Ischigualastia grazes nearby.",
+            "",
+            "2",
+            "00:00:04,000 --> 00:00:08,000",
+            "A young Ischigualastia calls.",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {"qa_auto_repair": True},
+    })
+
+    class FakePrimary:
+        def translate_batch(self, items, system_prompt):
+            raise AssertionError("scientific terms without expected should not auto-repair")
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            self.primary = FakePrimary()
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "伊斯基瓜拉斯兽在附近觅食。"
+            blocks[1].translation = "幼年伊斯基瓜拉兽在呼唤。"
+            return blocks
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
+    assert report["summary"]["by_type"]["scientific_term_inconsistent"] == 2
+    assert report["repaired_blocks"] == []
+    rounds = report["trace"]["auto_repair_rounds"]
+    assert rounds[0]["candidate_blocks"] == 0
+    assert rounds[0]["result"] == "no_repair_applied"
+
+
+def test_translate_pipeline_does_not_auto_repair_inferred_proper_names(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transpropernamenorepair"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "\n".join([
+            "1",
+            "00:00:00,000 --> 00:00:04,000",
+            "Hudson Oaks is quiet tonight.",
+            "",
+            "2",
+            "00:00:04,000 --> 00:00:08,000",
+            "I came from Hudson Oaks.",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {"qa_auto_repair": True},
+    })
+
+    class FakePrimary:
+        def translate_batch(self, items, system_prompt):
+            raise AssertionError("inferred proper names should not auto-repair without approved target")
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            self.primary = FakePrimary()
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "哈德逊奥克斯今晚很安静。"
+            blocks[1].translation = "我从哈德逊橡树来。"
+            return blocks
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
+    assert report["summary"]["by_type"]["proper_name_inconsistent"] == 2
+    assert report["repaired_blocks"] == []
+    rounds = report["trace"]["auto_repair_rounds"]
+    assert rounds[0]["candidate_blocks"] == 0
+    assert rounds[0]["result"] == "no_repair_applied"
+    assert project["translation_quality_status"] == "needs_review"
+    assert "需人工确认质量报告后再交付" in project["progress_msg"]
+
+
 def test_translate_pipeline_batches_auto_repair_and_records_trace(tmp_path, monkeypatch):
     from app.api import translate as api_translate
     from app.utils import project_store

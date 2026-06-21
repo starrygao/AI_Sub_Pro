@@ -81,7 +81,7 @@ def _recommendations(
         recommendations.append({
             "id": "professional_mode_available",
             "severity": "info",
-            "message": "当前为快速自动模式；专业交付可开启专业模式，自动使用知识库候选并启用质量门。",
+            "message": "当前为快速自动模式；专业辅助可自动生成知识库候选并启用质量报告。",
         })
     if content_type == "auto" and not profiles:
         recommendations.append({
@@ -139,11 +139,11 @@ def _quality_mode_summary(translation_cfg: dict) -> dict:
     if professional:
         return {
             "id": "professional",
-            "label": "专业模式",
+            "label": "专业辅助",
             "professional": True,
             "requires_kb_review": requires_kb_review,
             "quality_gate": True,
-            "summary": "自动应用知识库候选、术语和质量报告；仅在显式开启审校门槛时才阻塞翻译。",
+            "summary": "自动使用已审定知识库、翻译记忆、短语库和质量报告；未审定候选只作为软提示，显式开启审校门槛时阻塞翻译。",
         }
     return {
         "id": "fast",

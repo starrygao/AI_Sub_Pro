@@ -265,6 +265,16 @@ def test_project_detail_exposes_core_pipeline_actions_as_toolbar_buttons():
         assert snippet in css
 
 
+def test_translation_quality_mode_copy_uses_assisted_review_language():
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+
+    assert "专业辅助：术语软提示 + 质量报告" in html
+    assert "未审定候选只作软提示" in html
+    assert "人工确认后再交付" in html
+    assert "专业自动" not in html
+    assert "不会要求翻译前手工审校" not in html
+
+
 def test_click_navigation_uses_set_view_guard():
     html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
 

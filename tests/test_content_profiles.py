@@ -103,6 +103,46 @@ def test_infer_content_profiles_uses_network_video_source_title():
     })
 
 
+def test_infer_content_profiles_detects_science_documentary_from_title():
+    assert "science_documentary" in _profile_ids({
+        "name": "Surviving.Earth.S01E02.1080p.WEB.h264",
+        "original_language": "en",
+        "tmdb_type": "tv",
+    })
+
+
+def test_infer_content_profiles_detects_known_science_documentary_titles_without_metadata():
+    positive_titles = [
+        "Planet.Earth.S01E01.1080p.WEB.h264",
+        "Our_Planet_S01E01_1080p",
+        "Prehistoric Planet S01E01",
+        "Blue.Planet.S02E01",
+        "Life.on.Earth.S01E01",
+    ]
+
+    for title in positive_titles:
+        assert "science_documentary" in _profile_ids({
+            "name": title,
+            "original_language": "en",
+            "tmdb_type": "tv",
+        })
+
+
+def test_infer_content_profiles_does_not_overapply_science_documentary_from_generic_tokens():
+    negative_titles = [
+        "Planet.of.the.Apes.S01E01",
+        "Earth.Abides.S01E01",
+        "Science.Fiction.S01E01",
+    ]
+
+    for title in negative_titles:
+        assert "science_documentary" not in _profile_ids({
+            "name": title,
+            "original_language": "en",
+            "tmdb_type": "tv",
+        })
+
+
 def test_build_content_profile_prompt_snippet_is_bounded_and_traceable():
     from app.engines.content_profiles import build_content_profile_prompt_snippet
 
@@ -199,6 +239,21 @@ def test_academic_profile_adds_lecture_and_research_guidance():
     assert "academic_lecture" in ids
     assert "equations, symbols, variables" in snippet
     assert "citations, paper titles" in snippet
+
+
+def test_science_documentary_profile_adds_term_consistency_guidance():
+    from app.engines.content_profiles import build_content_profile_prompt_snippet
+
+    snippet, hits = build_content_profile_prompt_snippet({
+        "name": "Surviving Earth S01E02",
+        "original_language": "en",
+        "tmdb_type": "tv",
+    })
+
+    ids = {hit["id"] for hit in hits}
+    assert "science_documentary" in ids
+    assert "Latin scientific names" in snippet
+    assert "reuse it consistently" in snippet
 
 
 def test_content_profiles_do_not_overapply_adult_or_drama_profiles():

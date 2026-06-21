@@ -157,6 +157,49 @@ def test_repair_prompt_gives_core_term_consistency_guidance():
     assert "expected D-Day → D日" in prompt
 
 
+def test_repairable_quality_issues_skip_inferred_term_consistency():
+    from app.engines.translation_qa import QualityIssue, repairable_quality_issues
+
+    issues = [
+        QualityIssue(
+            type="scientific_term_inconsistent",
+            severity="warning",
+            block_id=1,
+            message="auto-detected scientific term has inconsistent target forms",
+        ),
+        QualityIssue(
+            type="scientific_term_inconsistent",
+            severity="warning",
+            block_id=2,
+            message="auto-detected scientific term has inconsistent target forms",
+            expected="伊斯基瓜拉斯兽",
+        ),
+        QualityIssue(
+            type="proper_name_inconsistent",
+            severity="warning",
+            block_id=3,
+            message="inferred proper name uses inconsistent target forms",
+        ),
+        QualityIssue(
+            type="line_too_long",
+            severity="warning",
+            block_id=4,
+            message="too long",
+        ),
+        QualityIssue(
+            type="kb_term_missing",
+            severity="error",
+            block_id=5,
+            message="expected KB term",
+            expected="哈德逊奥克斯",
+        ),
+    ]
+
+    repairable = repairable_quality_issues(issues)
+
+    assert [issue.block_id for issue in repairable] == [4, 5]
+
+
 def test_quality_checks_flag_inferred_proper_name_inconsistency():
     from app.engines.translation_qa import run_quality_checks
 
@@ -337,6 +380,43 @@ def test_quality_checks_project_kb_overrides_curated_science_terms():
 
     assert "canonical_term_missing" not in report.summary["by_type"]
     assert "kb_term_missing" not in report.summary["by_type"]
+
+
+def test_quality_checks_flag_auto_scientific_term_inconsistency():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Ischigualastia grazes nearby.", "伊斯基瓜拉斯兽在附近觅食。"),
+        _block(2, "A young Ischigualastia calls.", "幼年伊斯基瓜拉兽在呼唤。"),
+        _block(3, "The Ischigualastia keeps moving.", "伊斯基瓜拉斯提亚继续前进。"),
+        _block(4, "Without the Dicroidium, food is scarce.", "没有双脉蕨，食物变少。"),
+        _block(5, "Dicroidium spreads across the valley.", "双扇蕨遍布山谷。"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
+
+    flagged = [issue for issue in report.issues if issue.type == "scientific_term_inconsistent"]
+    assert len(flagged) == 5
+    assert {issue.block_id for issue in flagged} == {1, 2, 3, 4, 5}
+    assert report.summary["by_type"]["scientific_term_inconsistent"] == 5
+    messages = {issue.message for issue in flagged}
+    assert any("Ischigualastia" in message for message in messages)
+    assert any("Dicroidium" in message for message in messages)
+    assert all(issue.severity == "warning" for issue in flagged)
+    assert all(issue.expected == "" for issue in flagged)
+
+
+def test_quality_checks_allow_consistent_auto_scientific_term():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Ischigualastia grazes nearby.", "伊斯基瓜拉斯兽在附近觅食。"),
+        _block(2, "A young Ischigualastia calls.", "幼年伊斯基瓜拉斯兽在呼唤。"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
+
+    assert "scientific_term_inconsistent" not in report.summary["by_type"]
 
 
 def test_quality_checks_flag_core_term_inconsistency():
