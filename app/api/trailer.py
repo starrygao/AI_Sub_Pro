@@ -48,6 +48,7 @@ class StartReq(BaseModel):
     original_language: str
     name: str
     target_language: Optional[str] = None
+    workflow_mode: Optional[str] = None
 
 
 class StartUrlReq(BaseModel):
@@ -55,6 +56,7 @@ class StartUrlReq(BaseModel):
     name: Optional[str] = None
     original_language: Optional[str] = None
     target_language: Optional[str] = None
+    workflow_mode: Optional[str] = None
 
 
 def _require_positive_int(name: str, value: Optional[int]) -> None:
@@ -78,6 +80,15 @@ def _configured_target_language(override: Optional[str] = None) -> str:
     if isinstance(configured, str) and configured.strip():
         return configured.strip()
     return "简体中文"
+
+
+def _configured_workflow_mode(override: Optional[str] = None) -> str:
+    if override is None:
+        return "translate_burn"
+    value = _require_non_blank("workflow_mode", override)
+    if value not in {"translate_burn", "translate_only"}:
+        raise HTTPException(status_code=400, detail="workflow_mode must be translate_burn or translate_only")
+    return value
 
 
 def _default_url_project_name(url: str) -> str:
@@ -117,6 +128,7 @@ def _submission_project(project: dict) -> dict:
         "content_type": project.get("content_type"),
         "academic_field": project.get("academic_field"),
         "metadata_source": project.get("metadata_source"),
+        "workflow_mode": project.get("workflow_mode"),
         "network_video_plan": project.get("network_video_plan"),
     }
 
@@ -304,6 +316,7 @@ def start(req: StartReq):
     base_name = _require_non_blank("name", req.name)
     original_language = _require_non_blank("original_language", req.original_language)
     target_language = _configured_target_language(req.target_language)
+    workflow_mode = _configured_workflow_mode(req.workflow_mode)
     require_translation_ready()
     pids: List[str] = []
     projects: List[dict] = []
@@ -332,6 +345,7 @@ def start(req: StartReq):
             name=name,
             asr_language=original_language,
             target_language=target_language,
+            workflow_mode=workflow_mode,
         )
         pids.append(project["id"])
         projects.append(_submission_project(project))
@@ -349,6 +363,7 @@ def start_url(req: StartUrlReq):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     target_language = _configured_target_language(req.target_language)
+    workflow_mode = _configured_workflow_mode(req.workflow_mode)
     require_translation_ready()
     has_manual_name = bool(req.name is not None and req.name.strip())
     has_manual_language = (
@@ -376,6 +391,7 @@ def start_url(req: StartUrlReq):
         asr_language=original_language,
         target_language=target_language,
         network_metadata=network_metadata,
+        workflow_mode=workflow_mode,
     )
     _spawn_pipeline_thread(project["id"])
     return {"pids": [project["id"]], "projects": [_submission_project(project)], "status": "submitted"}

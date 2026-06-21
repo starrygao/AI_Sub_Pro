@@ -1847,6 +1847,68 @@
   </div>
 </div>
 
+<!-- Task settings modal -->
+<div x-show="taskSettingsPrompt" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-4" x-cloak
+     @click.self="cancelTaskSettings()"
+     @keydown.escape.window="cancelTaskSettings()">
+  <div class="glass rounded-2xl p-5" role="dialog" aria-modal="true" aria-labelledby="task-settings-title"
+       style="width: min(30rem, calc(100vw - 2rem));">
+    <h3 id="task-settings-title" class="text-[14px] font-semibold mb-2" x-text="taskSettingsTitle"></h3>
+    <p class="text-[13px] text-surface-500 leading-relaxed mb-4" x-text="taskSettingsMessage"></p>
+
+    <fieldset class="space-y-2 mb-4" x-show="taskSettingsCanBurn">
+      <legend class="text-[12px] text-surface-400 mb-2 font-medium">输出方式</legend>
+      <label class="flex items-start gap-3 rounded-xl border border-black/[0.06] bg-white/45 px-3 py-2.5 cursor-pointer">
+        <input type="radio" x-model="taskSettingsWorkflowMode" value="translate_burn"
+               class="mt-0.5 accent-accent" aria-label="翻译并烧录字幕">
+        <span>
+          <span class="block text-[13px] font-medium text-surface-700">翻译并烧录</span>
+          <span class="block text-[12px] text-surface-400 mt-0.5">生成中文字幕，并输出带字幕的视频。</span>
+        </span>
+      </label>
+      <label class="flex items-start gap-3 rounded-xl border border-black/[0.06] bg-white/45 px-3 py-2.5 cursor-pointer">
+        <input type="radio" x-model="taskSettingsWorkflowMode" value="translate_only"
+               class="mt-0.5 accent-accent" aria-label="仅翻译字幕不烧录">
+        <span>
+          <span class="block text-[13px] font-medium text-surface-700">仅翻译，不烧录</span>
+          <span class="block text-[12px] text-surface-400 mt-0.5">只生成可导出的字幕文件，后续需要时再手动烧录。</span>
+        </span>
+      </label>
+    </fieldset>
+
+    <div x-show="!taskSettingsCanBurn" class="rounded-xl bg-black/[0.03] px-3 py-2.5 mb-4">
+      <p class="text-[13px] font-medium text-surface-700">仅翻译</p>
+      <p class="text-[12px] text-surface-400 mt-0.5">当前来源没有视频烧录步骤。</p>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+      <label class="block">
+        <span class="block text-[12px] text-surface-400 mb-1.5 font-medium">原始语言 / ASR</span>
+        <input x-model="taskSettingsAsrLanguage"
+               placeholder="auto / en / ja"
+               aria-label="任务原始语言"
+               class="w-full px-3 py-2 rounded-xl text-[13px]">
+      </label>
+      <label class="block">
+        <span class="block text-[12px] text-surface-400 mb-1.5 font-medium">目标语言</span>
+        <input x-model="taskSettingsTargetLanguage"
+               placeholder="简体中文"
+               aria-label="任务目标语言"
+               class="w-full px-3 py-2 rounded-xl text-[13px]">
+      </label>
+    </div>
+
+    <div class="flex justify-end gap-2">
+      <button @click="cancelTaskSettings()"
+              class="btn-secondary px-3 py-1.5 rounded-lg text-[12px]">取消</button>
+      <button x-ref="taskSettingsConfirmButton"
+              @click="confirmTaskSettings()"
+              :disabled="!String(taskSettingsTargetLanguage || '').trim()"
+              class="btn-primary px-3 py-1.5 rounded-lg text-[12px] disabled:opacity-50 disabled:cursor-not-allowed">开始任务</button>
+    </div>
+  </div>
+</div>
+
 <!-- Project rename modal -->
 <div x-show="projectRenamePrompt" class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" x-cloak
      @click.self="cancelRenameProject()"
@@ -1883,6 +1945,6 @@
        aria-label="选择音频文件"
        @change="handleAudioFileSelect($event)">
 
-<script src="/static/js/app.js?v=20260613-auto1"></script>
+<script src="/static/js/app.js?v=20260621-task-settings"></script>
 </body>
 </html>

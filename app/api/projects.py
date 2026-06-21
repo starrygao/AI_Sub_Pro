@@ -66,6 +66,7 @@ _AUDIO_UPLOAD_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", 
 _PROJECT_SAFE_DEFAULTS = {
     "source_type": "upload",
     "auto_run": False,
+    "workflow_mode": "translate_burn",
     "tmdb_id": None,
     "tmdb_type": None,
     "season_number": None,
@@ -115,6 +116,14 @@ _TARGET_LANG_TO_ISO = {
     "日语": {"ja", "jpn"},
     "한국어": {"ko", "kor"},
 }
+
+_WORKFLOW_MODES = {"translate_burn", "translate_only"}
+
+
+def _normalize_workflow_mode(value) -> str:
+    if isinstance(value, str) and value.strip() in _WORKFLOW_MODES:
+        return value.strip()
+    return "translate_burn"
 
 
 def _json_safe_value(value):
@@ -245,6 +254,7 @@ def _apply_safe_defaults(project: dict) -> dict:
             project[field] = None
     if project.get("source_type") not in ("upload", "trailer", "subtitle", "audio"):
         project["source_type"] = "upload"
+    project["workflow_mode"] = _normalize_workflow_mode(project.get("workflow_mode"))
     for field, default in (("asr_language", "auto"), ("target_language", "简体中文")):
         value = project.get(field)
         if not isinstance(value, str) or not value.strip():
@@ -772,6 +782,7 @@ def create_trailer_project(
     asr_language: str = "auto",
     target_language: str = "简体中文",
     network_metadata: Optional[dict] = None,
+    workflow_mode: str = "translate_burn",
 ) -> dict:
     """Create a new trailer-source project directory + project.json.
 
@@ -825,6 +836,7 @@ def create_trailer_project(
         "youtube_url": youtube_url,
         "original_language": original_language,
         "auto_run": True,
+        "workflow_mode": _normalize_workflow_mode(workflow_mode),
         "parent_project_id": parent_project_id,
         "pipeline_stage": "download",
         "archived": False,

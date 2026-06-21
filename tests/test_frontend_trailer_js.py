@@ -1137,6 +1137,67 @@ def test_trailer_start_includes_selected_target_language_in_payload():
     assert result.returncode == 0, result.stderr
 
 
+def test_trailer_start_uses_task_settings_workflow_mode_and_languages():
+    script = textwrap.dedent(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        let payload = null;
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          fetch: async (_url, options) => {
+            payload = JSON.parse(options.body);
+            return {ok: true, json: async () => ({pids: ['p1']})};
+          },
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          state.sysCheck = {translation_ready: true};
+          state.trailerSelectedShow = {id: 1399, media_type: 'tv', name: 'Foo', original_language: 'ja'};
+          state.trailerSelectedVideos = ['abc123'];
+          state.openTaskSettings = async (options) => {
+            if (!options.canBurn) throw new Error('expected trailer video jobs to allow burn choice');
+            return {
+              workflow_mode: 'translate_only',
+              asr_language: 'ko',
+              target_language: 'English',
+            };
+          };
+
+          await state.startTrailerJobs();
+
+          if (!payload) throw new Error('expected trailer start payload');
+          if (payload.workflow_mode !== 'translate_only') {
+            throw new Error(`expected translate_only workflow mode, got ${JSON.stringify(payload)}`);
+          }
+          if (payload.original_language !== 'ko' || payload.target_language !== 'English') {
+            throw new Error(`expected modal languages in payload, got ${JSON.stringify(payload)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_frontend_model_loader_filters_malformed_model_entries():
     script = textwrap.dedent(
         """

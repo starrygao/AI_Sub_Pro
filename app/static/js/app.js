@@ -77,6 +77,14 @@ function app() {
     confirmCancelText: '取消',
     confirmIntent: 'danger',
     confirmResolve: null,
+    taskSettingsPrompt: false,
+    taskSettingsTitle: '任务设置',
+    taskSettingsMessage: '',
+    taskSettingsCanBurn: true,
+    taskSettingsWorkflowMode: 'translate_burn',
+    taskSettingsAsrLanguage: 'auto',
+    taskSettingsTargetLanguage: '简体中文',
+    taskSettingsResolve: null,
     homeSourceMode: 'local',
     newVideoPath: '',
     fileImporting: false,
@@ -210,6 +218,62 @@ function app() {
       this.confirmIntent = 'danger';
       this.confirmResolve = null;
       if (resolve) resolve(!!result);
+    },
+
+    normalizeWorkflowMode(value, canBurn = true) {
+      if (!canBurn) return 'translate_only';
+      return value === 'translate_only' ? 'translate_only' : 'translate_burn';
+    },
+
+    taskSettingsResultFromState() {
+      const targetLanguage = String(this.taskSettingsTargetLanguage || this.targetLang || '简体中文').trim() || '简体中文';
+      const asrLanguage = String(this.taskSettingsAsrLanguage || this.asrLanguage || 'auto').trim() || 'auto';
+      return {
+        workflow_mode: this.normalizeWorkflowMode(this.taskSettingsWorkflowMode, this.taskSettingsCanBurn),
+        asr_language: asrLanguage,
+        target_language: targetLanguage,
+      };
+    },
+
+    openTaskSettings(options = {}) {
+      const canBurn = options.canBurn !== false;
+      const resultDefaults = {
+        workflow_mode: this.normalizeWorkflowMode(options.workflow_mode, canBurn),
+        asr_language: String(options.asr_language || this.asrLanguage || 'auto').trim() || 'auto',
+        target_language: String(options.target_language || this.targetLang || '简体中文').trim() || '简体中文',
+      };
+      if (typeof document === 'undefined') {
+        return Promise.resolve(resultDefaults);
+      }
+      if (this.taskSettingsResolve) this.cancelTaskSettings();
+      this.taskSettingsTitle = options.title || '任务设置';
+      this.taskSettingsMessage = options.message || '';
+      this.taskSettingsCanBurn = canBurn;
+      this.taskSettingsWorkflowMode = resultDefaults.workflow_mode;
+      this.taskSettingsAsrLanguage = resultDefaults.asr_language;
+      this.taskSettingsTargetLanguage = resultDefaults.target_language;
+      this.taskSettingsPrompt = true;
+      return new Promise((resolve) => {
+        this.taskSettingsResolve = resolve;
+        if (typeof this.$nextTick === 'function') {
+          this.$nextTick(() => this.$refs.taskSettingsConfirmButton?.focus?.());
+        }
+      });
+    },
+
+    cancelTaskSettings() {
+      const resolve = this.taskSettingsResolve;
+      this.taskSettingsPrompt = false;
+      this.taskSettingsResolve = null;
+      if (resolve) resolve(null);
+    },
+
+    confirmTaskSettings() {
+      const resolve = this.taskSettingsResolve;
+      const result = this.taskSettingsResultFromState();
+      this.taskSettingsPrompt = false;
+      this.taskSettingsResolve = null;
+      if (resolve) resolve(result);
     },
 
     async confirmLeaveKbEditor() {
@@ -4165,20 +4229,30 @@ function app() {
       this.trailerError = null;
       this.trailerSubmitting = true;
       const singleSeason = this.trailerSelectedSeasons.length === 1 ? this.trailerSelectedSeasons[0] : null;
-      const payload = {
-        tmdb_id: show.id,
-        tmdb_type: show.media_type,
-        season: singleSeason,
-        video_keys: this.trailerSelectedVideos,
-        original_language: show.original_language || 'en',
-        name: show.name || show.title || '未命名',
-        target_language: this.targetLang,
-      };
       try {
         if (!await this.ensureTranslationReadyForWorkflow()) {
           this.trailerError = `请先完成翻译引擎配置：${this.systemTranslationHint()}`;
           return;
         }
+        const taskSettings = await this.openTaskSettings({
+          title: '创建剧集翻译任务',
+          message: '选择输出方式和本次任务语言。仅翻译会生成字幕文件，不烧录到视频。',
+          canBurn: true,
+          workflow_mode: 'translate_burn',
+          asr_language: show.original_language || 'en',
+          target_language: this.targetLang,
+        });
+        if (!taskSettings) return;
+        const payload = {
+          tmdb_id: show.id,
+          tmdb_type: show.media_type,
+          season: singleSeason,
+          video_keys: this.trailerSelectedVideos,
+          original_language: taskSettings.asr_language,
+          name: show.name || show.title || '未命名',
+          target_language: taskSettings.target_language,
+          workflow_mode: taskSettings.workflow_mode,
+        };
         const r = await fetch('/api/trailer/start', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
@@ -4220,11 +4294,21 @@ function app() {
         if (!await this.confirmNetworkVideoDownload()) {
           return;
         }
+        const taskSettings = await this.openTaskSettings({
+          title: '创建在线视频任务',
+          message: '选择输出方式和本次任务语言。仅翻译会生成字幕文件，不烧录到视频。',
+          canBurn: true,
+          workflow_mode: 'translate_burn',
+          asr_language: String(this.trailerOriginalLanguage || 'auto').trim() || 'auto',
+          target_language: this.targetLang,
+        });
+        if (!taskSettings) return;
         const payload = {
           video_url: videoUrl,
           name: String(this.trailerNameInput || '').trim(),
-          original_language: String(this.trailerOriginalLanguage || 'auto').trim() || 'auto',
-          target_language: this.targetLang,
+          original_language: taskSettings.asr_language,
+          target_language: taskSettings.target_language,
+          workflow_mode: taskSettings.workflow_mode,
         };
         const r = await fetch('/api/trailer/start-url', {
           method: 'POST',

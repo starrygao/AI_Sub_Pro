@@ -62,6 +62,47 @@ def test_run_trailer_pipeline_happy_path(patched_projects_dir, monkeypatch):
     assert p["status"] == "completed"
 
 
+def test_run_trailer_pipeline_translate_only_skips_burn(patched_projects_dir, monkeypatch):
+    from app.engines import trailer_pipeline as tp
+    from app.api.projects import create_trailer_project, _load_project
+
+    project = create_trailer_project(
+        tmdb_id=1,
+        tmdb_type="movie",
+        video_key="k",
+        youtube_url="https://youtu.be/k",
+        original_language="en",
+        name="Test",
+        workflow_mode="translate_only",
+    )
+    pid = project["id"]
+
+    import pathlib
+
+    def fake_download(url, out, progress_callback=None, **kw):
+        pathlib.Path(out).parent.mkdir(parents=True, exist_ok=True)
+        pathlib.Path(out).write_bytes(b"x")
+        return out
+
+    asr_called = []
+    translate_called = []
+    burn_called = []
+    monkeypatch.setattr(tp, "download_trailer", fake_download)
+    monkeypatch.setattr(tp, "_run_asr_for_project", lambda pid_: asr_called.append(pid_))
+    monkeypatch.setattr(tp, "_run_translate_for_project", lambda pid_: translate_called.append(pid_))
+    monkeypatch.setattr(tp, "_run_burn_for_project", lambda pid_: burn_called.append(pid_))
+
+    tp.run_trailer_pipeline(pid)
+
+    assert asr_called == [pid]
+    assert translate_called == [pid]
+    assert burn_called == []
+    p = _load_project(pid)
+    assert p["status"] == "translated"
+    assert p["pipeline_stage"] is None
+    assert p["workflow_mode"] == "translate_only"
+
+
 def test_run_trailer_pipeline_download_failure_sets_error(patched_projects_dir, monkeypatch):
     from app.engines import trailer_pipeline as tp
     from app.api.projects import create_trailer_project, _load_project

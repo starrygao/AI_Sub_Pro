@@ -1,4 +1,4 @@
-"""Trailer-project orchestrator: download -> ASR -> translate -> burn.
+"""Trailer-project orchestrator: download -> ASR -> translate -> optional burn.
 
 On per-stage failure, records error on project.json and stops. Does NOT re-raise
 (caller is a background thread spawned by the /api/trailer/start endpoint).
@@ -299,8 +299,15 @@ def _check_stage_status(pid: str, stage_name: str) -> None:
         raise RuntimeError(f"{stage_name} stage failed: {proj.get('error') or 'unknown'}")
 
 
+def _workflow_mode(project: dict) -> str:
+    value = project.get("workflow_mode") if isinstance(project, dict) else None
+    if isinstance(value, str) and value.strip() == "translate_only":
+        return "translate_only"
+    return "translate_burn"
+
+
 def run_trailer_pipeline(pid: str) -> None:
-    """Run the full 4-stage pipeline for a trailer project. Exceptions captured."""
+    """Run the trailer pipeline. Exceptions captured."""
     if is_cancelled(pid):
         _save_partial(pid, status="error", error="Cancelled by user", pipeline_stage=None)
         update_progress(pid, "download", 0, "已取消")
@@ -326,6 +333,11 @@ def run_trailer_pipeline(pid: str) -> None:
         _check_cancelled(pid)
         _run_translate_for_project(pid)
         _check_stage_status(pid, "translate")
+
+        if _workflow_mode(_load_project(pid)) == "translate_only":
+            _save_partial(pid, status="translated", pipeline_stage=None)
+            update_progress(pid, "translate", 100, "translation complete; burn skipped")
+            return
 
         _save_partial(pid, pipeline_stage="burn")
         _check_cancelled(pid)

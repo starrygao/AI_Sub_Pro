@@ -107,6 +107,31 @@ def test_start_endpoint_creates_projects_and_schedules(patched_projects_dir, mon
     assert threaded == data["pids"]
 
 
+def test_start_endpoint_persists_translate_only_workflow_mode(patched_projects_dir, monkeypatch):
+    from app.main import app
+    from app.api.projects import _load_project
+
+    client = TestClient(app)
+    monkeypatch.setattr("app.api.trailer._spawn_pipeline_thread", lambda pid: None)
+
+    r = client.post("/api/trailer/start", json={
+        "tmdb_id": 1,
+        "tmdb_type": "movie",
+        "season": None,
+        "video_keys": ["vidkey1abc"],
+        "original_language": "en",
+        "name": "Foo",
+        "target_language": "简体中文",
+        "workflow_mode": "translate_only",
+    })
+
+    assert r.status_code == 200
+    pid = r.json()["pids"][0]
+    project = _load_project(pid)
+    assert project["workflow_mode"] == "translate_only"
+    assert r.json()["projects"][0]["workflow_mode"] == "translate_only"
+
+
 def test_start_url_endpoint_creates_project_and_schedules(patched_projects_dir, monkeypatch):
     from app.main import app
     from app.api.projects import _load_project
