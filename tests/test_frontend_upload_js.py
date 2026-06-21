@@ -290,6 +290,70 @@ def test_quick_start_sends_selected_workflow_languages_when_creating_project():
     )
 
 
+def test_quick_start_opens_task_settings_after_project_create_and_uses_selection():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const calls = [];
+          state.newVideoPath = '/tmp/movie.mp4';
+          state.sysCheck = {translation_ready: true};
+          state.asrLanguage = 'en';
+          state.targetLang = '简体中文';
+          state.toast = () => {};
+          state.setView = async (view) => { calls.push(['view', view]); state.view = view; return true; };
+          state.connectWS = (pid) => { calls.push(['ws', pid]); };
+          state.openTaskSettings = async (options) => {
+            calls.push(['settings', options.title, options.canBurn, state.currentProject?.id]);
+            if (state.currentProject?.id !== 'p1') {
+              throw new Error(`expected project to be recognized before task settings, got ${JSON.stringify(state.currentProject)}`);
+            }
+            return {
+              workflow_mode: 'translate_only',
+              asr_language: 'fr',
+              target_language: 'English',
+            };
+          };
+          state.api = async (url, method, body) => {
+            calls.push([method, url, body]);
+            if (url === '/api/projects' && method === 'POST') {
+              return {id: 'p1', status: 'created', source_type: 'upload', asr_language: 'en', target_language: '简体中文'};
+            }
+            if (url === '/api/projects/p1/start-full' && method === 'POST') {
+              return {status: 'started', stage: 'asr_translate'};
+            }
+            throw new Error(`unexpected api call ${method} ${url}`);
+          };
+
+          await state.quickStart();
+
+          const settingsIndex = calls.findIndex((call) => call[0] === 'settings');
+          const createIndex = calls.findIndex((call) => call[1] === '/api/projects');
+          const startCall = calls.find((call) => call[1] === '/api/projects/p1/start-full');
+          if (createIndex < 0 || settingsIndex < 0 || !(createIndex < settingsIndex)) {
+            throw new Error(`expected task settings after project create, got ${JSON.stringify(calls)}`);
+          }
+          if (!startCall) throw new Error(`expected start-full call, got ${JSON.stringify(calls)}`);
+          const body = startCall[2] || {};
+          if (body.workflow_mode !== 'translate_only' || body.language !== 'fr' || body.target_language !== 'English') {
+            throw new Error(`expected selected task settings in start body, got ${JSON.stringify(body)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_video_file_import_ignores_duplicate_uploads_while_busy():
     _run_node(
         """

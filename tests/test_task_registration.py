@@ -126,8 +126,9 @@ def test_translate_worker_honors_cancel_requested_before_start(tmp_project_dir):
     try:
         translate._run_translate_pipeline(pid, "简体中文", owns_registration=False)
         data = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
-        assert data["status"] == "error"
-        assert "cancelled" in data["error"]
+        assert data["status"] == "cancelled"
+        assert data["error"] is None
+        assert data["progress_msg"] == "已取消"
     finally:
         reset_cancel(pid)
 
@@ -159,8 +160,8 @@ def test_cancel_pipeline_stage_without_registered_task_sets_cancel_event(tmp_pro
         assert r.json()["status"] == "cancelled"
         assert is_cancelled(pid) is True
         data = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
-        assert data["status"] == "error"
+        assert data["status"] == "cancelled"
         assert data["pipeline_stage"] is None
-        assert data["error"] == "Cancelled by user"
+        assert data["error"] is None
     finally:
         reset_cancel(pid)

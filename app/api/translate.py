@@ -60,6 +60,10 @@ _KB_REVIEW_REQUIRED_CODE = "kb_review_required"
 _QA_AUTO_REPAIR_MAX_BLOCKS = 20
 
 
+class TaskCancelled(RuntimeError):
+    """Raised when a user-requested cancellation reaches a worker checkpoint."""
+
+
 def _safe_error_message(exc, limit: int = 200) -> str:
     return redact_error_message(exc, limit)
 
@@ -107,7 +111,14 @@ def _emit_progress(pid: str, stage: str, local_pct: int, msg: str) -> None:
 def _check_cancel(pid: str) -> None:
     """Raise if the user requested cancellation for this pid."""
     if is_cancelled(pid):
-        raise RuntimeError(f"cancelled by user pid={pid}")
+        raise TaskCancelled(f"cancelled by user pid={pid}")
+
+
+def _is_task_cancelled(exc: BaseException) -> bool:
+    if isinstance(exc, TaskCancelled):
+        return True
+    message = str(exc).lower()
+    return "cancelled by user" in message or "canceled by user" in message
 
 
 def _resolve_filter_language(lang, original_language, blocks):
@@ -145,6 +156,7 @@ class FullPipelineRequest(BaseModel):
     audio_track: Optional[StrictInt] = None
     language: Optional[str] = None
     target_language: Optional[str] = None
+    workflow_mode: Optional[str] = None
 
 
 class RetryRequest(BaseModel):
@@ -224,6 +236,22 @@ def _project_source_type(project: dict) -> str:
 
 def _project_supports_video_burn(project: dict) -> bool:
     return _project_source_type(project) not in {"audio", "subtitle"}
+
+
+_WORKFLOW_MODES = {"translate_burn", "translate_only"}
+
+
+def _resolve_workflow_mode(value, project: dict, *, can_burn: bool = True) -> str:
+    raw = value
+    if raw is None and isinstance(project, dict):
+        raw = project.get("workflow_mode")
+    if isinstance(raw, str) and raw.strip():
+        mode = raw.strip()
+        if mode not in _WORKFLOW_MODES:
+            raise HTTPException(400, "workflow_mode must be translate_burn or translate_only")
+    else:
+        mode = "translate_burn"
+    return mode if can_burn else "translate_only"
 
 
 def _safe_generated_project_output_path(pid: str, filename: str) -> Optional[Path]:
@@ -318,6 +346,8 @@ def _latest_failed_stage(pid: str) -> str:
 
 
 def _resume_stage_for_project(pid: str, project: Optional[dict] = None) -> str:
+    if isinstance(project, dict) and project.get("translation_quality_status") == "needs_review":
+        return "translate"
     if _project_supports_video_burn(project or {}) and _first_safe_project_artifact(pid, ["translated.srt", "bilingual.srt"])[0]:
         return "burn"
     if _first_safe_project_artifact(pid, ["filtered.srt", "raw.srt", "native.srt"])[0]:
@@ -339,6 +369,7 @@ def _persist_workflow_options(
     audio_track: Optional[int] = None,
     language: Optional[str] = None,
     target_language: Optional[str] = None,
+    workflow_mode: Optional[str] = None,
 ) -> None:
     """Persist manually selected run options before launching a worker."""
     def _apply(project: dict) -> None:
@@ -348,6 +379,8 @@ def _persist_workflow_options(
             project["asr_language"] = language
         if target_language is not None:
             project["target_language"] = target_language
+        if workflow_mode is not None:
+            project["workflow_mode"] = workflow_mode
 
     mutate_project(pid, _apply, normalize=_apply_safe_defaults)
 
@@ -419,6 +452,33 @@ def _resolve_cancel_stage(pid: str, project: dict) -> str:
     return "asr"
 
 
+def _workflow_stage_with_status(pid: str, statuses: set[str]) -> Optional[str]:
+    try:
+        state = load_workflow_state(pid)
+    except Exception as e:
+        log.warning("workflow load failed while resolving status stage pid=%s: %s", pid, e)
+        return None
+    stages = state.get("stages", {}) if isinstance(state, dict) else {}
+    if not isinstance(stages, dict):
+        return None
+    for stage in ("burn", "translate", "asr", "download"):
+        item = stages.get(stage)
+        if isinstance(item, dict) and item.get("status") in statuses:
+            return stage
+    return None
+
+
+def _stage_for_cancelled_exception(pid: str, fallback_stage: str) -> str:
+    project = _load_project(pid)
+    raw_stage = project.get("pipeline_stage")
+    return (
+        _workflow_stage_with_status(pid, {"cancelled"})
+        or (raw_stage if raw_stage in {"download", "asr", "translate", "burn"} else None)
+        or _workflow_stage_with_status(pid, {"running"})
+        or fallback_stage
+    )
+
+
 def _best_effort_start_stage(pid: str, stage: str, *, input_artifact: str = "") -> None:
     try:
         start_stage(pid, stage, input_artifact=input_artifact)
@@ -459,10 +519,35 @@ def _best_effort_cancel_workflow(pid: str, stage: str) -> None:
 
 
 def _best_effort_mark_exception(pid: str, stage: str, exc: BaseException) -> None:
-    if is_cancelled(pid):
+    if is_cancelled(pid) or _is_task_cancelled(exc):
         _best_effort_cancel_workflow(pid, stage)
     else:
         _best_effort_fail_stage(pid, stage, exc)
+
+
+def _cancelled_project_fields(pid: str, stage: str) -> dict:
+    """Return project fields for a user-cancelled task without marking failure."""
+    if stage == "burn" and _first_safe_project_artifact(pid, ["translated.srt", "bilingual.srt"])[0]:
+        return {
+            "status": "translated",
+            "error": None,
+            "progress": 100,
+            "progress_msg": "已取消烧录，翻译字幕仍可用",
+            "pipeline_stage": None,
+            **_translation_artifact_fields(pid),
+        }
+    return {
+        "status": "cancelled",
+        "error": None,
+        "progress_msg": "已取消",
+        "pipeline_stage": None,
+    }
+
+
+def _mark_project_cancelled(pid: str, stage: str) -> dict:
+    fields = _cancelled_project_fields(pid, stage)
+    mutate_project(pid, lambda p: p.update(fields), normalize=_apply_safe_defaults)
+    return fields
 
 
 def _resolve_audio_track(project: dict, requested: Optional[int]) -> int:
@@ -687,6 +772,14 @@ def _run_asr_pipeline(pid: str, audio_track: int, language: str, owns_registrati
                 resume_eligible=True,
             )
 
+    except TaskCancelled as e:
+        log.info("ASR pipeline cancelled for %s", pid)
+        _best_effort_mark_exception(pid, "asr", e)
+        try:
+            _mark_project_cancelled(pid, "asr")
+        except Exception:
+            pass
+        _emit_progress(pid, "asr", 0, "已取消")
     except Exception as e:
         log.exception("ASR pipeline failed for %s", pid)
         _best_effort_mark_exception(pid, "asr", e)
@@ -1120,11 +1213,14 @@ def _mark_translation_quality_failed(pid: str, message: str) -> None:
     mutate_project(
         pid,
         lambda p: p.update({
-            "status": "error",
-            "error": detail,
+            "status": "translated",
+            "error": None,
             "progress": 100,
             "progress_msg": detail,
+            "translation_quality_status": "needs_review",
+            "translation_quality_message": detail,
             "pipeline_stage": None,
+            **_translation_artifact_fields(pid),
         }),
         normalize=_apply_safe_defaults,
     )
@@ -1491,6 +1587,14 @@ def _run_translate_pipeline(
                 resume_eligible=True,
             )
 
+    except TaskCancelled as e:
+        log.info("Translation pipeline cancelled for %s", pid)
+        _best_effort_mark_exception(pid, "translate", e)
+        try:
+            _mark_project_cancelled(pid, "translate")
+        except Exception:
+            pass
+        _emit_progress(pid, "translate", 0, "已取消")
     except Exception as e:
         log.exception("Translation pipeline failed for %s", pid)
         _best_effort_mark_exception(pid, "translate", e)
@@ -1703,6 +1807,15 @@ def _run_burn_pipeline(pid: str):
                 _mark_burn_failed(pid, reason)
                 _best_effort_fail_stage(pid, "burn", reason)
                 _emit_progress(pid, "burn", 100, "翻译完成，但字幕烧录失败")
+    except TaskCancelled as e:
+        log.info("Burn pipeline cancelled for %s", pid)
+        _best_effort_mark_exception(pid, "burn", e)
+        try:
+            fields = _mark_project_cancelled(pid, "burn")
+            message = fields.get("progress_msg") if isinstance(fields.get("progress_msg"), str) else "已取消"
+        except Exception:
+            message = "已取消"
+        _emit_progress(pid, "burn", 0, message)
     except Exception as e:
         _best_effort_mark_exception(pid, "burn", e)
         raise
@@ -1728,10 +1841,22 @@ def _run_full_pipeline(pid: str, audio_track: int, language: str, target_languag
         project = _load_project(pid)
         if project["status"] == "error":
             return
+        if project.get("translation_quality_status") == "needs_review":
+            return
         _check_cancel(pid)
 
         _run_burn_pipeline(pid)
 
+    except TaskCancelled as e:
+        log.info("Full pipeline cancelled for %s", pid)
+        stage = _stage_for_cancelled_exception(pid, "asr")
+        _best_effort_mark_exception(pid, stage, e)
+        try:
+            fields = _mark_project_cancelled(pid, stage)
+            message = fields.get("progress_msg") if isinstance(fields.get("progress_msg"), str) else "已取消"
+        except Exception:
+            message = "已取消"
+        _emit_progress(pid, stage, 0, message)
     except Exception as e:
         log.exception("Full pipeline failed for %s", pid)
         error_msg = _safe_error_message(e)
@@ -1757,6 +1882,16 @@ def _run_asr_translate_pipeline(pid: str, audio_track: int, language: str, targe
             return
         _check_cancel(pid)
         _run_translate_pipeline(pid, target_language, owns_registration=False)
+    except TaskCancelled as e:
+        log.info("ASR+translate pipeline cancelled for %s", pid)
+        stage = _stage_for_cancelled_exception(pid, "asr")
+        _best_effort_mark_exception(pid, stage, e)
+        try:
+            fields = _mark_project_cancelled(pid, stage)
+            message = fields.get("progress_msg") if isinstance(fields.get("progress_msg"), str) else "已取消"
+        except Exception:
+            message = "已取消"
+        _emit_progress(pid, stage, 0, message)
     except Exception as e:
         log.exception("ASR+translate pipeline failed for %s", pid)
         error_msg = _safe_error_message(e)
@@ -1833,6 +1968,11 @@ def start_full(pid: str = PathParam(pattern=PID_PATTERN), req: FullPipelineReque
     """Start full pipeline (ASR + translate)."""
     project = _load_project(pid)
     _reject_busy_project(project)
+    workflow_mode = _resolve_workflow_mode(
+        req.workflow_mode,
+        project,
+        can_burn=_project_supports_video_burn(project),
+    )
     if _project_source_type(project) == "audio":
         return start_transcribe_translate(pid, req)
     if _project_source_type(project) == "subtitle":
@@ -1840,7 +1980,18 @@ def start_full(pid: str = PathParam(pattern=PID_PATTERN), req: FullPipelineReque
             pid,
             TranslateRequest(target_language=req.target_language),
         )
+        _persist_workflow_options(pid, workflow_mode="translate_only")
         return _add_launch_stage(response, "translate")
+    if workflow_mode == "translate_only":
+        return start_transcribe_translate(
+            pid,
+            FullPipelineRequest(
+                audio_track=req.audio_track,
+                language=req.language,
+                target_language=req.target_language,
+                workflow_mode="translate_only",
+            ),
+        )
     audio_track = _resolve_audio_track(project, req.audio_track)
     language = _resolve_text_option(req.language, project.get("asr_language"), "auto", "language")
     target_lang = _resolve_text_option(
@@ -1864,6 +2015,7 @@ def start_full(pid: str = PathParam(pattern=PID_PATTERN), req: FullPipelineReque
             audio_track=audio_track,
             language=language,
             target_language=target_lang,
+            workflow_mode=workflow_mode,
         )
         _reset_workflow_for_action(pid, "full")
     except Exception:
@@ -1878,6 +2030,7 @@ def start_transcribe_translate(pid: str = PathParam(pattern=PID_PATTERN), req: F
     """Start ASR + translation without the video burn stage."""
     project = _load_project(pid)
     _reject_busy_project(project)
+    workflow_mode = _resolve_workflow_mode(req.workflow_mode, project, can_burn=False)
     audio_track = _resolve_audio_track(project, req.audio_track)
     language = _resolve_text_option(req.language, project.get("asr_language"), "auto", "language")
     target_lang = _resolve_text_option(
@@ -1901,6 +2054,7 @@ def start_transcribe_translate(pid: str = PathParam(pattern=PID_PATTERN), req: F
             audio_track=audio_track,
             language=language,
             target_language=target_lang,
+            workflow_mode=workflow_mode,
         )
         _reset_workflow_for_action(pid, "asr_translate")
     except Exception:
@@ -1968,15 +2122,18 @@ def cancel_task(pid: str = PathParam(pattern=PID_PATTERN)):
         # the next _check_cancel checkpoint and raise.
         request_cancel(pid)
         _best_effort_cancel_workflow(pid, stage)
+        fields = {"status": "cancelled", "progress_msg": "已取消"}
         try:
-            mutate_project(pid, lambda p: p.update({"status": "error",
-                                                     "pipeline_stage": None,
-                                                     "error": "Cancelled by user"}),
-                           normalize=_apply_safe_defaults)
+            fields = _mark_project_cancelled(pid, stage)
         except Exception:
             pass
-        _emit_progress(pid, stage, 0, "已取消")
-        return {"status": "cancelled"}
+        message = fields.get("progress_msg") if isinstance(fields.get("progress_msg"), str) else "已取消"
+        _emit_progress(pid, stage, 0, message)
+        return {
+            "status": "cancelled",
+            "project_status": fields.get("status", "cancelled"),
+            "message": message,
+        }
     return {"status": "no_task"}
 
 
@@ -2049,6 +2206,15 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                     _mark_burn_failed(pid, reason)
                     _best_effort_fail_stage(pid, "burn", reason)
                     _emit_progress(pid, "burn", 0, "字幕烧录失败")
+        except TaskCancelled as e:
+            log.info("Standalone burn cancelled for %s", pid)
+            _best_effort_mark_exception(pid, "burn", e)
+            try:
+                fields = _mark_project_cancelled(pid, "burn")
+                message = fields.get("progress_msg") if isinstance(fields.get("progress_msg"), str) else "已取消"
+            except Exception:
+                message = "已取消"
+            _emit_progress(pid, "burn", 0, message)
         except Exception as e:
             _best_effort_mark_exception(pid, "burn", e)
             error_msg = _safe_error_message(e, 120)

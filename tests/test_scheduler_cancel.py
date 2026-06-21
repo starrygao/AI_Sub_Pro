@@ -49,8 +49,9 @@ def test_cancel_marks_workflow_stage_cancelled(tmp_project_dir, monkeypatch):
     assert response.status_code == 200
     assert response.json()["status"] == "cancelled"
     data = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
-    assert data["status"] == "error"
+    assert data["status"] == "cancelled"
     assert data["pipeline_stage"] is None
+    assert data["error"] is None
     state = load_workflow_state(pid)
     assert state["stages"]["asr"]["status"] == "cancelled"
 

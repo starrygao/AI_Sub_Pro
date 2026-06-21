@@ -1049,7 +1049,7 @@ def test_cancel_task_clears_pipeline_stage_after_backend_cancel():
 
           await state.cancelTask();
 
-          if (state.currentProject.status !== 'error' || state.currentProject.pipeline_stage !== null) {
+          if (state.currentProject.status !== 'cancelled' || state.currentProject.pipeline_stage !== null) {
             throw new Error(`expected cancelled busy project to be cleared, got ${JSON.stringify(state.currentProject)}`);
           }
         })().catch((err) => {
@@ -1410,7 +1410,7 @@ def test_cancel_task_ignores_duplicate_submits_while_pending():
           if (state.projectActionPending !== '') {
             throw new Error(`expected pending state to clear, got ${state.projectActionPending}`);
           }
-          if (state.currentProject.status !== 'error' || state.currentProject.error !== 'Cancelled by user') {
+          if (state.currentProject.status !== 'cancelled' || state.currentProject.error !== null || state.currentProject.progress_msg !== '已取消') {
             throw new Error(`expected cancelled project state, got ${JSON.stringify(state.currentProject)}`);
           }
         })().catch((err) => {

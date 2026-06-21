@@ -300,6 +300,43 @@ def test_start_full_persists_requested_workflow_options_before_launch(tmp_projec
     assert saved["target_language"] == "English"
 
 
+def test_start_full_translate_only_dispatches_without_burn_and_persists_mode(tmp_project_dir, monkeypatch):
+    from app.api import translate as translate_api
+
+    client = _client(tmp_project_dir, monkeypatch)
+    _allow_translation(monkeypatch)
+    pid = _seed_project(tmp_project_dir)
+    pfile = tmp_project_dir / pid / "project.json"
+    launched = {}
+
+    class DummyThread:
+        def __init__(self, target=None, args=()):
+            self.target = target
+            self.args = args
+
+        def start(self):
+            launched["target"] = self.target
+            launched["args"] = self.args
+
+    monkeypatch.setattr(translate_api.threading, "Thread", lambda target, args=(), daemon=True: DummyThread(target, args))
+    monkeypatch.setattr(translate_api, "try_register_task", lambda pid_, factory, **kwargs: factory())
+
+    r = client.post(f"/api/projects/{pid}/start-full", json={
+        "language": "ja",
+        "target_language": "English",
+        "workflow_mode": "translate_only",
+    })
+
+    assert r.status_code == 200
+    assert r.json()["stage"] == "asr_translate"
+    assert launched["target"] is translate_api._run_asr_translate_pipeline
+    assert launched["args"] == (pid, 0, "ja", "English")
+    saved = json.loads(pfile.read_text(encoding="utf-8"))
+    assert saved["workflow_mode"] == "translate_only"
+    assert saved["asr_language"] == "ja"
+    assert saved["target_language"] == "English"
+
+
 def test_start_full_dispatches_audio_and_subtitle_sources_to_supported_workflows(tmp_project_dir, monkeypatch):
     from app.api import translate as translate_api
 

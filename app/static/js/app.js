@@ -261,6 +261,52 @@ function app() {
       });
     },
 
+    projectTaskSettingsDefaults(project, canBurn = this.canBurnVideo(project)) {
+      const asrLanguage = String(
+        project?.asr_language
+        || project?.original_language
+        || project?.source_language
+        || this.asrLanguage
+        || 'auto'
+      ).trim() || 'auto';
+      const targetLanguage = String(project?.target_language || this.targetLang || '简体中文').trim() || '简体中文';
+      return {
+        workflow_mode: this.normalizeWorkflowMode(project?.workflow_mode, canBurn),
+        asr_language: asrLanguage,
+        target_language: targetLanguage,
+      };
+    },
+
+    openProjectTaskSettings(project, options = {}) {
+      const canBurn = options.canBurn !== undefined ? !!options.canBurn : this.canBurnVideo(project);
+      const defaults = this.projectTaskSettingsDefaults(project, canBurn);
+      return this.openTaskSettings({
+        title: options.title || '任务设置',
+        message: options.message || '选择输出方式和本次任务语言。仅翻译会生成字幕文件，不烧录到视频。',
+        canBurn,
+        ...defaults,
+      });
+    },
+
+    applyTaskSettingsToCurrentProject(settings, project = this.currentProject) {
+      const canBurn = this.canBurnVideo(project);
+      const asrLanguage = String(settings?.asr_language || this.asrLanguage || 'auto').trim() || 'auto';
+      const targetLanguage = String(settings?.target_language || this.targetLang || '简体中文').trim() || '简体中文';
+      const workflowMode = this.normalizeWorkflowMode(settings?.workflow_mode, canBurn);
+      this.asrLanguage = asrLanguage;
+      this.targetLang = targetLanguage;
+      if (this.isPlainObject(project)) {
+        project.asr_language = asrLanguage;
+        project.target_language = targetLanguage;
+        project.workflow_mode = workflowMode;
+      }
+      return {
+        language: asrLanguage,
+        target_language: targetLanguage,
+        workflow_mode: workflowMode,
+      };
+    },
+
     cancelTaskSettings() {
       const resolve = this.taskSettingsResolve;
       this.taskSettingsPrompt = false;
@@ -365,7 +411,7 @@ function app() {
     },
 
     statusText(s) {
-      return { created:'新建', processing:'处理中', asr_done:'识别完成', translated:'已翻译', completed:'已完成', error:'错误' }[s] || s;
+      return { created:'新建', processing:'处理中', asr_done:'识别完成', translated:'已翻译', completed:'已完成', cancelled:'已取消', error:'错误' }[s] || s;
     },
 
     statusColor(p) {
@@ -375,6 +421,7 @@ function app() {
       const qualityStatus = typeof p.translation_quality_status === 'string'
         ? p.translation_quality_status.trim()
         : '';
+      if (status === 'cancelled') return {bg: '#f1f5f9', text: '#475569', hex: '#64748b'};
       if (status === 'error') return {bg: '#fee2e2', text: '#991b1b', hex: '#dc2626'};
       if (status === 'completed') return {bg: '#dcfce7', text: '#166534', hex: '#16a34a'};
       if (stage === 'download') return {bg: '#ffedd5', text: '#9a3412', hex: '#f97316'};
@@ -589,6 +636,7 @@ function app() {
       const qualityStatus = typeof p.translation_quality_status === 'string'
         ? p.translation_quality_status.trim()
         : '';
+      if (status === 'cancelled') return '已取消';
       if (status === 'error') return '失败';
       if (status === 'completed') return '已完成';
       if (stage === 'download') return '下载中';
@@ -700,7 +748,7 @@ function app() {
       };
       return (Array.isArray(this.projects) ? this.projects : [])
         .filter((project) => this.isPlainObject(project) && !project.archived)
-        .filter((project) => this.isProjectBusy(project) || project.status === 'error' || project.status === 'translated' || project.status === 'completed' || project.output_video)
+        .filter((project) => this.isProjectBusy(project) || project.status === 'error' || project.status === 'cancelled' || project.status === 'translated' || project.status === 'completed' || project.output_video)
         .slice()
         .sort((a, b) => priority(a) - priority(b) || this.projectSortTimestamp(b) - this.projectSortTimestamp(a))
         .slice(0, limit);
@@ -2589,7 +2637,6 @@ function app() {
           target_language: this.targetLang,
         });
         if (this.newVideoPath === originalPath) this.newVideoPath = '';
-        this.toast('项目已创建，开始处理...');
         this.clearKbSuggestions();
         this.clearKbUsageTrace();
         this.clearQualityReport();
@@ -2600,9 +2647,18 @@ function app() {
         this.applyWorkflowDefaultsFromProject(p);
         await this.setView('detail');
         this.connectWS(p.id);
-        // Auto-start full pipeline
-        await this.api(`/api/projects/${p.id}/start-full`, 'POST', { language: this.asrLanguage, target_language: this.targetLang });
+        const taskSettings = await this.openProjectTaskSettings(p, {
+          title: '任务设置',
+          message: '本地视频已识别完成。选择输出方式和本次任务语言；仅翻译会生成字幕文件，不烧录到视频。',
+        });
+        if (!taskSettings) {
+          this.toast('项目已创建，未开始处理');
+          return;
+        }
+        const startBody = this.applyTaskSettingsToCurrentProject(taskSettings, p);
+        await this.api(`/api/projects/${p.id}/start-full`, 'POST', startBody);
         this.currentProject.status = 'processing';
+        this.toast(startBody.workflow_mode === 'translate_only' ? '开始处理，仅生成字幕...' : '项目已创建，开始处理...');
       } catch(e) {
         this.toast(e.message, 'error');
       } finally {
@@ -2992,6 +3048,7 @@ function app() {
           if (this.progressPollRequestSeq !== requestId || this.currentProject?.id !== projectId) return;
           this.subtitles = Array.isArray(data.blocks) ? data.blocks.filter(b => this.isPlainObject(b)) : [];
           if (p.status === 'error') this.toast(p.error || '处理失败', 'error');
+          else if (p.status === 'cancelled') this.toast(p.progress_msg || '已取消');
           else if (p.status === 'completed') this.toast('带字幕的视频已就绪！');
           else this.toast('处理完成');
           await this.loadWorkflowState();
@@ -3113,6 +3170,28 @@ function app() {
       if (!this.currentProject) return;
       const audioOnly = this.currentProject.source_type === 'audio';
       const subtitleOnly = this.currentProject.source_type === 'subtitle';
+      if (!audioOnly && !subtitleOnly) {
+        if (this.projectActionsDisabled(this.currentProject)) return;
+        const action = 'start-full';
+        this.projectActionPending = action;
+        try {
+          if (!await this.ensureTranslationReadyForWorkflow()) return;
+          const taskSettings = await this.openProjectTaskSettings(this.currentProject, {
+            title: '任务设置',
+            message: '选择本次处理的输出方式和语言；仅翻译会生成字幕文件，不烧录到视频。',
+          });
+          if (!taskSettings) return;
+          const body = this.applyTaskSettingsToCurrentProject(taskSettings, this.currentProject);
+          await this.api(`/api/projects/${this.currentProject.id}/start-full`, 'POST', body);
+          this.currentProject.status = 'processing';
+          this.toast(body.workflow_mode === 'translate_only' ? '开始处理，仅生成字幕...' : '开始一键处理...');
+        } catch(e) {
+          await this.handleProjectActionError(e);
+        } finally {
+          if (this.projectActionPending === action) this.projectActionPending = '';
+        }
+        return;
+      }
       await this.runProjectAction(
         'start-full',
         `/api/projects/${this.currentProject.id}/${audioOnly ? 'start-transcribe-translate' : (subtitleOnly ? 'start-translate' : 'start-full')}`,
@@ -3144,10 +3223,17 @@ function app() {
       try {
         const result = await this.api(`/api/projects/${this.currentProject.id}/cancel`, 'POST');
         if (result.status === 'cancelled') {
-          this.toast('已取消');
-          this.currentProject.status = 'error';
+          const nextStatus = typeof result.project_status === 'string' && result.project_status.trim()
+            ? result.project_status.trim()
+            : 'cancelled';
+          const message = typeof result.message === 'string' && result.message.trim()
+            ? result.message.trim()
+            : '已取消';
+          this.toast(message);
+          this.currentProject.status = nextStatus;
           this.currentProject.pipeline_stage = null;
-          this.currentProject.error = 'Cancelled by user';
+          this.currentProject.error = null;
+          this.currentProject.progress_msg = message;
         } else {
           this.toast('没有正在运行的任务', 'error');
         }

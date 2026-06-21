@@ -587,8 +587,11 @@ def test_full_pipeline_stops_before_burn_when_quality_gate_fails(tmp_path, monke
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
     assert burn_called == []
-    assert project["status"] == "error"
-    assert "翻译质量未达标" in project["error"]
+    assert project["status"] == "translated"
+    assert project["error"] is None
+    assert project["translation_quality_status"] == "needs_review"
+    assert "翻译质量未达标" in project["progress_msg"]
+    assert api_translate._resume_stage_for_project(pid, project) == "translate"
     assert report["summary"]["quality_gate"]["passed"] is False
     assert (pdir / "translated.srt").exists()
 
