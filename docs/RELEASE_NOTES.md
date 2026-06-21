@@ -2,6 +2,30 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.9 - Translation Quality Workflow Hardening
+
+Highlights:
+
+- Automatic knowledge-base suggestions now feed translation context without
+  blocking the user with a mandatory pre-translation review queue.
+- Scientific and Latin-term handling is stricter, reducing false glossary
+  suggestions while preserving useful detected terminology.
+- Translation QA now separates confirmed defects from inferred term/name
+  warnings, so jobs can finish while still showing quality-review status when
+  professional review is warranted.
+- The frontend now surfaces the translation quality state instead of masking
+  warnings as a clean final delivery.
+
+Quality/Verification:
+
+- Full test suite passed locally: `1219 passed in 219.75s`.
+- Package script regression passed locally: `33 passed`.
+- Local package target: `AI_Sub_Pro_v1.3.9.dmg`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.9.dmg` is the macOS package name for this release line.
+
 ## v1.3.8 - Download Location Prompt and Popover Layering
 
 Highlights:
