@@ -9,10 +9,10 @@ def test_home_file_entry_controls_have_accessible_names():
     html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
 
     assert 'role="button"' in html
-    assert 'aria-label="选择或拖入视频文件"' in html
-    assert '@keydown.enter.prevent="openFilePicker()"' in html
-    assert '@keydown.space.prevent="openFilePicker()"' in html
-    assert 'aria-label="视频文件路径"' in html
+    assert ":aria-label=\"homeSourceMode === 'batch' ? '选择或拖入视频文件夹' : '选择或拖入视频文件'\"" in html
+    assert '@keydown.enter.prevent="openPrimaryPicker()"' in html
+    assert '@keydown.space.prevent="openPrimaryPicker()"' in html
+    assert ':aria-label="homeManualPathAriaLabel()"' in html
 
 
 def test_packaged_frontend_uses_local_runtime_assets():
@@ -314,6 +314,7 @@ def test_home_unified_source_modes_are_visible_and_accessible():
         "homeSourceReadiness()",
         "handleHomeSourceReadinessAction(homeSourceReadiness())",
         "startHomeSourceAction()",
+        "homeSourceMode === 'batch'",
         "homeSourceMode === 'network'",
         "homeSourceMode === 'subtitle'",
         "homeSourceMode === 'audio'",
@@ -339,6 +340,9 @@ def test_home_unified_source_modes_are_visible_and_accessible():
         "handleHomeSourceReadinessAction(readiness)",
         "homeSourceActionLabel()",
         "startHomeSourceAction()",
+        "openFolderPicker()",
+        "quickStartBatch()",
+        "/api/projects/discover-local-videos",
         "isSubtitleFile(file)",
         "uploadSubtitleFile(file)",
         "useSelectedSubtitleFile(file)",
@@ -363,6 +367,8 @@ def test_desktop_native_save_dialog_advertises_subtitle_export_formats():
 
     assert "Subtitle Files (*.srt;*.vtt)" in main_py
     assert "SubRip Subtitle (*.srt)" not in main_py
+    assert "def select_video_folder(self):" in main_py
+    assert "FOLDER_DIALOG" in main_py
 
 
 def test_online_video_success_explains_download_and_subtitle_plan():
@@ -811,9 +817,9 @@ def test_project_creation_entry_has_busy_and_duplicate_submit_states():
     assert "if (this.fileImporting || this.projectCreating) return;" in js
     assert ':aria-disabled="fileImporting || projectCreating"' in html
     assert ':disabled="!canStartProject()"' in html
-    assert "读取中..." in html
-    assert "创建中..." in html
-    assert "请稍候，不要重复提交" in html
+    assert "读取中..." in js
+    assert "创建中..." in js
+    assert "请稍候，不要重复提交" in js
 
 
 def test_home_dashboard_surfaces_project_summary_and_recent_work():

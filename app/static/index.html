@@ -89,7 +89,7 @@
                 <span class="text-[12px] font-medium text-surface-500">来源模式</span>
                 <span class="text-[11px] text-surface-400" x-text="homeSourceOption().helper"></span>
               </div>
-              <div class="home-source-options grid grid-cols-2 gap-2">
+              <div class="home-source-options grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <template x-for="option in homeSourceOptions()" :key="option.mode">
                   <button type="button"
                           @click="setHomeSourceMode(option.mode)"
@@ -124,18 +124,18 @@
 
             <!-- Drop Zone -->
             <div class="drop-zone rounded-3xl p-10 cursor-pointer group"
-                 x-show="homeSourceMode === 'local'"
+                 x-show="homeSourceMode === 'local' || homeSourceMode === 'batch'"
                  role="button"
                  tabindex="0"
-                 aria-label="选择或拖入视频文件"
+                 :aria-label="homeSourceMode === 'batch' ? '选择或拖入视频文件夹' : '选择或拖入视频文件'"
                  :aria-disabled="fileImporting || projectCreating"
                  :class="(fileImporting || projectCreating) ? 'opacity-60 cursor-wait' : ''"
                  @dragover.prevent="$el.classList.add('drag-active')"
                  @dragleave.prevent="$el.classList.remove('drag-active')"
                  @drop.prevent="handleDrop($event); $el.classList.remove('drag-active')"
-                 @keydown.enter.prevent="openFilePicker()"
-                 @keydown.space.prevent="openFilePicker()"
-                 @click="openFilePicker()">
+                 @keydown.enter.prevent="openPrimaryPicker()"
+                 @keydown.space.prevent="openPrimaryPicker()"
+                 @click="openPrimaryPicker()">
               <div class="flex flex-col items-center gap-4">
                 <div class="w-14 h-14 rounded-2xl bg-surface-100 flex items-center justify-center group-hover:bg-accent/10 transition-colors">
                   <svg class="w-7 h-7 text-surface-400 group-hover:text-accent transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
@@ -143,20 +143,21 @@
                   </svg>
                 </div>
                 <div>
-                  <p class="text-[14px] font-medium text-surface-600" x-text="fileImporting ? '正在读取视频文件...' : (projectCreating ? '正在创建项目...' : '点击选择或拖入视频文件')"></p>
-                  <p class="text-[12px] text-surface-400 mt-1" x-text="(fileImporting || projectCreating) ? '请稍候，不要重复提交' : '支持 MP4、MKV、AVI、MOV 等格式'"></p>
+                  <p class="text-[14px] font-medium text-surface-600" x-text="homeDropTitle()"></p>
+                  <p class="text-[12px] text-surface-400 mt-1" x-text="homeDropHint()"></p>
                 </div>
               </div>
             </div>
 
             <!-- Or enter path manually -->
-            <div x-show="homeSourceMode === 'local'" class="home-manual-path mt-5 flex items-center gap-3 max-w-md mx-auto">
-              <input x-model="newVideoPath" type="text" placeholder="或粘贴视频文件路径..."
-                     aria-label="视频文件路径"
+            <div x-show="homeSourceMode === 'local' || homeSourceMode === 'batch'" class="home-manual-path mt-5 flex items-center gap-3 max-w-md mx-auto">
+              <input x-model="newVideoPath" type="text"
+                     :placeholder="homeManualPathPlaceholder()"
+                     :aria-label="homeManualPathAriaLabel()"
                      class="flex-1 px-4 py-2.5 rounded-xl text-[13px]"
-                     @keydown.enter="quickStart()">
-              <button @click="quickStart()" :disabled="!canStartProject()" class="btn-primary px-5 py-2.5 rounded-xl text-[13px] font-medium disabled:opacity-30 disabled:cursor-not-allowed">
-                <span x-text="fileImporting ? '读取中...' : (projectCreating ? '创建中...' : '开始')"></span>
+                     @keydown.enter="quickStartPrimary()">
+              <button @click="quickStartPrimary()" :disabled="!canStartProject()" class="btn-primary px-5 py-2.5 rounded-xl text-[13px] font-medium disabled:opacity-30 disabled:cursor-not-allowed">
+                <span x-text="homeManualSubmitLabel()"></span>
               </button>
             </div>
 

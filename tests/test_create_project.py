@@ -60,6 +60,43 @@ async def test_create_project_rejects_non_video_extension(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_discover_local_videos_returns_supported_files_sorted(tmp_path):
+    from app.api.projects import DiscoverLocalVideosReq, discover_local_videos
+
+    folder = tmp_path / "shows"
+    nested = folder / "season"
+    nested.mkdir(parents=True)
+    (folder / "B.Episode.mkv").write_bytes(b"video")
+    (folder / "notes.txt").write_text("not video", encoding="utf-8")
+    (folder / ".hidden.mp4").write_bytes(b"hidden")
+    (nested / "A.Episode.mp4").write_bytes(b"video")
+    (nested / "empty.mov").write_bytes(b"")
+
+    result = await discover_local_videos(DiscoverLocalVideosReq(folder_path=str(folder)))
+
+    assert [item["name"] for item in result["videos"]] == [
+        "B.Episode.mkv",
+        "A.Episode.mp4",
+    ]
+    assert result["count"] == 2
+    assert result["truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_discover_local_videos_rejects_file_path(tmp_path):
+    from app.api.projects import DiscoverLocalVideosReq, discover_local_videos
+
+    video = tmp_path / "Movie.mp4"
+    video.write_bytes(b"video")
+
+    with pytest.raises(HTTPException) as ei:
+        await discover_local_videos(DiscoverLocalVideosReq(folder_path=str(video)))
+
+    assert ei.value.status_code == 400
+    assert "folder" in ei.value.detail.lower()
+
+
+@pytest.mark.asyncio
 async def test_create_project_blank_name_falls_back_to_filename(tmp_path, monkeypatch):
     from app.api import projects as projects_api
     from app.api.projects import CreateProjectReq, create_project

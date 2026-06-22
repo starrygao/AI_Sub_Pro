@@ -363,6 +363,12 @@ if __name__ == "__main__":
                     )
                     return self._dialog_path(result)
 
+                def select_video_folder(self):
+                    """Open native folder picker for batch video imports."""
+                    folder_dialog = getattr(webview, "FOLDER_DIALOG", webview.OPEN_DIALOG)
+                    result = window.create_file_dialog(folder_dialog)
+                    return self._dialog_path(result)
+
                 def save_text_file(self, filename, content):
                     """Open a native save dialog and write text content to the chosen file."""
                     if not isinstance(content, str):

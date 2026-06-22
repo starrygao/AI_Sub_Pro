@@ -354,6 +354,89 @@ def test_quick_start_opens_task_settings_after_project_create_and_uses_selection
     )
 
 
+def test_quick_start_batch_discovers_folder_and_starts_each_video():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const calls = [];
+          const toasts = [];
+          state.newVideoPath = '/Shows';
+          state.sysCheck = {translation_ready: true};
+          state.toast = (message, type) => { toasts.push([message, type || 'success']); };
+          state.loadProjects = async () => { calls.push(['loadProjects']); };
+          state.setView = async (view) => { calls.push(['view', view]); state.view = view; return true; };
+          state.openTaskSettings = async (options) => {
+            calls.push(['settings', options.title, options.message, options.workflow_mode]);
+            return {
+              workflow_mode: 'translate_only',
+              asr_language: 'en',
+              target_language: '简体中文',
+            };
+          };
+          let projectSeq = 0;
+          state.api = async (url, method, body) => {
+            calls.push([method, url, body]);
+            if (url === '/api/projects/discover-local-videos' && method === 'POST') {
+              return {
+                videos: [
+                  {path: '/Shows/A.mkv', name: 'A.mkv'},
+                  {path: '/Shows/B.mp4', name: 'B.mp4'},
+                ],
+                truncated: false,
+              };
+            }
+            if (url === '/api/projects' && method === 'POST') {
+              projectSeq += 1;
+              return {id: `p${projectSeq}`, source_type: 'upload', status: 'created'};
+            }
+            if (url === `/api/projects/p${projectSeq}/start-full` && method === 'POST') {
+              return {status: 'started'};
+            }
+            throw new Error(`unexpected api call ${method} ${url}`);
+          };
+
+          await state.quickStartBatch();
+
+          const creates = calls.filter((call) => call[0] === 'POST' && call[1] === '/api/projects');
+          const starts = calls.filter((call) => call[0] === 'POST' && call[1].endsWith('/start-full'));
+          if (creates.length !== 2 || starts.length !== 2) {
+            throw new Error(`expected two create/start calls, got ${JSON.stringify(calls)}`);
+          }
+          if (creates[0][2].asr_language !== 'en' || creates[1][2].target_language !== '简体中文') {
+            throw new Error(`expected selected languages in create calls, got ${JSON.stringify(creates)}`);
+          }
+          if (!starts.every((call) => call[2].workflow_mode === 'translate_only')) {
+            throw new Error(`expected translate_only batch start, got ${JSON.stringify(starts)}`);
+          }
+          if (!calls.some((call) => call[0] === 'settings' && call[3] === 'translate_only')) {
+            throw new Error(`expected batch settings default to translate_only, got ${JSON.stringify(calls)}`);
+          }
+          if (!calls.some((call) => call[0] === 'view' && call[1] === 'projects')) {
+            throw new Error(`expected batch start to return to projects view, got ${JSON.stringify(calls)}`);
+          }
+          if (!toasts.some((toast) => String(toast[0]).includes('批量任务已启动：2 个'))) {
+            throw new Error(`expected success toast, got ${JSON.stringify(toasts)}`);
+          }
+          if (state.projectCreating !== false || state.newVideoPath !== '') {
+            throw new Error(`expected batch state to reset, got ${state.projectCreating}/${state.newVideoPath}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_video_file_import_ignores_duplicate_uploads_while_busy():
     _run_node(
         """
@@ -418,9 +501,17 @@ def test_home_source_mode_routes_supported_sources_and_explains_pending_ones():
 
           const options = state.homeSourceOptions();
           const modes = options.map((option) => option.mode);
-          const expectedModes = ['local', 'network', 'subtitle', 'audio'];
+          const expectedModes = ['local', 'batch', 'network', 'subtitle', 'audio'];
           if (JSON.stringify(modes) !== JSON.stringify(expectedModes)) {
             throw new Error(`expected broad source modes, got ${JSON.stringify(modes)}`);
+          }
+          const batchOption = options.find((option) => option.mode === 'batch');
+          if (!batchOption?.strategy.includes('批量创建项目') || !batchOption?.strategy.includes('默认仅翻译')) {
+            throw new Error(`expected batch mode to explain automatic batch translation, got ${JSON.stringify(batchOption)}`);
+          }
+          const batchCapabilities = state.homeSourceCapabilities(batchOption);
+          if (!batchCapabilities.some((item) => item.includes('递归扫描')) || !batchCapabilities.some((item) => item.includes('自动创建'))) {
+            throw new Error(`expected batch capabilities to mention folder scanning and automatic start, got ${JSON.stringify(batchCapabilities)}`);
           }
           if (!options.find((option) => option.mode === 'network')?.strategy.includes('原生字幕')) {
             throw new Error(`expected network mode to explain native subtitle priority, got ${JSON.stringify(options)}`);
@@ -463,6 +554,12 @@ def test_home_source_mode_routes_supported_sources_and_explains_pending_ones():
           state.openFilePicker = async () => { picked = true; };
           await state.startHomeSourceAction();
           if (!picked) throw new Error('expected local source action to open file picker');
+
+          let folderPicked = false;
+          state.openFolderPicker = async () => { folderPicked = true; };
+          state.setHomeSourceMode('batch');
+          await state.startHomeSourceAction();
+          if (!folderPicked) throw new Error('expected batch source action to open folder picker');
 
           state.setHomeSourceMode('network');
           state.trailerUrlInput = 'https://youtu.be/demo';

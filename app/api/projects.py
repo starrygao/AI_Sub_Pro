@@ -362,6 +362,12 @@ class CreateProjectReq(BaseModel):
     manual_terms: Optional[str] = None
 
 
+class DiscoverLocalVideosReq(BaseModel):
+    folder_path: str
+    recursive: bool = True
+    limit: Optional[StrictInt] = 200
+
+
 class SubtitleEdit(BaseModel):
     blocks: list
 
@@ -1085,6 +1091,64 @@ async def upload_video(file: UploadFile = File(...)):
         raise HTTPException(400, "Uploaded file is empty")
 
     return {"path": str(dest)}
+
+
+@router.post("/discover-local-videos")
+async def discover_local_videos(req: DiscoverLocalVideosReq):
+    """Return supported local video files inside a user-selected folder."""
+    raw_folder = str(req.folder_path or "").strip()
+    if not raw_folder:
+        raise HTTPException(400, "Folder path is required")
+
+    folder = Path(raw_folder).expanduser()
+    if not folder.exists():
+        raise HTTPException(400, f"Folder not found: {raw_folder}")
+    if not folder.is_dir():
+        raise HTTPException(400, f"Path is not a folder: {raw_folder}")
+
+    limit = req.limit if isinstance(req.limit, int) else 200
+    limit = max(1, min(limit, 500))
+    try:
+        root = folder.resolve()
+    except OSError:
+        raise HTTPException(400, f"Folder is not accessible: {raw_folder}")
+
+    try:
+        iterator = root.rglob("*") if req.recursive else root.iterdir()
+        candidates = sorted(iterator, key=lambda p: str(p).lower())
+    except OSError as exc:
+        raise HTTPException(400, f"Folder is not accessible: {exc}")
+
+    videos = []
+    truncated = False
+    for candidate in candidates:
+        if len(videos) >= limit:
+            truncated = True
+            break
+        try:
+            if candidate.name.startswith(".") or not candidate.is_file():
+                continue
+            if candidate.suffix.lower() not in _VIDEO_UPLOAD_EXTS:
+                continue
+            stat = candidate.stat()
+            if stat.st_size <= 0:
+                continue
+        except OSError:
+            continue
+        videos.append({
+            "path": str(candidate),
+            "name": candidate.name,
+            "size": stat.st_size,
+        })
+
+    return {
+        "folder_path": str(root),
+        "recursive": bool(req.recursive),
+        "limit": limit,
+        "truncated": truncated,
+        "count": len(videos),
+        "videos": videos,
+    }
 
 
 @router.post("/import-subtitle")

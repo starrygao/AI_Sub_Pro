@@ -939,10 +939,18 @@ function app() {
       }
     },
 
+    videoFileExtensions() {
+      return ['.mp4','.mkv','.avi','.mov','.wmv','.flv','.webm','.ts','.m4v'];
+    },
+
+    isVideoPath(path) {
+      const name = String(path || '').toLowerCase();
+      return this.videoFileExtensions().some(ext => name.endsWith(ext));
+    },
+
     isVideoFile(file) {
-      const name = String(file?.name || '').toLowerCase();
-      const videoExts = ['.mp4','.mkv','.avi','.mov','.wmv','.flv','.webm','.ts','.m4v'];
-      return videoExts.some(ext => name.endsWith(ext));
+      const name = String(file?.name || file?.path || '').toLowerCase();
+      return this.isVideoPath(name);
     },
 
     homeSourceOptions() {
@@ -954,6 +962,15 @@ function app() {
           strategy: '优先读取内嵌字幕和同名外挂字幕；没有可用字幕时再进入 ASR 听写。',
           capabilities: ['内嵌字幕/外挂字幕优先', '无字幕时 ASR 听写', '完成后可烧录视频'],
           actionLabel: '选择视频文件',
+          disabled: false,
+        },
+        {
+          mode: 'batch',
+          label: '批量文件夹',
+          helper: 'Folder',
+          strategy: '扫描文件夹内的视频文件，用一次任务设置批量创建项目并自动启动；默认仅翻译生成字幕，可在弹窗中改为烧录。',
+          capabilities: ['递归扫描视频文件', '共用一次任务设置', '自动创建并启动任务'],
+          actionLabel: '选择文件夹',
           disabled: false,
         },
         {
@@ -1066,9 +1083,11 @@ function app() {
           actionText: '去设置',
         };
       }
-      if (resolved.mode === 'local' || resolved.mode === 'network') {
+      if (resolved.mode === 'local' || resolved.mode === 'batch' || resolved.mode === 'network') {
         const prefix = resolved.mode === 'network'
           ? '无平台字幕时需要 ASR'
+          : resolved.mode === 'batch'
+            ? '文件夹内无字幕视频需要 ASR'
           : '无内嵌/外挂字幕时需要 ASR';
         return {
           tone: 'warn',
@@ -1088,9 +1107,9 @@ function app() {
 
     homeSourceActionLabel() {
       const option = this.homeSourceOption();
-      if (option.mode === 'local') {
+      if (option.mode === 'local' || option.mode === 'batch') {
         if (this.fileImporting) return '读取中...';
-        if (this.projectCreating) return '创建中...';
+        if (this.projectCreating) return option.mode === 'batch' ? '批量创建中...' : '创建中...';
       }
       if (option.mode === 'network' && this.trailerSubmitting) return '提交中...';
       if (option.mode === 'subtitle') {
@@ -1107,7 +1126,7 @@ function app() {
     homeSourceActionDisabled() {
       const option = this.homeSourceOption();
       if (option.disabled) return true;
-      if (option.mode === 'local') return this.fileImporting || this.projectCreating;
+      if (option.mode === 'local' || option.mode === 'batch') return this.fileImporting || this.projectCreating;
       if (option.mode === 'network') {
         return !String(this.trailerUrlInput || '').trim() || this.trailerSubmitting;
       }
@@ -1134,6 +1153,10 @@ function app() {
         await this.openAudioFilePicker();
         return;
       }
+      if (option.mode === 'batch') {
+        await this.openFolderPicker();
+        return;
+      }
       await this.openFilePicker();
     },
 
@@ -1141,6 +1164,53 @@ function app() {
       return !!String(this.newVideoPath || '').trim()
         && !this.fileImporting
         && !this.projectCreating;
+    },
+
+    homeDropTitle() {
+      if (this.fileImporting) return '正在读取文件...';
+      if (this.projectCreating) {
+        return this.homeSourceMode === 'batch' ? '正在创建批量任务...' : '正在创建项目...';
+      }
+      return this.homeSourceMode === 'batch' ? '点击选择或拖入视频文件夹' : '点击选择或拖入视频文件';
+    },
+
+    homeDropHint() {
+      if (this.fileImporting || this.projectCreating) return '请稍候，不要重复提交';
+      return this.homeSourceMode === 'batch'
+        ? '支持拖入文件夹，也支持一次拖入多个视频文件'
+        : '支持 MP4、MKV、AVI、MOV 等格式';
+    },
+
+    homeManualPathPlaceholder() {
+      return this.homeSourceMode === 'batch'
+        ? '或粘贴视频文件夹路径...'
+        : '或粘贴视频文件路径...';
+    },
+
+    homeManualPathAriaLabel() {
+      return this.homeSourceMode === 'batch' ? '视频文件夹路径' : '视频文件路径';
+    },
+
+    homeManualSubmitLabel() {
+      if (this.fileImporting) return '读取中...';
+      if (this.projectCreating) return this.homeSourceMode === 'batch' ? '批量创建中...' : '创建中...';
+      return this.homeSourceMode === 'batch' ? '批量开始' : '开始';
+    },
+
+    async openPrimaryPicker() {
+      if (this.homeSourceMode === 'batch') {
+        await this.openFolderPicker();
+        return;
+      }
+      await this.openFilePicker();
+    },
+
+    async quickStartPrimary() {
+      if (this.homeSourceMode === 'batch') {
+        await this.quickStartBatch();
+        return;
+      }
+      await this.quickStart();
     },
 
     async uploadVideoFile(file) {
@@ -2564,8 +2634,25 @@ function app() {
     async handleDrop(event) {
       const files = event.dataTransfer?.files;
       if (!files || files.length === 0) return;
-      const file = files[0];
-      await this.useSelectedVideoFile(file);
+      const droppedFiles = Array.from(files);
+      if (this.homeSourceMode === 'batch') {
+        const localPaths = droppedFiles
+          .map((file) => (typeof file?.path === 'string' ? file.path.trim() : ''))
+          .filter(Boolean);
+        const videoPaths = localPaths.filter((path) => this.isVideoPath(path));
+        if (videoPaths.length > 0) {
+          await this.startBatchVideoPaths(videoPaths, {sourceLabel: '拖入的视频文件'});
+          return;
+        }
+        if (localPaths.length > 0) {
+          this.newVideoPath = localPaths[0];
+          await this.quickStartBatch();
+          return;
+        }
+        this.toast('请使用桌面版选择文件夹，或粘贴文件夹路径后批量开始', 'error');
+        return;
+      }
+      await this.useSelectedVideoFile(droppedFiles[0]);
     },
 
     async openFilePicker() {
@@ -2583,6 +2670,30 @@ function app() {
         console.warn('native file picker failed', e);
       }
       this.$refs.fileInput?.click();
+    },
+
+    async openFolderPicker() {
+      if (this.fileImporting || this.projectCreating) return;
+      try {
+        if (window.pywebview && window.pywebview.api?.select_video_folder) {
+          const p = await window.pywebview.api.select_video_folder();
+          if (p) {
+            this.newVideoPath = p;
+            await this.quickStartBatch();
+            return;
+          }
+        } else if (window.electronAPI?.selectVideoFolder) {
+          const p = await window.electronAPI.selectVideoFolder();
+          if (p) {
+            this.newVideoPath = p;
+            await this.quickStartBatch();
+            return;
+          }
+        }
+      } catch(e) {
+        console.warn('native folder picker failed', e);
+      }
+      this.toast('当前环境不支持直接选择文件夹，请粘贴文件夹路径后批量开始', 'error');
     },
 
     async openSubtitleFilePicker() {
@@ -2619,6 +2730,139 @@ function app() {
         await this.useSelectedAudioFile(file);
       } finally {
         if (event.target) event.target.value = '';
+      }
+    },
+
+    normalizeBatchVideoPaths(items) {
+      const seen = new Set();
+      const paths = [];
+      for (const item of Array.isArray(items) ? items : []) {
+        const rawPath = typeof item === 'string'
+          ? item
+          : (typeof item?.path === 'string' ? item.path : '');
+        const path = rawPath.trim();
+        if (!path || !this.isVideoPath(path)) continue;
+        const key = path.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        paths.push(path);
+      }
+      return paths;
+    },
+
+    async runBatchVideoPaths(videoPaths, options = {}) {
+      const paths = this.normalizeBatchVideoPaths(videoPaths);
+      if (paths.length === 0) {
+        this.toast('没有找到可处理的视频文件', 'error');
+        return {created: 0, failed: 0};
+      }
+
+      const sourceLabel = String(options.sourceLabel || '文件夹').trim() || '文件夹';
+      const truncated = !!options.truncated;
+      const taskSettings = await this.openTaskSettings({
+        title: '批量任务设置',
+        message: `${sourceLabel}已发现 ${paths.length} 个视频。选择一次输出方式和语言后，系统会逐个创建项目并自动开始。${truncated ? '本次只处理前 500 个视频。' : ''}`,
+        canBurn: true,
+        workflow_mode: 'translate_only',
+        asr_language: this.asrLanguage,
+        target_language: this.targetLang,
+      });
+      if (!taskSettings) {
+        this.toast('已取消批量处理');
+        return {created: 0, failed: 0};
+      }
+
+      const asrLanguage = String(taskSettings.asr_language || this.asrLanguage || 'auto').trim() || 'auto';
+      const targetLanguage = String(taskSettings.target_language || this.targetLang || '简体中文').trim() || '简体中文';
+      this.asrLanguage = asrLanguage;
+      this.targetLang = targetLanguage;
+
+      let created = 0;
+      let failed = 0;
+      const createdProjects = [];
+      for (const videoPath of paths) {
+        try {
+          const project = await this.api('/api/projects', 'POST', {
+            video_path: videoPath,
+            asr_language: asrLanguage,
+            target_language: targetLanguage,
+          });
+          const startBody = {
+            workflow_mode: this.normalizeWorkflowMode(taskSettings.workflow_mode, this.canBurnVideo(project)),
+            language: asrLanguage,
+            target_language: targetLanguage,
+          };
+          await this.api(`/api/projects/${project.id}/start-full`, 'POST', startBody);
+          project.status = 'processing';
+          project.workflow_mode = startBody.workflow_mode;
+          created += 1;
+          createdProjects.push(project);
+        } catch(e) {
+          failed += 1;
+          console.warn('batch project failed', videoPath, e);
+        }
+      }
+
+      if (createdProjects.length > 0) {
+        this.clearKbSuggestions();
+        this.clearKbUsageTrace();
+        this.clearQualityReport();
+        this.clearTranslationStrategy();
+        this.currentProject = createdProjects[createdProjects.length - 1];
+        this.workflowState = null;
+        this.workflowStateError = '';
+        this.applyWorkflowDefaultsFromProject(this.currentProject);
+        await this.loadProjects();
+        await this.setView('projects');
+      }
+
+      if (created === 0) {
+        this.toast(`批量任务未启动：${failed} 个视频创建失败`, 'error');
+      } else {
+        this.toast(`批量任务已启动：${created} 个${failed ? `，失败 ${failed} 个` : ''}`);
+      }
+      return {created, failed};
+    },
+
+    async startBatchVideoPaths(videoPaths, options = {}) {
+      if (this.projectCreating || this.fileImporting) return;
+      this.projectCreating = true;
+      try {
+        if (!await this.ensureTranslationReadyForWorkflow()) return;
+        await this.runBatchVideoPaths(videoPaths, options);
+      } catch(e) {
+        this.toast('批量处理失败: ' + e.message, 'error');
+      } finally {
+        this.projectCreating = false;
+      }
+    },
+
+    async quickStartBatch() {
+      if (this.projectCreating || this.fileImporting) return;
+      const folderPath = String(this.newVideoPath || '').trim();
+      if (!folderPath) return;
+      this.projectCreating = true;
+      try {
+        if (!await this.ensureTranslationReadyForWorkflow()) return;
+        const discovery = await this.api('/api/projects/discover-local-videos', 'POST', {
+          folder_path: folderPath,
+          recursive: true,
+          limit: 500,
+        });
+        const videos = Array.isArray(discovery?.videos) ? discovery.videos : [];
+        if (videos.length === 0) {
+          this.toast('文件夹内没有找到可处理的视频文件', 'error');
+          return;
+        }
+        const result = await this.runBatchVideoPaths(videos, {
+          sourceLabel: '文件夹',
+          truncated: !!discovery?.truncated,
+        });
+        if (result?.created > 0 && this.newVideoPath === folderPath) this.newVideoPath = '';
+      } catch(e) {
+        this.toast('批量处理失败: ' + e.message, 'error');
+      } finally {
+        this.projectCreating = false;
       }
     },
 

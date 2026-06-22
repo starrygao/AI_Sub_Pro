@@ -2,6 +2,25 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.10 - Batch Folder Translation
+
+Highlights:
+
+- The home source selector now includes a batch folder mode for recursive
+  local video discovery.
+- Batch jobs use the existing project creation and `start-full` workflow, with
+  one task settings prompt for all discovered videos.
+- Desktop builds expose a native folder picker for batch imports.
+
+Quality/Verification:
+
+- Targeted local tests passed: `108 passed`.
+- Local package target: `AI_Sub_Pro_v1.3.10.dmg`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.10.dmg` is the macOS package name for this release line.
+
 ## v1.3.9 - Translation Quality Workflow Hardening
 
 Highlights:
