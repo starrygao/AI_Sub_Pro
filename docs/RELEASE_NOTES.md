@@ -2,6 +2,31 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.16 - Historical Subtitle Polish Pass
+
+Highlights:
+
+- Expanded deterministic non-dialogue cue detection for bracketed subtitle
+  descriptions such as typing, giggling, kissing sounds, glass shatters,
+  wings fluttering, waves lapping, and indistinct announcements.
+- Refreshed and polished existing local translated SRT outputs with the
+  configured QA auto-repair flow.
+- Existing final translated projects now all pass the blocking quality gate:
+  `26 / 26` passed, with `0` blocking issues remaining.
+
+Quality/Verification:
+
+- Targeted local tests passed: `118 passed`.
+- Historical subtitle polish repaired `934` model-targeted blocks and applied
+  `34` deterministic non-dialogue cleanups.
+- Remaining historical report entries are non-blocking warnings only:
+  `45` scientific-term consistency reminders and `73` proper-name reminders.
+- Local package target: `AI_Sub_Pro_v1.3.16.dmg`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.16.dmg` is the macOS package name for this release line.
+
 ## v1.3.15 - Bracketed Sound Cue Cleanup
 
 Highlights:

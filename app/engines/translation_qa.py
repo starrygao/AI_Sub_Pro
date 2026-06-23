@@ -307,26 +307,64 @@ _SOUND_LABEL_KEYWORDS = (
     "监护仪",
     "警报",
     "噪音",
+    "抽屉",
+    "水声",
+    "流水",
+    "滴水",
+    "打字",
+    "键入",
+    "文件",
+    "纸页",
+    "车辆",
+    "车门",
+    "飞机",
+    "船笛",
+    "号角",
+    "动物叫",
+    "鸟鸣",
+    "虫鸣",
 )
 _SOUND_LABEL_EN_RE = re.compile(
     r"\b("
     r"music|song|singing|humming|ring(?:s|ing)?|vibrat(?:e|es|ing|ed)?|"
     r"phone|bell|chime|alarm|siren|radio|broadcast|voice|voices|crowd|"
-    r"chatter|conversation|inaudible|indistinct|applause|cheer(?:s|ing)?|"
+    r"in (?:arabic|farsi|persian|french|russian|spanish|german|italian|chinese|mandarin|cantonese)|"
+    r"sound(?:s)?|chatter|conversation|inaudible|indistinct(?:ly)?|applause|cheer(?:s|ing)?|"
     r"speak(?:s|ing)?|talk(?:s|ing)?|plead(?:s|ing)?|"
     r"scoff(?:s|ing)?|clear(?:s|ing)? throat|throat|sniffle(?:s|ing)?|"
     r"inhale(?:s|d|ing)?|exhale(?:s|d|ing)?|gasp(?:s|ing)?|"
     r"yell(?:s|ing)?|whimper(?:s|ing)?|grunt(?:s|ing)?|growl(?:s|ing)?|"
     r"roar(?:s|ing)?|honk(?:s|ing)?|clink(?:s|ing)?|squawk(?:s|ing)?|"
-    r"squeak(?:s|ing)?|shriek(?:s|ing)?|call(?:s|ing)?|"
+    r"squeak(?:s|ing)?|shriek(?:s|ing)?|call(?:s|ing)?|cries|"
+    r"insect(?:s)?|cricket(?:s)?|trill(?:s|ing)?|chirp(?:s|ing)?|"
+    r"chitter(?:s|ing)?|coo(?:s|ing)?|murmur(?:s|ing)?|"
+    r"bullet(?:s)?|ricochet(?:s|ing)?|"
     r"thunder|rumbl(?:e|es|ing)?|engine|rev(?:s|ving)?|"
     r"tire(?:s)?|screech(?:es|ing)?|key(?:s)?|jingle(?:s|ing)?|"
     r"line click(?:s|ing)?|click(?:s|ing)?|lock(?:s)?|hang(?:s|ing)? up|"
-    r"thump(?:s|ing)?|thudd(?:ing)?|paper|crinkle(?:s|ing)?|"
-    r"rewind(?:s|ing)?|rain|patter(?:s|ing)?|birdsong|"
+    r"thump(?:s|ing)?|thudd(?:ing)?|squelch(?:es|ing)?|clang(?:s|ing)?|"
+    r"clunk(?:s|ing)?|bang(?:s|ing)?|snap(?:s|ping)?|"
+    r"paper(?:s)?|crinkle(?:s|ing)?|shuffle(?:s|ing)?|"
+    r"scratch(?:es|ing)?|scribbl(?:e|es|ing)?|typ(?:e|es|ing)?|"
+    r"clack(?:s|ing)?|keyboard|computer|laptop|"
+    r"rewind(?:s|ing)?|fast-forward(?:s|ing)?|rain|patter(?:s|ing)?|birdsong|"
     r"tick(?:s|ing)?|gunfire|wail(?:s|ing)?|snort(?:s|ing)?|"
     r"rattl(?:e|es|ing)?|wind|howl(?:s|ing)?|theme|playing|"
-    r"laugh(?:s|ing)?|chuckle(?:s|ing)?|cry(?:ing)?|sob(?:s|bing)?|"
+    r"mutter(?:s|ing)?|incantation|snarl(?:s|ing)?|crackl(?:e|es|ing)?|"
+    r"creak(?:s|ing)?|hum(?:s|ming)?|musical sting|static|"
+    r"stone(?:s)?|branch(?:es)?|bone(?:s)?|crunch(?:es|ing)?|"
+    r"tape|rip(?:s|ping)?|water|wave(?:s)?|lap(?:s|ping)?|run(?:s|ning)?|drip(?:s|ping)?|"
+    r"bubbl(?:e|es|ing)?|detector|drawer|open(?:s|ing)?|close(?:s|ing)?|"
+    r"door(?:s)?|gate|elevator|ding(?:s|ing)?|vehicle(?:s)?|car|truck|"
+    r"approach(?:es|ing)?|plane|descend(?:s|ing)?|jet|whirr(?:s|ing)?|"
+    r"bag|zip(?:s|ping)?|unzip(?:s|ping)?|buzz(?:es|ing)?|dial(?:s|ing)?|"
+    r"cuff(?:s)?|strain(?:s|ing)?|retch(?:es|ing)?|shudder(?:s|ing)?|"
+    r"wheez(?:e|es|ing)?|crow|caw(?:s|ing)?|sheep|bleat(?:s|ing)?|"
+    r"chicken(?:s)?|cluck(?:s|ing)?|swing|hiss(?:es|ing)?|"
+    r"whistle(?:s|ing)?|horn|chok(?:e|es|ing)?|gulp(?:s|ing)?|"
+    r"convers(?:e|es|ing)|clamor(?:s|ing)?|exclaim(?:s|ing)?|"
+    r"shatter(?:s|ing)?|flutter(?:s|ing)?|kiss(?:es|ing)?|"
+    r"laugh(?:s|ing)?|laughter|chuckl(?:e|es|ing)|giggl(?:e|es|ing)|cry(?:ing)?|sob(?:s|bing)?|"
     r"scream(?:s|ing)?|shout(?:s|ing)?|whisper(?:s|ing)?|sigh(?:s|ing)?|"
     r"breath(?:e|es|ing)?|pant(?:s|ing)?|cough(?:s|ing)?|moan(?:s|ing)?|"
     r"groan(?:s|ing)?|door|knock(?:s|ing)?|footstep(?:s)?|gunshot(?:s)?|"

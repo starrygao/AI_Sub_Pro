@@ -96,6 +96,19 @@ def test_quality_checks_allow_blank_music_only_rows():
         _block(3, "(UNSETTLING MUSIC PLAYING)", ""),
         _block(4, "(PANTS)\n(MUSIC CONCLUDES)", ""),
         _block(5, "{\\an8}<i>[speaking Arabic]</i>", ""),
+        _block(6, "{\\an8}<i>[in Arabic]</i>", ""),
+        _block(7, "[insects trilling]", ""),
+        _block(8, "[bullets ricocheting off car]", ""),
+        _block(9, "[Ischigualastia cries]", ""),
+        _block(10, "[drawer opens, closes]", ""),
+        _block(11, "(HAUNTING MUSICAL STING PLAYS)", ""),
+        _block(12, "- [loud thud]\n- [squelch]", ""),
+        _block(13, "- [laughter]\n- [phone ringing]", ""),
+        _block(14, "[typing]", ""),
+        _block(15, "[giggles]", ""),
+        _block(16, "[waves lapping]", ""),
+        _block(17, "[kissing sounds]", ""),
+        _block(18, "[wings fluttering]", ""),
     ]
 
     report = run_quality_checks(blocks, target_language="简体中文", max_chars=4)
@@ -111,6 +124,8 @@ def test_quality_checks_do_not_treat_speaker_labels_as_sound_descriptions():
     blocks = [
         _block(1, "[The Martian]", "[火星人]"),
         _block(2, "A young Ischigualastia calls.", "幼年伊斯基瓜拉兽在呼唤。"),
+        _block(3, "David Selznick calls me up.", "大卫·塞尔兹尼克给我打电话。"),
+        _block(4, "Wind 18 knots, west, southwest.", "西南偏西风，18节。"),
     ]
 
     report = run_quality_checks(blocks, target_language="简体中文", max_chars=20)
