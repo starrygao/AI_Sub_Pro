@@ -2,6 +2,30 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.15 - Bracketed Sound Cue Cleanup
+
+Highlights:
+
+- Translation post-processing now removes bracketed sound/SDH cue fragments
+  from translated dialogue, such as `[laughs]`, `[phone vibrating]`, and
+  `（tense music）`, while preserving speaker labels like `[Henry]`.
+- QA now recognizes square-bracket and parenthesized non-dialogue cues,
+  including music marks, language/speaking notes, impact sounds, breathing,
+  phone, door, weather, and animal-call cues.
+- Existing local project outputs were refreshed: translated SRT files now have
+  `0` pending bracketed sound-cue cleanup hits.
+
+Quality/Verification:
+
+- Targeted local tests passed: `118 passed`.
+- Historical output dry-run verified `0` pending bracketed sound-cue cleanup
+  blocks across `26` local translated projects.
+- Local package target: `AI_Sub_Pro_v1.3.15.dmg`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.15.dmg` is the macOS package name for this release line.
+
 ## v1.3.14 - SRT QA Warning Refresh
 
 Highlights:

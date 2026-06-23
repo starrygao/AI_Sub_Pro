@@ -93,6 +93,9 @@ def test_quality_checks_allow_blank_music_only_rows():
     blocks = [
         _block(1, "♪", ""),
         _block(2, "🎵", ""),
+        _block(3, "(UNSETTLING MUSIC PLAYING)", ""),
+        _block(4, "(PANTS)\n(MUSIC CONCLUDES)", ""),
+        _block(5, "{\\an8}<i>[speaking Arabic]</i>", ""),
     ]
 
     report = run_quality_checks(blocks, target_language="简体中文", max_chars=4)
@@ -102,6 +105,19 @@ def test_quality_checks_allow_blank_music_only_rows():
     assert report.unresolved_blocks == []
 
 
+def test_quality_checks_do_not_treat_speaker_labels_as_sound_descriptions():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "[The Martian]", "[火星人]"),
+        _block(2, "A young Ischigualastia calls.", "幼年伊斯基瓜拉兽在呼唤。"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=20)
+
+    assert "sound_description_translated" not in report.summary["by_type"]
+
+
 def test_normalize_sound_description_translations_blanks_non_dialogue_rows():
     from app.engines.translation_qa import normalize_sound_description_translations
 
@@ -109,7 +125,9 @@ def test_normalize_sound_description_translations_blanks_non_dialogue_rows():
         _block(1, "{\\an8}[phone ringing]", "{\\an8}[电话响]"),
         _block(2, "- [elevator bell chimes]\n- [phone vibrating]", "[电梯铃响]\n[手机振动]"),
         _block(3, "<i>- Please leave a message.</i>\n- [phone vibrates]", "请留言。\n[手机振动]"),
-        _block(4, "Hello.", "你好。"),
+        _block(4, "Owen, are you okay?", "[尖叫] 欧文没事吧？"),
+        _block(5, "The Martian said it mattered.", "[火星人] 有很多因素会影响。"),
+        _block(6, "Hello.", "你好。"),
     ]
 
     applied = normalize_sound_description_translations(blocks)
@@ -129,11 +147,37 @@ def test_normalize_sound_description_translations_blanks_non_dialogue_rows():
             "to": "",
             "reason": "sound_description_blank",
         },
+        {
+            "id": 3,
+            "source": "<i>- Please leave a message.</i>\n- [phone vibrates]",
+            "from": "请留言。\n[手机振动]",
+            "to": "请留言。",
+            "reason": "translation_sound_description_clean",
+        },
+        {
+            "id": 4,
+            "source": "Owen, are you okay?",
+            "from": "[尖叫] 欧文没事吧？",
+            "to": "欧文没事吧？",
+            "reason": "translation_sound_description_clean",
+        },
     ]
     assert blocks[0].translation == ""
     assert blocks[1].translation == ""
-    assert blocks[2].translation == "请留言。\n[手机振动]"
-    assert blocks[3].translation == "你好。"
+    assert blocks[2].translation == "请留言。"
+    assert blocks[3].translation == "欧文没事吧？"
+    assert blocks[4].translation == "[火星人] 有很多因素会影响。"
+    assert blocks[5].translation == "你好。"
+
+
+def test_clean_sound_description_translation_text_keeps_speaker_labels():
+    from app.engines.translation_qa import clean_sound_description_translation_text
+
+    assert clean_sound_description_translation_text("（激昂音乐响起）") == ""
+    assert clean_sound_description_translation_text("- [女人们大笑]") == ""
+    assert clean_sound_description_translation_text("[轻笑] 你这一来，真及时。") == "你这一来，真及时。"
+    assert clean_sound_description_translation_text("[婴儿哭] -嘘。") == "嘘。"
+    assert clean_sound_description_translation_text("[亨利] 还能查她的手机吗？") == "[亨利] 还能查她的手机吗？"
 
 
 def test_quality_report_serializes_json_and_markdown(tmp_path):

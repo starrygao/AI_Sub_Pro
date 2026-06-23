@@ -85,6 +85,7 @@ def _clean_text(value) -> str:
 _ENGLISH_RE = re.compile(r"[A-Za-z]{3,}")
 _SOUND_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
 _SOUND_SEQUENCE_RE = re.compile(r"^\s*(?:\[[^\]]+\]\s*)+$")
+_BRACKETED_TRANSLATION_SEGMENT_RE = re.compile(r"[\[【（(]([^\]】）)\r\n]{1,80})[\]】）)]")
 _ASS_OVERRIDE_RE = re.compile(r"\{\\[^}]+\}")
 _MUSIC_MARK_RE = re.compile(r"[♪♫♬🎵🎶]+")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -189,6 +190,151 @@ _AUTO_REPAIR_REPORT_ONLY_ISSUE_TYPES = {
     "scientific_term_inconsistent",
     "sound_description_translated",
 }
+_SOUND_LABEL_KEYWORDS = (
+    "音乐",
+    "乐曲",
+    "配乐",
+    "摇滚乐",
+    "歌声",
+    "唱歌",
+    "哼唱",
+    "音效",
+    "音响",
+    "声音",
+    "声",
+    "人声",
+    "铃声",
+    "电话响",
+    "手机响",
+    "振动",
+    "震动",
+    "铃响",
+    "铃",
+    "响起",
+    "响",
+    "鸣笛",
+    "警笛",
+    "广播",
+    "电台",
+    "对话听不清",
+    "对白听不清",
+    "听不清",
+    "说阿拉伯语",
+    "说法语",
+    "说俄语",
+    "说波斯语",
+    "说外语",
+    "用阿拉伯语",
+    "用法语",
+    "用俄语",
+    "用波斯语",
+    "阿语",
+    "波斯语",
+    "外语",
+    "交谈",
+    "说话声",
+    "嘈杂",
+    "喧闹",
+    "喧嚷",
+    "人群",
+    "含混",
+    "嘘声",
+    "掌声",
+    "欢呼",
+    "尖叫",
+    "喊叫",
+    "喊声",
+    "大喊",
+    "喊",
+    "叫声",
+    "叫",
+    "尖啸",
+    "啸",
+    "咆哮",
+    "吼",
+    "哭",
+    "哭泣",
+    "啜泣",
+    "抽泣",
+    "啜泣声",
+    "呜咽",
+    "婴儿",
+    "笑声",
+    "大笑",
+    "轻笑",
+    "嗤笑",
+    "笑",
+    "叹气",
+    "喘息",
+    "吸气",
+    "呼吸",
+    "咳嗽",
+    "呻吟",
+    "低语",
+    "窃窃私语",
+    "脚步",
+    "脚步声",
+    "敲门",
+    "敲击",
+    "敲",
+    "门开",
+    "开门",
+    "关门",
+    "门关",
+    "门铃",
+    "电梯",
+    "引擎",
+    "轮胎",
+    "枪声",
+    "枪响",
+    "爆炸",
+    "撞击",
+    "重击",
+    "敲打",
+    "咔",
+    "咚",
+    "砰",
+    "哐",
+    "哔",
+    "沙沙",
+    "噼啪",
+    "咯吱",
+    "咔嗒",
+    "玻璃碎",
+    "按键",
+    "键盘",
+    "纸张",
+    "监护仪",
+    "警报",
+    "噪音",
+)
+_SOUND_LABEL_EN_RE = re.compile(
+    r"\b("
+    r"music|song|singing|humming|ring(?:s|ing)?|vibrat(?:e|es|ing|ed)?|"
+    r"phone|bell|chime|alarm|siren|radio|broadcast|voice|voices|crowd|"
+    r"chatter|conversation|inaudible|indistinct|applause|cheer(?:s|ing)?|"
+    r"speak(?:s|ing)?|talk(?:s|ing)?|plead(?:s|ing)?|"
+    r"scoff(?:s|ing)?|clear(?:s|ing)? throat|throat|sniffle(?:s|ing)?|"
+    r"inhale(?:s|d|ing)?|exhale(?:s|d|ing)?|gasp(?:s|ing)?|"
+    r"yell(?:s|ing)?|whimper(?:s|ing)?|grunt(?:s|ing)?|growl(?:s|ing)?|"
+    r"roar(?:s|ing)?|honk(?:s|ing)?|clink(?:s|ing)?|squawk(?:s|ing)?|"
+    r"squeak(?:s|ing)?|shriek(?:s|ing)?|call(?:s|ing)?|"
+    r"thunder|rumbl(?:e|es|ing)?|engine|rev(?:s|ving)?|"
+    r"tire(?:s)?|screech(?:es|ing)?|key(?:s)?|jingle(?:s|ing)?|"
+    r"line click(?:s|ing)?|click(?:s|ing)?|lock(?:s)?|hang(?:s|ing)? up|"
+    r"thump(?:s|ing)?|thudd(?:ing)?|paper|crinkle(?:s|ing)?|"
+    r"rewind(?:s|ing)?|rain|patter(?:s|ing)?|birdsong|"
+    r"tick(?:s|ing)?|gunfire|wail(?:s|ing)?|snort(?:s|ing)?|"
+    r"rattl(?:e|es|ing)?|wind|howl(?:s|ing)?|theme|playing|"
+    r"laugh(?:s|ing)?|chuckle(?:s|ing)?|cry(?:ing)?|sob(?:s|bing)?|"
+    r"scream(?:s|ing)?|shout(?:s|ing)?|whisper(?:s|ing)?|sigh(?:s|ing)?|"
+    r"breath(?:e|es|ing)?|pant(?:s|ing)?|cough(?:s|ing)?|moan(?:s|ing)?|"
+    r"groan(?:s|ing)?|door|knock(?:s|ing)?|footstep(?:s)?|gunshot(?:s)?|"
+    r"explosion(?:s)?|crash(?:es|ing)?|thud(?:s)?|clatter(?:s|ing)?|"
+    r"beep(?:s|ing)?|buzz(?:es|ing)?|rustl(?:e|es|ing)?"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def _is_report_only_issue(issue: QualityIssue) -> bool:
@@ -266,31 +412,116 @@ def _sound_description_probe_text(value: str) -> str:
 
 def _is_sound_description(source: str) -> bool:
     probe = _sound_description_probe_text(source)
-    return (
-        bool(_SOUND_RE.match(probe))
-        or bool(_SOUND_SEQUENCE_RE.match(probe))
-        or (not probe and bool(_MUSIC_MARK_RE.search(source or "")))
-    )
+    if not probe:
+        return bool(_MUSIC_MARK_RE.search(source or ""))
+    if _MUSIC_MARK_RE.search(source or ""):
+        return True
+
+    segments = list(_BRACKETED_TRANSLATION_SEGMENT_RE.finditer(probe))
+    if segments:
+        remainder = _BRACKETED_TRANSLATION_SEGMENT_RE.sub("", probe)
+        return (
+            _is_translation_separator_only(remainder)
+            and all(_is_sound_translation_label(match.group(1)) for match in segments)
+        )
+
+    return _is_unbracketed_sound_description_label(probe)
+
+
+def _is_sound_translation_label(label: str) -> bool:
+    text = _HTML_TAG_RE.sub("", label or "")
+    text = _ASS_OVERRIDE_RE.sub("", text)
+    text = _MUSIC_MARK_RE.sub("", text)
+    text = re.sub(r"\s+", " ", text).strip().lower()
+    if not text:
+        return False
+    if any(keyword in text for keyword in _SOUND_LABEL_KEYWORDS):
+        return True
+    return bool(_SOUND_LABEL_EN_RE.search(text))
+
+
+def _is_unbracketed_sound_description_label(value: str) -> bool:
+    text = _clean_text(value)
+    if not _is_sound_translation_label(text):
+        return False
+    if _CJK_TEXT_RE.search(text):
+        compact = _compact_subtitle_text(text)
+        return bool(compact and len(compact) <= 12)
+    words = re.findall(r"[A-Za-z]+", text)
+    if len(words) <= 3:
+        return True
+    letters = re.sub(r"[^A-Za-z]", "", text)
+    return bool(letters and letters == letters.upper())
+
+
+def _is_translation_separator_only(value: str) -> bool:
+    text = _ASS_OVERRIDE_RE.sub("", value or "")
+    text = re.sub(r"[\s\-–—、，,。.!！?？:：;；/\\|~·]+", "", text)
+    return not text
+
+
+def clean_sound_description_translation_text(value: str) -> str:
+    """Remove translated bracketed sound-description labels while preserving dialogue."""
+    if not isinstance(value, str) or not value:
+        return ""
+
+    cleaned_lines: list[str] = []
+    for line in value.splitlines():
+        changed = False
+
+        def replace_sound_label(match) -> str:
+            nonlocal changed
+            label = match.group(1)
+            if _is_sound_translation_label(label):
+                changed = True
+                return ""
+            return match.group(0)
+
+        cleaned = _BRACKETED_TRANSLATION_SEGMENT_RE.sub(replace_sound_label, line)
+        if changed:
+            cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+            cleaned = re.sub(r"^(?:[-–—]\s*)+", "", cleaned).strip()
+            cleaned = re.sub(r"(?:\s*[-–—])+$", "", cleaned).strip()
+            cleaned = re.sub(r"^[、，,。.!！?？:：;；]+\s*", "", cleaned).strip()
+            if _is_translation_separator_only(cleaned):
+                cleaned = ""
+        else:
+            cleaned = line.strip()
+        if cleaned:
+            cleaned_lines.append(cleaned)
+    return "\n".join(cleaned_lines).strip()
 
 
 def normalize_sound_description_translations(blocks: Iterable) -> list[dict]:
-    """Blank non-dialogue sound-description translations before QA/export."""
+    """Clean non-dialogue sound-description translations before QA/export."""
     applied: list[dict] = []
     for block in blocks or []:
         if getattr(block, "filtered", False):
             continue
         source = _clean_text(getattr(block, "text", ""))
         translation = _clean_text(getattr(block, "translation", ""))
-        if not source or not translation or not _is_sound_description(source):
+        if not source or not translation:
             continue
-        block.translation = ""
-        applied.append({
-            "id": getattr(block, "index", None),
-            "source": source,
-            "from": translation,
-            "to": "",
-            "reason": "sound_description_blank",
-        })
+        if _is_sound_description(source):
+            block.translation = ""
+            applied.append({
+                "id": getattr(block, "index", None),
+                "source": source,
+                "from": translation,
+                "to": "",
+                "reason": "sound_description_blank",
+            })
+            continue
+        cleaned_translation = clean_sound_description_translation_text(translation)
+        if cleaned_translation != translation:
+            block.translation = cleaned_translation
+            applied.append({
+                "id": getattr(block, "index", None),
+                "source": source,
+                "from": translation,
+                "to": cleaned_translation,
+                "reason": "translation_sound_description_clean",
+            })
     return applied
 
 
