@@ -42,6 +42,51 @@ def test_quality_checks_detect_common_deterministic_issues():
     assert report.summary["far"]["readability"] >= 1
 
 
+def test_quality_checks_allow_uppercase_acronyms_in_chinese_subtitles():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "That's James Richardson from SIS.", "那是SIS的詹姆斯·理查森。"),
+        _block(2, "the UAE and the RSF.", "阿联酋和RSF。"),
+        _block(3, "a new partnership CEO.", "新合资公司的CEO。"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
+
+    assert "english_residue" not in report.summary["by_type"]
+
+
+def test_quality_checks_treat_positioned_sound_descriptions_as_report_only():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "{\\an8}[Sami crying]", "{\\an8}[萨米哭泣]"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=10)
+
+    assert report.status == "ok"
+    assert report.unresolved_blocks == []
+    assert report.summary["by_type"] == {"sound_description_translated": 1}
+    assert report.summary["report_only_warning_count"] == 1
+
+
+def test_quality_checks_skip_style_rules_for_inaudible_music_markers():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "- ♪ - [dialogue inaudible]", "♪\n[对话听不清]"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=4)
+
+    assert report.status == "ok"
+    assert report.unresolved_blocks == []
+    assert "weak_semantic_line_break" not in report.summary["by_type"]
+    assert "line_too_long" not in report.summary["by_type"]
+    assert report.summary["by_type"] == {"sound_description_translated": 1}
+
+
 def test_quality_report_serializes_json_and_markdown(tmp_path):
     from app.engines.translation_qa import QualityIssue, TranslationQaReport, save_quality_report
 
@@ -208,13 +253,18 @@ def test_quality_checks_flag_inferred_proper_name_inconsistency():
         _block(2, "I came from Hudson Oaks.", "我从哈德逊橡树来。"),
         _block(3, "Hudson Oaks is closed now.", "哈德逊橡树现在关门了。", filtered=True),
     ]
+    for block in blocks:
+        block.end = block.start + timedelta(seconds=4)
 
     report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)
 
     assert report.summary["by_type"]["proper_name_inconsistent"] == 2
     flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
     assert {issue.block_id for issue in flagged} == {1, 2}
-    assert report.unresolved_blocks == [1, 2]
+    assert report.status == "ok"
+    assert report.unresolved_blocks == []
+    assert report.summary["blocking_issue_count"] == 0
+    assert report.summary["report_only_warning_count"] == 2
     assert all(issue.severity == "warning" for issue in flagged)
     assert all(issue.source_text == "Hudson Oaks" for issue in flagged)
 

@@ -969,8 +969,10 @@ def test_translate_pipeline_does_not_auto_repair_inferred_proper_names(tmp_path,
     rounds = report["trace"]["auto_repair_rounds"]
     assert rounds[0]["candidate_blocks"] == 0
     assert rounds[0]["result"] == "no_repair_applied"
-    assert project["translation_quality_status"] == "needs_review"
-    assert "需人工确认质量报告后再交付" in project["progress_msg"]
+    assert project["translation_quality_status"] == "passed"
+    assert "需人工确认质量报告后再交付" not in project["progress_msg"]
+    assert report["summary"]["quality_gate"]["passed"] is True
+    assert report["summary"]["blocking_warning_count"] == 0
 
 
 def test_translate_pipeline_batches_auto_repair_and_records_trace(tmp_path, monkeypatch):

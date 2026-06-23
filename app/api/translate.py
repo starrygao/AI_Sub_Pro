@@ -58,6 +58,10 @@ _tasks_lock = threading.Lock()
 _SOUND_DESCRIPTION_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
 _KB_REVIEW_REQUIRED_CODE = "kb_review_required"
 _QA_AUTO_REPAIR_MAX_BLOCKS = 20
+_QA_REPORT_ONLY_WARNING_TYPES = {
+    "proper_name_inconsistent",
+    "scientific_term_inconsistent",
+}
 
 
 class TaskCancelled(RuntimeError):
@@ -1146,15 +1150,25 @@ def _finalize_quality_conclusion(report, repaired: list[dict], repair_enabled: b
     issue_count, error_count, warning_count = _quality_issue_counts(report)
     unresolved_count = len(getattr(report, "unresolved_blocks", []) or [])
     repaired_count = len(repaired or [])
+    blocking_warnings = [
+        issue for issue in (getattr(report, "issues", []) or [])
+        if getattr(issue, "severity", "") == "warning"
+        and getattr(issue, "type", "") not in _QA_REPORT_ONLY_WARNING_TYPES
+    ]
     if error_count:
         verdict = "failed"
         conclusion = f"不达标：仍有 {error_count} 个错误、{unresolved_count} 个问题位置。"
-    elif issue_count:
+    elif blocking_warnings:
         verdict = "needs_review"
-        conclusion = f"未达专业交付标准：自动返工后仍有 {warning_count} 个警告、{unresolved_count} 个问题位置，需人工确认。"
+        conclusion = (
+            f"未达专业交付标准：自动返工后仍有 {len(blocking_warnings)} 个需确认警告、"
+            f"{unresolved_count} 个问题位置，需人工确认。"
+        )
     else:
         verdict = "passed"
         conclusion = "达标：自动检查通过。"
+        if warning_count:
+            conclusion = f"达标：自动检查通过，保留 {warning_count} 个非阻塞提醒。"
         if repaired_count:
             conclusion = f"达标：已自动重点返工 {repaired_count} 条并复检通过。"
 
@@ -1162,6 +1176,7 @@ def _finalize_quality_conclusion(report, repaired: list[dict], repair_enabled: b
         "issue_count": issue_count,
         "error_count": error_count,
         "warning_count": warning_count,
+        "blocking_warning_count": len(blocking_warnings),
         "repaired_blocks": repaired_count,
         "unresolved_blocks": unresolved_count,
         "conclusion": conclusion,

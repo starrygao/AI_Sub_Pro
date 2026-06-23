@@ -84,6 +84,8 @@ def _clean_text(value) -> str:
 
 _ENGLISH_RE = re.compile(r"[A-Za-z]{3,}")
 _SOUND_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
+_ASS_OVERRIDE_RE = re.compile(r"\{\\[^}]+\}")
+_MUSIC_MARK_RE = re.compile(r"[♪♫♬]+")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _CJK_TEXT_RE = re.compile(r"[\u3400-\u9fff]+")
 _REPEATED_CJK_RE = re.compile(r"([\u4e00-\u9fff])(?:[，,、\s]*\1){2,}")
@@ -184,7 +186,19 @@ _TECH_ALLOWED_ENGLISH_TOKENS = {
 _AUTO_REPAIR_REPORT_ONLY_ISSUE_TYPES = {
     "proper_name_inconsistent",
     "scientific_term_inconsistent",
+    "sound_description_translated",
 }
+
+
+def _is_report_only_issue(issue: QualityIssue) -> bool:
+    return (
+        getattr(issue, "severity", "") == "warning"
+        and getattr(issue, "type", "") in _AUTO_REPAIR_REPORT_ONLY_ISSUE_TYPES
+    )
+
+
+def _is_blocking_issue(issue: QualityIssue) -> bool:
+    return not _is_report_only_issue(issue)
 
 
 def _is_chinese_target(target_language: str) -> bool:
@@ -224,12 +238,32 @@ def _is_allowed_technical_token(token: str) -> bool:
     return bool(token.isupper() and 3 <= len(token) <= 10)
 
 
+def _is_allowed_acronym_token(token: str) -> bool:
+    return bool(token.isupper() and 3 <= len(token) <= 10)
+
+
 def _english_residue_match(translation: str, *, allow_technical_terms: bool = False):
     for match in _ENGLISH_RE.finditer(translation or ""):
+        if _is_allowed_acronym_token(match.group(0)):
+            continue
         if allow_technical_terms and _is_allowed_technical_token(match.group(0)):
             continue
         return match
     return None
+
+
+def _sound_description_probe_text(value: str) -> str:
+    text = _HTML_TAG_RE.sub("", value or "")
+    text = _ASS_OVERRIDE_RE.sub("", text)
+    text = _MUSIC_MARK_RE.sub("", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"^(?:[-–—]\s*)+", "", text).strip()
+    text = re.sub(r"(?:\s*[-–—])+$", "", text).strip()
+    return text
+
+
+def _is_sound_description(source: str) -> bool:
+    return bool(_SOUND_RE.match(_sound_description_probe_text(source)))
 
 
 def _kb_terms(project_kb: Optional[ProjectKb]) -> list[tuple[str, str]]:
@@ -549,7 +583,7 @@ def run_quality_checks(
                 ))
             seen_ids.add(block_id)
 
-        sound_description = bool(_SOUND_RE.match(source))
+        sound_description = _is_sound_description(source)
         if source and not translation and not sound_description:
             issues.append(QualityIssue(
                 type="missing_translation",
@@ -571,6 +605,8 @@ def run_quality_checks(
             ))
 
         if (
+            not sound_description
+            and
             chinese_target
             and translation
             and _english_residue_match(
@@ -589,7 +625,7 @@ def run_quality_checks(
 
         lines = _subtitle_lines(translation) or ([translation] if translation else [])
         compact_translation = _compact_subtitle_text(translation)
-        if effective_max_chars > 0 and any(
+        if not sound_description and effective_max_chars > 0 and any(
             len(_compact_subtitle_text(line)) > effective_max_chars for line in lines
         ):
             issues.append(QualityIssue(
@@ -602,7 +638,7 @@ def run_quality_checks(
                 expected=str(effective_max_chars),
             ))
 
-        if active_style_profile is not None and translation:
+        if active_style_profile is not None and translation and not sound_description:
             if len(lines) > active_style_profile.max_lines:
                 issues.append(QualityIssue(
                     type="too_many_lines",
@@ -729,18 +765,22 @@ def run_quality_checks(
                     translation=_clean_text(observation.get("translation", "")),
                 ))
 
-    status = "ok" if not issues else "needs_review"
+    blocking_issues = [issue for issue in issues if _is_blocking_issue(issue)]
+    report_only_count = max(0, len(issues) - len(blocking_issues))
+    status = "ok" if not blocking_issues else "needs_review"
     report = TranslationQaReport(
         status=status,
         issues=issues,
         summary={
             "issue_count": len(issues),
+            "blocking_issue_count": len(blocking_issues),
+            "report_only_warning_count": report_only_count,
             "by_type": _issue_counts(issues),
             "far": _far_counts(issues),
             "style_profile": _style_profile_summary(active_style_profile),
         },
         unresolved_blocks=sorted({
-            issue.block_id for issue in issues if isinstance(issue.block_id, int)
+            issue.block_id for issue in blocking_issues if isinstance(issue.block_id, int)
         }),
         trace=trace or {},
     )

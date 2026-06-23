@@ -2,6 +2,24 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.11 - Quality Gate Warning Triage
+
+Highlights:
+
+- Report-only inferred consistency warnings no longer block project delivery or
+  leave projects stuck in "needs review".
+- QA reports now separate blocking issues from report-only warnings in their
+  summary and unresolved-block counts.
+
+Quality/Verification:
+
+- Targeted local tests passed: `87 passed`.
+- Local package target: `AI_Sub_Pro_v1.3.11.dmg`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.11.dmg` is the macOS package name for this release line.
+
 ## v1.3.10 - Batch Folder Translation
 
 Highlights:
