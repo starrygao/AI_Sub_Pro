@@ -37,6 +37,7 @@ class SubtitleBlock:
 _TIME_RE = re.compile(r"^(\d+):(\d{2}):(\d{2})[,.](\d{3})$")
 _VTT_TIME_RE = re.compile(r"^(?:(\d+):)?(\d{2}):(\d{2})\.(\d{3})$")
 _ASS_TIME_RE = re.compile(r"^(\d+):(\d{2}):(\d{2})\.(\d{1,3})$")
+_MUSIC_SYMBOL_RE = re.compile(r"[♪♫♬🎵🎶]+")
 
 
 def _timedelta_ms(td: timedelta) -> int:
@@ -457,7 +458,15 @@ def apply_offset(blocks: List[SubtitleBlock], offset_ms: int) -> List[SubtitleBl
 def _subtitle_text(value) -> str:
     if not isinstance(value, str):
         return ""
-    return value.strip()
+    text = _MUSIC_SYMBOL_RE.sub("", value)
+    lines = []
+    for line in text.splitlines():
+        cleaned = re.sub(r"\s{2,}", " ", line).strip()
+        cleaned = re.sub(r"^(?:[-–—]\s*){2,}", "", cleaned).strip()
+        cleaned = re.sub(r"(?:\s*[-–—])+$", "", cleaned).strip()
+        if cleaned:
+            lines.append(cleaned)
+    return "\n".join(lines).strip()
 
 
 def _has_positive_duration(start, end) -> bool:

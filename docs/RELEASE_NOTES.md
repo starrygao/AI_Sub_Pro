@@ -2,6 +2,26 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.12 - Subtitle Music Symbol Cleanup
+
+Highlights:
+
+- Final SRT writers now strip music decoration symbols such as `♪`, `♫`, `♬`,
+  `🎵`, and `🎶` from exported subtitles.
+- Translation prompts explicitly tell providers not to emit those music
+  decoration symbols in translated output.
+
+Quality/Verification:
+
+- Targeted local tests passed: `111 passed`.
+- Existing exported project subtitle files were cleaned and verified with
+  `0` music-symbol hits in final output SRT files.
+- Local package target: `AI_Sub_Pro_v1.3.12.dmg`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.12.dmg` is the macOS package name for this release line.
+
 ## v1.3.11 - Quality Gate Warning Triage
 
 Highlights:
