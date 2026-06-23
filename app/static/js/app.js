@@ -21,7 +21,7 @@ function app() {
       trailer: {max_video_height: 1080},
       asr: {mode: 'speed', backend: 'auto'},
       translation: {
-        quality_mode: 'fast',
+        quality_mode: 'professional',
         use_translation_memory: true,
         use_phrase_library: true,
         qa_auto_repair: true,
@@ -2044,12 +2044,12 @@ function app() {
       const issueCount = report.summary.issue_count || issues.length;
       if (!issueCount) return '可继续导出或烧录。';
       if (gate.auto_repair_enabled && Number(gate.auto_repaired_blocks || 0) > 0) {
-        return '系统已自动重点返工并复检；剩余问题需人工确认后再交付。';
+        return '系统已自动重点返工并复检；仍未达标，建议重新自动返工或暂缓交付。';
       }
       const hasErrors = issues.some(item => ['error', 'severe'].includes(String(item.severity || '')));
-      if (hasErrors) return '先处理错误项，再导出或烧录。';
-      if ((report.summary.unresolved_blocks || 0) > 0) return '需人工确认未解决警告，必要时在字幕表中手动修正后再交付。';
-      return '仍有警告级问题，需人工确认后再交付。';
+      if (hasErrors) return '仍有错误项，需重新自动返工后再导出或烧录。';
+      if ((report.summary.unresolved_blocks || 0) > 0) return '仍有未解决警告，需重新自动返工或暂缓交付。';
+      return '仍有警告级问题，需重新自动返工或暂缓交付。';
     },
 
     focusFirstQaIssue() {
@@ -2098,7 +2098,7 @@ function app() {
           id: qualityModeId,
           label: typeof qualityMode.label === 'string' && qualityMode.label.trim()
             ? qualityMode.label.trim()
-            : (qualityModeId === 'professional' ? '专业辅助' : '快速自动'),
+            : (qualityModeId === 'professional' ? '专业自动' : '快速自动'),
           professional: qualityMode.professional === true || qualityModeId === 'professional',
           requires_kb_review: qualityMode.requires_kb_review === true,
           quality_gate: qualityMode.quality_gate === true,

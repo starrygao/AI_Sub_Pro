@@ -978,12 +978,9 @@ def _kb_review_required_detail(pid: str, count: int, total: int) -> dict:
 
 
 def _requires_kb_suggestion_review(config: Optional[dict] = None) -> bool:
-    cfg = config if isinstance(config, dict) else Config.to_dict()
-    translation = cfg.get("translation") if isinstance(cfg, dict) else {}
-    return (
-        isinstance(translation, dict)
-        and translation.get("require_kb_suggestion_review") is True
-    )
+    # Auto KB suggestions are translation hints, not a human preflight gate.
+    # Accepted project KB entries still act as hard terminology constraints.
+    return False
 
 
 def _ensure_kb_review_ready(
@@ -1161,8 +1158,8 @@ def _finalize_quality_conclusion(report, repaired: list[dict], repair_enabled: b
     elif blocking_warnings:
         verdict = "needs_review"
         conclusion = (
-            f"未达专业交付标准：自动返工后仍有 {len(blocking_warnings)} 个需确认警告、"
-            f"{unresolved_count} 个问题位置，需人工确认。"
+            f"未达专业交付标准：自动返工后仍有 {len(blocking_warnings)} 个阻塞警告、"
+            f"{unresolved_count} 个问题位置，建议继续自动返工或暂缓交付。"
         )
     else:
         verdict = "passed"
@@ -1362,6 +1359,8 @@ def _persist_translation_quality_report(
         from app.engines.knowledge import _get_singleton
         from app.engines.proper_name_normalizer import normalize_inferred_proper_name_variants
         from app.engines.translation_qa import (
+            normalize_curated_domain_term_translations,
+            normalize_scientific_term_translations,
             normalize_sound_description_translations,
             run_quality_checks,
             save_quality_report,
@@ -1372,11 +1371,34 @@ def _persist_translation_quality_report(
         trace = trace_obj.to_dict() if hasattr(trace_obj, "to_dict") else {}
         if not isinstance(trace, dict):
             trace = {}
-        repaired = normalize_sound_description_translations(blocks)
-        if repaired:
+        repaired = []
+        sound_repaired = normalize_sound_description_translations(blocks)
+        if sound_repaired:
+            repaired.extend(sound_repaired)
             trace.setdefault("deterministic_postprocess", {})[
                 "sound_description_blank_blocks"
-            ] = repaired
+            ] = sound_repaired
+        normalized_curated_terms = normalize_curated_domain_term_translations(
+            blocks,
+            project_kb=project_kb,
+        )
+        if normalized_curated_terms:
+            repaired.extend(normalized_curated_terms)
+            trace.setdefault("deterministic_postprocess", {})[
+                "curated_domain_term_normalized_blocks"
+            ] = normalized_curated_terms
+        normalized_science = normalize_scientific_term_translations(blocks)
+        if normalized_science:
+            repaired.extend(normalized_science)
+            trace.setdefault("deterministic_postprocess", {})[
+                "scientific_term_normalized_blocks"
+            ] = normalized_science
+        normalized_names = normalize_inferred_proper_name_variants(blocks)
+        if normalized_names:
+            repaired.extend(normalized_names)
+            trace.setdefault("deterministic_postprocess", {})[
+                "proper_name_normalized_blocks"
+            ] = normalized_names
         report = run_quality_checks(
             blocks,
             project_kb=project_kb,
@@ -1439,12 +1461,44 @@ def _persist_translation_quality_report(
                 previous_score = current_score
                 if current_score == (0, 0, 0):
                     break
-        normalized_names = normalize_inferred_proper_name_variants(blocks)
-        if normalized_names:
-            repaired.extend(normalized_names)
-            trace.setdefault("deterministic_postprocess", {})[
-                "proper_name_normalized_blocks"
-            ] = normalized_names
+        post_normalized_curated_terms = normalize_curated_domain_term_translations(
+            blocks,
+            project_kb=project_kb,
+        )
+        if post_normalized_curated_terms:
+            repaired.extend(post_normalized_curated_terms)
+            trace.setdefault("deterministic_postprocess", {}).setdefault(
+                "curated_domain_term_normalized_blocks",
+                [],
+            ).extend(post_normalized_curated_terms)
+            report = run_quality_checks(
+                blocks,
+                project_kb=project_kb,
+                target_language=target_language,
+                meta_info=project,
+                trace=trace,
+            )
+        post_normalized_science = normalize_scientific_term_translations(blocks)
+        if post_normalized_science:
+            repaired.extend(post_normalized_science)
+            trace.setdefault("deterministic_postprocess", {}).setdefault(
+                "scientific_term_normalized_blocks",
+                [],
+            ).extend(post_normalized_science)
+            report = run_quality_checks(
+                blocks,
+                project_kb=project_kb,
+                target_language=target_language,
+                meta_info=project,
+                trace=trace,
+            )
+        post_normalized_names = normalize_inferred_proper_name_variants(blocks)
+        if post_normalized_names:
+            repaired.extend(post_normalized_names)
+            trace.setdefault("deterministic_postprocess", {}).setdefault(
+                "proper_name_normalized_blocks",
+                [],
+            ).extend(post_normalized_names)
             report = run_quality_checks(
                 blocks,
                 project_kb=project_kb,
@@ -1600,7 +1654,7 @@ def _run_translate_pipeline(
             if failed_count > 0:
                 done_msg += f"(失败 {failed_count} 条)"
             if not quality_passed:
-                done_msg += "，需人工确认质量报告后再交付"
+                done_msg += "，质量未达标，建议继续自动返工或暂缓交付"
             _emit_progress(pid, "translate", 100, done_msg)
 
             mutate_project(

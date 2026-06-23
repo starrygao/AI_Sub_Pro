@@ -133,6 +133,22 @@ def test_quality_checks_do_not_treat_speaker_labels_as_sound_descriptions():
     assert "sound_description_translated" not in report.summary["by_type"]
 
 
+def test_quality_checks_do_not_treat_scientific_action_sentences_as_sound_descriptions():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Panphagia runs.", "泛食龙跑过。"),
+        _block(2, "Novaraptor runs.", "诺瓦盗龙跑过。"),
+        _block(3, "[drawer opens]", ""),
+        _block(4, "RUNNING WATER", ""),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
+
+    assert "sound_description_translated" not in report.summary["by_type"]
+    assert "missing_translation" not in report.summary["by_type"]
+
+
 def test_normalize_sound_description_translations_blanks_non_dialogue_rows():
     from app.engines.translation_qa import normalize_sound_description_translations
 
@@ -586,11 +602,11 @@ def test_quality_checks_flag_auto_scientific_term_inconsistency():
     from app.engines.translation_qa import run_quality_checks
 
     blocks = [
-        _block(1, "Ischigualastia grazes nearby.", "伊斯基瓜拉斯兽在附近觅食。"),
-        _block(2, "A young Ischigualastia calls.", "幼年伊斯基瓜拉兽在呼唤。"),
-        _block(3, "The Ischigualastia keeps moving.", "伊斯基瓜拉斯提亚继续前进。"),
-        _block(4, "Without the Dicroidium, food is scarce.", "没有双脉蕨，食物变少。"),
-        _block(5, "Dicroidium spreads across the valley.", "双扇蕨遍布山谷。"),
+        _block(1, "Novaraptor grazes nearby.", "诺瓦盗龙在附近觅食。"),
+        _block(2, "A young Novaraptor calls.", "幼年诺法猛禽在呼唤。"),
+        _block(3, "The Novaraptor keeps moving.", "诺瓦盗龙继续前进。"),
+        _block(4, "Without the Ventosuchus, food is scarce.", "没有温托鳄，食物变少。"),
+        _block(5, "Ventosuchus spreads across the valley.", "文都鳄遍布山谷。"),
     ]
 
     report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
@@ -600,8 +616,8 @@ def test_quality_checks_flag_auto_scientific_term_inconsistency():
     assert {issue.block_id for issue in flagged} == {1, 2, 3, 4, 5}
     assert report.summary["by_type"]["scientific_term_inconsistent"] == 5
     messages = {issue.message for issue in flagged}
-    assert any("Ischigualastia" in message for message in messages)
-    assert any("Dicroidium" in message for message in messages)
+    assert any("Novaraptor" in message for message in messages)
+    assert any("Ventosuchus" in message for message in messages)
     assert all(issue.severity == "warning" for issue in flagged)
     assert all(issue.expected == "" for issue in flagged)
 
@@ -610,13 +626,76 @@ def test_quality_checks_allow_consistent_auto_scientific_term():
     from app.engines.translation_qa import run_quality_checks
 
     blocks = [
-        _block(1, "Ischigualastia grazes nearby.", "伊斯基瓜拉斯兽在附近觅食。"),
-        _block(2, "A young Ischigualastia calls.", "幼年伊斯基瓜拉斯兽在呼唤。"),
+        _block(1, "Novaraptor grazes nearby.", "诺瓦盗龙在附近觅食。"),
+        _block(2, "A young Novaraptor calls.", "幼年诺瓦盗龙在呼唤。"),
     ]
 
     report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
 
     assert "scientific_term_inconsistent" not in report.summary["by_type"]
+
+
+def test_quality_checks_use_curated_paleontology_terms():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Ischigualastia grazes nearby.", "伊斯基瓜拉斯兽在附近觅食。"),
+        _block(2, "Dicroidium spreads across the valley.", "双脉蕨遍布山谷。"),
+        _block(3, "Panphagia runs.", "泛食龙跑过。"),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
+
+    flagged = [issue for issue in report.issues if issue.type == "canonical_term_missing"]
+    assert {issue.block_id for issue in flagged} == {2, 3}
+    assert {issue.expected for issue in flagged} == {"双扇蕨", "泛噬龙"}
+
+
+def test_normalize_curated_domain_term_translations_uses_expected_target():
+    from app.engines.translation_qa import normalize_curated_domain_term_translations
+
+    blocks = [
+        _block(1, "Ischigualastia grazes nearby.", "伊斯基瓜拉兽在附近觅食。"),
+        _block(2, "Dicroidium spreads across the valley.", "双脉蕨遍布山谷。"),
+        _block(3, "Panphagia runs.", "泛食龙跑过。"),
+    ]
+
+    applied = normalize_curated_domain_term_translations(blocks)
+
+    assert {
+        (item["id"], item["source"], item["from"], item["to"])
+        for item in applied
+    } == {
+        (1, "Ischigualastia", "伊斯基瓜拉兽", "伊斯基瓜拉斯兽"),
+        (2, "Dicroidium", "双脉蕨", "双扇蕨"),
+        (3, "Panphagia", "泛食龙", "泛噬龙"),
+    }
+    assert blocks[0].translation == "伊斯基瓜拉斯兽在附近觅食。"
+    assert blocks[1].translation == "双扇蕨遍布山谷。"
+    assert blocks[2].translation == "泛噬龙跑过。"
+
+
+def test_normalize_scientific_term_translations_uses_majority_suffix_form():
+    from app.engines.translation_qa import normalize_scientific_term_translations
+
+    blocks = [
+        _block(1, "Novaraptor grazes nearby.", "诺瓦盗龙在附近觅食。"),
+        _block(2, "A young Novaraptor calls.", "幼年诺瓦盗兽在呼唤。"),
+        _block(3, "The Novaraptor keeps moving.", "诺瓦盗龙继续前进。"),
+        _block(4, "Novaraptor returns.", "幼年诺法猛禽在返回。"),
+    ]
+
+    applied = normalize_scientific_term_translations(blocks)
+
+    assert applied == [{
+        "id": 2,
+        "source": "Novaraptor",
+        "from": "诺瓦盗兽",
+        "to": "诺瓦盗龙",
+        "reason": "scientific_term_majority_variant",
+    }]
+    assert blocks[1].translation == "幼年诺瓦盗龙在呼唤。"
+    assert blocks[3].translation == "幼年诺法猛禽在返回。"
 
 
 def test_quality_checks_flag_core_term_inconsistency():

@@ -865,11 +865,11 @@ def test_translate_pipeline_does_not_auto_repair_scientific_terms_without_expect
         "\n".join([
             "1",
             "00:00:00,000 --> 00:00:04,000",
-            "Ischigualastia grazes nearby.",
+            "Novaraptor grazes nearby.",
             "",
             "2",
             "00:00:04,000 --> 00:00:08,000",
-            "A young Ischigualastia calls.",
+            "A young Novaraptor calls.",
             "",
         ]),
         encoding="utf-8",
@@ -892,8 +892,8 @@ def test_translate_pipeline_does_not_auto_repair_scientific_terms_without_expect
             self.primary = FakePrimary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
-            blocks[0].translation = "伊斯基瓜拉斯兽在附近觅食。"
-            blocks[1].translation = "幼年伊斯基瓜拉兽在呼唤。"
+            blocks[0].translation = "诺瓦盗龙在附近觅食。"
+            blocks[1].translation = "幼年诺法猛禽在呼唤。"
             return blocks
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
@@ -906,6 +906,83 @@ def test_translate_pipeline_does_not_auto_repair_scientific_terms_without_expect
     rounds = report["trace"]["auto_repair_rounds"]
     assert rounds[0]["candidate_blocks"] == 0
     assert rounds[0]["result"] == "no_repair_applied"
+
+
+def test_translate_pipeline_normalizes_curated_scientific_terms_before_model_repair(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transscientificcuratedrepair"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "Surviving Earth S01E01",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "\n".join([
+            "1",
+            "00:00:00,000 --> 00:00:04,000",
+            "Ischigualastia grazes nearby.",
+            "",
+            "2",
+            "00:00:04,000 --> 00:00:08,000",
+            "A young Ischigualastia calls.",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {"qa_auto_repair": True},
+    })
+
+    class FakePrimary:
+        def translate_batch(self, items, system_prompt):
+            raise AssertionError("safe curated term variants should normalize before model repair")
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            self.primary = FakePrimary()
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "伊斯基瓜拉斯兽在附近觅食。"
+            blocks[1].translation = "幼年伊斯基瓜拉兽在呼唤。"
+            return blocks
+
+        def _apply_results(self, blocks, results):
+            for block in blocks:
+                for result in results:
+                    if str(result.get("id")) == str(block.index):
+                        block.translation = result.get("translation", "")
+
+        def get_kb_usage_trace(self):
+            return {"project": {}, "matches": []}
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    translated = (pdir / "translated.srt").read_text(encoding="utf-8")
+    report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
+    assert "幼年伊斯基瓜拉斯兽在呼唤。" in translated
+    assert "canonical_term_missing" not in report["summary"]["by_type"]
+    assert report["repaired_blocks"] == [{
+        "id": 2,
+        "source": "Ischigualastia",
+        "from": "伊斯基瓜拉兽",
+        "to": "伊斯基瓜拉斯兽",
+        "reason": "curated_domain_term_variant",
+    }]
+    assert report["summary"]["quality_gate"]["passed"] is True
 
 
 def test_translate_pipeline_does_not_auto_repair_inferred_proper_names(tmp_path, monkeypatch):

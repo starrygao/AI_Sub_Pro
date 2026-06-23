@@ -87,6 +87,24 @@ _SCIENCE_TERMS: tuple[DomainTerm, ...] = (
         notes="curated science terminology: anomodont genus",
     ),
     DomainTerm(
+        source="Ischigualastia",
+        target="伊斯基瓜拉斯兽",
+        accepted_targets=("伊斯基瓜拉斯兽", "伊斯基瓜拉斯獸"),
+        notes="curated science terminology: kannemeyeriiform dicynodont genus",
+    ),
+    DomainTerm(
+        source="Dicroidium",
+        target="双扇蕨",
+        accepted_targets=("双扇蕨", "雙扇蕨"),
+        notes="curated science terminology: Triassic seed fern genus",
+    ),
+    DomainTerm(
+        source="Panphagia",
+        target="泛噬龙",
+        accepted_targets=("泛噬龙", "泛噬龍"),
+        notes="curated science terminology: early sauropodomorph dinosaur genus",
+    ),
+    DomainTerm(
         source="Cyamodus",
         target="豆齿龙",
         accepted_targets=("豆齿龙", "豆齒龍"),

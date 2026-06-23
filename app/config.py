@@ -64,7 +64,7 @@ DEFAULT_CONFIG = {
         "filter_repetitive": True,
         "repetitive_threshold": 3,
         "filter_interjections": True,
-        "quality_mode": "fast",
+        "quality_mode": "professional",
         "full_doc_mode": False,
         "use_translation_memory": True,
         "use_phrase_library": True,

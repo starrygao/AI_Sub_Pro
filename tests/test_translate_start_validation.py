@@ -175,7 +175,7 @@ def test_start_translate_generates_kb_suggestions_without_blocking_by_default(tm
     assert {"Brilliant Minds", "Oliver Wolf"} <= sources
 
 
-def test_start_translate_can_require_kb_suggestion_review(tmp_project_dir, monkeypatch):
+def test_start_translate_treats_kb_suggestions_as_soft_hints(tmp_project_dir, monkeypatch):
     from app.api import translate as translate_api
 
     _isolate_kb(tmp_project_dir, monkeypatch)
@@ -188,19 +188,18 @@ def test_start_translate_can_require_kb_suggestion_review(tmp_project_dir, monke
         lambda: {"translation": {"require_kb_suggestion_review": True}},
     )
 
-    def fail_register(*args, **kwargs):
-        raise AssertionError("task should not start while KB suggestions need review")
+    class DummyThread:
+        def start(self):
+            pass
 
-    monkeypatch.setattr(translate_api, "try_register_task", fail_register)
+    monkeypatch.setattr(translate_api, "try_register_task", lambda *args, **kwargs: DummyThread())
 
     r = client.post(f"/api/projects/{pid}/start-translate", json={"target_language": "English"})
 
-    assert r.status_code == 409
-    detail = r.json()["detail"]
-    assert detail["code"] == "kb_review_required"
-    assert detail["suggestions_count"] > 0
-    assert "知识库建议" in detail["message"]
-    assert translate_api.active_tasks == {}
+    assert r.status_code == 200
+    assert r.json()["status"] == "started"
+    saved = json.loads((tmp_project_dir / pid / "kb_suggestions.json").read_text(encoding="utf-8"))
+    assert len(saved["suggestions"]) > 0
 
 
 def test_start_translate_professional_mode_generates_suggestions_without_blocking(tmp_project_dir, monkeypatch):
@@ -230,7 +229,7 @@ def test_start_translate_professional_mode_generates_suggestions_without_blockin
     assert len(saved["suggestions"]) > 0
 
 
-def test_start_translate_allows_after_kb_suggestions_are_rejected(tmp_project_dir, monkeypatch):
+def test_start_translate_keeps_running_when_kb_suggestions_are_rejected(tmp_project_dir, monkeypatch):
     from app.api import translate as translate_api
 
     _isolate_kb(tmp_project_dir, monkeypatch)
@@ -243,13 +242,13 @@ def test_start_translate_allows_after_kb_suggestions_are_rejected(tmp_project_di
         lambda: {"translation": {"require_kb_suggestion_review": True}},
     )
 
-    monkeypatch.setattr(
-        translate_api,
-        "try_register_task",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("first launch should be blocked")),
-    )
+    class DummyThread:
+        def start(self):
+            pass
+
+    monkeypatch.setattr(translate_api, "try_register_task", lambda *args, **kwargs: DummyThread())
     first = client.post(f"/api/projects/{pid}/start-translate", json={"target_language": "English"})
-    assert first.status_code == 409
+    assert first.status_code == 200
 
     saved = json.loads((tmp_project_dir / pid / "kb_suggestions.json").read_text(encoding="utf-8"))
     sources = [item["source"] for item in saved["suggestions"]]
@@ -257,12 +256,6 @@ def test_start_translate_allows_after_kb_suggestions_are_rejected(tmp_project_di
         json.dumps({"rejected_sources": sources}),
         encoding="utf-8",
     )
-
-    class DummyThread:
-        def start(self):
-            pass
-
-    monkeypatch.setattr(translate_api, "try_register_task", lambda *args, **kwargs: DummyThread())
 
     r = client.post(f"/api/projects/{pid}/start-translate", json={"target_language": "English"})
 

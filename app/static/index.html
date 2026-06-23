@@ -1442,9 +1442,9 @@
               <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">翻译质量模式</label>
               <select x-model="settings.translation.quality_mode" aria-label="翻译质量模式" class="w-full px-3 py-2 rounded-xl text-[13px]">
                 <option value="fast">快速自动：生成建议但不阻塞翻译</option>
-                <option value="professional">专业辅助：术语软提示 + 质量报告</option>
+                <option value="professional">专业自动：候选提示 + 自动返工 + 质量门禁</option>
               </select>
-              <p class="text-[12px] text-surface-400 mt-1">专业辅助会使用已审定知识库、记忆和短语库；未审定候选只作软提示，未通过质量报告时需人工确认后再交付。</p>
+              <p class="text-[12px] text-surface-400 mt-1">专业自动会使用已审定知识库、记忆、短语库和自动候选；不会要求翻译前手工审校候选，未达标时由系统自动重点返工。</p>
             </div>
             <label class="flex items-start gap-3 cursor-pointer">
               <input type="checkbox" x-model="settings.translation.full_doc_mode" aria-label="启用一次性全量翻译" class="mt-1 w-4 h-4">
@@ -1471,7 +1471,7 @@
               <input type="checkbox" x-model="settings.translation.qa_auto_repair" aria-label="启用翻译后自动修复" class="mt-1 w-4 h-4">
               <div>
                 <p class="text-[13px] font-medium">翻译后自动修复确定性问题</p>
-                <p class="text-[12px] text-surface-400 mt-0.5">发现漏译、英文残留或术语缺失时，仅把问题行发回模型修复；会增加一次额外调用。</p>
+                <p class="text-[12px] text-surface-400 mt-0.5">发现漏译、英文残留、术语缺失或格式问题时，仅把问题行发回模型修复；会增加额外调用。</p>
               </div>
             </label>
             </div>

@@ -91,7 +91,7 @@ def test_build_translation_strategy_explains_profiles_retrieval_and_qa():
     assert strategy["retrieval"]["phrase_library"] is True
     assert strategy["retrieval"]["max_phrase_examples"] == 4
     assert strategy["quality_mode"]["id"] == "professional"
-    assert strategy["quality_mode"]["label"] == "专业辅助"
+    assert strategy["quality_mode"]["label"] == "专业自动"
     assert strategy["quality_mode"]["requires_kb_review"] is False
     assert strategy["quality_mode"]["quality_gate"] is True
     assert strategy["qa"]["auto_repair"] is True
@@ -100,7 +100,7 @@ def test_build_translation_strategy_explains_profiles_retrieval_and_qa():
     assert any(item["id"] == "native_subtitles" for item in strategy["recommendations"])
 
 
-def test_build_translation_strategy_allows_explicit_kb_review_gate():
+def test_build_translation_strategy_treats_kb_suggestions_as_soft_hints():
     from app.engines.translation_strategy import build_translation_strategy
 
     strategy = build_translation_strategy(
@@ -114,7 +114,7 @@ def test_build_translation_strategy_allows_explicit_kb_review_gate():
     )
 
     assert strategy["quality_mode"]["id"] == "professional"
-    assert strategy["quality_mode"]["requires_kb_review"] is True
+    assert strategy["quality_mode"]["requires_kb_review"] is False
 
 
 def test_build_translation_strategy_warns_when_auto_has_no_profile_or_terms():
@@ -128,8 +128,8 @@ def test_build_translation_strategy_warns_when_auto_has_no_profile_or_terms():
     assert strategy["status"] == "needs_context"
     assert strategy["active_profiles"] == []
     assert strategy["manual_terms_count"] == 0
-    assert strategy["quality_mode"]["id"] == "fast"
+    assert strategy["quality_mode"]["id"] == "professional"
     assert strategy["quality_mode"]["requires_kb_review"] is False
-    assert any(item["id"] == "professional_mode_available" for item in strategy["recommendations"])
+    assert not any(item["id"] == "professional_mode_available" for item in strategy["recommendations"])
     assert any(item["id"] == "choose_content_type" for item in strategy["recommendations"])
     assert any(item["id"] == "add_terms" for item in strategy["recommendations"])

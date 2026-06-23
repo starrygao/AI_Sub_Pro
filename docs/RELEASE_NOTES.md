@@ -2,6 +2,27 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.17 - Automatic Professional Quality Loop
+
+Highlights:
+
+- Professional mode is now the default automatic path: generated KB candidates
+  are soft translation hints, not a pre-translation human review gate.
+- Added deterministic cleanup for curated paleontology terms, safe
+  auto-detected scientific term majority variants, and stable short place/name
+  anchors.
+- Updated quality-report UI copy to recommend automatic rework or deferred
+  delivery instead of manual confirmation.
+
+Quality/Verification:
+
+- Targeted local tests passed: `175 passed`.
+- Local package target: `AI_Sub_Pro_v1.3.17.dmg`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.17.dmg` is the macOS package name for this release line.
+
 ## v1.3.16 - Historical Subtitle Polish Pass
 
 Highlights:

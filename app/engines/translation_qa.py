@@ -92,6 +92,7 @@ _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _CJK_TEXT_RE = re.compile(r"[\u3400-\u9fff]+")
 _REPEATED_CJK_RE = re.compile(r"([\u4e00-\u9fff])(?:[，,、\s]*\1){2,}")
 _ASCII_PUNCT_RE = re.compile(r"[?!,;:]")
+_SENTENCE_END_PUNCT_RE = re.compile(r"[.!?。！？]\s*$")
 _SCIENTIFIC_TARGET_SUFFIXES = (
     "兽",
     "獸",
@@ -114,11 +115,13 @@ _SCIENTIFIC_TARGET_SUFFIXES = (
     "鳥",
     "虫",
     "蟲",
+    "齿",
+    "齒",
     "亚",
     "亞",
 )
 _SCIENTIFIC_CONTEXT_ANCHOR_CHARS = set("一只个個头頭群在从從到有没沒无無不是和与與及它他她我你")
-_SCIENTIFIC_CHUNK_PREFIX_NOISE = set("一只个個头頭群")
+_SCIENTIFIC_CHUNK_PREFIX_NOISE = set("一只个個头頭群名叫为為是有没沒无無幼年成年雌雄小")
 _CORE_TERM_RULES = (
     {
         "source": "D-Day",
@@ -482,13 +485,17 @@ def _is_unbracketed_sound_description_label(value: str) -> bool:
     text = _clean_text(value)
     if not _is_sound_translation_label(text):
         return False
+    if find_domain_terms(text) or find_scientific_terms(text):
+        return False
     if _CJK_TEXT_RE.search(text):
         compact = _compact_subtitle_text(text)
         return bool(compact and len(compact) <= 12)
     words = re.findall(r"[A-Za-z]+", text)
+    letters = re.sub(r"[^A-Za-z]", "", text)
+    if _SENTENCE_END_PUNCT_RE.search(text) and letters != letters.upper():
+        return False
     if len(words) <= 3:
         return True
-    letters = re.sub(r"[^A-Za-z]", "", text)
     return bool(letters and letters == letters.upper())
 
 
@@ -696,7 +703,7 @@ def _scientific_signature_from_anchor(cjk_text: str, anchor: str, source: str) -
     return cjk_text[start:max_end] or anchor
 
 
-def _scientific_suffix_chunks(cjk_text: str) -> list[str]:
+def _scientific_suffix_chunks(cjk_text: str, source: str = "") -> list[str]:
     chunks: set[str] = set()
     for end in range(len(cjk_text)):
         prefix = cjk_text[:end + 1]
@@ -705,18 +712,15 @@ def _scientific_suffix_chunks(cjk_text: str) -> list[str]:
         for length in range(2, min(10, end + 1) + 1):
             if length <= end + 1:
                 chunks.add(cjk_text[end - length + 1:end + 1])
-    return sorted(chunks, key=_scientific_suffix_chunk_sort_key)
+    return sorted(chunks, key=lambda chunk: _scientific_suffix_chunk_sort_key(chunk, source))
 
 
-def _scientific_suffix_chunk_sort_key(chunk: str) -> tuple[int, int, int, str]:
+def _scientific_suffix_chunk_sort_key(chunk: str, source: str = "") -> tuple[int, int, int, int, str]:
     noise = 1 if chunk and chunk[0] in _SCIENTIFIC_CHUNK_PREFIX_NOISE and len(chunk) > 2 else 0
-    if len(chunk) == 3:
-        length_rank = 0
-    elif len(chunk) == 2:
-        length_rank = 1
-    else:
-        length_rank = 2 + len(chunk)
-    return noise, length_rank, len(chunk), chunk
+    limit = _scientific_target_length_limit(source) if source else 10
+    over_limit = 1 if len(chunk) > limit else 0
+    too_short = 1 if len(chunk) < 3 else 0
+    return noise, over_limit, too_short, -min(len(chunk), limit), chunk
 
 
 def _scientific_target_signature(translation: str, source: str, shared_anchor: str = "") -> str:
@@ -727,7 +731,7 @@ def _scientific_target_signature(translation: str, source: str, shared_anchor: s
         signature = _scientific_signature_from_anchor(cjk_text, shared_anchor, source)
         if signature:
             return signature
-    chunks = _scientific_suffix_chunks(cjk_text)
+    chunks = _scientific_suffix_chunks(cjk_text, source)
     if chunks:
         return chunks[0]
     limit = _scientific_target_length_limit(source)
@@ -738,30 +742,10 @@ def _scientific_term_consistency_issues(
     source_by_id: dict[str, str],
     translation_by_id: dict[str, str],
 ) -> list[QualityIssue]:
-    observations_by_source: dict[str, list[dict]] = {}
-    canonical_source: dict[str, str] = {}
-    for block_id, source_text in source_by_id.items():
-        seen_in_block: set[str] = set()
-        for match in find_scientific_terms(source_text):
-            key = match.source.casefold()
-            if key in seen_in_block:
-                continue
-            seen_in_block.add(key)
-            translation = translation_by_id.get(block_id, "")
-            if not translation.strip():
-                continue
-            canonical_source.setdefault(key, match.source)
-            observations_by_source.setdefault(key, []).append({
-                "block_id": block_id,
-                "source_text": source_text,
-                "translation": translation,
-            })
-
     issues: list[QualityIssue] = []
-    for key, observations in observations_by_source.items():
+    for source, observations in _scientific_observations(source_by_id, translation_by_id).items():
         if len(observations) < 2:
             continue
-        source = canonical_source.get(key, key)
         cjk_translations = [
             _cjk_compact_text(item["translation"])
             for item in observations
@@ -797,6 +781,173 @@ def _scientific_term_consistency_issues(
                 translation=_clean_text(item.get("translation", "")),
             ))
     return issues
+
+
+def _scientific_observations(
+    source_by_id: dict[str, str],
+    translation_by_id: dict[str, str],
+) -> dict[str, list[dict]]:
+    observations_by_source: dict[str, list[dict]] = {}
+    canonical_source: dict[str, str] = {}
+    for block_id, source_text in source_by_id.items():
+        seen_in_block: set[str] = set()
+        for match in find_scientific_terms(source_text):
+            key = match.source.casefold()
+            if key in seen_in_block:
+                continue
+            seen_in_block.add(key)
+            translation = translation_by_id.get(block_id, "")
+            if not translation.strip():
+                continue
+            canonical_source.setdefault(key, match.source)
+            observations_by_source.setdefault(key, []).append({
+                "block_id": block_id,
+                "source_text": source_text,
+                "translation": translation,
+            })
+    return {
+        canonical_source.get(key, key): observations
+        for key, observations in observations_by_source.items()
+    }
+
+
+def _rank_scientific_canonical_signature(signatures: list[str]) -> str:
+    counts: dict[str, int] = {}
+    for signature in signatures:
+        if not signature:
+            continue
+        counts[signature] = counts.get(signature, 0) + 1
+    ranked = sorted(
+        counts,
+        key=lambda item: (
+            -counts[item],
+            0 if _ends_with_scientific_target_suffix(item) else 1,
+            len(item),
+            item,
+        ),
+    )
+    if len(ranked) < 2:
+        return ""
+    winner = ranked[0]
+    runner_up = ranked[1]
+    if counts[winner] < 2 or counts[winner] == counts[runner_up]:
+        return ""
+    if len(winner) < 2 or not _ends_with_scientific_target_suffix(winner):
+        return ""
+    return winner
+
+
+def normalize_scientific_term_translations(blocks: Iterable) -> list[dict]:
+    """Normalize minority auto-detected scientific term variants by majority."""
+    active_blocks = [
+        block for block in (blocks or [])
+        if not getattr(block, "filtered", False)
+        and isinstance(getattr(block, "index", None), int)
+    ]
+    if not active_blocks:
+        return []
+
+    source_by_id = {
+        str(getattr(block, "index")): getattr(block, "text", "")
+        for block in active_blocks
+    }
+    translation_by_id = {
+        str(getattr(block, "index")): getattr(block, "translation", "")
+        for block in active_blocks
+    }
+    by_id = {str(getattr(block, "index")): block for block in active_blocks}
+    applied: list[dict] = []
+
+    for source, observations in _scientific_observations(source_by_id, translation_by_id).items():
+        if len(observations) < 3:
+            continue
+        cjk_translations = [
+            _cjk_compact_text(item["translation"])
+            for item in observations
+            if _cjk_compact_text(item["translation"])
+        ]
+        shared_anchor = _common_scientific_anchor(cjk_translations)
+        signatures = []
+        for item in observations:
+            signature = _scientific_target_signature(
+                item["translation"],
+                source,
+                shared_anchor,
+            )
+            item["target_signature"] = signature
+            signatures.append(signature)
+        canonical = _rank_scientific_canonical_signature(signatures)
+        if not canonical:
+            continue
+
+        for item in observations:
+            signature = item.get("target_signature", "")
+            if not signature or signature == canonical or signature.startswith(canonical):
+                continue
+            if not _ends_with_scientific_target_suffix(signature):
+                continue
+            block_id = str(item.get("block_id", "")).strip()
+            block = by_id.get(block_id)
+            if block is None:
+                continue
+            current = getattr(block, "translation", "")
+            if not isinstance(current, str) or signature not in current:
+                continue
+            updated = current.replace(signature, canonical, 1)
+            if updated == current:
+                continue
+            block.translation = updated
+            applied.append({
+                "id": getattr(block, "index", None),
+                "source": source,
+                "from": signature,
+                "to": canonical,
+                "reason": "scientific_term_majority_variant",
+            })
+    return applied
+
+
+def normalize_curated_domain_term_translations(
+    blocks: Iterable,
+    *,
+    project_kb: Optional[ProjectKb] = None,
+) -> list[dict]:
+    """Normalize safely identifiable curated domain-term variants."""
+    applied: list[dict] = []
+    for block in blocks or []:
+        if getattr(block, "filtered", False):
+            continue
+        source = _clean_text(getattr(block, "text", ""))
+        translation = _clean_text(getattr(block, "translation", ""))
+        if not source or not translation:
+            continue
+        for match in find_domain_terms(source):
+            if match_is_overridden_by_project_kb(match, project_kb):
+                continue
+            term = match.term
+            if term.target_is_present(translation):
+                continue
+            signature = _scientific_target_signature(translation, term.source)
+            if (
+                not signature
+                or signature == term.target
+                or signature not in translation
+                or not _ends_with_scientific_target_suffix(signature)
+            ):
+                continue
+            updated = translation.replace(signature, term.target, 1)
+            if updated == translation:
+                continue
+            block.translation = updated
+            applied.append({
+                "id": getattr(block, "index", None),
+                "source": term.source,
+                "from": signature,
+                "to": term.target,
+                "reason": "curated_domain_term_variant",
+            })
+            translation = updated
+    return applied
 
 
 def _compact_subtitle_text(value: str) -> str:
@@ -1181,6 +1332,8 @@ def build_repair_prompt(
         parts.append("行长超标时优先在语义边界换行或压缩，不要为了换行添加新信息。")
     if "core_term_inconsistent" in issue_types:
         parts.append("核心术语不一致时必须使用 Issue 中 expected 指定的译法，并统一同一源术语。")
+    if issue_types & {"kb_term_missing", "manual_term_missing", "canonical_term_missing"}:
+        parts.append("术语缺失时必须使用 Issue 中 expected 指定的译法；不要改写已审定或策展术语。")
     parts.append("")
     parts.append("待修复字幕:")
     for item in items:

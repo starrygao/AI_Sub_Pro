@@ -13,6 +13,14 @@ _PROPER_NAME_RE = re.compile(
 )
 _CJK_RE = re.compile(r"[\u3400-\u9fff]+")
 _LEADING_NAME_STOPWORDS = {"A", "An", "The", "This", "That", "These", "Those"}
+_LEADING_EVENT_STOPWORDS = {
+    "After",
+    "Before",
+    "During",
+    "Once",
+    "When",
+    "While",
+}
 _LEADING_CONTEXT_PREPOSITIONS = {
     "At",
     "By",
@@ -77,6 +85,7 @@ _SOURCE_PERSON_TITLE_TOKENS = {
 }
 _SOURCE_ORG_UNIT_TOKENS = {
     "Agency",
+    "Airport",
     "Bureau",
     "Command",
     "Committee",
@@ -84,9 +93,13 @@ _SOURCE_ORG_UNIT_TOKENS = {
     "Desk",
     "Division",
     "Headquarters",
+    "House",
     "Office",
+    "Republic",
     "Section",
     "Service",
+    "Station",
+    "Tree",
     "Unit",
 }
 _COMMON_TITLE_PHRASES = {
@@ -156,6 +169,9 @@ _SHORT_NAME_CONTEXT_CHARS = {
     "吗",
 }
 _LONG_NAME_IDENTITY_SUFFIXES = (
+    "宫",
+    "屋",
+    "树",
     "医院",
     "大学",
     "学院",
@@ -184,6 +200,13 @@ _LONG_NAME_IDENTITY_SUFFIXES = (
     "街",
     "路",
     "桥",
+)
+_SHORT_PLACE_IDENTITY_SUFFIXES = (
+    "宫",
+    "屋",
+    "树",
+    "机场",
+    "共和国",
 )
 _LONG_NAME_IDENTITY_PREFIXES = (
     "老",
@@ -331,6 +354,10 @@ def _is_supported_proper_name(source_text: str, start: int, name: str) -> bool:
     if len(tokens) < 2:
         return False
     if any(len(token) < 2 for token in tokens):
+        return False
+    if all(token.strip(".") in _SOURCE_PERSON_TITLE_TOKENS for token in tokens):
+        return False
+    if tokens[0] in _LEADING_EVENT_STOPWORDS:
         return False
     if tokens[0] in _LEADING_NAME_STOPWORDS and len(tokens) < 3:
         return False
@@ -577,6 +604,8 @@ def _has_competing_name_suffixes(
     proper_name: str,
     has_title_context: bool = False,
 ) -> bool:
+    if any(anchor.endswith(suffix) for suffix in _SHORT_PLACE_IDENTITY_SUFFIXES):
+        return False
     if len(anchor) >= _estimated_cjk_name_length_floor(proper_name, has_title_context):
         return False
     suffixes = [_suffix_after_anchor(text, anchor) for text in translations]
