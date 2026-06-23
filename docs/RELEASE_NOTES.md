@@ -2,6 +2,29 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.13 - Proper Name Normalization Pass
+
+Highlights:
+
+- Added a conservative deterministic post-translation pass for inferred proper
+  names: it only normalizes minority variants when a strict majority target
+  form can be extracted safely.
+- The translation quality persistence flow now reruns QA after deterministic
+  proper-name normalization, so future reports reflect the cleaned result.
+- Existing local project outputs were reviewed and updated for known subtitle
+  name/term consistency issues.
+
+Quality/Verification:
+
+- Targeted local tests passed: `56 passed`.
+- Existing exported project subtitle files were verified with `0` music-symbol
+  hits and `0` remaining `proper_name_inconsistent` report entries.
+- Local package target: `AI_Sub_Pro_v1.3.13.dmg`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.13.dmg` is the macOS package name for this release line.
+
 ## v1.3.12 - Subtitle Music Symbol Cleanup
 
 Highlights:

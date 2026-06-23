@@ -1360,6 +1360,7 @@ def _persist_translation_quality_report(
     """Run deterministic QA and persist report artifacts without failing translation."""
     try:
         from app.engines.knowledge import _get_singleton
+        from app.engines.proper_name_normalizer import normalize_inferred_proper_name_variants
         from app.engines.translation_qa import run_quality_checks, save_quality_report
 
         project_kb = _get_singleton().select_for_project(project)
@@ -1430,6 +1431,19 @@ def _persist_translation_quality_report(
                 previous_score = current_score
                 if current_score == (0, 0, 0):
                     break
+        normalized_names = normalize_inferred_proper_name_variants(blocks)
+        if normalized_names:
+            repaired.extend(normalized_names)
+            trace.setdefault("deterministic_postprocess", {})[
+                "proper_name_normalized_blocks"
+            ] = normalized_names
+            report = run_quality_checks(
+                blocks,
+                project_kb=project_kb,
+                target_language=target_language,
+                meta_info=project,
+                trace=trace,
+            )
         if repaired:
             report.repaired_blocks = repaired
         report.trace = trace

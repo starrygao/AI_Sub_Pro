@@ -345,6 +345,48 @@ def test_quality_checks_run_proper_name_metric_for_common_chinese_aliases():
         assert {issue.block_id for issue in flagged} == {1, 2}
 
 
+def test_normalize_inferred_proper_name_variants_uses_majority_form():
+    from app.engines.proper_name_normalizer import normalize_inferred_proper_name_variants
+
+    blocks = [
+        _block(1, "You see Samia Zahir today?", "你今天见到萨米娅·扎希尔了？"),
+        _block(
+            2,
+            "Samia Zahir spilled to him when we tried to recruit her.",
+            "我们招募萨米娅·查希尔时 她向他泄了底",
+        ),
+        _block(3, "Through Samia Zahir.", "通过萨米娅·扎希尔。"),
+        _block(4, "Mikkel De Bruyne.", "米克尔·德布劳内。"),
+        _block(5, "De Bruyne is the vehicle here?", "德布鲁因就是这次行动的载体吗？"),
+        _block(6, "Mr. De Bruyne deserves as much as I do.", "德布劳内先生也功不可没。"),
+    ]
+
+    applied = normalize_inferred_proper_name_variants(blocks)
+
+    assert {
+        (item["id"], item["from"], item["to"])
+        for item in applied
+    } == {
+        (2, "萨米娅·查希尔", "萨米娅·扎希尔"),
+        (5, "德布鲁因", "德布劳内"),
+    }
+    assert blocks[1].translation == "我们招募萨米娅·扎希尔时 她向他泄了底"
+    assert blocks[4].translation == "德布劳内就是这次行动的载体吗？"
+
+
+def test_normalize_inferred_proper_name_variants_skips_ties():
+    from app.engines.proper_name_normalizer import normalize_inferred_proper_name_variants
+
+    blocks = [
+        _block(1, "Li Na arrived.", "李娜到了。"),
+        _block(2, "Li Na smiled.", "丽娜笑了。"),
+    ]
+
+    assert normalize_inferred_proper_name_variants(blocks) == []
+    assert blocks[0].translation == "李娜到了。"
+    assert blocks[1].translation == "丽娜笑了。"
+
+
 def test_quality_checks_do_not_flag_same_long_cjk_name_in_different_contexts():
     from app.engines.translation_qa import run_quality_checks
 
