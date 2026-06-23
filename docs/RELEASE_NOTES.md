@@ -2,6 +2,30 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.14 - SRT QA Warning Refresh
+
+Highlights:
+
+- SRT parsing now preserves cue line breaks, preventing already-wrapped
+  subtitles from being rechecked as one long line.
+- Music-only cues such as `♪` are treated as non-dialogue sound cues instead
+  of missing translations.
+- Deterministic post-processing now blanks full sound-description cue
+  translations before QA/export, including multi-line sound-only cues.
+- Refreshed the local S02E07 project report and exported subtitles so its QA
+  report has no remaining warnings.
+
+Quality/Verification:
+
+- Targeted local tests passed: `116 passed`.
+- S02E07 QA report verified with `0` issues, `0` warnings, and `0`
+  music-symbol hits in exported subtitles.
+- Local package target: `AI_Sub_Pro_v1.3.14.dmg`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.14.dmg` is the macOS package name for this release line.
+
 ## v1.3.13 - Proper Name Normalization Pass
 
 Highlights:

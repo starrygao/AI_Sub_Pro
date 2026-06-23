@@ -1361,13 +1361,22 @@ def _persist_translation_quality_report(
     try:
         from app.engines.knowledge import _get_singleton
         from app.engines.proper_name_normalizer import normalize_inferred_proper_name_variants
-        from app.engines.translation_qa import run_quality_checks, save_quality_report
+        from app.engines.translation_qa import (
+            normalize_sound_description_translations,
+            run_quality_checks,
+            save_quality_report,
+        )
 
         project_kb = _get_singleton().select_for_project(project)
         trace_obj = getattr(translator, "last_quality_trace", None)
         trace = trace_obj.to_dict() if hasattr(trace_obj, "to_dict") else {}
         if not isinstance(trace, dict):
             trace = {}
+        repaired = normalize_sound_description_translations(blocks)
+        if repaired:
+            trace.setdefault("deterministic_postprocess", {})[
+                "sound_description_blank_blocks"
+            ] = repaired
         report = run_quality_checks(
             blocks,
             project_kb=project_kb,
@@ -1375,7 +1384,6 @@ def _persist_translation_quality_report(
             meta_info=project,
             trace=trace,
         )
-        repaired = []
         repair_enabled = _qa_auto_repair_enabled(cfg)
         if repair_enabled and report.issues:
             repair_rounds = trace.setdefault("auto_repair_rounds", [])

@@ -87,6 +87,55 @@ def test_quality_checks_skip_style_rules_for_inaudible_music_markers():
     assert report.summary["by_type"] == {"sound_description_translated": 1}
 
 
+def test_quality_checks_allow_blank_music_only_rows():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "♪", ""),
+        _block(2, "🎵", ""),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=4)
+
+    assert report.status == "ok"
+    assert report.issues == []
+    assert report.unresolved_blocks == []
+
+
+def test_normalize_sound_description_translations_blanks_non_dialogue_rows():
+    from app.engines.translation_qa import normalize_sound_description_translations
+
+    blocks = [
+        _block(1, "{\\an8}[phone ringing]", "{\\an8}[电话响]"),
+        _block(2, "- [elevator bell chimes]\n- [phone vibrating]", "[电梯铃响]\n[手机振动]"),
+        _block(3, "<i>- Please leave a message.</i>\n- [phone vibrates]", "请留言。\n[手机振动]"),
+        _block(4, "Hello.", "你好。"),
+    ]
+
+    applied = normalize_sound_description_translations(blocks)
+
+    assert applied == [
+        {
+            "id": 1,
+            "source": "{\\an8}[phone ringing]",
+            "from": "{\\an8}[电话响]",
+            "to": "",
+            "reason": "sound_description_blank",
+        },
+        {
+            "id": 2,
+            "source": "- [elevator bell chimes]\n- [phone vibrating]",
+            "from": "[电梯铃响]\n[手机振动]",
+            "to": "",
+            "reason": "sound_description_blank",
+        },
+    ]
+    assert blocks[0].translation == ""
+    assert blocks[1].translation == ""
+    assert blocks[2].translation == "请留言。\n[手机振动]"
+    assert blocks[3].translation == "你好。"
+
+
 def test_quality_report_serializes_json_and_markdown(tmp_path):
     from app.engines.translation_qa import QualityIssue, TranslationQaReport, save_quality_report
 

@@ -109,6 +109,19 @@ def test_parse_srt_skips_non_positive_duration_blocks():
     assert [b.text for b in blocks] == ["good"]
 
 
+def test_parse_srt_preserves_cue_line_breaks():
+    from app.utils.srt import parse_srt
+
+    blocks = parse_srt(
+        "1\n"
+        "00:00:00,000 --> 00:00:02,000\n"
+        "第一行\n"
+        "第二行\n"
+    )
+
+    assert blocks[0].text == "第一行\n第二行"
+
+
 def test_parse_srt_skips_out_of_range_time_fields():
     from app.utils.srt import parse_srt, parse_time, parse_time_strict
 

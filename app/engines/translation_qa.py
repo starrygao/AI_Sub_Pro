@@ -84,8 +84,9 @@ def _clean_text(value) -> str:
 
 _ENGLISH_RE = re.compile(r"[A-Za-z]{3,}")
 _SOUND_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
+_SOUND_SEQUENCE_RE = re.compile(r"^\s*(?:\[[^\]]+\]\s*)+$")
 _ASS_OVERRIDE_RE = re.compile(r"\{\\[^}]+\}")
-_MUSIC_MARK_RE = re.compile(r"[♪♫♬]+")
+_MUSIC_MARK_RE = re.compile(r"[♪♫♬🎵🎶]+")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _CJK_TEXT_RE = re.compile(r"[\u3400-\u9fff]+")
 _REPEATED_CJK_RE = re.compile(r"([\u4e00-\u9fff])(?:[，,、\s]*\1){2,}")
@@ -256,6 +257,7 @@ def _sound_description_probe_text(value: str) -> str:
     text = _HTML_TAG_RE.sub("", value or "")
     text = _ASS_OVERRIDE_RE.sub("", text)
     text = _MUSIC_MARK_RE.sub("", text)
+    text = re.sub(r"(^|\s)[-–—]\s*(?=\[)", r"\1", text)
     text = re.sub(r"\s+", " ", text).strip()
     text = re.sub(r"^(?:[-–—]\s*)+", "", text).strip()
     text = re.sub(r"(?:\s*[-–—])+$", "", text).strip()
@@ -263,7 +265,33 @@ def _sound_description_probe_text(value: str) -> str:
 
 
 def _is_sound_description(source: str) -> bool:
-    return bool(_SOUND_RE.match(_sound_description_probe_text(source)))
+    probe = _sound_description_probe_text(source)
+    return (
+        bool(_SOUND_RE.match(probe))
+        or bool(_SOUND_SEQUENCE_RE.match(probe))
+        or (not probe and bool(_MUSIC_MARK_RE.search(source or "")))
+    )
+
+
+def normalize_sound_description_translations(blocks: Iterable) -> list[dict]:
+    """Blank non-dialogue sound-description translations before QA/export."""
+    applied: list[dict] = []
+    for block in blocks or []:
+        if getattr(block, "filtered", False):
+            continue
+        source = _clean_text(getattr(block, "text", ""))
+        translation = _clean_text(getattr(block, "translation", ""))
+        if not source or not translation or not _is_sound_description(source):
+            continue
+        block.translation = ""
+        applied.append({
+            "id": getattr(block, "index", None),
+            "source": source,
+            "from": translation,
+            "to": "",
+            "reason": "sound_description_blank",
+        })
+    return applied
 
 
 def _kb_terms(project_kb: Optional[ProjectKb]) -> list[tuple[str, str]]:

@@ -184,7 +184,7 @@ def parse_srt(content: str) -> List[SubtitleBlock]:
             continue
         if end <= start:
             continue
-        text = " ".join(lines[time_idx + 1 :])
+        text = "\n".join(lines[time_idx + 1 :])
         if text:
             blocks.append(SubtitleBlock(index=idx, start=start, end=end, text=text))
     return blocks
