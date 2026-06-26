@@ -88,6 +88,7 @@ function app() {
     homeSourceMode: 'local',
     newVideoPath: '',
     fileImporting: false,
+    dropClickSuppressUntil: 0,
     projectCreating: false,
     projectActionPending: '',
     asrLanguage: 'auto',
@@ -949,8 +950,53 @@ function app() {
     },
 
     isVideoFile(file) {
-      const name = String(file?.name || file?.path || '').toLowerCase();
-      return this.isVideoPath(name);
+      return this.isVideoPath(file?.name) || this.isVideoPath(file?.path);
+    },
+
+    isDesktopShell() {
+      if (typeof window === 'undefined') return false;
+      return !!(window.pywebview?.api || window.electronAPI);
+    },
+
+    normalizeDroppedPath(raw) {
+      let value = String(raw || '').trim();
+      if (!value || value.startsWith('#')) return '';
+      if (value.startsWith('file://')) {
+        value = value.replace(/^file:\/\/(?:localhost)?/i, '');
+        const suffixIndex = value.search(/[?#]/);
+        if (suffixIndex >= 0) value = value.slice(0, suffixIndex);
+        try {
+          value = decodeURIComponent(value);
+        } catch(e) {
+          // Keep the raw path when the drag payload is not valid URI encoding.
+        }
+      }
+      return value.startsWith('/') ? value.trim() : '';
+    },
+
+    droppedLocalPaths(event) {
+      const dataTransfer = event?.dataTransfer;
+      const rawPaths = [];
+      const files = Array.from(dataTransfer?.files || []);
+      for (const file of files) {
+        if (typeof file?.path === 'string' && file.path.trim()) rawPaths.push(file.path);
+      }
+      if (typeof dataTransfer?.getData === 'function') {
+        for (const type of ['text/uri-list', 'text/plain']) {
+          const payload = dataTransfer.getData(type);
+          if (!payload) continue;
+          rawPaths.push(...String(payload).split(/\r?\n/));
+        }
+      }
+      const seen = new Set();
+      const paths = [];
+      for (const rawPath of rawPaths) {
+        const path = this.normalizeDroppedPath(rawPath);
+        if (!path || seen.has(path)) continue;
+        seen.add(path);
+        paths.push(path);
+      }
+      return paths;
     },
 
     homeSourceOptions() {
@@ -1205,6 +1251,11 @@ function app() {
       await this.openFilePicker();
     },
 
+    async handleDropZoneClick() {
+      if (Date.now() < Number(this.dropClickSuppressUntil || 0)) return;
+      await this.openPrimaryPicker();
+    },
+
     async quickStartPrimary() {
       if (this.homeSourceMode === 'batch') {
         await this.quickStartBatch();
@@ -1336,20 +1387,41 @@ function app() {
       }
     },
 
-    async useSelectedVideoFile(file) {
-      if (!file) return;
-      if (!this.isVideoFile(file)) {
+    async useSelectedVideoPath(path) {
+      const localPath = String(path || '').trim();
+      if (!localPath || !this.isVideoPath(localPath)) {
         this.toast('请拖入视频文件（MP4、MKV、AVI 等）', 'error');
         return;
       }
       if (this.fileImporting || this.projectCreating) return;
       this.fileImporting = true;
       try {
-        if (file.path) {
-          this.newVideoPath = file.path;
-          await this.quickStart({ allowDuringImport: true });
-          return;
-        }
+        this.newVideoPath = localPath;
+        await this.quickStart({ allowDuringImport: true });
+      } catch(e) {
+        this.toast('文件读取失败: ' + e.message, 'error');
+      } finally {
+        this.fileImporting = false;
+      }
+    },
+
+    async useSelectedVideoFile(file) {
+      if (!file) return;
+      if (!this.isVideoFile(file)) {
+        this.toast('请拖入视频文件（MP4、MKV、AVI 等）', 'error');
+        return;
+      }
+      if (typeof file?.path === 'string' && file.path.trim()) {
+        await this.useSelectedVideoPath(file.path);
+        return;
+      }
+      if (this.isDesktopShell()) {
+        this.toast('拖拽未获得视频本地路径，请点击“选择视频文件”导入，避免复制大视频。', 'error');
+        return;
+      }
+      if (this.fileImporting || this.projectCreating) return;
+      this.fileImporting = true;
+      try {
         this.toast('正在读取视频文件...');
         this.newVideoPath = await this.uploadVideoFile(file);
         await this.quickStart({ allowDuringImport: true });
@@ -2632,13 +2704,15 @@ function app() {
 
     // Drag & Drop
     async handleDrop(event) {
-      const files = event.dataTransfer?.files;
-      if (!files || files.length === 0) return;
-      const droppedFiles = Array.from(files);
+      event?.preventDefault?.();
+      event?.stopPropagation?.();
+      this.dropClickSuppressUntil = Date.now() + 800;
+
+      const files = event?.dataTransfer?.files;
+      const droppedFiles = Array.from(files || []);
+      const localPaths = this.droppedLocalPaths(event);
+      if (droppedFiles.length === 0 && localPaths.length === 0) return;
       if (this.homeSourceMode === 'batch') {
-        const localPaths = droppedFiles
-          .map((file) => (typeof file?.path === 'string' ? file.path.trim() : ''))
-          .filter(Boolean);
         const videoPaths = localPaths.filter((path) => this.isVideoPath(path));
         if (videoPaths.length > 0) {
           await this.startBatchVideoPaths(videoPaths, {sourceLabel: '拖入的视频文件'});
@@ -2650,6 +2724,11 @@ function app() {
           return;
         }
         this.toast('请使用桌面版选择文件夹，或粘贴文件夹路径后批量开始', 'error');
+        return;
+      }
+      const videoPath = localPaths.find((path) => this.isVideoPath(path));
+      if (videoPath) {
+        await this.useSelectedVideoPath(videoPath);
         return;
       }
       await this.useSelectedVideoFile(droppedFiles[0]);

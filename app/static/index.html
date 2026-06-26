@@ -130,12 +130,12 @@
                  :aria-label="homeSourceMode === 'batch' ? '选择或拖入视频文件夹' : '选择或拖入视频文件'"
                  :aria-disabled="fileImporting || projectCreating"
                  :class="(fileImporting || projectCreating) ? 'opacity-60 cursor-wait' : ''"
-                 @dragover.prevent="$el.classList.add('drag-active')"
-                 @dragleave.prevent="$el.classList.remove('drag-active')"
-                 @drop.prevent="handleDrop($event); $el.classList.remove('drag-active')"
+                 @dragover.stop.prevent="$el.classList.add('drag-active')"
+                 @dragleave.stop.prevent="$el.classList.remove('drag-active')"
+                 @drop.stop.prevent="handleDrop($event); $el.classList.remove('drag-active')"
                  @keydown.enter.prevent="openPrimaryPicker()"
                  @keydown.space.prevent="openPrimaryPicker()"
-                 @click="openPrimaryPicker()">
+                 @click="handleDropZoneClick()">
               <div class="flex flex-col items-center gap-4">
                 <div class="w-14 h-14 rounded-2xl bg-surface-100 flex items-center justify-center group-hover:bg-accent/10 transition-colors">
                   <svg class="w-7 h-7 text-surface-400 group-hover:text-accent transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">

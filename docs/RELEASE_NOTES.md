@@ -2,6 +2,26 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.18 - Desktop Drag Import Stability
+
+Highlights:
+
+- Desktop drag-and-drop now resolves Finder `file://` payloads to local video
+  paths before project creation.
+- When the desktop shell cannot provide a local path for a dragged video, the
+  UI now refuses the large upload fallback and shows a clear picker instruction.
+- The drop zone stops the follow-up click event after a drop, avoiding accidental
+  native picker opens.
+
+Quality/Verification:
+
+- Targeted local tests passed: `67 passed`.
+- Local package target: `AI_Sub_Pro_v1.3.18.dmg`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.18.dmg` is the macOS package name for this release line.
+
 ## v1.3.17 - Automatic Professional Quality Loop
 
 Highlights:

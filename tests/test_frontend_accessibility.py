@@ -12,6 +12,7 @@ def test_home_file_entry_controls_have_accessible_names():
     assert ":aria-label=\"homeSourceMode === 'batch' ? '选择或拖入视频文件夹' : '选择或拖入视频文件'\"" in html
     assert '@keydown.enter.prevent="openPrimaryPicker()"' in html
     assert '@keydown.space.prevent="openPrimaryPicker()"' in html
+    assert '@click="handleDropZoneClick()"' in html
     assert ':aria-label="homeManualPathAriaLabel()"' in html
 
 

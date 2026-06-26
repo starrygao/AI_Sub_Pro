@@ -195,6 +195,204 @@ def test_selected_file_path_can_start_project_during_import_flow():
     )
 
 
+def test_drop_video_uri_uses_local_path_without_uploading_large_file():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const starts = [];
+          const event = {
+            prevented: false,
+            stopped: false,
+            preventDefault() { this.prevented = true; },
+            stopPropagation() { this.stopped = true; },
+            dataTransfer: {
+              files: [{name: 'My Movie.mkv'}],
+              getData(type) {
+                return type === 'text/uri-list'
+                  ? 'file:///Users/me/Movies/My%20Movie.mkv\\n'
+                  : '';
+              },
+            },
+          };
+          state.toast = () => {};
+          state.uploadVideoFile = async () => {
+            throw new Error('dragged local videos should not be uploaded');
+          };
+          state.quickStart = async (options) => {
+            starts.push([state.newVideoPath, options]);
+          };
+
+          await state.handleDrop(event);
+
+          if (!event.prevented || !event.stopped) {
+            throw new Error('expected drop event propagation to be stopped and prevented');
+          }
+          if (starts.length !== 1) {
+            throw new Error(`expected one local quick start, got ${JSON.stringify(starts)}`);
+          }
+          if (starts[0][0] !== '/Users/me/Movies/My Movie.mkv') {
+            throw new Error(`expected decoded local path, got ${starts[0][0]}`);
+          }
+          if (!starts[0][1]?.allowDuringImport) {
+            throw new Error(`expected import-aware quick start, got ${JSON.stringify(starts[0][1])}`);
+          }
+          if (state.fileImporting !== false) {
+            throw new Error(`expected fileImporting reset, got ${state.fileImporting}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_desktop_drop_without_path_refuses_video_upload_fallback():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          window: {pywebview: {api: {}}},
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          let uploads = 0;
+          let starts = 0;
+          const toasts = [];
+          state.toast = (message, type) => { toasts.push([message, type || 'success']); };
+          state.uploadVideoFile = async () => {
+            uploads += 1;
+            return '/tmp/uploaded.mkv';
+          };
+          state.quickStart = async () => { starts += 1; };
+
+          await state.handleDrop({
+            dataTransfer: {
+              files: [{name: 'movie.mkv'}],
+              getData() { return ''; },
+            },
+          });
+
+          if (uploads !== 0) throw new Error(`expected no desktop video upload fallback, got ${uploads}`);
+          if (starts !== 0) throw new Error(`expected no quick start without a local path, got ${starts}`);
+          if (!toasts.some((toast) => String(toast[0]).includes('未获得视频本地路径'))) {
+            throw new Error(`expected clear missing-path toast, got ${JSON.stringify(toasts)}`);
+          }
+          if (state.fileImporting !== false) {
+            throw new Error(`expected fileImporting to stay false, got ${state.fileImporting}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_batch_drop_uri_list_starts_video_paths_without_folder_dialog():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const calls = [];
+          state.homeSourceMode = 'batch';
+          state.toast = () => {};
+          state.startBatchVideoPaths = async (paths, options) => {
+            calls.push([paths, options]);
+          };
+          state.quickStartBatch = async () => {
+            throw new Error('video URI drops should not open folder discovery');
+          };
+
+          await state.handleDrop({
+            dataTransfer: {
+              files: [],
+              getData(type) {
+                return type === 'text/uri-list'
+                  ? 'file:///Shows/A.mkv\\nfile:///Shows/B.mp4\\n'
+                  : '';
+              },
+            },
+          });
+
+          if (calls.length !== 1) {
+            throw new Error(`expected one batch path start, got ${JSON.stringify(calls)}`);
+          }
+          if (JSON.stringify(calls[0][0]) !== JSON.stringify(['/Shows/A.mkv', '/Shows/B.mp4'])) {
+            throw new Error(`expected decoded batch video paths, got ${JSON.stringify(calls)}`);
+          }
+          if (calls[0][1]?.sourceLabel !== '拖入的视频文件') {
+            throw new Error(`expected drag source label, got ${JSON.stringify(calls[0][1])}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_drop_zone_click_is_suppressed_immediately_after_drop():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          let pickerCalls = 0;
+          state.openPrimaryPicker = async () => { pickerCalls += 1; };
+
+          state.dropClickSuppressUntil = Date.now() + 1000;
+          await state.handleDropZoneClick();
+          if (pickerCalls !== 0) {
+            throw new Error(`expected suppressed picker click, got ${pickerCalls}`);
+          }
+
+          state.dropClickSuppressUntil = 0;
+          await state.handleDropZoneClick();
+          if (pickerCalls !== 1) {
+            throw new Error(`expected picker click after suppression expires, got ${pickerCalls}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_quick_start_blocks_when_translation_is_not_ready():
     _run_node(
         """
