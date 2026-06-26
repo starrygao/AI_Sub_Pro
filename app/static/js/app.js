@@ -179,6 +179,9 @@ function app() {
       // Global drag-and-drop on home page
       document.addEventListener('dragover', (e) => e.preventDefault());
       document.addEventListener('drop', (e) => e.preventDefault());
+      if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('aisubpro:native-file-drop', (e) => this.handleNativeFileDrop(e?.detail?.paths));
+      }
     },
 
     clearKbDraft() {
@@ -997,6 +1000,27 @@ function app() {
         paths.push(path);
       }
       return paths;
+    },
+
+    async handleNativeFileDrop(paths) {
+      const localPaths = Array.isArray(paths)
+        ? paths.map((path) => String(path || '').trim()).filter(Boolean)
+        : [];
+      if (localPaths.length === 0) return;
+      await this.handleDrop({
+        preventDefault() {},
+        stopPropagation() {},
+        dataTransfer: {
+          files: localPaths.map((path) => ({
+            name: path.split('/').filter(Boolean).pop() || path,
+            path,
+          })),
+          getData(type) {
+            if (type !== 'text/uri-list' && type !== 'text/plain') return '';
+            return localPaths.map((path) => `file://${encodeURI(path)}`).join('\n');
+          },
+        },
+      });
     },
 
     homeSourceOptions() {

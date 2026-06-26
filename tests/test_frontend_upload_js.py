@@ -358,6 +358,47 @@ def test_batch_drop_uri_list_starts_video_paths_without_folder_dialog():
     )
 
 
+def test_native_file_drop_paths_reuse_existing_local_drag_flow():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const starts = [];
+          state.toast = () => {};
+          state.uploadVideoFile = async () => {
+            throw new Error('native local drops should not upload video files');
+          };
+          state.quickStart = async (options) => {
+            starts.push([state.newVideoPath, options]);
+          };
+
+          await state.handleNativeFileDrop(['/Users/me/Movies/native drop.mkv']);
+
+          if (starts.length !== 1) {
+            throw new Error(`expected one local quick start, got ${JSON.stringify(starts)}`);
+          }
+          if (starts[0][0] !== '/Users/me/Movies/native drop.mkv') {
+            throw new Error(`expected native path to be selected, got ${starts[0][0]}`);
+          }
+          if (!starts[0][1]?.allowDuringImport) {
+            throw new Error(`expected import-aware quick start, got ${JSON.stringify(starts[0][1])}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_drop_zone_click_is_suppressed_immediately_after_drop():
     _run_node(
         """

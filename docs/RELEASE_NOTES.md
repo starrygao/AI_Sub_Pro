@@ -2,6 +2,24 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.19 - Native File Drop Bridge
+
+Highlights:
+
+- Added a pywebview native drop bridge so macOS Finder drops provide real local
+  file paths to the existing import flow.
+- Native drop paths now reuse the same single-video and batch-video frontend
+  handling as manual local paths.
+
+Quality/Verification:
+
+- Targeted local tests passed: `80 passed`.
+- Local package target: `AI_Sub_Pro_v1.3.19.dmg`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.19.dmg` is the macOS package name for this release line.
+
 ## v1.3.18 - Desktop Drag Import Stability
 
 Highlights:

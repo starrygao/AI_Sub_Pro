@@ -91,6 +91,41 @@ def test_local_server_ready_returns_false_on_probe_error(monkeypatch):
     assert main._local_server_ready(timeout=0.25) is False
 
 
+def test_drop_event_paths_extracts_pywebview_full_paths():
+    from app import main
+
+    event = {
+        "dataTransfer": {
+            "files": [
+                {"name": "movie.mkv", "pywebviewFullPath": "/Users/me/Movies/movie.mkv"},
+                {"name": "duplicate.mkv", "pywebviewFullPath": "/Users/me/Movies/movie.mkv"},
+                {"name": "relative.mkv", "pywebviewFullPath": "relative/movie.mkv"},
+                {"name": "empty.mkv", "pywebviewFullPath": "  "},
+            ],
+        },
+    }
+
+    assert main._drop_event_paths(event) == ["/Users/me/Movies/movie.mkv"]
+
+
+def test_native_file_drop_dispatches_json_custom_event():
+    from app import main
+
+    class FakeWindow:
+        def __init__(self):
+            self.js = ""
+
+        def evaluate_js(self, js):
+            self.js = js
+
+    window = FakeWindow()
+
+    main._dispatch_native_file_drop(window, ["/Users/me/Movies/a'b.mkv"])
+
+    assert "aisubpro:native-file-drop" in window.js
+    assert "\"paths\": [\"/Users/me/Movies/a'b.mkv\"]" in window.js
+
+
 def test_app_startup_uses_lifespan_instead_of_deprecated_on_event():
     source = (ROOT / "app/main.py").read_text(encoding="utf-8")
 

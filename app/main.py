@@ -300,6 +300,59 @@ def _local_server_ready(timeout: float = 1.0) -> bool:
         return False
 
 
+def _drop_event_paths(event) -> list[str]:
+    """Extract local file paths from a pywebview native drop event."""
+    if not isinstance(event, dict):
+        return []
+    data_transfer = event.get("dataTransfer")
+    if not isinstance(data_transfer, dict):
+        return []
+    files = data_transfer.get("files")
+    if not isinstance(files, list):
+        return []
+    paths: list[str] = []
+    seen = set()
+    for file_info in files:
+        if not isinstance(file_info, dict):
+            continue
+        raw_path = file_info.get("pywebviewFullPath") or file_info.get("path")
+        if not isinstance(raw_path, str):
+            continue
+        path = raw_path.strip()
+        if not path or not os.path.isabs(path) or path in seen:
+            continue
+        seen.add(path)
+        paths.append(path)
+    return paths
+
+
+def _dispatch_native_file_drop(window, paths: list[str]) -> None:
+    payload = json.dumps({"paths": paths}, ensure_ascii=False)
+    window.evaluate_js(
+        "window.dispatchEvent(new CustomEvent('aisubpro:native-file-drop', "
+        f"{{detail: {payload}}}));"
+    )
+
+
+def _install_native_file_drop_bridge(window) -> None:
+    """Enable Finder file drops in pywebview and forward paths to the frontend."""
+    def handle_native_drop(event):
+        paths = _drop_event_paths(event)
+        if not paths:
+            return
+        log.info("Native file drop received %d path(s)", len(paths))
+        _dispatch_native_file_drop(window, paths)
+
+    def install_drop_listener():
+        try:
+            window.dom.document.events.drop += handle_native_drop
+            log.info("Native file drop bridge installed")
+        except Exception as exc:
+            log.warning("Native file drop bridge install failed: %s", exc)
+
+    window.events.loaded += install_drop_listener
+
+
 if __name__ == "__main__":
     import threading
     import time
@@ -455,6 +508,7 @@ if __name__ == "__main__":
                 js_api=api,
                 text_select=True,
             )
+            _install_native_file_drop_bridge(window)
             webview.start(debug=False)
         except ImportError:
             # pywebview not available, fall back to browser

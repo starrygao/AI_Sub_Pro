@@ -2,6 +2,22 @@
 
 语言：[English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.19 - 原生文件拖拽桥接
+
+主要内容：
+
+- 新增 pywebview 原生拖拽桥接，让 macOS Finder 拖入文件时能把真实本地路径传给导入流程。
+- 原生拖拽路径复用现有的单视频和批量视频前端处理逻辑，不再依赖浏览器层直接暴露文件路径。
+
+质量验证：
+
+- 本地目标测试已通过：`80 passed`。
+- 本地安装包目标：`AI_Sub_Pro_v1.3.19.dmg`。
+
+安装包：
+
+- `AI_Sub_Pro_v1.3.19.dmg` 是本 release line 的 macOS 安装包名称。
+
 ## v1.3.18 - 桌面拖拽导入稳定性
 
 主要内容：
