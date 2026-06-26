@@ -13,6 +13,8 @@ def test_home_file_entry_controls_have_accessible_names():
     assert '@keydown.enter.prevent="openPrimaryPicker()"' in html
     assert '@keydown.space.prevent="openPrimaryPicker()"' in html
     assert '@click="handleDropZoneClick()"' in html
+    assert '@drop.prevent="handleDrop($event); $el.classList.remove(\'drag-active\')"' in html
+    assert '@drop.stop.prevent' not in html
     assert ':aria-label="homeManualPathAriaLabel()"' in html
 
 

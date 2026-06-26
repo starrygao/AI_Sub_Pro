@@ -2,6 +2,24 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.20 - Native Drop Propagation Fix
+
+Highlights:
+
+- The drop zone no longer stops propagation of Finder drop events, allowing the
+  pywebview native bridge to receive and resolve local paths.
+- The missing-path warning is delayed and cancelled when the native bridge
+  supplies the real path, avoiding a false failure toast before import starts.
+
+Quality/Verification:
+
+- Targeted local tests passed: `81 passed`.
+- Local package target: `AI_Sub_Pro_v1.3.20.dmg`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.20.dmg` is the macOS package name for this release line.
+
 ## v1.3.19 - Native File Drop Bridge
 
 Highlights:

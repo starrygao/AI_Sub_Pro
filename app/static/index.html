@@ -132,7 +132,7 @@
                  :class="(fileImporting || projectCreating) ? 'opacity-60 cursor-wait' : ''"
                  @dragover.stop.prevent="$el.classList.add('drag-active')"
                  @dragleave.stop.prevent="$el.classList.remove('drag-active')"
-                 @drop.stop.prevent="handleDrop($event); $el.classList.remove('drag-active')"
+                 @drop.prevent="handleDrop($event); $el.classList.remove('drag-active')"
                  @keydown.enter.prevent="openPrimaryPicker()"
                  @keydown.space.prevent="openPrimaryPicker()"
                  @click="handleDropZoneClick()">

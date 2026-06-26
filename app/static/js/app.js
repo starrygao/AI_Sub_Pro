@@ -89,6 +89,7 @@ function app() {
     newVideoPath: '',
     fileImporting: false,
     dropClickSuppressUntil: 0,
+    nativeDropFallbackTimer: null,
     projectCreating: false,
     projectActionPending: '',
     asrLanguage: 'auto',
@@ -1003,6 +1004,10 @@ function app() {
     },
 
     async handleNativeFileDrop(paths) {
+      if (this.nativeDropFallbackTimer) {
+        clearTimeout(this.nativeDropFallbackTimer);
+        this.nativeDropFallbackTimer = null;
+      }
       const localPaths = Array.isArray(paths)
         ? paths.map((path) => String(path || '').trim()).filter(Boolean)
         : [];
@@ -1021,6 +1026,14 @@ function app() {
           },
         },
       });
+    },
+
+    scheduleMissingNativeDropPathToast() {
+      if (this.nativeDropFallbackTimer) clearTimeout(this.nativeDropFallbackTimer);
+      this.nativeDropFallbackTimer = setTimeout(() => {
+        this.nativeDropFallbackTimer = null;
+        this.toast('拖拽未获得视频本地路径，请点击“选择视频文件”导入，避免复制大视频。', 'error');
+      }, 900);
     },
 
     homeSourceOptions() {
@@ -2729,7 +2742,6 @@ function app() {
     // Drag & Drop
     async handleDrop(event) {
       event?.preventDefault?.();
-      event?.stopPropagation?.();
       this.dropClickSuppressUntil = Date.now() + 800;
 
       const files = event?.dataTransfer?.files;
@@ -2753,6 +2765,10 @@ function app() {
       const videoPath = localPaths.find((path) => this.isVideoPath(path));
       if (videoPath) {
         await this.useSelectedVideoPath(videoPath);
+        return;
+      }
+      if (this.isDesktopShell() && this.isVideoFile(droppedFiles[0])) {
+        this.scheduleMissingNativeDropPathToast();
         return;
       }
       await this.useSelectedVideoFile(droppedFiles[0]);

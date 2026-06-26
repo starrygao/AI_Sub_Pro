@@ -233,8 +233,8 @@ def test_drop_video_uri_uses_local_path_without_uploading_large_file():
 
           await state.handleDrop(event);
 
-          if (!event.prevented || !event.stopped) {
-            throw new Error('expected drop event propagation to be stopped and prevented');
+          if (!event.prevented || event.stopped) {
+            throw new Error('expected drop default prevention without stopping propagation');
           }
           if (starts.length !== 1) {
             throw new Error(`expected one local quick start, got ${JSON.stringify(starts)}`);
@@ -293,11 +293,66 @@ def test_desktop_drop_without_path_refuses_video_upload_fallback():
 
           if (uploads !== 0) throw new Error(`expected no desktop video upload fallback, got ${uploads}`);
           if (starts !== 0) throw new Error(`expected no quick start without a local path, got ${starts}`);
+          if (toasts.length !== 0) {
+            throw new Error(`expected no immediate missing-path toast while native bridge may answer, got ${JSON.stringify(toasts)}`);
+          }
+          await new Promise(resolve => setTimeout(resolve, 950));
           if (!toasts.some((toast) => String(toast[0]).includes('未获得视频本地路径'))) {
             throw new Error(`expected clear missing-path toast, got ${JSON.stringify(toasts)}`);
           }
           if (state.fileImporting !== false) {
             throw new Error(`expected fileImporting to stay false, got ${state.fileImporting}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_native_file_drop_cancels_pending_missing_path_toast():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          window: {pywebview: {api: {}}},
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const starts = [];
+          const toasts = [];
+          state.toast = (message, type) => { toasts.push([message, type || 'success']); };
+          state.uploadVideoFile = async () => {
+            throw new Error('desktop local drops should not upload video files');
+          };
+          state.quickStart = async (options) => {
+            starts.push([state.newVideoPath, options]);
+          };
+
+          await state.handleDrop({
+            dataTransfer: {
+              files: [{name: 'movie.mkv'}],
+              getData() { return ''; },
+            },
+          });
+          await state.handleNativeFileDrop(['/Users/me/Movies/movie.mkv']);
+          await new Promise(resolve => setTimeout(resolve, 950));
+
+          if (starts.length !== 1 || starts[0][0] !== '/Users/me/Movies/movie.mkv') {
+            throw new Error(`expected native drop to start once with local path, got ${JSON.stringify(starts)}`);
+          }
+          if (toasts.some((toast) => String(toast[0]).includes('未获得视频本地路径'))) {
+            throw new Error(`expected native drop to cancel missing-path toast, got ${JSON.stringify(toasts)}`);
           }
         })().catch((err) => {
           console.error(err.message);
