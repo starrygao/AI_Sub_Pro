@@ -79,7 +79,7 @@ def test_srt_writers_strip_music_decoration_symbols(tmp_path):
 
     blocks = [
         _make_block(1, "- ♪ - [dialogue inaudible]", "♪\n[对话听不清]"),
-        _make_block(2, "Song lyric", "🎵 爱不会迷路 🎶"),
+        _make_block(2, "I love you", "🎵 爱不会迷路 🎶"),
     ]
     translated = tmp_path / "translated.srt"
     bilingual = tmp_path / "bilingual.srt"
@@ -92,9 +92,9 @@ def test_srt_writers_strip_music_decoration_symbols(tmp_path):
     for symbol in "♪♫♬🎵🎶":
         assert symbol not in translated_text
         assert symbol not in bilingual_text
-    assert "[对话听不清]" in translated_text
+    assert "[对话听不清]" not in translated_text
     assert "爱不会迷路" in translated_text
-    assert "[dialogue inaudible]" in bilingual_text
+    assert "[dialogue inaudible]" not in bilingual_text
 
 
 def test_parse_srt_skips_non_positive_duration_blocks():

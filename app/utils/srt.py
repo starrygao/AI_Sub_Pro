@@ -373,6 +373,8 @@ def write_srt(blocks: List[SubtitleBlock], path: str, use_translation: bool = Fa
         for b in blocks:
             if getattr(b, "filtered", False):
                 continue
+            if use_translation and _is_source_sound_description(getattr(b, "text", "")):
+                continue
             text = _subtitle_text(getattr(b, "translation", "") if use_translation else getattr(b, "text", ""))
             if not text:
                 continue
@@ -399,6 +401,8 @@ def write_mono_srt(blocks, out_path: str, use_translation: bool = True) -> int:
     for b in blocks:
         if getattr(b, "filtered", False):
             continue
+        if use_translation and _is_source_sound_description(getattr(b, "text", "")):
+            continue
         text = _subtitle_text(getattr(b, "translation", "") if use_translation else getattr(b, "text", ""))
         if not text:
             continue
@@ -418,6 +422,8 @@ def write_bilingual_srt(blocks: List[SubtitleBlock], path: str):
         idx = 1
         for b in blocks:
             if getattr(b, "filtered", False):
+                continue
+            if _is_source_sound_description(getattr(b, "text", "")):
                 continue
             text = _subtitle_text(getattr(b, "text", ""))
             translation = _subtitle_text(getattr(b, "translation", ""))
@@ -467,6 +473,16 @@ def _subtitle_text(value) -> str:
         if cleaned:
             lines.append(cleaned)
     return "\n".join(lines).strip()
+
+
+def _is_source_sound_description(value) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        from app.engines.translation_qa import is_sound_description_source
+        return is_sound_description_source(value)
+    except Exception:
+        return False
 
 
 def _has_positive_duration(start, end) -> bool:

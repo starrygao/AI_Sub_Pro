@@ -26,7 +26,11 @@ from app.utils.media import (
     resolve_font,
 )
 from app.api.settings import require_translation_ready
-from app.api.projects import _apply_safe_defaults
+from app.api.projects import (
+    _apply_safe_defaults,
+    _is_forced_or_commentary_subtitle,
+    _pick_subtitle_track,
+)
 from app.utils.project_store import atomic_write_json, mutate_project, PID_PATTERN, project_dir
 from app.engines.kb_trace import write_kb_usage_trace
 from app.engines.scheduler import (
@@ -59,6 +63,10 @@ _SOUND_DESCRIPTION_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
 _KB_REVIEW_REQUIRED_CODE = "kb_review_required"
 _QA_AUTO_REPAIR_MAX_BLOCKS = 20
 _QA_REPORT_ONLY_WARNING_TYPES = {
+    "proper_name_inconsistent",
+    "scientific_term_inconsistent",
+}
+_QA_EXPECTED_REPAIRABLE_WARNING_TYPES = {
     "proper_name_inconsistent",
     "scientific_term_inconsistent",
 }
@@ -624,6 +632,41 @@ def _try_bypass_asr_with_embedded_subtitle(pid: str, project: dict, pdir: str) -
     sub_idx = project.get("selected_subtitle_track")
     if sub_idx is None:
         return False
+    tracks = project.get("subtitle_tracks") if isinstance(project.get("subtitle_tracks"), list) else []
+    if tracks:
+        if isinstance(sub_idx, bool) or not isinstance(sub_idx, int) or sub_idx < 0 or sub_idx >= len(tracks):
+            sub_idx = _pick_subtitle_track(tracks, project.get("target_language") or "简体中文")
+            if sub_idx is None:
+                return False
+        else:
+            selected_track = tracks[sub_idx] if isinstance(tracks[sub_idx], dict) else {}
+            if _is_forced_or_commentary_subtitle(selected_track):
+                replacement = _pick_subtitle_track(
+                    tracks,
+                    project.get("target_language") or "简体中文",
+                )
+                if replacement is None:
+                    log.info(
+                        "pid=%s selected embedded subtitle track %s is forced/commentary; "
+                        "falling back to ASR",
+                        pid,
+                        sub_idx,
+                    )
+                    return False
+                if replacement != sub_idx:
+                    log.info(
+                        "pid=%s switched embedded subtitle track %s -> %s to avoid forced/commentary track",
+                        pid,
+                        sub_idx,
+                        replacement,
+                    )
+                    sub_idx = replacement
+                    project["selected_subtitle_track"] = replacement
+                    mutate_project(
+                        pid,
+                        lambda p: p.update({"selected_subtitle_track": replacement}),
+                        normalize=_apply_safe_defaults,
+                    )
     video_path = project.get("video_path")
     if not video_path or not os.path.exists(video_path):
         return False
@@ -837,6 +880,163 @@ def _incomplete_translation_message(blocks) -> Optional[str]:
     return f"翻译未完成: {translated_count}/{active_count} 条成功，{failed_count} 条缺失"
 
 
+_FINAL_MISSING_TRANSLATION_RETRY_NOTE = (
+    "最终补翻要求: 这些字幕在主翻译和批内补翻后仍缺译。"
+    "本轮只处理当前 JSON 中的条目；每个普通对白 id 必须返回非空 translation，"
+    "不要省略、不要合并、不要改 id。"
+)
+
+
+def _missing_translation_retry_rounds(cfg: dict) -> int:
+    trans_cfg = cfg.get("translation") if isinstance(cfg, dict) else {}
+    if not isinstance(trans_cfg, dict):
+        trans_cfg = {}
+    return _coerce_int_option(
+        trans_cfg.get("missing_translation_retries", 2),
+        2,
+        minimum=0,
+        maximum=4,
+    )
+
+
+def _missing_translation_retry_batch_size(cfg: dict) -> int:
+    trans_cfg = cfg.get("translation") if isinstance(cfg, dict) else {}
+    if not isinstance(trans_cfg, dict):
+        trans_cfg = {}
+    return _coerce_int_option(
+        trans_cfg.get("missing_translation_retry_batch_size", 5),
+        5,
+        minimum=1,
+        maximum=20,
+    )
+
+
+def _retry_context_for_blocks(blocks, batch_blocks, window: int = 3) -> tuple[list[dict], list[str]]:
+    positions = {id(block): i for i, block in enumerate(blocks)}
+    batch_positions = [positions[id(block)] for block in batch_blocks if id(block) in positions]
+    if not batch_positions:
+        return [], []
+
+    start = min(batch_positions)
+    end = max(batch_positions)
+    before = []
+    for block in reversed(blocks[:start]):
+        if _is_translatable_block(block) and block.translation:
+            before.append({"original": block.text, "translated": block.translation})
+            if len(before) >= window:
+                break
+    before.reverse()
+
+    after = []
+    for block in blocks[end + 1:]:
+        if _is_translatable_block(block):
+            after.append(block.text)
+            if len(after) >= window:
+                break
+    return before, after
+
+
+def _retry_missing_translations_before_quality(
+    cfg: dict,
+    translator,
+    blocks,
+    target_language: str,
+    project: dict,
+    kb_data: Optional[dict],
+    progress_callback=None,
+) -> list[dict]:
+    rounds = _missing_translation_retry_rounds(cfg)
+    if rounds <= 0:
+        return []
+
+    primary = getattr(translator, "primary", None)
+    build_prompt = getattr(translator, "_build_prompt", None)
+    if primary is None or not hasattr(primary, "translate_batch") or not callable(build_prompt):
+        return []
+
+    from app.engines.providers.result_contract import reconcile_translation_results
+
+    batch_size = _missing_translation_retry_batch_size(cfg)
+    applied = []
+
+    def _retry_batch(batch_blocks) -> None:
+        items = [{"id": block.index, "original": block.text} for block in batch_blocks]
+        context_before, context_after = _retry_context_for_blocks(blocks, batch_blocks)
+        prompt = build_prompt(
+            target_language,
+            project if isinstance(project, dict) else {},
+            kb_data if isinstance(kb_data, dict) else {},
+            context_before,
+            context_after,
+            items=items,
+        )
+        prompt = f"{prompt}\n\n{_FINAL_MISSING_TRANSLATION_RETRY_NOTE}"
+        try:
+            raw_results = primary.translate_batch(items, prompt)
+        except Exception as exc:
+            err = _safe_error_message(exc)
+            for block in batch_blocks:
+                if not getattr(block, "translation_error", ""):
+                    block.translation_error = err
+            log.warning("final missing translation retry failed: %s", err)
+            return
+
+        results = reconcile_translation_results(
+            raw_results if isinstance(raw_results, list) else [],
+            items,
+        )
+        block_by_id = {str(block.index): block for block in batch_blocks}
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            block = block_by_id.get(str(result.get("id", "")))
+            if block is None:
+                continue
+            translation = result.get("translation", "")
+            error = result.get("error", "")
+            if isinstance(translation, str) and translation.strip():
+                block.translation = translation
+                block.translation_error = ""
+                applied.append({"id": block.index, "translation": translation})
+            elif isinstance(error, str) and error and not getattr(block, "translation_error", ""):
+                block.translation_error = error
+
+    for round_index in range(rounds):
+        missing_blocks = [
+            block for block in blocks
+            if _is_translatable_block(block) and not getattr(block, "translation", "")
+        ]
+        if not missing_blocks:
+            break
+
+        if progress_callback is not None:
+            try:
+                progress_callback(
+                    90,
+                    f"全片补翻缺失: 第 {round_index + 1}/{rounds} 轮 ({len(missing_blocks)} 条)",
+                )
+            except Exception:
+                pass
+
+        for start in range(0, len(missing_blocks), batch_size):
+            batch_blocks = missing_blocks[start:start + batch_size]
+            _retry_batch(batch_blocks)
+
+    remaining_blocks = [
+        block for block in blocks
+        if _is_translatable_block(block) and not getattr(block, "translation", "")
+    ]
+    if remaining_blocks and batch_size > 1:
+        for idx, block in enumerate(remaining_blocks, start=1):
+            if progress_callback is not None:
+                try:
+                    progress_callback(90, f"逐条补翻缺失: {idx}/{len(remaining_blocks)}")
+                except Exception:
+                    pass
+            _retry_batch([block])
+    return applied
+
+
 def _is_translatable_block(block) -> bool:
     """Return False for filtered/blank/sound-description rows that may stay empty."""
     if getattr(block, "filtered", False):
@@ -844,7 +1044,11 @@ def _is_translatable_block(block) -> bool:
     text = getattr(block, "text", "")
     if not isinstance(text, str) or not text.strip():
         return False
-    return not _SOUND_DESCRIPTION_RE.match(text)
+    try:
+        from app.engines.translation_qa import is_sound_description_source
+        return not is_sound_description_source(text)
+    except Exception:
+        return not _SOUND_DESCRIPTION_RE.match(text)
 
 
 def _find_subtitle_source(pid: str) -> tuple[Optional[str], Optional[str]]:
@@ -1143,6 +1347,16 @@ def _quality_score(report) -> tuple[int, int, int]:
     return error_count, issue_count, unresolved
 
 
+def _is_report_only_quality_warning(issue) -> bool:
+    if getattr(issue, "severity", "") != "warning":
+        return False
+    issue_type = getattr(issue, "type", "")
+    if issue_type in _QA_EXPECTED_REPAIRABLE_WARNING_TYPES:
+        expected = getattr(issue, "expected", "")
+        return not (isinstance(expected, str) and expected.strip())
+    return issue_type in _QA_REPORT_ONLY_WARNING_TYPES
+
+
 def _finalize_quality_conclusion(report, repaired: list[dict], repair_enabled: bool) -> None:
     issue_count, error_count, warning_count = _quality_issue_counts(report)
     unresolved_count = len(getattr(report, "unresolved_blocks", []) or [])
@@ -1150,7 +1364,7 @@ def _finalize_quality_conclusion(report, repaired: list[dict], repair_enabled: b
     blocking_warnings = [
         issue for issue in (getattr(report, "issues", []) or [])
         if getattr(issue, "severity", "") == "warning"
-        and getattr(issue, "type", "") not in _QA_REPORT_ONLY_WARNING_TYPES
+        and not _is_report_only_quality_warning(issue)
     ]
     if error_count:
         verdict = "failed"
@@ -1239,6 +1453,28 @@ def _mark_translation_quality_failed(pid: str, message: str) -> None:
     _emit_progress(pid, "translate", 100, detail)
 
 
+def _apply_nonempty_repair_results(blocks, results) -> list[dict]:
+    by_id = {str(getattr(block, "index", "")): block for block in blocks or []}
+    applied = []
+    unmatched = 0
+    for result in results or []:
+        if not isinstance(result, dict):
+            continue
+        translation = result.get("translation", "")
+        if not isinstance(translation, str) or not translation.strip():
+            continue
+        block = by_id.get(str(result.get("id", "")))
+        if block is None:
+            unmatched += 1
+            continue
+        block.translation = translation
+        block.translation_error = ""
+        applied.append({"id": getattr(block, "index", result.get("id")), "translation": translation})
+    if unmatched:
+        log.warning("translation QA auto-repair ignored %d unmatched result id(s)", unmatched)
+    return applied
+
+
 def _auto_repair_quality_issues(
     cfg: dict,
     translator,
@@ -1302,10 +1538,7 @@ def _auto_repair_quality_issues(
                 raw_results if isinstance(raw_results, list) else [],
                 repair_items,
             )
-            batch_results = [
-                result for result in results
-                if isinstance(result, dict) and result.get("translation")
-            ]
+            batch_results = _apply_nonempty_repair_results(blocks, results)
             applied_results.extend(batch_results)
             if isinstance(batch_traces, list):
                 batch_traces.append({
@@ -1319,26 +1552,7 @@ def _auto_repair_quality_issues(
             repair_trace["applied_blocks"] = len(applied_results)
         if not applied_results:
             return []
-        if hasattr(translator, "_apply_results"):
-            repaired_ids = {str(result.get("id", "")) for result in applied_results}
-            target_blocks = [
-                block for block in blocks
-                if str(getattr(block, "index", "")) in repaired_ids
-            ]
-            translator._apply_results(target_blocks, applied_results)
-        else:
-            by_id = {
-                str(result.get("id")): result.get("translation", "")
-                for result in applied_results
-            }
-            for block in blocks:
-                translation = by_id.get(str(getattr(block, "index", "")))
-                if translation:
-                    block.translation = translation
-        return [
-            {"id": result.get("id"), "translation": result.get("translation", "")}
-            for result in applied_results
-        ]
+        return applied_results
     except Exception as e:
         log.warning("translation QA auto-repair failed: %s", e)
         return []
@@ -1608,6 +1822,23 @@ def _run_translate_pipeline(
             )
             _check_cancel(pid)
 
+            final_missing_repaired = _retry_missing_translations_before_quality(
+                cfg,
+                translator,
+                blocks,
+                target_language,
+                project,
+                kb_data,
+                progress_callback=lambda pct, msg: _emit_progress(pid, "translate", pct, msg),
+            )
+            if final_missing_repaired:
+                log.info(
+                    "final missing translation retry repaired %d block(s) for %s",
+                    len(final_missing_repaired),
+                    pid,
+                )
+            _check_cancel(pid)
+
             _emit_progress(pid, "translate", 92, "正在检查翻译质量...")
             repaired = _persist_translation_quality_report(
                 pid,
@@ -1621,6 +1852,36 @@ def _run_translate_pipeline(
             )
             if repaired:
                 log.info("translation QA repaired %d block(s) for %s", len(repaired), pid)
+
+            if _incomplete_translation_message(blocks):
+                post_quality_missing_repaired = _retry_missing_translations_before_quality(
+                    cfg,
+                    translator,
+                    blocks,
+                    target_language,
+                    project,
+                    kb_data,
+                    progress_callback=lambda pct, msg: _emit_progress(pid, "translate", pct, msg),
+                )
+                if post_quality_missing_repaired:
+                    log.info(
+                        "post-QA missing translation retry repaired %d block(s) for %s",
+                        len(post_quality_missing_repaired),
+                        pid,
+                    )
+                _emit_progress(pid, "translate", 92, "正在复检翻译质量...")
+                repaired = _persist_translation_quality_report(
+                    pid,
+                    pdir,
+                    project,
+                    blocks,
+                    target_language,
+                    translator,
+                    cfg,
+                    progress_callback=lambda pct, msg: _emit_progress(pid, "translate", pct, msg),
+                )
+                if repaired:
+                    log.info("translation QA repaired %d block(s) after post-QA retry for %s", len(repaired), pid)
 
             active_count, translated_count, failed_count = _translation_completion_counts(blocks)
             incomplete_msg = _incomplete_translation_message(blocks)

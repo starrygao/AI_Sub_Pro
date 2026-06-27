@@ -32,6 +32,7 @@ def _make_project(tmp_path, *, sub_idx, prefer=True, video_exists=True):
         "video_path": str(video),
         "selected_subtitle_track": sub_idx,
         "prefer_embedded_subtitle": prefer,
+        "target_language": "简体中文",
         "status": "created",
     }
     return pid, str(pdir), project
@@ -144,3 +145,31 @@ def test_bypass_writes_both_raw_and_filtered_srt(tmp_path):
     filtered = open(os.path.join(pdir, "filtered.srt")).read()
     assert raw == filtered
     assert "Hello world." in raw
+
+
+def test_bypass_switches_saved_forced_track_to_regular_track(tmp_path):
+    from app.api import translate
+
+    pid, pdir, project = _make_project(tmp_path, sub_idx=0)
+    project["subtitle_tracks"] = [
+        {"index": 2, "codec": "subrip", "lang": "eng", "title": "Forced"},
+        {"index": 3, "codec": "subrip", "lang": "eng", "title": ""},
+        {"index": 4, "codec": "subrip", "lang": "eng", "title": "SDH"},
+    ]
+    used_tracks = []
+
+    def fake_extract(video, output, track_index):
+        used_tracks.append(track_index)
+        with open(output, "w") as f:
+            f.write(SAMPLE_SRT)
+        return True
+
+    with patch("app.utils.media.extract_subtitle", side_effect=fake_extract), \
+         patch.object(translate, "_emit_progress"), \
+         patch.object(translate, "mutate_project") as mutate:
+        ok = translate._try_bypass_asr_with_embedded_subtitle(pid, project, pdir)
+
+    assert ok is True
+    assert used_tracks == [1]
+    assert project["selected_subtitle_track"] == 1
+    mutate.assert_called()

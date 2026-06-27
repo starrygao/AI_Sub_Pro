@@ -34,6 +34,36 @@ def test_prefers_english_when_present():
     assert _pick_subtitle_track(tracks, "简体中文") == 1
 
 
+def test_skips_forced_english_when_full_english_available():
+    from app.api.projects import _pick_subtitle_track
+    tracks = [
+        _track("subrip", "eng", "Forced"),
+        _track("subrip", "eng", ""),
+        _track("subrip", "eng", "SDH"),
+    ]
+
+    assert _pick_subtitle_track(tracks, "简体中文") == 1
+
+
+def test_only_forced_subtitle_falls_back_to_asr():
+    from app.api.projects import _pick_subtitle_track
+    tracks = [
+        _track("subrip", "eng", "Forced"),
+    ]
+
+    assert _pick_subtitle_track(tracks, "简体中文") is None
+
+
+def test_prefers_regular_subtitle_over_sdh():
+    from app.api.projects import _pick_subtitle_track
+    tracks = [
+        _track("subrip", "eng", "SDH"),
+        _track("subrip", "eng", ""),
+    ]
+
+    assert _pick_subtitle_track(tracks, "简体中文") == 1
+
+
 def test_does_not_prefer_english_when_english_is_target_language():
     from app.api.projects import _pick_subtitle_track
     tracks = [

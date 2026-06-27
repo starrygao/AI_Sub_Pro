@@ -2,23 +2,53 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
-## v1.3.20 - Native Drop Propagation Fix
+## v1.3.24 - Professional QA Warning Automation
 
 Highlights:
 
-- The drop zone no longer stops propagation of Finder drop events, allowing the
-  pywebview native bridge to receive and resolve local paths.
-- The missing-path warning is delayed and cancelled when the native bridge
-  supplies the real path, avoiding a false failure toast before import starts.
+- Proper-name QA now treats ordinary deictic/classifier prefixes such as
+  "this pair" / "this one" as subtitle context, preventing false inconsistent
+  name warnings for repeated documentary creature names such as Nanuqsaurus.
+- High-confidence consistency warnings now carry an `expected` target when a
+  clear majority form exists; only the minority rows enter automatic QA repair.
+- The quality gate no longer passes high-confidence consistency warnings after
+  auto-repair if they still have an expected fix, while low-confidence
+  heuristic warnings remain report-only.
 
 Quality/Verification:
 
-- Targeted local tests passed: `81 passed`.
-- Local package target: `AI_Sub_Pro_v1.3.20.dmg`.
+- Targeted and integration tests passed: `112 passed`.
+- Real project QA recheck passed for `调音师` and `地球·劫后重生 S01E03`: `0 issues`.
+- Local package target: `AI_Sub_Pro_v1.3.24.dmg`.
 
 Packages:
 
-- `AI_Sub_Pro_v1.3.20.dmg` is the macOS package name for this release line.
+- `AI_Sub_Pro_v1.3.24.dmg` is the macOS package name for this release line.
+
+## v1.3.23 - Export Quality Sound-Cue Parity
+
+Highlights:
+
+- Missing-translation checks now share the deterministic QA sound-description
+  classifier, so music cues, sound effects, and lyric-marked non-dialogue rows do
+  not block automatic completion.
+- QA auto-repair now applies only non-empty exact-id repairs and runs a post-QA
+  missing-dialogue retry before saving, preventing repaired jobs from losing
+  ordinary dialogue translations.
+- Frontend export quality checks now recognize the same sound/music cues as the
+  backend, including animal sounds such as `[squawking]`, `[hissing]`, and
+  `[dinosaur snarls]`.
+- Translated and bilingual exports omit source sound/music description cues,
+  avoiding burn-in artifacts such as `[growling]` or music symbols.
+
+Quality/Verification:
+
+- Targeted local tests passed: `2 passed`.
+- Local package target: `AI_Sub_Pro_v1.3.23.dmg`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.23.dmg` is the macOS package name for this release line.
 
 ## v1.3.19 - Native File Drop Bridge
 

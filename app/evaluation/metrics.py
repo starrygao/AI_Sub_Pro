@@ -235,6 +235,8 @@ _LONG_NAME_CONTEXT_PREFIX_HINTS = (
     "他",
     "她",
     "它",
+    "这",
+    "那",
     "们",
     "在",
     "从",
@@ -287,6 +289,30 @@ _LONG_NAME_CONTEXT_PREFIX_TOKENS = (
     "他们",
     "她们",
     "它们",
+    "这",
+    "那",
+    "这个",
+    "那个",
+    "这位",
+    "那位",
+    "这只",
+    "那只",
+    "这头",
+    "那头",
+    "这匹",
+    "那匹",
+    "这条",
+    "那条",
+    "这群",
+    "那群",
+    "这对",
+    "那对",
+    "一只",
+    "一头",
+    "一匹",
+    "一条",
+    "一群",
+    "一对",
     "我",
     "你",
     "他",
@@ -628,7 +654,7 @@ def _is_valid_long_name_anchor(
     # or shared subparts of competing prefix/suffix transliterations.
     if _is_context_anchor(anchor):
         return False
-    allow_context_prefixes = has_title_context or _has_source_org_unit(proper_name)
+    allow_context_prefixes = True
     if _has_competing_name_prefix_chunks(
         anchor,
         translations,

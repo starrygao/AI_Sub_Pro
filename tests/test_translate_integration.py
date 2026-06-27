@@ -715,6 +715,173 @@ def test_translate_pipeline_marks_partial_translation_as_error(tmp_path, monkeyp
     assert (pdir / "translation_qa_report.json").exists()
 
 
+def test_translate_pipeline_final_retry_repairs_missing_translation(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transfinalretry"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n"
+        "2\n00:00:02,000 --> 00:00:03,000\nWorld\n\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {
+            "missing_translation_retries": 2,
+            "missing_translation_retry_batch_size": 5,
+        }
+    })
+    progress_messages = []
+    monkeypatch.setattr(
+        api_translate,
+        "_emit_progress",
+        lambda pid, stage, pct, msg: progress_messages.append((stage, pct, msg)),
+    )
+
+    class FakePrimary:
+        def __init__(self):
+            self.calls = []
+
+        def translate_batch(self, items, system_prompt):
+            self.calls.append([item["id"] for item in items])
+            assert [item["id"] for item in items] == [2]
+            assert "最终补翻要求" in system_prompt
+            return [{"id": 2, "translation": "世界"}]
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            self.primary = FakePrimary()
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "你好"
+            return blocks
+
+        def _build_prompt(self, target_lang, meta_info, kb_data, context_before, context_after, items=None):
+            assert items == [{"id": 2, "original": "World"}]
+            assert context_before == [{"original": "Hello", "translated": "你好"}]
+            return "retry prompt"
+
+        def get_kb_usage_trace(self):
+            return {"project": {}, "matches": []}
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    translated = (pdir / "translated.srt").read_text(encoding="utf-8")
+    assert project["status"] == "translated"
+    assert project["error"] is None
+    assert "你好" in translated
+    assert "世界" in translated
+    assert not (pdir / "partial_translated.srt").exists()
+    assert any("全片补翻缺失" in msg for _, _, msg in progress_messages)
+
+
+def test_translate_pipeline_retries_missing_created_after_quality_repair(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transpostqaretry"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n"
+        "2\n00:00:02,000 --> 00:00:03,000\nWorld\n\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {
+            "missing_translation_retries": 2,
+            "missing_translation_retry_batch_size": 5,
+        }
+    })
+    progress_messages = []
+    monkeypatch.setattr(
+        api_translate,
+        "_emit_progress",
+        lambda pid, stage, pct, msg: progress_messages.append((stage, pct, msg)),
+    )
+
+    persist_calls = []
+
+    def fake_persist(pid, pdir, project, blocks, target_language, translator, cfg, progress_callback=None):
+        persist_calls.append([block.translation for block in blocks])
+        if len(persist_calls) == 1:
+            blocks[1].translation = ""
+        report = {"status": "ok", "issues": [], "summary": {"quality_gate": {"passed": True}}}
+        root = Path(pdir)
+        (root / "translation_qa_report.json").write_text(json.dumps(report), encoding="utf-8")
+        (root / "translation_qa_report.md").write_text("# Translation QA Report\n", encoding="utf-8")
+        return []
+
+    monkeypatch.setattr(api_translate, "_persist_translation_quality_report", fake_persist)
+
+    class FakePrimary:
+        def translate_batch(self, items, system_prompt):
+            assert [item["id"] for item in items] == [2]
+            assert "最终补翻要求" in system_prompt
+            return [{"id": 2, "translation": "世界"}]
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            self.primary = FakePrimary()
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "你好"
+            blocks[1].translation = "世界"
+            return blocks
+
+        def _build_prompt(self, target_lang, meta_info, kb_data, context_before, context_after, items=None):
+            assert items == [{"id": 2, "original": "World"}]
+            return "retry prompt"
+
+        def get_kb_usage_trace(self):
+            return {"project": {}, "matches": []}
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    translated = (pdir / "translated.srt").read_text(encoding="utf-8")
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["status"] == "translated"
+    assert "你好" in translated
+    assert "世界" in translated
+    assert len(persist_calls) == 2
+    assert any("全片补翻缺失" in msg for _, _, msg in progress_messages)
+
+
 def test_translate_pipeline_can_auto_repair_quality_issues(tmp_path, monkeypatch):
     from app.api import translate as api_translate
     from app.utils import project_store

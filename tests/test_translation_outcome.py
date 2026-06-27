@@ -43,6 +43,8 @@ def test_completion_counts_ignore_non_translatable_rows():
         _blk("a", translation="甲"),
         _blk("b"),
         _blk("[music]"),
+        _blk("♪ I see trees of green ♪"),
+        _blk("-[shrieking]\n-[roaring]"),
         _blk("c", filtered=True),
     ]
     assert _translation_completion_counts(blocks) == (2, 1, 1)

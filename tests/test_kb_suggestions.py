@@ -497,10 +497,14 @@ def test_suggest_kb_entries_extracts_auto_scientific_terms_without_context_fragm
     assert "Without the Dicroidium" not in by_source
     assert "As the Ischigualastia" not in by_source
     assert "The Ischigualastia" not in by_source
-    assert by_source["Ischigualastia"].target == ""
-    assert by_source["Ischigualastia"].confidence >= 0.72
-    assert "auto-detected scientific" in by_source["Ischigualastia"].notes
+    assert by_source["Dicroidium"].target == "双扇蕨"
+    assert by_source["Ischigualastia"].target == "伊斯基瓜拉斯兽"
+    assert by_source["Ischigualastia"].confidence >= 0.85
+    assert "curated science terminology" in by_source["Ischigualastia"].notes
     assert set(by_source["Ischigualastia"].evidence) == {"subtitle:2", "subtitle:3"}
+    assert by_source["Saurosuchus"].target == ""
+    assert by_source["Saurosuchus"].confidence >= 0.72
+    assert "auto-detected scientific" in by_source["Saurosuchus"].notes
 
 
 def test_suggest_kb_entries_filters_curated_science_context_fragments():

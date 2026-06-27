@@ -461,14 +461,14 @@ def test_build_prompt_injects_auto_scientific_terms_for_consistency(monkeypatch)
         [],
         [],
         items=[
-            {"id": 1, "original": "The Ischigualastia keeps moving."},
-            {"id": 2, "original": "Without the Dicroidium, food is scarce."},
+            {"id": 1, "original": "A Saurosuchus watches from the riverbank."},
+            {"id": 2, "original": "The Novaraptor keeps moving."},
         ],
     )
 
     assert "Auto-detected terminology" in prompt
-    assert "Ischigualastia" in prompt
-    assert "Dicroidium" in prompt
+    assert "Saurosuchus" in prompt
+    assert "Novaraptor" in prompt
     assert "preserve the standard source form" in prompt
     scopes = {
         hit.get("scope")

@@ -193,6 +193,10 @@ _AUTO_REPAIR_REPORT_ONLY_ISSUE_TYPES = {
     "scientific_term_inconsistent",
     "sound_description_translated",
 }
+_EXPECTED_REPAIRABLE_CONSISTENCY_TYPES = {
+    "proper_name_inconsistent",
+    "scientific_term_inconsistent",
+}
 _SOUND_LABEL_KEYWORDS = (
     "音乐",
     "乐曲",
@@ -379,10 +383,14 @@ _SOUND_LABEL_EN_RE = re.compile(
 
 
 def _is_report_only_issue(issue: QualityIssue) -> bool:
-    return (
-        getattr(issue, "severity", "") == "warning"
-        and getattr(issue, "type", "") in _AUTO_REPAIR_REPORT_ONLY_ISSUE_TYPES
-    )
+    if getattr(issue, "severity", "") != "warning":
+        return False
+    issue_type = getattr(issue, "type", "")
+    if issue_type == "sound_description_translated":
+        return True
+    if issue_type in _EXPECTED_REPAIRABLE_CONSISTENCY_TYPES:
+        return not bool(_clean_text(getattr(issue, "expected", "")))
+    return issue_type in _AUTO_REPAIR_REPORT_ONLY_ISSUE_TYPES
 
 
 def _is_blocking_issue(issue: QualityIssue) -> bool:
@@ -467,6 +475,11 @@ def _is_sound_description(source: str) -> bool:
         )
 
     return _is_unbracketed_sound_description_label(probe)
+
+
+def is_sound_description_source(source: str) -> bool:
+    """Return True when a source cue is a non-dialogue sound/music description."""
+    return _is_sound_description(source)
 
 
 def _is_sound_translation_label(label: str) -> bool:
@@ -588,6 +601,27 @@ def _issue_counts(issues: list[QualityIssue]) -> dict:
     for issue in issues:
         counts[issue.type] = counts.get(issue.type, 0) + 1
     return counts
+
+
+def _majority_target_signature(observations: list[dict]) -> str:
+    counts: dict[str, int] = {}
+    order: list[str] = []
+    for item in observations or []:
+        if not isinstance(item, dict):
+            continue
+        signature = _clean_text(item.get("target_signature", ""))
+        if not signature:
+            continue
+        if signature not in counts:
+            order.append(signature)
+            counts[signature] = 0
+        counts[signature] += 1
+    ranked = sorted(order, key=lambda value: (-counts[value], order.index(value)))
+    if not ranked or counts[ranked[0]] < 2:
+        return ""
+    if len(ranked) > 1 and counts[ranked[0]] == counts[ranked[1]]:
+        return ""
+    return ranked[0]
 
 
 _FAR_CATEGORY_BY_TYPE = {
@@ -765,6 +799,7 @@ def _scientific_term_consistency_issues(
 
         if len(target_forms) <= 1:
             continue
+        expected = _majority_target_signature(observations)
         message = (
             f"auto-detected scientific term {source} uses inconsistent target forms: "
             f"{', '.join(target_forms)}"
@@ -779,6 +814,7 @@ def _scientific_term_consistency_issues(
                 message=message,
                 source_text=item.get("source_text", ""),
                 translation=_clean_text(item.get("translation", "")),
+                expected=expected if expected and item.get("target_signature") != expected else "",
             ))
     return issues
 
@@ -1201,7 +1237,16 @@ def run_quality_checks(
             message = f"inferred proper name {item['source']} uses inconsistent target forms"
             if target_forms:
                 message = f"{message}: {', '.join(target_forms)}"
-            for observation in item.get("observations", []):
+            observations = [
+                observation for observation in item.get("observations", [])
+                if isinstance(observation, dict)
+            ]
+            has_shared_anchor = any(
+                _clean_text(observation.get("target_anchor", ""))
+                for observation in observations
+            )
+            expected = _majority_target_signature(observations) if has_shared_anchor else ""
+            for observation in observations:
                 block_value = observation.get("block_id")
                 block_id = int(block_value) if str(block_value).isdigit() else None
                 issues.append(QualityIssue(
@@ -1211,6 +1256,11 @@ def run_quality_checks(
                     message=message,
                     source_text=item["source"],
                     translation=_clean_text(observation.get("translation", "")),
+                    expected=(
+                        expected
+                        if expected and observation.get("target_signature") != expected
+                        else ""
+                    ),
                 ))
 
     blocking_issues = [issue for issue in issues if _is_blocking_issue(issue)]
@@ -1286,7 +1336,12 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
 def repairable_quality_issues(issues: list[QualityIssue]) -> list[QualityIssue]:
     repairable: list[QualityIssue] = []
     for issue in issues or []:
-        if issue.type in _AUTO_REPAIR_REPORT_ONLY_ISSUE_TYPES:
+        if issue.type == "sound_description_translated":
+            continue
+        if (
+            issue.type in _EXPECTED_REPAIRABLE_CONSISTENCY_TYPES
+            and not _clean_text(issue.expected)
+        ):
             continue
         repairable.append(issue)
     return repairable
@@ -1332,6 +1387,10 @@ def build_repair_prompt(
         parts.append("行长超标时优先在语义边界换行或压缩，不要为了换行添加新信息。")
     if "core_term_inconsistent" in issue_types:
         parts.append("核心术语不一致时必须使用 Issue 中 expected 指定的译法，并统一同一源术语。")
+    if "scientific_term_inconsistent" in issue_types:
+        parts.append("科学名不一致时必须使用 Issue 中 expected 指定的译名，只改必要的术语部分。")
+    if "proper_name_inconsistent" in issue_types:
+        parts.append("专名不一致时必须使用 Issue 中 expected 指定的译名，只改必要的专名部分，不要重写整句。")
     if issue_types & {"kb_term_missing", "manual_term_missing", "canonical_term_missing"}:
         parts.append("术语缺失时必须使用 Issue 中 expected 指定的译法；不要改写已审定或策展术语。")
     parts.append("")

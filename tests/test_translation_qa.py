@@ -326,7 +326,7 @@ def test_repair_prompt_gives_core_term_consistency_guidance():
     assert "expected D-Day → D日" in prompt
 
 
-def test_repairable_quality_issues_skip_inferred_term_consistency():
+def test_repairable_quality_issues_require_expected_for_inferred_consistency():
     from app.engines.translation_qa import QualityIssue, repairable_quality_issues
 
     issues = [
@@ -350,6 +350,13 @@ def test_repairable_quality_issues_skip_inferred_term_consistency():
             message="inferred proper name uses inconsistent target forms",
         ),
         QualityIssue(
+            type="proper_name_inconsistent",
+            severity="warning",
+            block_id=6,
+            message="inferred proper name uses inconsistent target forms",
+            expected="萨米娅·扎希尔",
+        ),
+        QualityIssue(
             type="line_too_long",
             severity="warning",
             block_id=4,
@@ -366,7 +373,7 @@ def test_repairable_quality_issues_skip_inferred_term_consistency():
 
     repairable = repairable_quality_issues(issues)
 
-    assert [issue.block_id for issue in repairable] == [4, 5]
+    assert [issue.block_id for issue in repairable] == [2, 6, 4, 5]
 
 
 def test_quality_checks_flag_inferred_proper_name_inconsistency():
@@ -391,6 +398,29 @@ def test_quality_checks_flag_inferred_proper_name_inconsistency():
     assert report.summary["report_only_warning_count"] == 2
     assert all(issue.severity == "warning" for issue in flagged)
     assert all(issue.source_text == "Hudson Oaks" for issue in flagged)
+
+
+def test_quality_checks_mark_majority_proper_name_variant_as_repairable():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(1, "Hudson Oaks is quiet tonight.", "哈德逊奥克斯很安静。"),
+        _block(2, "I came from Hudson Oaks.", "我从哈德逊奥克斯来。"),
+        _block(3, "Hudson Oaks is closed now.", "哈德逊奥克斯镇已关闭。"),
+    ]
+    for block in blocks:
+        block.end = block.start + timedelta(seconds=4)
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
+    flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
+    repairable = [issue for issue in flagged if issue.expected]
+
+    assert report.status == "needs_review"
+    assert report.summary["blocking_issue_count"] == 1
+    assert report.summary["report_only_warning_count"] == 2
+    assert [(issue.block_id, issue.expected) for issue in repairable] == [
+        (3, "哈德逊奥克斯")
+    ]
 
 
 def test_quality_checks_do_not_flag_rank_name_context_as_name_inconsistency():
@@ -524,6 +554,23 @@ def test_quality_checks_do_not_flag_same_long_cjk_name_in_different_contexts():
     assert "proper_name_inconsistent" not in report.summary["by_type"]
 
 
+def test_quality_checks_allow_deictic_classifier_prefixes_for_same_name():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(164, "Our Nanuqsaurus couple watch...", "这对纳努克龙伴侣在一旁观察……"),
+        _block(
+            401,
+            "Our Nanuqsaurus is\nnow the last of his kind.",
+            "这只纳努克龙\n如今已是同类中的最后一员。",
+        ),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
+
+    assert "proper_name_inconsistent" not in report.summary["by_type"]
+
+
 def test_quality_checks_do_not_flag_short_consistent_cjk_names():
     from app.engines.translation_qa import run_quality_checks
 
@@ -619,7 +666,11 @@ def test_quality_checks_flag_auto_scientific_term_inconsistency():
     assert any("Novaraptor" in message for message in messages)
     assert any("Ventosuchus" in message for message in messages)
     assert all(issue.severity == "warning" for issue in flagged)
-    assert all(issue.expected == "" for issue in flagged)
+    assert {
+        (issue.block_id, issue.expected)
+        for issue in flagged
+        if issue.expected
+    } == {(2, "诺瓦盗龙")}
 
 
 def test_quality_checks_allow_consistent_auto_scientific_term():

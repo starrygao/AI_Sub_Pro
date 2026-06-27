@@ -294,6 +294,24 @@ def test_proper_name_consistency_score_allows_same_long_name_in_natural_contexts
     assert result["issues"] == []
 
 
+def test_proper_name_consistency_score_allows_deictic_classifier_prefixes():
+    from app.evaluation.metrics import proper_name_consistency_score
+
+    result = proper_name_consistency_score(
+        {
+            "164": "Our Nanuqsaurus couple watch...",
+            "401": "Our Nanuqsaurus is now the last of his kind.",
+        },
+        {
+            "164": "这对纳努克龙伴侣在一旁观察……",
+            "401": "这只纳努克龙如今已是同类中的最后一员。",
+        },
+    )
+
+    assert result["issue_count"] == 0
+    assert result["issues"] == []
+
+
 def test_proper_name_consistency_score_allows_rank_name_with_sentence_context():
     from app.evaluation.metrics import proper_name_consistency_score
 

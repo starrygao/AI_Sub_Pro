@@ -58,6 +58,18 @@ log = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024
 MAX_SUBTITLE_UPLOAD_BYTES = 32 * 1024 * 1024
 MAX_AUDIO_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
+_FORCED_SUBTITLE_TITLE_RE = re.compile(
+    r"\b(forced|foreign\s+only|signs?\s*(?:&|and)\s*songs?)\b",
+    re.IGNORECASE,
+)
+_COMMENTARY_SUBTITLE_TITLE_RE = re.compile(
+    r"\b(commentary|director'?s?\s+commentary)\b",
+    re.IGNORECASE,
+)
+_SDH_SUBTITLE_TITLE_RE = re.compile(
+    r"\b(sdh|cc|closed\s+captions?|hearing\s+impaired|descriptive)\b",
+    re.IGNORECASE,
+)
 _VIDEO_UPLOAD_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".ts", ".m4v"}
 _SUBTITLE_UPLOAD_EXTS = {".srt", ".vtt", ".ass", ".ssa"}
 _AUDIO_UPLOAD_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".webm"}
@@ -136,6 +148,29 @@ def _json_safe_value(value):
     return value
 
 
+def _subtitle_track_title(track: dict) -> str:
+    title = track.get("title") if isinstance(track, dict) else ""
+    return title.strip() if isinstance(title, str) else ""
+
+
+def _is_forced_or_commentary_subtitle(track: dict) -> bool:
+    title = _subtitle_track_title(track)
+    return bool(
+        title
+        and (
+            _FORCED_SUBTITLE_TITLE_RE.search(title)
+            or _COMMENTARY_SUBTITLE_TITLE_RE.search(title)
+        )
+    )
+
+
+def _subtitle_track_penalty(track: dict) -> int:
+    title = _subtitle_track_title(track)
+    if title and _SDH_SUBTITLE_TITLE_RE.search(title):
+        return 5
+    return 0
+
+
 def _pick_subtitle_track(tracks: list, target_language: str) -> Optional[int]:
     """Pick the best embedded subtitle track to bypass ASR.
 
@@ -148,15 +183,18 @@ def _pick_subtitle_track(tracks: list, target_language: str) -> Optional[int]:
 
     Selection rules:
       1. Drop image-based codecs (PGS/DVD/DVB) — they need OCR, can't transcode.
-      2. Prefer English (most common source language for translation).
-      3. Then prefer non-target-language tracks (no point translating to itself).
-      4. Otherwise the first text-based track.
+      2. Drop forced/commentary tracks — they are usually incomplete or not
+         the program dialogue; fall back to ASR if those are the only tracks.
+      3. Prefer regular English (most common source language for translation).
+      4. Then prefer regular non-target-language tracks.
+      5. Prefer SDH/CC only when there is no regular source track.
     Returns None if no usable text track exists.
     """
     target_iso = _TARGET_LANG_TO_ISO.get(target_language, set())
     text_subs = [
         (i, t) for i, t in enumerate(tracks)
         if is_text_subtitle_codec(t.get("codec"))
+        and not _is_forced_or_commentary_subtitle(t)
     ]
     if not text_subs:
         return None
@@ -165,17 +203,20 @@ def _pick_subtitle_track(tracks: list, target_language: str) -> Optional[int]:
         value = t.get("lang")
         return value.lower() if isinstance(value, str) else ""
 
-    # Priority 1: English, unless English is the requested output language.
-    if not ({"en", "eng"} & target_iso):
-        for i, t in text_subs:
-            if lang(t) in {"en", "eng"}:
-                return i
-    # Priority 2: any non-target language
-    for i, t in text_subs:
-        if lang(t) and lang(t) not in target_iso:
-            return i
-    # Priority 3: first text-based track
-    return text_subs[0][0]
+    def score(item):
+        i, t = item
+        track_lang = lang(t)
+        if not ({"en", "eng"} & target_iso) and track_lang in {"en", "eng"}:
+            lang_score = 0
+        elif track_lang and track_lang not in target_iso:
+            lang_score = 10
+        elif track_lang in target_iso:
+            lang_score = 20
+        else:
+            lang_score = 15
+        return (lang_score + _subtitle_track_penalty(t), i)
+
+    return min(text_subs, key=score)[0]
 
 
 def _apply_safe_defaults(project: dict) -> dict:
