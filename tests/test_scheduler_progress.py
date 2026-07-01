@@ -260,3 +260,122 @@ def test_load_progress_store_from_disk_sanitizes_payload(tmp_project_dir):
 
     assert count >= 1
     assert progress_store["dirty_seed"] == {"progress": 0, "stage": "", "message": ""}
+
+
+def test_mark_interrupted_tasks_from_previous_session_fails_running_workflow(tmp_project_dir):
+    from app.engines.scheduler import mark_interrupted_tasks_from_previous_session, progress_store
+    from app.engines.workflow_state import load_workflow_state, start_stage
+
+    pid = "stucktrans"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir()
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "stuck translate",
+        "video_path": "/fake/movie.mkv",
+        "status": "processing",
+        "pipeline_stage": None,
+    }), encoding="utf-8")
+    (pdir / "progress.json").write_text(json.dumps({
+        "progress": 40,
+        "stage": "translate",
+        "message": "翻译中: 批次 1/172",
+    }), encoding="utf-8")
+    start_stage(pid, "translate", input_artifact="filtered.srt")
+
+    count = mark_interrupted_tasks_from_previous_session()
+
+    assert count == 1
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["status"] == "error"
+    assert project["pipeline_stage"] is None
+    assert "应用重启中断" in project["error"]
+    state = load_workflow_state(pid)
+    assert state["stages"]["translate"]["status"] == "failed"
+    assert "应用重启中断" in state["stages"]["translate"]["error_summary"]
+    progress = json.loads((pdir / "progress.json").read_text(encoding="utf-8"))
+    assert progress["stage"] == ""
+    assert progress["message"] == project["error"]
+    assert progress_store[pid]["stage"] == ""
+
+
+def test_mark_interrupted_tasks_from_previous_session_handles_legacy_processing(tmp_project_dir):
+    from app.engines.scheduler import mark_interrupted_tasks_from_previous_session
+    from app.engines.workflow_state import load_workflow_state
+
+    pid = "legacyrun"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir()
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "legacy processing",
+        "video_path": "/fake/movie.mkv",
+        "status": "processing",
+        "pipeline_stage": None,
+    }), encoding="utf-8")
+    (pdir / "progress.json").write_text(json.dumps({
+        "progress": 57,
+        "stage": "translate",
+        "message": "翻译中: 批次 2/4",
+    }), encoding="utf-8")
+
+    count = mark_interrupted_tasks_from_previous_session()
+
+    assert count == 1
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["status"] == "error"
+    assert project["pipeline_stage"] is None
+    state = load_workflow_state(pid)
+    assert state["stages"]["translate"]["status"] == "failed"
+
+
+def test_mark_interrupted_tasks_from_previous_session_skips_orphan_progress_dir(tmp_project_dir):
+    from app.engines.scheduler import mark_interrupted_tasks_from_previous_session
+
+    pdir = tmp_project_dir / "orphan1"
+    pdir.mkdir()
+    (pdir / "progress.json").write_text(json.dumps({
+        "progress": 40,
+        "stage": "translate",
+        "message": "旧进度",
+    }), encoding="utf-8")
+
+    assert mark_interrupted_tasks_from_previous_session() == 0
+
+
+@pytest.mark.parametrize("status", ["cancelled", "translated", "error", "completed"])
+def test_mark_interrupted_tasks_from_previous_session_ignores_terminal_or_review_states(
+    tmp_project_dir,
+    status,
+):
+    from app.engines.scheduler import mark_interrupted_tasks_from_previous_session
+
+    pid = f"stale-{status}"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir()
+    project = {
+        "id": pid,
+        "name": "stale progress",
+        "video_path": "/fake/movie.mkv",
+        "status": status,
+        "progress": 100,
+        "progress_msg": "已取消" if status == "cancelled" else "翻译完成",
+        "pipeline_stage": None,
+    }
+    if status == "translated":
+        project["translation_quality_status"] = "needs_review"
+        project["translation_quality_message"] = "翻译质量未达标"
+    (pdir / "project.json").write_text(json.dumps(project), encoding="utf-8")
+    (pdir / "progress.json").write_text(json.dumps({
+        "progress": 57,
+        "stage": "translate",
+        "message": "旧的翻译进度",
+    }), encoding="utf-8")
+
+    count = mark_interrupted_tasks_from_previous_session()
+
+    assert count == 0
+    loaded = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert loaded["status"] == status
+    assert loaded["progress_msg"] == project["progress_msg"]
+    assert loaded.get("error") != "任务因应用重启中断，请点击恢复流程或重试失败阶段。"

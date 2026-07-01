@@ -150,7 +150,13 @@ def _run_startup():
     except Exception as e:
         log.warning("bundled phrase pack import failed: %s", e)
     log.info("AI Sub Pro started on http://127.0.0.1:18090")
-    from app.engines.scheduler import load_progress_store_from_disk
+    from app.engines.scheduler import (
+        load_progress_store_from_disk,
+        mark_interrupted_tasks_from_previous_session,
+    )
+    interrupted = mark_interrupted_tasks_from_previous_session()
+    if interrupted:
+        log.warning("marked %d interrupted task(s) from previous session as retryable errors", interrupted)
     restored = load_progress_store_from_disk()
     log.info("restored progress for %d projects from disk", restored)
 

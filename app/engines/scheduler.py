@@ -20,8 +20,14 @@ from typing import Dict, Iterator, Optional
 
 from app import config as cfg
 from app.config import PROJECTS_DIR
-from app.engines.workflow_state import append_stage_log
-from app.utils.project_store import atomic_write_json, project_dir, validate_pid
+from app.engines.workflow_state import append_stage_log, fail_stage, load_workflow_state
+from app.utils.project_store import (
+    atomic_write_json,
+    load_project,
+    mutate_project,
+    project_dir,
+    validate_pid,
+)
 
 log = logging.getLogger(__name__)
 
@@ -77,6 +83,9 @@ _STAGE_RANGES = {
     "translate": (40, 75),
     "burn":      (75, 100),
 }
+_RECOVERABLE_RUNNING_STAGES = {"download", "asr", "translate", "burn"}
+_RUNNING_STAGE_PRIORITY = ("burn", "translate", "asr", "download")
+_INTERRUPTED_TASK_MESSAGE = "任务因应用重启中断，请点击恢复流程或重试失败阶段。"
 
 
 def _map_global(stage: str, local_pct: int) -> int:
@@ -188,6 +197,105 @@ def load_progress_store_from_disk() -> int:
             count += 1
         except Exception as e:
             log.warning("load progress failed pid=%s: %s", pdir.name, e)
+    return count
+
+
+def _running_stage_from_workflow_state(pid: str) -> str:
+    state = load_workflow_state(pid)
+    stages = state.get("stages") if isinstance(state, dict) else {}
+    if not isinstance(stages, dict):
+        return ""
+    for stage in _RUNNING_STAGE_PRIORITY:
+        item = stages.get(stage)
+        if isinstance(item, dict) and item.get("status") == "running":
+            return stage
+    return ""
+
+
+def _stage_from_progress_file(pdir: Path) -> str:
+    fp = pdir / "progress.json"
+    if not fp.exists():
+        return ""
+    try:
+        data = json.loads(fp.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    stage = data.get("stage")
+    return stage if stage in _RECOVERABLE_RUNNING_STAGES else ""
+
+
+def _clear_interrupted_progress(pid: str) -> None:
+    payload = {
+        "progress": 0,
+        "stage": "",
+        "message": _INTERRUPTED_TASK_MESSAGE,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    with _progress_lock:
+        progress_store[pid] = payload
+    try:
+        atomic_write_json(project_dir(pid) / "progress.json", payload)
+    except Exception as e:
+        log.warning("persist interrupted progress failed pid=%s: %s", pid, e)
+
+
+def _mark_interrupted_task(pid: str, stage: str) -> None:
+    try:
+        fail_stage(pid, stage, _INTERRUPTED_TASK_MESSAGE)
+        append_stage_log(pid, stage, _INTERRUPTED_TASK_MESSAGE)
+    except Exception as e:
+        log.warning("workflow interruption recovery failed pid=%s stage=%s: %s", pid, stage, e)
+
+    def _apply(project: dict) -> None:
+        project["status"] = "error"
+        project["error"] = _INTERRUPTED_TASK_MESSAGE
+        project["progress"] = 0
+        project["progress_msg"] = _INTERRUPTED_TASK_MESSAGE
+        project["pipeline_stage"] = None
+
+    try:
+        mutate_project(pid, _apply)
+    except Exception as e:
+        log.warning("project interruption recovery failed pid=%s stage=%s: %s", pid, stage, e)
+    _clear_interrupted_progress(pid)
+
+
+def mark_interrupted_tasks_from_previous_session() -> int:
+    """Convert stale running task state from a previous process into retryable errors.
+
+    Worker threads are process-local. After an app restart, a project may still
+    have project.json/progress.json/workflow_state.json fields saying a stage is
+    running even though no worker can continue it. Mark those projects as failed
+    on startup so the UI offers retry/resume instead of showing a frozen task.
+    """
+    count = 0
+    root = Path(PROJECTS_DIR)
+    if not root.exists():
+        return 0
+    for pdir in root.iterdir():
+        if pdir.is_symlink() or not pdir.is_dir():
+            continue
+        if not (pdir / "project.json").is_file():
+            continue
+        try:
+            pid = validate_pid(pdir.name)
+            project = load_project(pid)
+            workflow_stage = _running_stage_from_workflow_state(pid)
+            project_stage = project.get("pipeline_stage")
+            if project_stage not in _RECOVERABLE_RUNNING_STAGES:
+                project_stage = ""
+            processing = project.get("status") == "processing"
+            stage = workflow_stage or project_stage
+            if not stage and processing:
+                stage = _stage_from_progress_file(pdir) or "asr"
+            if not stage:
+                continue
+            _mark_interrupted_task(pid, stage)
+            count += 1
+        except Exception as e:
+            log.warning("interrupted task recovery skipped pid=%s: %s", pdir.name, e)
     return count
 
 
