@@ -38,6 +38,10 @@ _TIME_RE = re.compile(r"^(\d+):(\d{2}):(\d{2})[,.](\d{3})$")
 _VTT_TIME_RE = re.compile(r"^(?:(\d+):)?(\d{2}):(\d{2})\.(\d{3})$")
 _ASS_TIME_RE = re.compile(r"^(\d+):(\d{2}):(\d{2})\.(\d{1,3})$")
 _MUSIC_SYMBOL_RE = re.compile(r"[♪♫♬🎵🎶]+")
+_DIALOGUE_MARKER_RE = re.compile(r"^\s*[-–—]\s+\S")
+_SPEAKER_LABEL_RE = re.compile(r"^[^:：\n]{1,12}[:：]\s*\S")
+_CJK_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
+_TRANSLATION_SINGLE_LINE_MAX_CHARS = 30
 
 
 def _timedelta_ms(td: timedelta) -> int:
@@ -375,7 +379,10 @@ def write_srt(blocks: List[SubtitleBlock], path: str, use_translation: bool = Fa
                 continue
             if use_translation and _is_source_sound_description(getattr(b, "text", "")):
                 continue
-            text = _subtitle_text(getattr(b, "translation", "") if use_translation else getattr(b, "text", ""))
+            text = _subtitle_text(
+                getattr(b, "translation", "") if use_translation else getattr(b, "text", ""),
+                single_line=use_translation,
+            )
             if not text:
                 continue
             start = getattr(b, "start", timedelta(0))
@@ -403,7 +410,10 @@ def write_mono_srt(blocks, out_path: str, use_translation: bool = True) -> int:
             continue
         if use_translation and _is_source_sound_description(getattr(b, "text", "")):
             continue
-        text = _subtitle_text(getattr(b, "translation", "") if use_translation else getattr(b, "text", ""))
+        text = _subtitle_text(
+            getattr(b, "translation", "") if use_translation else getattr(b, "text", ""),
+            single_line=use_translation,
+        )
         if not text:
             continue
         start = getattr(b, "start", timedelta(0))
@@ -426,7 +436,7 @@ def write_bilingual_srt(blocks: List[SubtitleBlock], path: str):
             if _is_source_sound_description(getattr(b, "text", "")):
                 continue
             text = _subtitle_text(getattr(b, "text", ""))
-            translation = _subtitle_text(getattr(b, "translation", ""))
+            translation = _subtitle_text(getattr(b, "translation", ""), single_line=True)
             if not text and not translation:
                 continue
             start = getattr(b, "start", timedelta(0))
@@ -461,7 +471,7 @@ def apply_offset(blocks: List[SubtitleBlock], offset_ms: int) -> List[SubtitleBl
     return shifted
 
 
-def _subtitle_text(value) -> str:
+def _subtitle_text(value, *, single_line: bool = False) -> str:
     if not isinstance(value, str):
         return ""
     text = _MUSIC_SYMBOL_RE.sub("", value)
@@ -472,7 +482,54 @@ def _subtitle_text(value) -> str:
         cleaned = re.sub(r"(?:\s*[-–—])+$", "", cleaned).strip()
         if cleaned:
             lines.append(cleaned)
+    if single_line:
+        lines = _single_line_translation(lines)
     return "\n".join(lines).strip()
+
+
+def _single_line_translation(lines: list[str]) -> list[str]:
+    if len(lines) <= 1:
+        return lines
+    if _has_structural_line_break(lines):
+        return lines
+    joined = _join_subtitle_lines(lines)
+    if _compact_subtitle_chars(joined) > _TRANSLATION_SINGLE_LINE_MAX_CHARS:
+        return lines
+    return [joined]
+
+
+def _has_structural_line_break(lines: list[str]) -> bool:
+    if any(_DIALOGUE_MARKER_RE.match(line) for line in lines):
+        return True
+    speaker_lines = sum(1 for line in lines if _SPEAKER_LABEL_RE.match(line))
+    return speaker_lines >= 2
+
+
+def _join_subtitle_lines(lines: list[str]) -> str:
+    out = lines[0]
+    for line in lines[1:]:
+        if _needs_join_space(out, line):
+            out += " "
+        out += line
+    return out.strip()
+
+
+def _needs_join_space(left: str, right: str) -> bool:
+    left = left.rstrip()
+    right = right.lstrip()
+    if not left or not right:
+        return False
+    if left[-1] in "([{（《“‘":
+        return False
+    if right[0] in ")]}），。！？、：；,.!?;:%》”’":
+        return False
+    if _CJK_RE.search(left[-1]) or _CJK_RE.search(right[0]):
+        return False
+    return left[-1].isascii() and right[0].isascii() and left[-1].isalnum() and right[0].isalnum()
+
+
+def _compact_subtitle_chars(value: str) -> int:
+    return len(re.sub(r"\s+", "", value or ""))
 
 
 def _is_source_sound_description(value) -> bool:

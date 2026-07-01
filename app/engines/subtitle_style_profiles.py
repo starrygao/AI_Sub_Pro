@@ -28,14 +28,14 @@ class SubtitleStyleProfile:
 _ZH_CN_GENERAL = SubtitleStyleProfile(
     id="zh_cn_general",
     label="Simplified Chinese subtitle style",
-    max_line_chars=16,
+    max_line_chars=30,
     max_lines=2,
     max_chars_per_second=9.0,
     rules=(
-        "Keep each subtitle line at or below 16 Chinese characters per line when possible.",
-        "Use no more than 2 subtitle lines per block.",
+        "Prefer one subtitle line when the translation fits within about 30 Chinese characters.",
+        "Use two subtitle lines only for genuinely long or hard-to-read cues.",
         "Keep reading speed at or below 9.0 characters per second.",
-        "Prefer semantic line breaks at punctuation or phrase boundaries.",
+        "When two lines are necessary, break at punctuation or phrase boundaries.",
         "Compress repeated short exclamations unless repetition carries meaning.",
         "Use Chinese punctuation in Chinese subtitles.",
     ),
@@ -44,14 +44,14 @@ _ZH_CN_GENERAL = SubtitleStyleProfile(
 _ZH_CN_CHILDREN = SubtitleStyleProfile(
     id="zh_cn_children",
     label="Simplified Chinese children subtitle style",
-    max_line_chars=16,
+    max_line_chars=24,
     max_lines=2,
     max_chars_per_second=7.0,
     rules=(
-        "Keep each subtitle line at or below 16 Chinese characters per line when possible.",
-        "Use no more than 2 subtitle lines per block.",
+        "Prefer one subtitle line when the translation fits within about 24 Chinese characters.",
+        "Use two subtitle lines only for genuinely long or hard-to-read cues.",
         "Keep reading speed at or below 7.0 characters per second for children/family content.",
-        "Prefer simple vocabulary and semantic line breaks.",
+        "Prefer simple vocabulary; when two lines are necessary, break at semantic boundaries.",
     ),
 )
 

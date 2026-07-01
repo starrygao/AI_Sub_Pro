@@ -507,6 +507,22 @@ def _is_unbracketed_sound_description_label(value: str) -> bool:
     letters = re.sub(r"[^A-Za-z]", "", text)
     if _SENTENCE_END_PUNCT_RE.search(text) and letters != letters.upper():
         return False
+    if words and words[0].casefold() in {
+        "a",
+        "an",
+        "the",
+        "this",
+        "that",
+        "these",
+        "those",
+        "my",
+        "your",
+        "his",
+        "her",
+        "our",
+        "their",
+    }:
+        return False
     if len(words) <= 3:
         return True
     return bool(letters and letters == letters.upper())
@@ -1384,7 +1400,10 @@ def build_repair_prompt(
             "争吵、追问等双人对话优先改成短句。"
         )
     if "line_too_long" in issue_types:
-        parts.append("行长超标时优先在语义边界换行或压缩，不要为了换行添加新信息。")
+        parts.append(
+            "行长超标时优先压缩成自然单行；确实过长才在语义边界换成两行，"
+            "不要为了换行添加新信息。"
+        )
     if "core_term_inconsistent" in issue_types:
         parts.append("核心术语不一致时必须使用 Issue 中 expected 指定的译法，并统一同一源术语。")
     if "scientific_term_inconsistent" in issue_types:

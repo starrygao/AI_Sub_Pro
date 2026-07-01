@@ -126,6 +126,7 @@ def test_quality_checks_do_not_treat_speaker_labels_as_sound_descriptions():
         _block(2, "A young Ischigualastia calls.", "幼年伊斯基瓜拉兽在呼唤。"),
         _block(3, "David Selznick calls me up.", "大卫·塞尔兹尼克给我打电话。"),
         _block(4, "Wind 18 knots, west, southwest.", "西南偏西风，18节。"),
+        _block(5, "That car,", "那辆车，"),
     ]
 
     report = run_quality_checks(blocks, target_language="简体中文", max_chars=20)
@@ -159,6 +160,7 @@ def test_normalize_sound_description_translations_blanks_non_dialogue_rows():
         _block(4, "Owen, are you okay?", "[尖叫] 欧文没事吧？"),
         _block(5, "The Martian said it mattered.", "[火星人] 有很多因素会影响。"),
         _block(6, "Hello.", "你好。"),
+        _block(7, "That car,", "那辆车，"),
     ]
 
     applied = normalize_sound_description_translations(blocks)
@@ -199,6 +201,7 @@ def test_normalize_sound_description_translations_blanks_non_dialogue_rows():
     assert blocks[3].translation == "欧文没事吧？"
     assert blocks[4].translation == "[火星人] 有很多因素会影响。"
     assert blocks[5].translation == "你好。"
+    assert blocks[6].translation == "那辆车，"
 
 
 def test_clean_sound_description_translation_text_keeps_speaker_labels():
@@ -782,7 +785,7 @@ def test_quality_checks_apply_subtitle_style_profile_rules():
     from app.engines.translation_qa import run_quality_checks
 
     blocks = [
-        _block(1, "Fast line", "这是一条非常非常非常非常非常长的字幕"),
+        _block(1, "Fast line", "这是一条非常非常非常非常非常非常非常非常非常非常非常非常长的字幕"),
         _block(2, "Too many lines", "第一行\n第二行\n第三行"),
         _block(3, "Bad semantic break", "我\n知道你来了"),
         _block(4, "No, no, no!", "不，不，不！"),

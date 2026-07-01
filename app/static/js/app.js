@@ -954,7 +954,7 @@ function app() {
     },
 
     isVideoFile(file) {
-      return this.isVideoPath(file?.name) || this.isVideoPath(file?.path);
+      return this.isVideoPath(file?.name) || this.isVideoPath(this.localPathForFile(file));
     },
 
     isDesktopShell() {
@@ -978,12 +978,26 @@ function app() {
       return value.startsWith('/') ? value.trim() : '';
     },
 
+    localPathForFile(file) {
+      if (!file || typeof file !== 'object') return '';
+      if (typeof file.path === 'string' && file.path.trim()) return file.path.trim();
+      const resolver = typeof window !== 'undefined' ? window.electronAPI?.getPathForFile : null;
+      if (typeof resolver === 'function') {
+        try {
+          const path = resolver(file);
+          if (typeof path === 'string' && path.trim()) return path.trim();
+        } catch(e) {}
+      }
+      return '';
+    },
+
     droppedLocalPaths(event) {
       const dataTransfer = event?.dataTransfer;
       const rawPaths = [];
       const files = Array.from(dataTransfer?.files || []);
       for (const file of files) {
-        if (typeof file?.path === 'string' && file.path.trim()) rawPaths.push(file.path);
+        const filePath = this.localPathForFile(file);
+        if (filePath) rawPaths.push(filePath);
       }
       if (typeof dataTransfer?.getData === 'function') {
         for (const type of ['text/uri-list', 'text/plain']) {
@@ -1448,8 +1462,9 @@ function app() {
         this.toast('请拖入视频文件（MP4、MKV、AVI 等）', 'error');
         return;
       }
-      if (typeof file?.path === 'string' && file.path.trim()) {
-        await this.useSelectedVideoPath(file.path);
+      const localPath = this.localPathForFile(file);
+      if (localPath) {
+        await this.useSelectedVideoPath(localPath);
         return;
       }
       if (this.isDesktopShell()) {

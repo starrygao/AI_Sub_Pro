@@ -311,6 +311,67 @@ def test_desktop_drop_without_path_refuses_video_upload_fallback():
     )
 
 
+def test_electron_drop_uses_preload_path_resolver():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        let resolverCalls = 0;
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          window: {
+            electronAPI: {
+              getPathForFile(file) {
+                resolverCalls += 1;
+                return file?.name === 'movie.mkv' ? '/Users/me/Movies/movie.mkv' : '';
+              },
+            },
+          },
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const starts = [];
+          const toasts = [];
+          state.toast = (message, type) => { toasts.push([message, type || 'success']); };
+          state.uploadVideoFile = async () => {
+            throw new Error('electron local drops should not upload video files');
+          };
+          state.quickStart = async (options) => {
+            starts.push([state.newVideoPath, options]);
+          };
+
+          await state.handleDrop({
+            dataTransfer: {
+              files: [{name: 'movie.mkv'}],
+              getData() { return ''; },
+            },
+          });
+          await new Promise(resolve => setTimeout(resolve, 950));
+
+          if (resolverCalls < 1) {
+            throw new Error(`expected preload path resolver to be called, got ${resolverCalls}`);
+          }
+          if (starts.length !== 1 || starts[0][0] !== '/Users/me/Movies/movie.mkv') {
+            throw new Error(`expected electron drop to start from local path, got ${JSON.stringify(starts)}`);
+          }
+          if (toasts.some((toast) => String(toast[0]).includes('未获得视频本地路径'))) {
+            throw new Error(`expected no missing-path toast, got ${JSON.stringify(toasts)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_native_file_drop_cancels_pending_missing_path_toast():
     _run_node(
         """

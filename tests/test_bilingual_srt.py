@@ -62,6 +62,7 @@ def test_write_srt_translation_mode_skips_empty_translations(tmp_path):
         _make_block(1, "Hello", "你好"),
         _make_block(2, "World", ""),
         _make_block(3, "Again", "再来"),
+        _make_block(4, "That car,", "那辆车，"),
     ]
     out = tmp_path / "translated.srt"
 
@@ -70,8 +71,63 @@ def test_write_srt_translation_mode_skips_empty_translations(tmp_path):
     text = out.read_text(encoding="utf-8")
     assert "你好" in text
     assert "再来" in text
+    assert "那辆车，" in text
     assert "World" not in text
-    assert "\n3\n" not in text
+    assert "\n4\n" not in text
+
+
+def test_translated_srt_collapses_short_translation_line_breaks(tmp_path):
+    from app.utils.srt import write_mono_srt, write_srt
+
+    blocks = [
+        _make_block(1, "Short line", "我们现在就走\n别再回头"),
+        _make_block(2, "English residue", "API\nreturns data"),
+    ]
+    translated = tmp_path / "translated.srt"
+    mono = tmp_path / "mono.srt"
+
+    write_srt(blocks, str(translated), use_translation=True)
+    n = write_mono_srt(blocks, str(mono), use_translation=True)
+
+    assert n == 2
+    translated_text = translated.read_text(encoding="utf-8")
+    mono_text = mono.read_text(encoding="utf-8")
+    assert "我们现在就走别再回头" in translated_text
+    assert "API returns data" in translated_text
+    assert "我们现在就走\n别再回头" not in translated_text
+    assert "我们现在就走别再回头" in mono_text
+
+
+def test_translated_srt_preserves_structural_dialogue_line_breaks(tmp_path):
+    from app.utils.srt import write_srt
+
+    blocks = [
+        _make_block(1, "Two speakers", "- 你看见了吗？\n- 看见了。"),
+        _make_block(2, "Speaker labels", "玛丽：你来了？\n约翰：刚到。"),
+        _make_block(3, "Long cue", "这是一条非常非常非常非常长的字幕\n它本来就不适合强行压成单行观看"),
+    ]
+    out = tmp_path / "translated.srt"
+
+    write_srt(blocks, str(out), use_translation=True)
+
+    text = out.read_text(encoding="utf-8")
+    assert "- 你看见了吗？\n- 看见了。" in text
+    assert "玛丽：你来了？\n约翰：刚到。" in text
+    assert "这是一条非常非常非常非常长的字幕\n它本来就不适合强行压成单行观看" in text
+
+
+def test_bilingual_srt_collapses_translation_only(tmp_path):
+    from app.utils.srt import write_bilingual_srt
+
+    blocks = [
+        _make_block(1, "First source line\nSecond source line", "第一句译文\n第二句译文"),
+    ]
+    out = tmp_path / "bilingual.srt"
+
+    write_bilingual_srt(blocks, str(out))
+
+    text = out.read_text(encoding="utf-8")
+    assert "第一句译文第二句译文\nFirst source line\nSecond source line" in text
 
 
 def test_srt_writers_strip_music_decoration_symbols(tmp_path):

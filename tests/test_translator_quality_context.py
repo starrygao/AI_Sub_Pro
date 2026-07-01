@@ -635,7 +635,8 @@ def test_build_prompt_injects_subtitle_style_guidance(monkeypatch):
     )
 
     assert "Subtitle style constraints" in prompt
-    assert "16 Chinese characters per line" in prompt
+    assert "Prefer one subtitle line" in prompt
+    assert "30 Chinese characters" in prompt
     assert "reading speed at or below 9.0 characters per second" in prompt
     assert translator.last_quality_trace.style_hits
     assert translator.last_quality_trace.style_hits[0]["scope"] == "subtitle_style"
