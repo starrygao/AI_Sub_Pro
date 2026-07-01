@@ -919,6 +919,80 @@ def test_translate_pipeline_final_retry_repairs_missing_translation(tmp_path, mo
     assert any("全片补翻缺失" in msg for _, _, msg in progress_messages)
 
 
+def test_translate_pipeline_skips_final_retry_when_missing_count_is_catastrophic(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transfinalretryhuge"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nOne\n\n"
+        "2\n00:00:02,000 --> 00:00:03,000\nTwo\n\n"
+        "3\n00:00:04,000 --> 00:00:05,000\nThree\n\n"
+        "4\n00:00:06,000 --> 00:00:07,000\nFour\n\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {
+            "missing_translation_retries": 2,
+            "missing_translation_retry_batch_size": 1,
+            "missing_translation_retry_max_blocks": 2,
+            "qa_auto_repair": False,
+            "semantic_qa": False,
+        }
+    })
+    progress_messages = []
+    monkeypatch.setattr(
+        api_translate,
+        "_emit_progress",
+        lambda pid, stage, pct, msg: progress_messages.append((stage, pct, msg)),
+    )
+
+    class FakePrimary:
+        def translate_batch(self, items, system_prompt):
+            raise AssertionError("catastrophic final retry should be skipped")
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            self.primary = FakePrimary()
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "一"
+            return blocks
+
+        def _build_prompt(self, target_lang, meta_info, kb_data, context_before, context_after, items=None):
+            return "retry prompt"
+
+        def get_kb_usage_trace(self):
+            return {"project": {}, "matches": []}
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    partial = (pdir / "partial_translated.srt").read_text(encoding="utf-8")
+    assert project["status"] == "error"
+    assert "翻译未完成" in project["error"]
+    assert "一" in partial
+    assert not (pdir / "translated.srt").exists()
+    assert any("全片缺译过多" in msg for _, _, msg in progress_messages)
+
+
 def test_translate_pipeline_retries_missing_created_after_quality_repair(tmp_path, monkeypatch):
     from pathlib import Path
 

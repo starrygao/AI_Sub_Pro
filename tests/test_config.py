@@ -45,6 +45,7 @@ def test_default_config_translation_has_retrieval_settings():
     assert translation["require_kb_suggestion_review"] is False
     assert translation["missing_translation_retries"] == 2
     assert translation["missing_translation_retry_batch_size"] == 5
+    assert translation["missing_translation_retry_max_blocks"] == 200
     assert translation["qa_auto_repair"] is True
     assert translation["qa_auto_repair_rounds"] == 3
 
@@ -94,6 +95,7 @@ def test_config_loads_and_merges_partial_saved_config(tmp_path, monkeypatch):
     assert loaded["translation"]["require_kb_suggestion_review"] is False
     assert loaded["translation"]["missing_translation_retries"] == 2
     assert loaded["translation"]["missing_translation_retry_batch_size"] == 5
+    assert loaded["translation"]["missing_translation_retry_max_blocks"] == 200
     assert loaded["translation"]["qa_auto_repair"] is True
     assert loaded["translation"]["qa_auto_repair_rounds"] == 3
     assert loaded["asr"]["backend"] == "auto"

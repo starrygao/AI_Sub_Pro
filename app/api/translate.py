@@ -952,6 +952,18 @@ def _missing_translation_retry_batch_size(cfg: dict) -> int:
     )
 
 
+def _missing_translation_retry_max_blocks(cfg: dict) -> int:
+    trans_cfg = cfg.get("translation") if isinstance(cfg, dict) else {}
+    if not isinstance(trans_cfg, dict):
+        trans_cfg = {}
+    return _coerce_int_option(
+        trans_cfg.get("missing_translation_retry_max_blocks", 200),
+        200,
+        minimum=0,
+        maximum=5000,
+    )
+
+
 def _retry_context_for_blocks(blocks, batch_blocks, window: int = 3) -> tuple[list[dict], list[str]]:
     positions = {id(block): i for i, block in enumerate(blocks)}
     batch_positions = [positions[id(block)] for block in batch_blocks if id(block) in positions]
@@ -998,6 +1010,7 @@ def _retry_missing_translations_before_quality(
     from app.engines.providers.result_contract import reconcile_translation_results
 
     batch_size = _missing_translation_retry_batch_size(cfg)
+    max_retry_blocks = _missing_translation_retry_max_blocks(cfg)
     applied = []
 
     def _retry_batch(batch_blocks) -> None:
@@ -1048,6 +1061,22 @@ def _retry_missing_translations_before_quality(
             if _is_translatable_block(block) and not getattr(block, "translation", "")
         ]
         if not missing_blocks:
+            break
+        if max_retry_blocks > 0 and len(missing_blocks) > max_retry_blocks:
+            active_count = sum(1 for block in blocks if _is_translatable_block(block))
+            message = (
+                f"全片缺译过多: {len(missing_blocks)}/{active_count} 条，"
+                f"超过补翻上限 {max_retry_blocks}，跳过耗时补翻"
+            )
+            if progress_callback is not None:
+                try:
+                    progress_callback(90, message)
+                except Exception:
+                    pass
+            log.warning("skip final missing translation retry: %s", message)
+            for block in missing_blocks:
+                if not getattr(block, "translation_error", ""):
+                    block.translation_error = message
             break
 
         if progress_callback is not None:

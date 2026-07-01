@@ -467,7 +467,12 @@ def _validate_settings_update(data: dict) -> None:
         _require_int("translation", translation, "max_memory_examples", min_value=0, max_value=20)
         _require_int("translation", translation, "max_phrase_examples", min_value=0, max_value=20)
         _require_int("translation", translation, "repetitive_threshold", min_value=1, max_value=100)
+        _require_int("translation", translation, "missing_translation_retries", min_value=0, max_value=4)
+        _require_int("translation", translation, "missing_translation_retry_batch_size", min_value=1, max_value=20)
+        _require_int("translation", translation, "missing_translation_retry_max_blocks", min_value=0, max_value=5000)
         _require_int("translation", translation, "qa_auto_repair_rounds", min_value=0, max_value=4)
+        _require_int("translation", translation, "semantic_qa_batch_size", min_value=5, max_value=80)
+        _require_int("translation", translation, "semantic_qa_max_blocks", min_value=0, max_value=5000)
         _require_bool("translation", translation, "filter_repetitive")
         _require_bool("translation", translation, "filter_interjections")
         _require_bool("translation", translation, "full_doc_mode")
@@ -475,6 +480,7 @@ def _validate_settings_update(data: dict) -> None:
         _require_bool("translation", translation, "use_phrase_library")
         _require_bool("translation", translation, "require_kb_suggestion_review")
         _require_bool("translation", translation, "qa_auto_repair")
+        _require_bool("translation", translation, "semantic_qa")
 
     asr = data.get("asr") if isinstance(data, dict) else None
     if isinstance(asr, dict):
