@@ -647,6 +647,9 @@ _FAR_CATEGORY_BY_TYPE = {
     "manual_term_missing": "functional",
     "canonical_term_missing": "functional",
     "core_term_inconsistent": "functional",
+    "semantic_mismatch": "functional",
+    "semantic_uncertain": "functional",
+    "semantic_qa_failed": "functional",
     "scientific_term_inconsistent": "functional",
     "proper_name_inconsistent": "functional",
     "english_residue": "acceptability",
@@ -1406,6 +1409,11 @@ def build_repair_prompt(
         )
     if "core_term_inconsistent" in issue_types:
         parts.append("核心术语不一致时必须使用 Issue 中 expected 指定的译法，并统一同一源术语。")
+    if issue_types & {"semantic_mismatch", "semantic_uncertain"}:
+        parts.append(
+            "语义错位时必须抛弃 draft，严格按 original 重新翻译；"
+            "不要沿用与原文无关的旧译文，不要合并相邻 id。"
+        )
     if "scientific_term_inconsistent" in issue_types:
         parts.append("科学名不一致时必须使用 Issue 中 expected 指定的译名，只改必要的术语部分。")
     if "proper_name_inconsistent" in issue_types:

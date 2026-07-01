@@ -587,13 +587,16 @@ def test_full_pipeline_stops_before_burn_when_quality_gate_fails(tmp_path, monke
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
     assert burn_called == []
-    assert project["status"] == "translated"
-    assert project["error"] is None
+    assert project["status"] == "error"
+    assert "翻译质量未达标" in project["error"]
     assert project["translation_quality_status"] == "needs_review"
     assert "翻译质量未达标" in project["progress_msg"]
     assert api_translate._resume_stage_for_project(pid, project) == "translate"
     assert report["summary"]["quality_gate"]["passed"] is False
-    assert (pdir / "translated.srt").exists()
+    assert not (pdir / "translated.srt").exists()
+    assert not (pdir / "bilingual.srt").exists()
+    assert (pdir / "partial_translated.srt").exists()
+    assert (pdir / "partial_bilingual.srt").exists()
 
 
 def test_translate_done_message_ignores_blank_sound_descriptions(tmp_path, monkeypatch):
@@ -713,6 +716,129 @@ def test_translate_pipeline_marks_partial_translation_as_error(tmp_path, monkeyp
     assert (pdir / "partial_translated.srt").exists()
     assert (pdir / "partial_bilingual.srt").exists()
     assert (pdir / "translation_qa_report.json").exists()
+
+
+def test_translate_pipeline_blocks_export_when_cleaned_translation_is_empty(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transexportempty"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\nHello.\n\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {"qa_auto_repair": False},
+    })
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            pass
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "♪"
+            return blocks
+
+        def get_kb_usage_trace(self):
+            return {"project": {}, "matches": []}
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["status"] == "error"
+    assert "翻译导出不完整" in project["error"]
+    assert project["translated_srt"] is None
+    assert project["bilingual_srt"] is None
+    assert not (pdir / "translated.srt").exists()
+    assert not (pdir / "bilingual.srt").exists()
+    assert (pdir / "partial_translated.srt").exists()
+    assert (pdir / "partial_bilingual.srt").exists()
+
+
+def test_translate_pipeline_semantic_mismatch_blocks_delivery(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transsemanticbad"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\nHello.\n\n"
+        "2\n00:00:02,000 --> 00:00:04,000\nBear, what does that mean?\n\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {
+            "qa_auto_repair": False,
+            "semantic_qa": True,
+            "semantic_qa_batch_size": 10,
+        },
+    })
+
+    class FakePrimary:
+        def translate_batch(self, items, system_prompt):
+            assert "字幕语义质检员" in system_prompt
+            return [
+                {"id": 1, "translation": "OK"},
+                {"id": 2, "translation": "MISMATCH: 译文与原文问题含义不对应"},
+            ]
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            self.primary = FakePrimary()
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "你好。"
+            blocks[1].translation = "你车呢？"
+            return blocks
+
+        def get_kb_usage_trace(self):
+            return {"project": {}, "matches": []}
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
+    assert project["status"] == "error"
+    assert project["translation_quality_status"] == "needs_review"
+    assert "翻译质量未达标" in project["error"]
+    assert project["translated_srt"] is None
+    assert report["summary"]["by_type"]["semantic_mismatch"] == 1
+    assert report["summary"]["quality_gate"]["passed"] is False
+    assert not (pdir / "translated.srt").exists()
+    assert (pdir / "partial_translated.srt").exists()
 
 
 def test_translate_pipeline_final_retry_repairs_missing_translation(tmp_path, monkeypatch):
@@ -981,11 +1107,14 @@ def test_translate_pipeline_auto_repair_preserves_omitted_rows(tmp_path, monkeyp
     monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
         "translation": {"qa_auto_repair": True},
     })
+    attempted_batches = []
 
     class FakePrimary:
         def translate_batch(self, items, system_prompt):
-            assert [item["id"] for item in items] == [1, 2]
-            return [{"id": 1, "translation": "你还好吗？"}]
+            attempted_batches.append([item["id"] for item in items])
+            if [item["id"] for item in items] == [1, 2]:
+                return [{"id": 1, "translation": "你还好吗？"}]
+            return []
 
     class FakeTranslator:
         last_quality_trace = None
@@ -1006,10 +1135,14 @@ def test_translate_pipeline_auto_repair_preserves_omitted_rows(tmp_path, monkeyp
 
     api_translate._run_translate_pipeline(pid, "简体中文")
 
-    translated = (pdir / "translated.srt").read_text(encoding="utf-8")
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    partial = (pdir / "partial_translated.srt").read_text(encoding="utf-8")
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
-    assert "你还好吗？" in translated
-    assert "Hello there." in translated
+    assert attempted_batches == [[1, 2], [2]]
+    assert project["status"] == "error"
+    assert "你还好吗？" in partial
+    assert "Hello there." in partial
+    assert not (pdir / "translated.srt").exists()
     assert report["repaired_blocks"] == [{"id": 1, "translation": "你还好吗？"}]
 
 

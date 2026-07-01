@@ -34,6 +34,15 @@ class SubtitleBlock:
         }
 
 
+@dataclass
+class SrtWriteReport:
+    written_ids: List[int] = field(default_factory=list)
+    filtered_ids: List[int] = field(default_factory=list)
+    omitted_sound_description_ids: List[int] = field(default_factory=list)
+    empty_text_ids: List[int] = field(default_factory=list)
+    invalid_duration_ids: List[int] = field(default_factory=list)
+
+
 _TIME_RE = re.compile(r"^(\d+):(\d{2}):(\d{2})[,.](\d{3})$")
 _VTT_TIME_RE = re.compile(r"^(?:(\d+):)?(\d{2}):(\d{2})\.(\d{3})$")
 _ASS_TIME_RE = re.compile(r"^(\d+):(\d{2}):(\d{2})\.(\d{1,3})$")
@@ -370,29 +379,57 @@ def parse_srt_file(path: str) -> List[SubtitleBlock]:
         return parse_srt(f.read())
 
 
-def write_srt(blocks: List[SubtitleBlock], path: str, use_translation: bool = False):
+def _report_block_id(block) -> Optional[int]:
+    idx = getattr(block, "index", None)
+    if isinstance(idx, bool):
+        return None
+    return idx if isinstance(idx, int) else None
+
+
+def _append_report_id(target: List[int], block) -> None:
+    idx = _report_block_id(block)
+    if idx is not None:
+        target.append(idx)
+
+
+def write_srt(
+    blocks: List[SubtitleBlock],
+    path: str,
+    use_translation: bool = False,
+    *,
+    return_report: bool = False,
+):
     """Write SubtitleBlock list to SRT file."""
+    report = SrtWriteReport()
     with open(path, "w", encoding="utf-8") as f:
         seq = 1
         for b in blocks:
             if getattr(b, "filtered", False):
+                _append_report_id(report.filtered_ids, b)
                 continue
             if use_translation and _is_source_sound_description(getattr(b, "text", "")):
+                _append_report_id(report.omitted_sound_description_ids, b)
                 continue
             text = _subtitle_text(
                 getattr(b, "translation", "") if use_translation else getattr(b, "text", ""),
                 single_line=use_translation,
             )
             if not text:
+                _append_report_id(report.empty_text_ids, b)
                 continue
             start = getattr(b, "start", timedelta(0))
             end = getattr(b, "end", timedelta(0))
             if not _has_positive_duration(start, end):
+                _append_report_id(report.invalid_duration_ids, b)
                 continue
             f.write(f"{seq}\n")
             f.write(f"{fmt_time(start)} --> {fmt_time(end)}\n")
             f.write(f"{text}\n\n")
+            _append_report_id(report.written_ids, b)
             seq += 1
+    if return_report:
+        return report
+    return None
 
 
 def write_mono_srt(blocks, out_path: str, use_translation: bool = True) -> int:

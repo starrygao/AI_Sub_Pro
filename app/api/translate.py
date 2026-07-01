@@ -880,6 +880,47 @@ def _incomplete_translation_message(blocks) -> Optional[str]:
     return f"翻译未完成: {translated_count}/{active_count} 条成功，{failed_count} 条缺失"
 
 
+def _preview_ids(ids: list[int], limit: int = 12) -> str:
+    shown = ", ".join(str(item) for item in ids[:limit])
+    if len(ids) > limit:
+        shown = f"{shown}, ..."
+    return shown
+
+
+def _has_exportable_duration(block) -> bool:
+    try:
+        return getattr(block, "end") > getattr(block, "start")
+    except Exception:
+        return False
+
+
+def _expected_translation_export_ids(blocks) -> list[int]:
+    ids = []
+    for block in blocks or []:
+        block_id = getattr(block, "index", None)
+        if not isinstance(block_id, int) or isinstance(block_id, bool):
+            continue
+        if not _has_exportable_duration(block):
+            continue
+        if _is_translatable_block(block):
+            ids.append(block_id)
+    return ids
+
+
+def _translation_export_integrity_message(blocks, write_report) -> Optional[str]:
+    expected_ids = _expected_translation_export_ids(blocks)
+    if not expected_ids:
+        return None
+    written_ids = set(getattr(write_report, "written_ids", []) or [])
+    missing_ids = [block_id for block_id in expected_ids if block_id not in written_ids]
+    if not missing_ids:
+        return None
+    return (
+        f"翻译导出不完整: {len(expected_ids) - len(missing_ids)}/{len(expected_ids)} 条可交付字幕写入，"
+        f"{len(missing_ids)} 条导出缺失 (id: {_preview_ids(missing_ids)})"
+    )
+
+
 _FINAL_MISSING_TRANSLATION_RETRY_NOTE = (
     "最终补翻要求: 这些字幕在主翻译和批内补翻后仍缺译。"
     "本轮只处理当前 JSON 中的条目；每个普通对白 id 必须返回非空 translation，"
@@ -1334,6 +1375,277 @@ def _qa_auto_repair_enabled(cfg: dict) -> bool:
     return trans_cfg.get("qa_auto_repair") is not False
 
 
+def _semantic_qa_enabled(cfg: dict) -> bool:
+    trans_cfg = cfg.get("translation", {}) if isinstance(cfg, dict) else {}
+    if not isinstance(trans_cfg, dict):
+        return False
+    return trans_cfg.get("semantic_qa") is True
+
+
+def _semantic_qa_batch_size(cfg: dict) -> int:
+    trans_cfg = cfg.get("translation", {}) if isinstance(cfg, dict) else {}
+    raw = trans_cfg.get("semantic_qa_batch_size", 40) if isinstance(trans_cfg, dict) else 40
+    try:
+        value = int(raw)
+    except (TypeError, ValueError, OverflowError):
+        value = 40
+    return max(5, min(value, 80))
+
+
+def _semantic_qa_max_blocks(cfg: dict) -> int:
+    trans_cfg = cfg.get("translation", {}) if isinstance(cfg, dict) else {}
+    raw = trans_cfg.get("semantic_qa_max_blocks", 0) if isinstance(trans_cfg, dict) else 0
+    try:
+        value = int(raw)
+    except (TypeError, ValueError, OverflowError):
+        value = 0
+    return max(0, min(value, 5000))
+
+
+def _issue_counts_by_type(issues) -> dict:
+    counts = {}
+    for issue in issues or []:
+        issue_type = getattr(issue, "type", "")
+        if issue_type:
+            counts[issue_type] = counts.get(issue_type, 0) + 1
+    return counts
+
+
+def _refresh_quality_report_issue_summary(report) -> None:
+    issues = list(getattr(report, "issues", []) or [])
+    blocking = [
+        issue for issue in issues
+        if getattr(issue, "severity", "") in {"error", "severe"}
+        or not _is_report_only_quality_warning(issue)
+    ]
+    report.status = "ok" if not blocking else "needs_review"
+    report.unresolved_blocks = sorted({
+        issue.block_id for issue in blocking if isinstance(issue.block_id, int)
+    })
+    summary = getattr(report, "summary", None)
+    if not isinstance(summary, dict):
+        summary = {}
+        report.summary = summary
+    summary.update({
+        "issue_count": len(issues),
+        "blocking_issue_count": len(blocking),
+        "report_only_warning_count": max(0, len(issues) - len(blocking)),
+        "by_type": _issue_counts_by_type(issues),
+    })
+
+
+def _semantic_qa_prompt(target_language: str) -> str:
+    return "\n".join([
+        f"你是一位严格的字幕语义质检员，检查译文是否准确对应原文，目标语言是{target_language}。",
+        "用户会给 JSON 数组；每项包含 id、original 和 draft。",
+        "只判断语义对应关系，不检查行长、标点、风格或读速。",
+        "如果 draft 准确表达 original 的核心意思，返回 OK。",
+        "如果 draft 与 original 明显无关、错位、漏掉核心动作/对象/问答关系，返回 MISMATCH: 简短中文原因。",
+        "如果信息不足但高度可疑，返回 UNCERTAIN: 简短中文原因。",
+        "必须保持 id 原样，不要新增、删除或重编号。",
+        "仅输出 JSON 数组，格式: [{\"id\": N, \"translation\": \"OK\"}]。",
+    ])
+
+
+def _semantic_qa_items(blocks, cfg: dict) -> list[dict]:
+    items = []
+    for block in blocks or []:
+        block_id = getattr(block, "index", None)
+        if not isinstance(block_id, int) or isinstance(block_id, bool):
+            continue
+        if not _is_translatable_block(block):
+            continue
+        source = getattr(block, "text", "")
+        translation = getattr(block, "translation", "")
+        if not isinstance(source, str) or not source.strip():
+            continue
+        if not isinstance(translation, str) or not translation.strip():
+            continue
+        items.append({
+            "id": block_id,
+            "original": source,
+            "draft": translation,
+        })
+    max_blocks = _semantic_qa_max_blocks(cfg)
+    if max_blocks > 0:
+        return items[:max_blocks]
+    return items
+
+
+def _semantic_issue_from_verdict(item: dict, verdict: str, error: str = ""):
+    from app.engines.translation_qa import QualityIssue
+
+    block_id = item.get("id")
+    source = item.get("original", "")
+    translation = item.get("draft", "")
+    clean_verdict = verdict.strip() if isinstance(verdict, str) else ""
+    clean_error = error.strip() if isinstance(error, str) else ""
+
+    if clean_error and not clean_verdict:
+        return QualityIssue(
+            type="semantic_qa_failed",
+            severity="warning",
+            block_id=block_id if isinstance(block_id, int) else None,
+            message=f"semantic QA did not return a usable verdict: {_safe_error_message(clean_error, 120)}",
+            source_text=source if isinstance(source, str) else "",
+            translation=translation if isinstance(translation, str) else "",
+        )
+
+    normalized = clean_verdict.strip().lower()
+    if normalized == "ok" or normalized.startswith("ok "):
+        return None
+    if normalized.startswith("mismatch") or normalized.startswith("不匹配") or normalized.startswith("错译"):
+        reason = clean_verdict.split(":", 1)[-1].strip() if ":" in clean_verdict else clean_verdict
+        return QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=block_id if isinstance(block_id, int) else None,
+            message=reason or "translation does not match source meaning",
+            source_text=source if isinstance(source, str) else "",
+            translation=translation if isinstance(translation, str) else "",
+        )
+    if normalized.startswith("uncertain") or normalized.startswith("可疑") or normalized.startswith("不确定"):
+        reason = clean_verdict.split(":", 1)[-1].strip() if ":" in clean_verdict else clean_verdict
+        return QualityIssue(
+            type="semantic_uncertain",
+            severity="warning",
+            block_id=block_id if isinstance(block_id, int) else None,
+            message=reason or "semantic QA could not confirm source-target alignment",
+            source_text=source if isinstance(source, str) else "",
+            translation=translation if isinstance(translation, str) else "",
+        )
+
+    return QualityIssue(
+        type="semantic_uncertain",
+        severity="warning",
+        block_id=block_id if isinstance(block_id, int) else None,
+        message=f"semantic QA returned ambiguous verdict: {_safe_error_message(clean_verdict, 120)}",
+        source_text=source if isinstance(source, str) else "",
+        translation=translation if isinstance(translation, str) else "",
+    )
+
+
+def _run_semantic_quality_checks(
+    cfg: dict,
+    translator,
+    blocks,
+    target_language: str,
+    *,
+    progress_callback=None,
+) -> tuple[list, dict]:
+    if not _semantic_qa_enabled(cfg):
+        return [], {"enabled": False}
+    primary = getattr(translator, "primary", None)
+    if primary is None or not hasattr(primary, "translate_batch"):
+        return [], {"enabled": True, "skipped_reason": "provider_unavailable"}
+
+    items = _semantic_qa_items(blocks, cfg)
+    trace = {
+        "enabled": True,
+        "checked_blocks": 0,
+        "issue_count": 0,
+        "batch_size": _semantic_qa_batch_size(cfg),
+        "batches": [],
+    }
+    if not items:
+        return [], trace
+
+    try:
+        from app.engines.providers.result_contract import reconcile_translation_results
+        from app.engines.translation_qa import QualityIssue
+    except Exception as exc:
+        trace["skipped_reason"] = f"import_failed: {_safe_error_message(exc)}"
+        return [], trace
+
+    issues = []
+    prompt = _semantic_qa_prompt(target_language)
+    batch_size = trace["batch_size"]
+    item_by_id = {str(item["id"]): item for item in items}
+    for start in range(0, len(items), batch_size):
+        batch = items[start:start + batch_size]
+        if progress_callback is not None:
+            try:
+                progress_callback(92, f"正在语义复核: {min(start + len(batch), len(items))}/{len(items)}")
+            except Exception:
+                pass
+        batch_trace = {
+            "batch": len(trace["batches"]) + 1,
+            "attempted_blocks": len(batch),
+            "issues": 0,
+        }
+        trace["batches"].append(batch_trace)
+        try:
+            raw_results = primary.translate_batch(batch, prompt)
+            results = reconcile_translation_results(
+                raw_results if isinstance(raw_results, list) else [],
+                batch,
+            )
+        except Exception as exc:
+            message = _safe_error_message(exc)
+            issues.append(QualityIssue(
+                type="semantic_qa_failed",
+                severity="warning",
+                block_id=None,
+                message=f"semantic QA batch failed: {message}",
+            ))
+            batch_trace["error"] = message
+            batch_trace["issues"] = 1
+            continue
+
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            item = item_by_id.get(str(result.get("id", "")))
+            if item is None:
+                continue
+            issue = _semantic_issue_from_verdict(
+                item,
+                result.get("translation", ""),
+                result.get("error", ""),
+            )
+            if issue is not None:
+                issues.append(issue)
+                batch_trace["issues"] += 1
+    trace["checked_blocks"] = len(items)
+    trace["issue_count"] = len(issues)
+    return issues, trace
+
+
+def _run_quality_checks_with_semantics(
+    cfg: dict,
+    translator,
+    blocks,
+    target_language: str,
+    project_kb,
+    project: dict,
+    trace: dict,
+    *,
+    progress_callback=None,
+):
+    from app.engines.translation_qa import run_quality_checks
+
+    report = run_quality_checks(
+        blocks,
+        project_kb=project_kb,
+        target_language=target_language,
+        meta_info=project,
+        trace=trace,
+    )
+    semantic_issues, semantic_trace = _run_semantic_quality_checks(
+        cfg,
+        translator,
+        blocks,
+        target_language,
+        progress_callback=progress_callback,
+    )
+    if semantic_trace:
+        trace["semantic_qa"] = semantic_trace
+    if semantic_issues:
+        report.issues.extend(semantic_issues)
+        _refresh_quality_report_issue_summary(report)
+    return report
+
+
 def _quality_issue_counts(report) -> tuple[int, int, int]:
     issues = list(getattr(report, "issues", []) or [])
     error_count = sum(1 for issue in issues if getattr(issue, "severity", "") in {"error", "severe"})
@@ -1439,8 +1751,8 @@ def _mark_translation_quality_failed(pid: str, message: str) -> None:
     mutate_project(
         pid,
         lambda p: p.update({
-            "status": "translated",
-            "error": None,
+            "status": "error",
+            "error": detail,
             "progress": 100,
             "progress_msg": detail,
             "translation_quality_status": "needs_review",
@@ -1576,7 +1888,6 @@ def _persist_translation_quality_report(
             normalize_curated_domain_term_translations,
             normalize_scientific_term_translations,
             normalize_sound_description_translations,
-            run_quality_checks,
             save_quality_report,
         )
 
@@ -1613,12 +1924,15 @@ def _persist_translation_quality_report(
             trace.setdefault("deterministic_postprocess", {})[
                 "proper_name_normalized_blocks"
             ] = normalized_names
-        report = run_quality_checks(
+        report = _run_quality_checks_with_semantics(
+            cfg,
+            translator,
             blocks,
-            project_kb=project_kb,
-            target_language=target_language,
-            meta_info=project,
-            trace=trace,
+            target_language,
+            project_kb,
+            project,
+            trace,
+            progress_callback=progress_callback,
         )
         repair_enabled = _qa_auto_repair_enabled(cfg)
         if repair_enabled and report.issues:
@@ -1654,12 +1968,15 @@ def _persist_translation_quality_report(
                     round_trace["result"] = "no_repair_applied"
                     break
                 repaired.extend(round_repaired)
-                report = run_quality_checks(
+                report = _run_quality_checks_with_semantics(
+                    cfg,
+                    translator,
                     blocks,
-                    project_kb=project_kb,
-                    target_language=target_language,
-                    meta_info=project,
-                    trace=trace,
+                    target_language,
+                    project_kb,
+                    project,
+                    trace,
+                    progress_callback=progress_callback,
                 )
                 current_score = _quality_score(report)
                 after_issue_count, after_error_count, after_warning_count = _quality_issue_counts(report)
@@ -1685,12 +2002,15 @@ def _persist_translation_quality_report(
                 "curated_domain_term_normalized_blocks",
                 [],
             ).extend(post_normalized_curated_terms)
-            report = run_quality_checks(
+            report = _run_quality_checks_with_semantics(
+                cfg,
+                translator,
                 blocks,
-                project_kb=project_kb,
-                target_language=target_language,
-                meta_info=project,
-                trace=trace,
+                target_language,
+                project_kb,
+                project,
+                trace,
+                progress_callback=progress_callback,
             )
         post_normalized_science = normalize_scientific_term_translations(blocks)
         if post_normalized_science:
@@ -1699,12 +2019,15 @@ def _persist_translation_quality_report(
                 "scientific_term_normalized_blocks",
                 [],
             ).extend(post_normalized_science)
-            report = run_quality_checks(
+            report = _run_quality_checks_with_semantics(
+                cfg,
+                translator,
                 blocks,
-                project_kb=project_kb,
-                target_language=target_language,
-                meta_info=project,
-                trace=trace,
+                target_language,
+                project_kb,
+                project,
+                trace,
+                progress_callback=progress_callback,
             )
         post_normalized_names = normalize_inferred_proper_name_variants(blocks)
         if post_normalized_names:
@@ -1713,12 +2036,15 @@ def _persist_translation_quality_report(
                 "proper_name_normalized_blocks",
                 [],
             ).extend(post_normalized_names)
-            report = run_quality_checks(
+            report = _run_quality_checks_with_semantics(
+                cfg,
+                translator,
                 blocks,
-                project_kb=project_kb,
-                target_language=target_language,
-                meta_info=project,
-                trace=trace,
+                target_language,
+                project_kb,
+                project,
+                trace,
+                progress_callback=progress_callback,
             )
         if repaired:
             report.repaired_blocks = repaired
@@ -1885,19 +2211,39 @@ def _run_translate_pipeline(
 
             active_count, translated_count, failed_count = _translation_completion_counts(blocks)
             incomplete_msg = _incomplete_translation_message(blocks)
+            quality_passed, quality_message = _translation_quality_gate_status(pid)
 
             # Save results
             _emit_progress(pid, "translate", 95, "正在保存结果...")
             from app.utils.srt import write_bilingual_srt
-            if incomplete_msg:
+
+            def _write_partial_outputs() -> None:
                 _remove_safe_project_files(pid, ["translated.srt", "bilingual.srt"])
-                write_srt(blocks, os.path.join(pdir, "partial_translated.srt"), use_translation=True)
+                write_srt(
+                    blocks,
+                    os.path.join(pdir, "partial_translated.srt"),
+                    use_translation=True,
+                )
                 write_bilingual_srt(blocks, os.path.join(pdir, "partial_bilingual.srt"))
                 _mark_translation_artifacts(pid)
+
+            if incomplete_msg or not quality_passed:
+                _write_partial_outputs()
             else:
-                write_srt(blocks, os.path.join(pdir, "translated.srt"), use_translation=True)
-                write_bilingual_srt(blocks, os.path.join(pdir, "bilingual.srt"))
-                _mark_translation_artifacts(pid)
+                _remove_safe_project_files(pid, ["partial_translated.srt", "partial_bilingual.srt"])
+                write_report = write_srt(
+                    blocks,
+                    os.path.join(pdir, "translated.srt"),
+                    use_translation=True,
+                    return_report=True,
+                )
+                export_msg = _translation_export_integrity_message(blocks, write_report)
+                if export_msg:
+                    incomplete_msg = export_msg
+                    _write_partial_outputs()
+                else:
+                    write_bilingual_srt(blocks, os.path.join(pdir, "bilingual.srt"))
+                    _mark_translation_artifacts(pid)
             try:
                 write_kb_usage_trace(Path(pdir), translator.get_kb_usage_trace())
             except Exception as e:
@@ -1906,16 +2252,13 @@ def _run_translate_pipeline(
             if incomplete_msg:
                 raise RuntimeError(incomplete_msg)
 
-            quality_passed, quality_message = _translation_quality_gate_status(pid)
-            if strict_quality_gate and not quality_passed:
+            if not quality_passed:
                 _mark_translation_quality_failed(pid, quality_message)
                 return
 
             done_msg = f"翻译完成: {translated_count} 条"
             if failed_count > 0:
                 done_msg += f"(失败 {failed_count} 条)"
-            if not quality_passed:
-                done_msg += "，质量未达标，建议继续自动返工或暂缓交付"
             _emit_progress(pid, "translate", 100, done_msg)
 
             mutate_project(
