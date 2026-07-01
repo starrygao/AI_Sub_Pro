@@ -1,6 +1,8 @@
 """Bugfix B2 — context window lookahead must honor config, not hardcode 2."""
 from datetime import timedelta
 
+import pytest
+
 
 def test_context_window_respects_config(monkeypatch):
     """With context_window=5, lookahead must be 5, not hardcoded 2."""
@@ -54,6 +56,47 @@ def test_context_window_respects_config(monkeypatch):
         f"Expected lookahead to include line 7/8 (context_window=5). "
         f"Prompt was: {prompt[:800]}"
     )
+
+
+def test_translate_aborts_when_provider_returns_too_many_empty_results(monkeypatch):
+    from app.engines.translator import SubtitleTranslator
+    from app.utils.srt import SubtitleBlock
+
+    config = {
+        "translation": {
+            "primary_provider": "openai",
+            "primary_model": "gpt-4o",
+            "batch_size": 10,
+            "context_window": 1,
+            "target_language": "简体中文",
+            "polish_provider": "",
+            "polish_model": "",
+            "missing_translation_retries": 0,
+            "missing_translation_abort_min_blocks": 10,
+            "missing_translation_abort_missing_pct": 50,
+        },
+        "api_keys": {"openai": "sk-test"},
+    }
+    t = SubtitleTranslator(config)
+    monkeypatch.setattr(
+        t.primary,
+        "translate_batch",
+        lambda items, system_prompt, retries=3: [
+            {"id": items[0]["id"], "translation": "只翻了一条", "error": ""}
+        ],
+    )
+    blocks = [
+        SubtitleBlock(
+            index=i,
+            start=timedelta(seconds=i),
+            end=timedelta(seconds=i + 1),
+            text=f"line {i}",
+        )
+        for i in range(10)
+    ]
+
+    with pytest.raises(RuntimeError, match="翻译服务返回大量空结果"):
+        t.translate(blocks, target_lang="简体中文")
 
 
 def test_translate_tolerates_malformed_meta_and_kb_data(monkeypatch):

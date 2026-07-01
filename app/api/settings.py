@@ -470,6 +470,8 @@ def _validate_settings_update(data: dict) -> None:
         _require_int("translation", translation, "missing_translation_retries", min_value=0, max_value=4)
         _require_int("translation", translation, "missing_translation_retry_batch_size", min_value=1, max_value=20)
         _require_int("translation", translation, "missing_translation_retry_max_blocks", min_value=0, max_value=5000)
+        _require_int("translation", translation, "missing_translation_abort_min_blocks", min_value=0, max_value=5000)
+        _require_int("translation", translation, "missing_translation_abort_missing_pct", min_value=0, max_value=100)
         _require_int("translation", translation, "qa_auto_repair_rounds", min_value=0, max_value=4)
         _require_int("translation", translation, "semantic_qa_batch_size", min_value=5, max_value=80)
         _require_int("translation", translation, "semantic_qa_max_blocks", min_value=0, max_value=5000)

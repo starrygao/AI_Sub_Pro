@@ -403,6 +403,18 @@ class SubtitleTranslator:
             min_value=1,
             max_value=50,
         )
+        self.missing_translation_abort_min_blocks = _coerce_bounded_int_setting(
+            trans_cfg.get("missing_translation_abort_min_blocks", 200),
+            200,
+            min_value=0,
+            max_value=5000,
+        )
+        self.missing_translation_abort_missing_pct = _coerce_bounded_int_setting(
+            trans_cfg.get("missing_translation_abort_missing_pct", 50),
+            50,
+            min_value=0,
+            max_value=100,
+        )
         self.last_quality_trace = TranslationContextTrace()
         self._accumulate_quality_trace = False
 
@@ -781,6 +793,21 @@ class SubtitleTranslator:
                 # Apply results to this batch's blocks.
                 batch_blocks = [blocks[ci] for ci in batch_indices]
                 self._apply_results(batch_blocks, self._results_from_map(items, result_map))
+
+                processed_blocks = batch_end
+                translated_processed = sum(1 for ci in active_indices[:batch_end] if blocks[ci].translation)
+                missing_processed = processed_blocks - translated_processed
+                if (
+                    self.missing_translation_abort_min_blocks > 0
+                    and processed_blocks >= self.missing_translation_abort_min_blocks
+                    and self.missing_translation_abort_missing_pct < 100
+                    and missing_processed * 100 >= processed_blocks * self.missing_translation_abort_missing_pct
+                ):
+                    raise RuntimeError(
+                        "翻译服务返回大量空结果: "
+                        f"{translated_processed}/{processed_blocks} 条成功，"
+                        f"{missing_processed} 条缺失，已提前停止"
+                    )
 
                 # Report progress AFTER the batch completes (the pre-batch callback
                 # above reflects work already done and doubles as the cancel

@@ -76,6 +76,8 @@ DEFAULT_CONFIG = {
         "missing_translation_retries": 2,
         "missing_translation_retry_batch_size": 5,
         "missing_translation_retry_max_blocks": 200,
+        "missing_translation_abort_min_blocks": 200,
+        "missing_translation_abort_missing_pct": 50,
         "qa_auto_repair": True,
         "qa_auto_repair_rounds": 3,
         "semantic_qa": True,
