@@ -1426,6 +1426,33 @@ def test_translate_pipeline_does_not_auto_repair_inferred_proper_names(tmp_path,
     assert report["summary"]["blocking_warning_count"] == 0
 
 
+def test_quality_gate_does_not_block_expected_name_at_question_tail():
+    from app.api.translate import _finalize_quality_conclusion
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+
+    report = TranslationQaReport(
+        status="ok",
+        issues=[
+            QualityIssue(
+                type="proper_name_inconsistent",
+                severity="warning",
+                block_id=1494,
+                message="inferred proper name One Wish Willow uses inconsistent target forms",
+                source_text="What's a One Wish Willow?",
+                translation="什么是一愿柳？",
+                expected="一愿柳",
+            )
+        ],
+        summary={},
+        unresolved_blocks=[],
+    )
+
+    _finalize_quality_conclusion(report, [], False)
+
+    assert report.summary["quality_gate"]["passed"] is True
+    assert report.summary["blocking_warning_count"] == 0
+
+
 def test_translate_pipeline_batches_auto_repair_and_records_trace(tmp_path, monkeypatch):
     from app.api import translate as api_translate
     from app.utils import project_store

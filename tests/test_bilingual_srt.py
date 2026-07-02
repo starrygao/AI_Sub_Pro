@@ -98,7 +98,7 @@ def test_translated_srt_collapses_short_translation_line_breaks(tmp_path):
     assert "我们现在就走别再回头" in mono_text
 
 
-def test_translated_srt_preserves_structural_dialogue_line_breaks(tmp_path):
+def test_translated_srt_collapses_short_structural_dialogue_line_breaks(tmp_path):
     from app.utils.srt import write_srt
 
     blocks = [
@@ -111,8 +111,8 @@ def test_translated_srt_preserves_structural_dialogue_line_breaks(tmp_path):
     write_srt(blocks, str(out), use_translation=True)
 
     text = out.read_text(encoding="utf-8")
-    assert "- 你看见了吗？\n- 看见了。" in text
-    assert "玛丽：你来了？\n约翰：刚到。" in text
+    assert "- 你看见了吗？- 看见了。" in text
+    assert "玛丽：你来了？约翰：刚到。" in text
     assert "这是一条非常非常非常非常长的字幕\n它本来就不适合强行压成单行观看" in text
 
 

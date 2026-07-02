@@ -527,8 +527,6 @@ def _subtitle_text(value, *, single_line: bool = False) -> str:
 def _single_line_translation(lines: list[str]) -> list[str]:
     if len(lines) <= 1:
         return lines
-    if _has_structural_line_break(lines):
-        return lines
     joined = _join_subtitle_lines(lines)
     if _compact_subtitle_chars(joined) > _TRANSLATION_SINGLE_LINE_MAX_CHARS:
         return lines

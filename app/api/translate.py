@@ -1691,10 +1691,23 @@ def _quality_score(report) -> tuple[int, int, int]:
 def _is_report_only_quality_warning(issue) -> bool:
     if getattr(issue, "severity", "") != "warning":
         return False
+    try:
+        from app.engines.translation_qa import _is_report_only_issue
+        return _is_report_only_issue(issue)
+    except Exception:
+        pass
     issue_type = getattr(issue, "type", "")
     if issue_type in _QA_EXPECTED_REPAIRABLE_WARNING_TYPES:
         expected = getattr(issue, "expected", "")
-        return not (isinstance(expected, str) and expected.strip())
+        if not (isinstance(expected, str) and expected.strip()):
+            return True
+        try:
+            from app.engines.translation_qa import _cjk_compact_text, _clean_text
+            translation = _cjk_compact_text(_clean_text(getattr(issue, "translation", "")))
+            expected_signature = _cjk_compact_text(_clean_text(expected))
+            return bool(expected_signature and translation.endswith(expected_signature))
+        except Exception:
+            return False
     return issue_type in _QA_REPORT_ONLY_WARNING_TYPES
 
 

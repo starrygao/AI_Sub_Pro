@@ -426,6 +426,26 @@ def test_quality_checks_mark_majority_proper_name_variant_as_repairable():
     ]
 
 
+def test_quality_checks_do_not_block_when_expected_name_ends_question_phrase():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(441, '"One Wish Willow.', "“一愿柳。"),
+        _block(1083, "One Wish Willow?", "一愿柳？"),
+        _block(1494, "What's a One Wish Willow?", "什么是一愿柳？"),
+    ]
+    for block in blocks:
+        block.end = block.start + timedelta(seconds=3)
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
+    flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
+
+    assert flagged
+    assert report.status == "ok"
+    assert report.summary["blocking_issue_count"] == 0
+    assert report.unresolved_blocks == []
+
+
 def test_quality_checks_do_not_flag_rank_name_context_as_name_inconsistency():
     from app.engines.translation_qa import run_quality_checks
 

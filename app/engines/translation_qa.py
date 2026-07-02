@@ -389,7 +389,14 @@ def _is_report_only_issue(issue: QualityIssue) -> bool:
     if issue_type == "sound_description_translated":
         return True
     if issue_type in _EXPECTED_REPAIRABLE_CONSISTENCY_TYPES:
-        return not bool(_clean_text(getattr(issue, "expected", "")))
+        expected = _clean_text(getattr(issue, "expected", ""))
+        if not expected:
+            return True
+        translation = _cjk_compact_text(_clean_text(getattr(issue, "translation", "")))
+        expected_signature = _cjk_compact_text(expected)
+        if expected_signature and translation.endswith(expected_signature):
+            return True
+        return False
     return issue_type in _AUTO_REPAIR_REPORT_ONLY_ISSUE_TYPES
 
 
