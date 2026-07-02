@@ -528,9 +528,70 @@ def test_translate_pipeline_writes_quality_report(tmp_path, monkeypatch):
     api_translate._run_translate_pipeline(pid, "简体中文")
 
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
-    assert report["status"] == "needs_review"
+    assert report["status"] == "failed"
     assert report["summary"]["by_type"]["english_residue"] == 1
     assert (pdir / "translation_qa_report.md").exists()
+
+
+def test_translate_pipeline_marks_contextual_background_speakers(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "contextspeaker"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\nANNOUNCER: Welcome to trivia night.\n\n"
+        "2\n00:00:03,000 --> 00:00:05,000\nNIKKI: I need air.\n\n"
+        "3\n00:00:06,000 --> 00:00:08,000\nON TV: Breaking news.\n\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {"qa_auto_repair": False},
+    })
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            pass
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "欢迎来到问答之夜。"
+            blocks[1].translation = "我需要透透气。"
+            blocks[2].translation = "突发新闻。"
+            return blocks
+
+        def get_kb_usage_trace(self):
+            return {"project": {}, "matches": []}
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
+    translated = (pdir / "translated.srt").read_text(encoding="utf-8")
+    assert project["status"] == "translated"
+    assert "【主持人】欢迎来到问答之夜。" in translated
+    assert "我需要透透气。" in translated
+    assert "【电视】突发新闻。" in translated
+    marked = report["trace"]["deterministic_postprocess"]["contextual_speaker_marked_blocks"]
+    assert [(item["id"], item["marker"]) for item in marked] == [
+        (1, "【主持人】"),
+        (3, "【电视】"),
+    ]
 
 
 def test_full_pipeline_stops_before_burn_when_quality_gate_fails(tmp_path, monkeypatch):
@@ -589,10 +650,11 @@ def test_full_pipeline_stops_before_burn_when_quality_gate_fails(tmp_path, monke
     assert burn_called == []
     assert project["status"] == "error"
     assert "翻译质量未达标" in project["error"]
-    assert project["translation_quality_status"] == "needs_review"
+    assert project["translation_quality_status"] == "failed"
     assert "翻译质量未达标" in project["progress_msg"]
     assert api_translate._resume_stage_for_project(pid, project) == "translate"
     assert report["summary"]["quality_gate"]["passed"] is False
+    assert report["summary"]["quality_gate"]["requires_human_review"] is False
     assert not (pdir / "translated.srt").exists()
     assert not (pdir / "bilingual.srt").exists()
     assert (pdir / "partial_translated.srt").exists()
@@ -832,11 +894,12 @@ def test_translate_pipeline_semantic_mismatch_blocks_delivery(tmp_path, monkeypa
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
     assert project["status"] == "error"
-    assert project["translation_quality_status"] == "needs_review"
+    assert project["translation_quality_status"] == "failed"
     assert "翻译质量未达标" in project["error"]
     assert project["translated_srt"] is None
     assert report["summary"]["by_type"]["semantic_mismatch"] == 1
     assert report["summary"]["quality_gate"]["passed"] is False
+    assert report["summary"]["quality_gate"]["requires_human_review"] is False
     assert not (pdir / "translated.srt").exists()
     assert (pdir / "partial_translated.srt").exists()
 
@@ -1451,6 +1514,39 @@ def test_quality_gate_does_not_block_expected_name_at_question_tail():
 
     assert report.summary["quality_gate"]["passed"] is True
     assert report.summary["blocking_warning_count"] == 0
+
+
+def test_quality_gate_failure_is_unattended_not_human_review():
+    from app.api.translate import _finalize_quality_conclusion
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+
+    report = TranslationQaReport(
+        status="needs_review",
+        issues=[
+            QualityIssue(
+                type="line_too_long",
+                severity="warning",
+                block_id=7,
+                message="translation line exceeds 32",
+                source_text="Long subtitle",
+                translation="这是一条太长的字幕。",
+            )
+        ],
+        summary={},
+        unresolved_blocks=[7],
+    )
+
+    _finalize_quality_conclusion(report, [{"id": 7}], True)
+
+    gate = report.summary["quality_gate"]
+    assert report.status == "failed"
+    assert gate["verdict"] == "failed"
+    assert gate["passed"] is False
+    assert gate["requires_human_review"] is False
+    assert gate["delivery_mode"] == "unattended"
+    assert "人工" not in report.summary["conclusion"]
+    assert "审核" not in report.summary["conclusion"]
+    assert "已停止交付" in report.summary["conclusion"]
 
 
 def test_translate_pipeline_batches_auto_repair_and_records_trace(tmp_path, monkeypatch):

@@ -2,6 +2,28 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.25 - Unattended Delivery Gate and Background Speaker Markers
+
+Highlights:
+
+- Quality-gate failures now use a fail-closed unattended delivery state instead
+  of human-review wording; failed jobs keep partial subtitle artifacts and resume
+  from translation for the next automatic retry.
+- Contextual speaker labels such as `ANNOUNCER:`, `HOST:`, `M.C.:`, `ON TV:`,
+  `RADIO:`, `V.O.`, and `O.S.` are converted into compact Chinese markers such
+  as `【主持人】`, `【电视】`, `【广播】`, `【旁白】`, and `【画外音】` before export.
+- Translated SRT export now collapses two-line translated cues up to the QA line
+  limit of 32 compact characters, while longer cues keep their line break.
+
+Quality/Verification:
+
+- Full local test suite passed: `1283 passed`.
+- Local package target: `AI_Sub_Pro_v1.3.25.dmg`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.25.dmg` is the macOS package name for this release line.
+
 ## v1.3.24 - Professional QA Warning Automation
 
 Highlights:

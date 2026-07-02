@@ -214,6 +214,34 @@ def test_clean_sound_description_translation_text_keeps_speaker_labels():
     assert clean_sound_description_translation_text("[亨利] 还能查她的手机吗？") == "[亨利] 还能查她的手机吗？"
 
 
+def test_annotate_contextual_speaker_translations_marks_background_sources():
+    from app.engines.translation_qa import annotate_contextual_speaker_translations
+
+    blocks = [
+        _block(1, "ANNOUNCER: Welcome to trivia night.", "欢迎来到问答之夜。"),
+        _block(2, "ON TV: Breaking news.", "突发新闻。"),
+        _block(3, "NIKKI: I need air.", "我需要透透气。"),
+        _block(4, "HOST: Last call.", "主持人：最后一轮。"),
+        _block(5, "RADIO: Weather update.", "【广播】天气更新。"),
+        _block(6, "M.C.: Take it away.", "开始吧。"),
+    ]
+
+    applied = annotate_contextual_speaker_translations(blocks, target_language="简体中文")
+
+    assert [(item["id"], item["marker"]) for item in applied] == [
+        (1, "【主持人】"),
+        (2, "【电视】"),
+        (4, "【主持人】"),
+        (6, "【主持人】"),
+    ]
+    assert blocks[0].translation == "【主持人】欢迎来到问答之夜。"
+    assert blocks[1].translation == "【电视】突发新闻。"
+    assert blocks[2].translation == "我需要透透气。"
+    assert blocks[3].translation == "【主持人】最后一轮。"
+    assert blocks[4].translation == "【广播】天气更新。"
+    assert blocks[5].translation == "【主持人】开始吧。"
+
+
 def test_quality_report_serializes_json_and_markdown(tmp_path):
     from app.engines.translation_qa import QualityIssue, TranslationQaReport, save_quality_report
 

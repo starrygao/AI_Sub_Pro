@@ -380,6 +380,23 @@ _SOUND_LABEL_EN_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_CONTEXTUAL_SPEAKER_PREFIX_RE = re.compile(
+    r"^\s*(?:[-–—]\s*)?"
+    r"(?P<label>[A-Za-z][A-Za-z0-9 ./'&-]{0,44}|[\u3400-\u9fff]{1,12})"
+    r"(?:\s*\([^)\r\n]{1,40}\))?\s*[:：]\s*\S",
+    re.IGNORECASE,
+)
+_CONTEXTUAL_BRACKET_CUE_RE = re.compile(
+    r"^\s*(?:[-–—]\s*)?(?:\[(?P<bracket>[^\]\r\n]{1,48})\]|"
+    r"[（(](?P<paren>[^）)\r\n]{1,48})[）)])\s*\S",
+    re.IGNORECASE,
+)
+_CONTEXTUAL_MARKER_RE = re.compile(
+    r"^\s*(?:【[^】\r\n]{1,12}】|\[[^\]\r\n]{1,20}\]|[（(][^）)\r\n]{1,20}[）)])"
+)
+_CONTEXTUAL_TARGET_LABEL_RE = re.compile(
+    r"^\s*(?:主持人|主持|司仪|DJ|酒保|电视|新闻|广播|旁白|画外音|电话|人群|歌声)[:：]\s*"
+)
 
 
 def _is_report_only_issue(issue: QualityIssue) -> bool:
@@ -425,6 +442,125 @@ def _is_chinese_target(target_language: str) -> bool:
         "zho",
         "cmn",
     }
+
+
+def _contextual_marker_from_label(label: str) -> str:
+    text = _clean_text(label)
+    if not text:
+        return ""
+    if any(keyword in text for keyword in ("主持", "司仪", "报幕")):
+        return "【主持人】"
+    if any(keyword in text for keyword in ("电视", "屏幕")):
+        return "【电视】"
+    if any(keyword in text for keyword in ("新闻", "记者", "主播")):
+        return "【新闻】"
+    if any(keyword in text for keyword in ("广播", "电台", "扩音", "喇叭")):
+        return "【广播】"
+    if any(keyword in text for keyword in ("旁白", "画外", "话外")):
+        return "【旁白】"
+    if "电话" in text:
+        return "【电话】"
+    if any(keyword in text for keyword in ("人群", "观众")):
+        return "【人群】"
+    if "酒保" in text:
+        return "【酒保】"
+
+    normalized = re.sub(r"[^A-Z0-9]+", " ", text.upper()).strip()
+    if not normalized:
+        return ""
+    words = set(normalized.split())
+    if {"PA", "INTERCOM", "LOUDSPEAKER"} & words or "OVER PA" in normalized:
+        return "【广播】"
+    if {"TV", "TELEVISION", "SCREEN"} & words or "ON TV" in normalized:
+        return "【电视】"
+    if {"NEWS", "ANCHOR", "REPORTER", "NEWSCASTER"} & words:
+        return "【新闻】"
+    if {"RADIO", "BROADCAST", "BROADCASTER"} & words:
+        return "【广播】"
+    if {"HOST", "ANNOUNCER", "EMCEE", "PRESENTER", "MC"} & words or "M C" in normalized:
+        return "【主持人】"
+    if "DJ" in words:
+        return "【DJ】"
+    if "BARTENDER" in words:
+        return "【酒保】"
+    if {"VOICE", "VOICEOVER", "VO", "NARRATOR"} & words or "V O" in normalized:
+        return "【旁白】"
+    if (
+        {"OFFSCREEN", "OFFCAMERA", "OS"} & words
+        or "O S" in normalized
+        or "OFF SCREEN" in normalized
+        or "OFF CAMERA" in normalized
+    ):
+        return "【画外音】"
+    if {"PHONE", "CALLER", "VOICEMAIL"} & words:
+        return "【电话】"
+    if {"CROWD", "AUDIENCE", "PATRONS"} & words:
+        return "【人群】"
+    if {"SINGER", "VOCALIST"} & words:
+        return "【歌声】"
+    return ""
+
+
+def _contextual_marker_from_source(source: str) -> str:
+    text = _ASS_OVERRIDE_RE.sub("", source or "")
+    text = _HTML_TAG_RE.sub("", text).strip()
+    if not text:
+        return ""
+    match = _CONTEXTUAL_SPEAKER_PREFIX_RE.match(text)
+    if match:
+        marker = _contextual_marker_from_label(match.group("label"))
+        if marker:
+            return marker
+    match = _CONTEXTUAL_BRACKET_CUE_RE.match(text)
+    if not match:
+        return ""
+    label = match.group("bracket") or match.group("paren") or ""
+    return _contextual_marker_from_label(label)
+
+
+def _translation_with_contextual_marker(translation: str, marker: str) -> str:
+    text = _clean_text(translation)
+    if not text or _CONTEXTUAL_MARKER_RE.match(text):
+        return text
+    label_match = _CONTEXTUAL_TARGET_LABEL_RE.match(text)
+    if label_match:
+        body = text[label_match.end():].strip()
+        return f"{marker}{body}" if body else marker
+    return f"{marker}{text}"
+
+
+def annotate_contextual_speaker_translations(
+    blocks: Iterable,
+    *,
+    target_language: str = "简体中文",
+) -> list[dict]:
+    """Prefix offscreen/broadcast/host dialogue with compact source markers."""
+    if not _is_chinese_target(target_language):
+        return []
+    applied: list[dict] = []
+    for block in blocks or []:
+        if getattr(block, "filtered", False):
+            continue
+        source = _clean_text(getattr(block, "text", ""))
+        translation = _clean_text(getattr(block, "translation", ""))
+        if not source or not translation:
+            continue
+        marker = _contextual_marker_from_source(source)
+        if not marker:
+            continue
+        updated = _translation_with_contextual_marker(translation, marker)
+        if updated == translation:
+            continue
+        block.translation = updated
+        applied.append({
+            "id": getattr(block, "index", None),
+            "source": source,
+            "from": translation,
+            "to": updated,
+            "marker": marker,
+            "reason": "contextual_speaker_marker",
+        })
+    return applied
 
 
 def _has_technical_tutorial_context(meta_info: Optional[dict]) -> bool:

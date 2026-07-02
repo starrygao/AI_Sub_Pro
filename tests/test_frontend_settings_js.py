@@ -2381,8 +2381,8 @@ def test_project_filter_recent_tasks_and_next_action_helpers():
 
         const recentTasks = state.recentTaskProjects(3).map((p) => p.id).join(',');
         if (recentTasks !== 'p2,p1,p4') throw new Error(`unexpected recent task order ${recentTasks}`);
-        if (state.statusLabel(state.projects[3]) !== '待质量确认') {
-          throw new Error(`expected quality review status label, got ${state.statusLabel(state.projects[3])}`);
+        if (state.statusLabel(state.projects[3]) !== '待自动重试') {
+          throw new Error(`expected automatic retry status label, got ${state.statusLabel(state.projects[3])}`);
         }
         if (state.statusColor(state.projects[3]).hex !== '#d97706') {
           throw new Error(`expected quality review status color, got ${JSON.stringify(state.statusColor(state.projects[3]))}`);

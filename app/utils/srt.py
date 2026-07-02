@@ -50,7 +50,7 @@ _MUSIC_SYMBOL_RE = re.compile(r"[♪♫♬🎵🎶]+")
 _DIALOGUE_MARKER_RE = re.compile(r"^\s*[-–—]\s+\S")
 _SPEAKER_LABEL_RE = re.compile(r"^[^:：\n]{1,12}[:：]\s*\S")
 _CJK_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
-_TRANSLATION_SINGLE_LINE_MAX_CHARS = 30
+_TRANSLATION_SINGLE_LINE_MAX_CHARS = 32
 
 
 def _timedelta_ms(td: timedelta) -> int:

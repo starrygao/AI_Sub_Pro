@@ -358,7 +358,7 @@ def _latest_failed_stage(pid: str) -> str:
 
 
 def _resume_stage_for_project(pid: str, project: Optional[dict] = None) -> str:
-    if isinstance(project, dict) and project.get("translation_quality_status") == "needs_review":
+    if isinstance(project, dict) and project.get("translation_quality_status") in {"needs_review", "failed"}:
         return "translate"
     if _project_supports_video_burn(project or {}) and _first_safe_project_artifact(pid, ["translated.srt", "bilingual.srt"])[0]:
         return "burn"
@@ -1722,12 +1722,12 @@ def _finalize_quality_conclusion(report, repaired: list[dict], repair_enabled: b
     ]
     if error_count:
         verdict = "failed"
-        conclusion = f"不达标：仍有 {error_count} 个错误、{unresolved_count} 个问题位置。"
+        conclusion = f"自动交付未通过：仍有 {error_count} 个错误、{unresolved_count} 个问题位置。"
     elif blocking_warnings:
-        verdict = "needs_review"
+        verdict = "failed"
         conclusion = (
-            f"未达专业交付标准：自动返工后仍有 {len(blocking_warnings)} 个阻塞警告、"
-            f"{unresolved_count} 个问题位置，建议继续自动返工或暂缓交付。"
+            f"自动交付未通过：自动返工后仍有 {len(blocking_warnings)} 个阻塞警告、"
+            f"{unresolved_count} 个问题位置，已停止交付。"
         )
     else:
         verdict = "passed"
@@ -1737,6 +1737,7 @@ def _finalize_quality_conclusion(report, repaired: list[dict], repair_enabled: b
         if repaired_count:
             conclusion = f"达标：已自动重点返工 {repaired_count} 条并复检通过。"
 
+    report.status = "ok" if verdict == "passed" else "failed"
     report.summary.update({
         "issue_count": issue_count,
         "error_count": error_count,
@@ -1748,9 +1749,12 @@ def _finalize_quality_conclusion(report, repaired: list[dict], repair_enabled: b
         "quality_gate": {
             "verdict": verdict,
             "passed": verdict == "passed",
+            "delivery_mode": "unattended",
+            "requires_human_review": False,
             "auto_repair_enabled": bool(repair_enabled),
             "auto_repaired_blocks": repaired_count,
             "unresolved_blocks": unresolved_count,
+            "next_action": "deliver" if verdict == "passed" else "auto_retry_or_stop",
         },
     })
 
@@ -1758,13 +1762,13 @@ def _finalize_quality_conclusion(report, repaired: list[dict], repair_enabled: b
 def _translation_quality_gate_status(pid: str) -> tuple[bool, str]:
     report_path = _safe_project_artifact_path(pid, "translation_qa_report.json")
     if report_path is None:
-        return False, "翻译质量检查未生成报告，已停止烧录。"
+        return False, "翻译质量检查未生成报告，已停止交付。"
     try:
         report = json.loads(report_path.read_text(encoding="utf-8"))
     except Exception:
-        return False, "翻译质量检查报告无效，已停止烧录。"
+        return False, "翻译质量检查报告无效，已停止交付。"
     if not isinstance(report, dict):
-        return False, "翻译质量检查报告无效，已停止烧录。"
+        return False, "翻译质量检查报告无效，已停止交付。"
 
     summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
     gate = summary.get("quality_gate") if isinstance(summary.get("quality_gate"), dict) else {}
@@ -1783,12 +1787,12 @@ def _translation_quality_gate_status(pid: str) -> tuple[bool, str]:
     if not isinstance(unresolved_count, int) or isinstance(unresolved_count, bool):
         unresolved_count = len(report.get("unresolved_blocks") or [])
     if conclusion:
-        return False, f"翻译质量未达标：{conclusion.strip()} 已停止烧录。"
-    return False, f"翻译质量未达标：仍有 {issue_count} 个问题、{unresolved_count} 个问题位置，已停止烧录。"
+        return False, f"翻译质量未达标：{conclusion.strip()} 已停止交付。"
+    return False, f"翻译质量未达标：仍有 {issue_count} 个问题、{unresolved_count} 个问题位置，已停止交付。"
 
 
 def _mark_translation_quality_failed(pid: str, message: str) -> None:
-    detail = message.strip() or "翻译质量未达标，已停止烧录。"
+    detail = message.strip() or "翻译质量未达标，已停止交付。"
     _best_effort_fail_stage(pid, "translate", detail)
     mutate_project(
         pid,
@@ -1797,7 +1801,7 @@ def _mark_translation_quality_failed(pid: str, message: str) -> None:
             "error": detail,
             "progress": 100,
             "progress_msg": detail,
-            "translation_quality_status": "needs_review",
+            "translation_quality_status": "failed",
             "translation_quality_message": detail,
             "pipeline_stage": None,
             **_translation_artifact_fields(pid),
@@ -1927,6 +1931,7 @@ def _persist_translation_quality_report(
         from app.engines.knowledge import _get_singleton
         from app.engines.proper_name_normalizer import normalize_inferred_proper_name_variants
         from app.engines.translation_qa import (
+            annotate_contextual_speaker_translations,
             normalize_curated_domain_term_translations,
             normalize_scientific_term_translations,
             normalize_sound_description_translations,
@@ -1945,6 +1950,15 @@ def _persist_translation_quality_report(
             trace.setdefault("deterministic_postprocess", {})[
                 "sound_description_blank_blocks"
             ] = sound_repaired
+        contextual_marked = annotate_contextual_speaker_translations(
+            blocks,
+            target_language=target_language,
+        )
+        if contextual_marked:
+            repaired.extend(contextual_marked)
+            trace.setdefault("deterministic_postprocess", {})[
+                "contextual_speaker_marked_blocks"
+            ] = contextual_marked
         normalized_curated_terms = normalize_curated_domain_term_translations(
             blocks,
             project_kb=project_kb,
@@ -2078,6 +2092,26 @@ def _persist_translation_quality_report(
                 "proper_name_normalized_blocks",
                 [],
             ).extend(post_normalized_names)
+            report = _run_quality_checks_with_semantics(
+                cfg,
+                translator,
+                blocks,
+                target_language,
+                project_kb,
+                project,
+                trace,
+                progress_callback=progress_callback,
+            )
+        post_contextual_marked = annotate_contextual_speaker_translations(
+            blocks,
+            target_language=target_language,
+        )
+        if post_contextual_marked:
+            repaired.extend(post_contextual_marked)
+            trace.setdefault("deterministic_postprocess", {}).setdefault(
+                "contextual_speaker_marked_blocks",
+                [],
+            ).extend(post_contextual_marked)
             report = _run_quality_checks_with_semantics(
                 cfg,
                 translator,
@@ -2310,7 +2344,7 @@ def _run_translate_pipeline(
                     "error": None,
                     "progress": 100,
                     "progress_msg": done_msg,
-                    "translation_quality_status": "passed" if quality_passed else "needs_review",
+                    "translation_quality_status": "passed" if quality_passed else "failed",
                     "translation_quality_message": quality_message,
                     "pipeline_stage": None,
                     **_translation_artifact_fields(pid),
@@ -2578,7 +2612,7 @@ def _run_full_pipeline(pid: str, audio_track: int, language: str, target_languag
         project = _load_project(pid)
         if project["status"] == "error":
             return
-        if project.get("translation_quality_status") == "needs_review":
+        if project.get("translation_quality_status") in {"needs_review", "failed"}:
             return
         _check_cancel(pid)
 

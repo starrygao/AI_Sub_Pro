@@ -239,8 +239,8 @@ def test_project_quality_helpers_load_suggestions_and_report():
           }
           state.qaReport.summary.repaired_blocks = 2;
           state.qaReport.summary.quality_gate = {passed: false, auto_repair_enabled: true, auto_repaired_blocks: 2};
-          if (!state.qaReportNextAction().includes('暂缓交付') || state.qaReportNextAction().includes('抽查确认')) {
-            throw new Error(`expected repaired warning next action to defer delivery, got ${state.qaReportNextAction()}`);
+          if (!state.qaReportNextAction().includes('已停止交付') || state.qaReportNextAction().includes('抽查确认')) {
+            throw new Error(`expected repaired warning next action to stop delivery, got ${state.qaReportNextAction()}`);
           }
           let focused = null;
           state.focusSubtitleById = (id) => { focused = id; };

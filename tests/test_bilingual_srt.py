@@ -104,7 +104,7 @@ def test_translated_srt_collapses_short_structural_dialogue_line_breaks(tmp_path
     blocks = [
         _make_block(1, "Two speakers", "- 你看见了吗？\n- 看见了。"),
         _make_block(2, "Speaker labels", "玛丽：你来了？\n约翰：刚到。"),
-        _make_block(3, "Long cue", "这是一条非常非常非常非常长的字幕\n它本来就不适合强行压成单行观看"),
+        _make_block(3, "Long cue", "这是一条非常非常非常非常长的字幕\n它本来就不适合强行压成单行继续观看"),
     ]
     out = tmp_path / "translated.srt"
 
@@ -113,7 +113,7 @@ def test_translated_srt_collapses_short_structural_dialogue_line_breaks(tmp_path
     text = out.read_text(encoding="utf-8")
     assert "- 你看见了吗？- 看见了。" in text
     assert "玛丽：你来了？约翰：刚到。" in text
-    assert "这是一条非常非常非常非常长的字幕\n它本来就不适合强行压成单行观看" in text
+    assert "这是一条非常非常非常非常长的字幕\n它本来就不适合强行压成单行继续观看" in text
 
 
 def test_bilingual_srt_collapses_translation_only(tmp_path):

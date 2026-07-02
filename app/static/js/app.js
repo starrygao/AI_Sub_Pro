@@ -432,7 +432,7 @@ function app() {
       if (stage === 'download') return {bg: '#ffedd5', text: '#9a3412', hex: '#f97316'};
       if (stage === 'asr' || status === 'asr_done') return {bg: '#f3e8ff', text: '#6b21a8', hex: '#a855f7'};
       if (stage === 'burn') return {bg: '#dcfce7', text: '#166534', hex: '#22c55e'};
-      if (status === 'translated' && !stage && qualityStatus === 'needs_review') return {bg: '#fef3c7', text: '#92400e', hex: '#d97706'};
+      if (status === 'translated' && !stage && ['needs_review', 'failed'].includes(qualityStatus)) return {bg: '#fef3c7', text: '#92400e', hex: '#d97706'};
       if (stage === 'translate' || status === 'translated') return {bg: '#dbeafe', text: '#1e40af', hex: '#3b82f6'};
       // created / processing / default
       return {bg: '#ccfbf1', text: '#115e59', hex: '#0f766e'};
@@ -648,7 +648,7 @@ function app() {
       if (stage === 'asr') return '识别中';
       if (status === 'asr_done' && !stage) return '识别完成';
       if (stage === 'translate') return '翻译中';
-      if (status === 'translated' && !stage && qualityStatus === 'needs_review') return '待质量确认';
+      if (status === 'translated' && !stage && ['needs_review', 'failed'].includes(qualityStatus)) return '待自动重试';
       if (status === 'translated' && !stage) return '翻译完成';
       if (stage === 'burn') return '烧录中';
       if (status === 'processing') return '处理中';
@@ -2168,12 +2168,12 @@ function app() {
       const issueCount = report.summary.issue_count || issues.length;
       if (!issueCount) return '可继续导出或烧录。';
       if (gate.auto_repair_enabled && Number(gate.auto_repaired_blocks || 0) > 0) {
-        return '系统已自动重点返工并复检；仍未达标，建议重新自动返工或暂缓交付。';
+        return '系统已自动重点返工并复检；仍未达标，已停止交付，可重新启动自动返工。';
       }
       const hasErrors = issues.some(item => ['error', 'severe'].includes(String(item.severity || '')));
       if (hasErrors) return '仍有错误项，需重新自动返工后再导出或烧录。';
-      if ((report.summary.unresolved_blocks || 0) > 0) return '仍有未解决警告，需重新自动返工或暂缓交付。';
-      return '仍有警告级问题，需重新自动返工或暂缓交付。';
+      if ((report.summary.unresolved_blocks || 0) > 0) return '仍有未解决警告，已停止交付，需重新自动返工。';
+      return '仍有警告级问题，已停止交付，需重新自动返工。';
     },
 
     focusFirstQaIssue() {
