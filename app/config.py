@@ -56,8 +56,10 @@ DEFAULT_CONFIG = {
     "translation": {
         "primary_provider": "openai",
         "primary_model": "gpt-4o",
+        "primary_effort": "auto",
         "polish_provider": "",
         "polish_model": "",
+        "polish_effort": "auto",
         "batch_size": 10,
         "context_window": 3,
         "target_language": "简体中文",
@@ -86,12 +88,10 @@ DEFAULT_CONFIG = {
     "providers": {
         "claude_cli": {
             "enabled": True,
-            "model": "claude-opus-4-7",
             "timeout_sec": 180,
         },
         "codex_cli": {
             "enabled": True,
-            "model": "gpt-5.5",
             "timeout_sec": 180,
         },
     },
@@ -126,6 +126,41 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def _migrate_legacy_cli_models(config: dict) -> None:
+    """Move the former provider-wide CLI model into each selected stage."""
+    if not isinstance(config, dict):
+        return
+    providers = config.get("providers")
+    translation = config.get("translation")
+    if not isinstance(providers, dict):
+        return
+
+    for provider_name in ("claude_cli", "codex_cli"):
+        provider_cfg = providers.get(provider_name)
+        if not isinstance(provider_cfg, dict):
+            continue
+        legacy_model = provider_cfg.pop("model", None)
+        if not isinstance(translation, dict) or not isinstance(legacy_model, str):
+            continue
+        legacy_model = legacy_model.strip()
+        if not legacy_model:
+            continue
+        if translation.get("primary_provider") == provider_name:
+            translation["primary_model"] = legacy_model
+        if translation.get("polish_provider") == provider_name:
+            translation["polish_model"] = legacy_model
+
+
+def _drop_legacy_cli_models(config: dict) -> None:
+    providers = config.get("providers") if isinstance(config, dict) else None
+    if not isinstance(providers, dict):
+        return
+    for provider_name in ("claude_cli", "codex_cli"):
+        provider_cfg = providers.get(provider_name)
+        if isinstance(provider_cfg, dict):
+            provider_cfg.pop("model", None)
+
+
 def _backup_invalid_config() -> None:
     if not CONFIG_FILE.exists():
         return
@@ -149,6 +184,7 @@ class Config:
             try:
                 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                     saved = json.load(f, parse_constant=_reject_json_constant)
+                _migrate_legacy_cli_models(saved)
                 cls._data = _deep_merge(DEFAULT_CONFIG, saved)
             except Exception:
                 _backup_invalid_config()
@@ -185,7 +221,10 @@ class Config:
 
     @classmethod
     def update(cls, data: dict):
-        cls._data = _deep_merge(cls._data, data)
+        sanitized = copy.deepcopy(data)
+        _drop_legacy_cli_models(sanitized)
+        cls._data = _deep_merge(cls._data, sanitized)
+        _drop_legacy_cli_models(cls._data)
         cls.save()
 
     @classmethod

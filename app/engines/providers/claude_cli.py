@@ -12,11 +12,19 @@ from .result_contract import reconcile_translation_results, redact_error_message
 log = logging.getLogger(__name__)
 
 CLAUDE_CLI_MODELS = [
+    "claude-fable-5",
     "claude-opus-4-7",
     "claude-sonnet-4-6",
     "claude-haiku-4-5",
 ]
 ALLOWED_CLAUDE_CLI_MODELS = set(CLAUDE_CLI_MODELS)
+ALLOWED_CLAUDE_CLI_EFFORTS = {"auto", "low", "medium", "high", "xhigh", "max"}
+CLAUDE_CLI_MODEL_EFFORTS = {
+    "claude-fable-5": {"low", "medium", "high", "xhigh", "max"},
+    "claude-opus-4-7": {"low", "medium", "high", "xhigh", "max"},
+    "claude-sonnet-4-6": {"low", "medium", "high", "max"},
+    "claude-haiku-4-5": set(),
+}
 
 
 def _coerce_timeout(value) -> int:
@@ -31,6 +39,15 @@ def _coerce_timeout(value) -> int:
     return parsed
 
 
+def _coerce_effort(value, model: str) -> str:
+    if not isinstance(value, str):
+        return "auto"
+    normalized = value.strip().lower()
+    if normalized == "auto":
+        return normalized
+    return normalized if normalized in CLAUDE_CLI_MODEL_EFFORTS.get(model, set()) else "auto"
+
+
 class ClaudeCliProvider(BaseProvider):
     """Translation via local `claude` CLI; uses user's subscription auth."""
 
@@ -40,6 +57,7 @@ class ClaudeCliProvider(BaseProvider):
         self.model = model if isinstance(model, str) else "claude-opus-4-7"
         if self.model not in ALLOWED_CLAUDE_CLI_MODELS:
             raise ValueError(f"Unsupported Claude CLI model: {self.model}")
+        self.effort = _coerce_effort(config.get("effort"), self.model)
         self.timeout_sec = _coerce_timeout(config.get("timeout_sec", 180))
 
     @staticmethod
@@ -56,10 +74,18 @@ class ClaudeCliProvider(BaseProvider):
         for cmd in (["claude", "auth", "status"], ["claude", "auth", "whoami"]):
             try:
                 r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-                if r.returncode == 0:
-                    out = (r.stdout + r.stderr).lower()
-                    if any(s in out for s in ("logged in", "authenticated", "@")):
-                        return True
+                try:
+                    status = json.loads(r.stdout or "")
+                except (TypeError, ValueError):
+                    status = None
+                if isinstance(status, dict) and isinstance(status.get("loggedIn"), bool):
+                    return status["loggedIn"]
+
+                out = ((r.stdout or "") + (r.stderr or "")).lower()
+                if any(s in out for s in ("not logged", "not authenticated", "login required")):
+                    return False
+                if r.returncode == 0 and any(s in out for s in ("logged in", "authenticated", "@")):
+                    return True
             except Exception:
                 continue
         # Probe commands may not exist; surface real errors later during translate
@@ -114,9 +140,13 @@ class ClaudeCliProvider(BaseProvider):
         cmd = [
             "claude", "-p",
             "--model", self.model,
+        ]
+        if self.effort != "auto":
+            cmd.extend(["--effort", self.effort])
+        cmd.extend([
             "--output-format", "json",
             "--max-turns", "1",
-        ]
+        ])
         r = subprocess.run(cmd, input=prompt, capture_output=True,
                            text=True, timeout=self.timeout_sec)
         if r.returncode != 0:

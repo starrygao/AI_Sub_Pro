@@ -5,6 +5,17 @@ from unittest.mock import patch
 import pytest
 
 
+def test_codex_cli_models_include_gpt_5_6_family():
+    from app.engines.providers.codex_cli import CODEX_CLI_MODELS
+
+    assert CODEX_CLI_MODELS[:3] == [
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+    ]
+    assert "gpt-5.6" not in CODEX_CLI_MODELS
+
+
 def test_codex_cli_provider_cli_not_installed():
     from app.engines.providers.codex_cli import CodexCliProvider
 
@@ -59,6 +70,41 @@ def test_codex_cli_provider_normalizes_non_object_and_non_string_model():
 
     assert CodexCliProvider(["bad"]).model == "gpt-5.5"
     assert CodexCliProvider({"model": ["bad"]}).model == "gpt-5.5"
+
+
+def test_codex_cli_provider_passes_explicit_effort_as_isolated_config(monkeypatch):
+    from app.engines.providers import codex_cli as codex_mod
+    from app.engines.providers.codex_cli import CodexCliProvider
+
+    captured = {}
+
+    class FakeProcess:
+        pid = 12345
+        returncode = 0
+
+        def communicate(self, input=None, timeout=None):
+            return ('[{"id":1,"translation":"ok"}]', "")
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return FakeProcess()
+
+    monkeypatch.setattr(codex_mod.subprocess, "Popen", fake_popen)
+    provider = CodexCliProvider({"model": "gpt-5.6-sol", "effort": "ultra"})
+
+    provider._invoke([{"id": 1, "original": "hi"}], "system")
+
+    command = captured["cmd"]
+    assert command[command.index("--config") + 1] == 'model_reasoning_effort="ultra"'
+
+
+def test_codex_cli_provider_omits_automatic_or_invalid_effort():
+    from app.engines.providers.codex_cli import CodexCliProvider
+
+    assert CodexCliProvider({"model": "gpt-5.6-sol", "effort": "auto"}).effort == "auto"
+    assert CodexCliProvider({"model": "gpt-5.6-sol", "effort": "impossible"}).effort == "auto"
+    assert CodexCliProvider({"model": "gpt-5.6-luna", "effort": "ultra"}).effort == "auto"
+    assert CodexCliProvider({"model": "gpt-5.5", "effort": "max"}).effort == "auto"
 
 
 def test_codex_cli_provider_parse_response():
@@ -125,6 +171,7 @@ def test_codex_cli_provider_kills_process_group_on_timeout(monkeypatch):
     fake_process = FakeProcess()
 
     def fake_popen(cmd, **kwargs):
+        assert "--ignore-user-config" in cmd
         assert kwargs.get("start_new_session") is True
         return fake_process
 

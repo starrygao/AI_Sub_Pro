@@ -520,11 +520,24 @@ def test_codex_cli_status_errors_are_visible():
     assert "Claude / Codex CLI（本机）" in html
     assert "settingsUsesCodexCli()" in js
     assert "settingsUsesLocalCli()" in js
-    assert "Codex CLI 模型" in html
+    assert 'x-model.number="settings.providers.codex_cli.timeout_sec"' in html
     assert "codexCliStatus && codexCliStatus.error" in html
     assert "Codex 检查失败" in html
     assert "checkCodexCliStatus()" in html
     assert "codexCliStatus && !codexCliStatus.installed && !codexCliStatus.error" in html
+
+
+def test_local_cli_panel_does_not_duplicate_translation_model_controls():
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+
+    assert 'settings.providers.claude_cli.model' not in html
+    assert 'settings.providers.codex_cli.model' not in html
+    assert 'x-model.number="settings.providers.claude_cli.timeout_sec"' in html
+    assert 'x-model.number="settings.providers.codex_cli.timeout_sec"' in html
+    assert 'x-model="settings.translation.primary_effort"' in html
+    assert 'x-model="settings.translation.polish_effort"' in html
+    assert ':selected="settings.translation.primary_model === m"' in html
+    assert ':selected="settings.translation.polish_model === m"' in html
 
 
 def test_full_document_mode_setting_is_not_hidden_behind_claude_only_copy():

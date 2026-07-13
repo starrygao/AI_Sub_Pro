@@ -13,13 +13,16 @@ def test_default_config_has_providers_claude_cli():
     assert "providers" in DEFAULT_CONFIG
     cc = DEFAULT_CONFIG["providers"]["claude_cli"]
     assert cc["enabled"] is True
-    assert cc["model"] == "claude-opus-4-7"
+    assert "model" not in cc
     assert cc["timeout_sec"] == 180
 
     codex = DEFAULT_CONFIG["providers"]["codex_cli"]
     assert codex["enabled"] is True
-    assert codex["model"] == "gpt-5.5"
+    assert "model" not in codex
     assert codex["timeout_sec"] == 180
+
+    assert DEFAULT_CONFIG["translation"]["primary_effort"] == "auto"
+    assert DEFAULT_CONFIG["translation"]["polish_effort"] == "auto"
 
 
 def test_default_config_has_concurrency_section():
@@ -103,6 +106,33 @@ def test_config_loads_and_merges_partial_saved_config(tmp_path, monkeypatch):
     assert loaded["translation"]["qa_auto_repair"] is True
     assert loaded["translation"]["qa_auto_repair_rounds"] == 3
     assert loaded["asr"]["backend"] == "auto"
+
+
+def test_config_load_migrates_legacy_cli_model_to_selected_translation_stages(tmp_path, monkeypatch):
+    import app.config as cfg
+
+    cfg_file = tmp_path / "config.json"
+    monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+    cfg_file.write_text(json.dumps({
+        "translation": {
+            "primary_provider": "codex_cli",
+            "primary_model": "gpt-5.4-mini",
+            "polish_provider": "codex_cli",
+            "polish_model": "gpt-5.4-mini",
+        },
+        "providers": {
+            "codex_cli": {"model": "gpt-5.6-sol", "timeout_sec": 240},
+        },
+    }), encoding="utf-8")
+
+    cfg.Config._data = {}
+    cfg.Config.load()
+    loaded = cfg.Config.to_dict()
+
+    assert loaded["translation"]["primary_model"] == "gpt-5.6-sol"
+    assert loaded["translation"]["polish_model"] == "gpt-5.6-sol"
+    assert "model" not in loaded["providers"]["codex_cli"]
+    assert loaded["providers"]["codex_cli"]["timeout_sec"] == 240
 
 
 def test_config_load_ignores_non_object_saved_sections(tmp_path, monkeypatch):

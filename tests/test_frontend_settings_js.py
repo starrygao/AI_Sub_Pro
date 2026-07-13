@@ -130,6 +130,47 @@ def test_frontend_api_key_panel_only_lists_selected_key_providers():
     assert result.returncode == 0, result.stderr
 
 
+def test_frontend_reasoning_effort_options_follow_local_cli_model_capabilities():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        const values = (provider, model) => state.reasoningEffortOptions(provider, model).map(option => option.value);
+
+        if (JSON.stringify(values('codex_cli', 'gpt-5.6-sol')) !== JSON.stringify(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])) {
+          throw new Error(`unexpected Sol efforts: ${JSON.stringify(values('codex_cli', 'gpt-5.6-sol'))}`);
+        }
+        if (JSON.stringify(values('codex_cli', 'gpt-5.6-luna')) !== JSON.stringify(['auto', 'low', 'medium', 'high', 'xhigh', 'max'])) {
+          throw new Error(`unexpected Luna efforts: ${JSON.stringify(values('codex_cli', 'gpt-5.6-luna'))}`);
+        }
+        if (!values('claude_cli', 'claude-fable-5').includes('max')) {
+          throw new Error('Fable 5 must expose max effort');
+        }
+        if (JSON.stringify(values('openai', 'gpt-4o')) !== JSON.stringify(['auto'])) {
+          throw new Error('API providers must not expose CLI effort levels');
+        }
+
+        state.settings.translation = {
+          primary_provider: 'codex_cli',
+          primary_model: 'gpt-5.6-luna',
+          primary_effort: 'ultra',
+        };
+        state.normalizeReasoningEffort('primary');
+        if (state.settings.translation.primary_effort !== 'auto') {
+          throw new Error(`unsupported effort was not reset: ${state.settings.translation.primary_effort}`);
+        }
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_save_settings_applies_workflow_language_defaults_to_project_actions():
     result = run_js(
         """
@@ -869,6 +910,123 @@ def test_frontend_model_loader_ignores_stale_provider_responses():
     assert result.returncode == 0, result.stderr
 
 
+def test_cli_settings_model_options_follow_shared_model_catalog():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        const claudeFallback = state.cliProviderModelOptions('claude_cli');
+        const codexFallback = state.cliProviderModelOptions('codex_cli');
+        if (claudeFallback[0] !== 'claude-fable-5') {
+          throw new Error(`missing Fable 5 fallback: ${JSON.stringify(claudeFallback)}`);
+        }
+        if (JSON.stringify(codexFallback.slice(0, 3)) !== JSON.stringify([
+          'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'
+        ])) {
+          throw new Error(`missing GPT-5.6 fallback: ${JSON.stringify(codexFallback)}`);
+        }
+
+        state.modelCache.claude_cli = ['claude-provider-live'];
+        state.modelCache.codex_cli = ['codex-provider-live'];
+        if (JSON.stringify(state.cliProviderModelOptions('claude_cli')) !== JSON.stringify(['claude-provider-live'])) {
+          throw new Error('Claude CLI settings did not use the shared live catalog');
+        }
+        if (JSON.stringify(state.cliProviderModelOptions('codex_cli')) !== JSON.stringify(['codex-provider-live'])) {
+          throw new Error('Codex CLI settings did not use the shared live catalog');
+        }
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_opening_settings_checks_selected_cli_statuses():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          state.settings.translation.primary_provider = 'codex_cli';
+          state.settings.translation.polish_provider = '';
+          let claudeChecks = 0;
+          let codexChecks = 0;
+          const refreshedCatalogs = [];
+          state.checkClaudeCliStatus = async () => { claudeChecks += 1; };
+          state.checkCodexCliStatus = async () => { codexChecks += 1; };
+          state.refreshCliProviderModelCatalog = async (provider) => { refreshedCatalogs.push(provider); };
+
+          await state.setView('settings');
+
+          if (claudeChecks !== 1 || codexChecks !== 1) {
+            throw new Error(`expected one status check each, got Claude=${claudeChecks} Codex=${codexChecks}`);
+          }
+          if (JSON.stringify(refreshedCatalogs.sort()) !== JSON.stringify(['claude_cli', 'codex_cli'])) {
+            throw new Error(`expected both CLI catalogs to refresh, got ${JSON.stringify(refreshedCatalogs)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_cli_model_catalog_refresh_updates_shared_cache():
+    result = run_js(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          state.api = async (url) => {
+            if (url === '/api/models/claude_cli') return {models: ['claude-live']};
+            if (url === '/api/models/codex_cli') return {models: ['codex-live']};
+            throw new Error(`unexpected URL ${url}`);
+          };
+
+          await Promise.all([
+            state.refreshCliProviderModelCatalog('claude_cli'),
+            state.refreshCliProviderModelCatalog('codex_cli'),
+          ]);
+
+          if (JSON.stringify(state.modelCache.claude_cli) !== JSON.stringify(['claude-live'])) {
+            throw new Error(`Claude catalog not cached: ${JSON.stringify(state.modelCache.claude_cli)}`);
+          }
+          if (JSON.stringify(state.modelCache.codex_cli) !== JSON.stringify(['codex-live'])) {
+            throw new Error(`Codex catalog not cached: ${JSON.stringify(state.modelCache.codex_cli)}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_frontend_model_loader_clears_loading_when_switching_to_static_provider():
     result = run_js(
         """
@@ -885,9 +1043,14 @@ def test_frontend_model_loader_clears_loading_when_switching_to_static_provider(
           state.settings.api_keys.openai = 'sk-openai';
           let releaseOpenAI;
           state.api = async (url) => {
-            if (url !== '/api/models/openai') throw new Error(`unexpected model URL ${url}`);
-            await new Promise((resolve) => { releaseOpenAI = resolve; });
-            return {models: ['openai-slow']};
+            if (url === '/api/models/openai') {
+              await new Promise((resolve) => { releaseOpenAI = resolve; });
+              return {models: ['openai-slow']};
+            }
+            if (url === '/api/models/claude_cli') {
+              return {models: ['claude-fable-5', 'claude-opus-4-7']};
+            }
+            throw new Error(`unexpected model URL ${url}`);
           };
 
           const slow = state.fetchModels('openai', 'primary');
@@ -898,7 +1061,7 @@ def test_frontend_model_loader_clears_loading_when_switching_to_static_provider(
           if (state.modelLoading.primary) {
             throw new Error('switching to a static provider should clear loading state');
           }
-          const expected = ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5'];
+          const expected = ['claude-fable-5', 'claude-opus-4-7'];
           if (JSON.stringify(state.primaryModels) !== JSON.stringify(expected)) {
             throw new Error(`expected Claude fallback models, got ${JSON.stringify(state.primaryModels)}`);
           }
@@ -934,9 +1097,14 @@ def test_frontend_model_loader_clears_loading_when_switching_to_codex_cli():
           state.settings.api_keys.openai = 'sk-openai';
           let releaseOpenAI;
           state.api = async (url) => {
-            if (url !== '/api/models/openai') throw new Error(`unexpected model URL ${url}`);
-            await new Promise((resolve) => { releaseOpenAI = resolve; });
-            return {models: ['openai-slow']};
+            if (url === '/api/models/openai') {
+              await new Promise((resolve) => { releaseOpenAI = resolve; });
+              return {models: ['openai-slow']};
+            }
+            if (url === '/api/models/codex_cli') {
+              return {models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']};
+            }
+            throw new Error(`unexpected model URL ${url}`);
           };
 
           const slow = state.fetchModels('openai', 'primary');
@@ -947,7 +1115,7 @@ def test_frontend_model_loader_clears_loading_when_switching_to_codex_cli():
           if (state.modelLoading.primary) {
             throw new Error('switching to Codex CLI should clear loading state');
           }
-          const expected = ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark'];
+          const expected = ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'];
           if (JSON.stringify(state.primaryModels) !== JSON.stringify(expected)) {
             throw new Error(`expected Codex fallback models, got ${JSON.stringify(state.primaryModels)}`);
           }

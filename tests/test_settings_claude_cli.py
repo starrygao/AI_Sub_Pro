@@ -247,19 +247,22 @@ def test_tmdb_key_test_reports_blank_key_without_network_call():
     test_connection.assert_not_called()
 
 
-def test_update_settings_rejects_unknown_claude_cli_model():
+def test_update_settings_discards_legacy_cli_provider_model():
     from app.main import app
     client = TestClient(app)
 
-    r = client.post("/api/settings", json={
-        "providers": {
-            "claude_cli": {
-                "model": "not-a-real-claude-model",
+    with patch("app.api.settings.Config.update", return_value=None) as update:
+        r = client.post("/api/settings", json={
+            "providers": {
+                "claude_cli": {
+                    "model": "not-a-real-claude-model",
+                    "timeout_sec": 240,
+                }
             }
-        }
-    })
-    assert r.status_code == 400
-    assert "Claude CLI model" in r.json()["detail"]
+        })
+
+    assert r.status_code == 200
+    assert update.call_args.args[0]["providers"]["claude_cli"] == {"timeout_sec": 240}
 
 
 def test_update_settings_accepts_codex_cli_provider_config():
@@ -270,7 +273,11 @@ def test_update_settings_accepts_codex_cli_provider_config():
         r = client.post("/api/settings", json={
             "translation": {
                 "primary_provider": "codex_cli",
+                "primary_model": "gpt-5.6-sol",
+                "primary_effort": " ULTRA ",
                 "polish_provider": " claude_cli ",
+                "polish_model": "claude-fable-5",
+                "polish_effort": " xhigh ",
             },
             "providers": {
                 "codex_cli": {
@@ -285,7 +292,21 @@ def test_update_settings_accepts_codex_cli_provider_config():
     payload = update.call_args.args[0]
     assert payload["translation"]["primary_provider"] == "codex_cli"
     assert payload["translation"]["polish_provider"] == "claude_cli"
-    assert payload["providers"]["codex_cli"]["model"] == "gpt-5.5"
+    assert payload["translation"]["primary_effort"] == "ultra"
+    assert payload["translation"]["polish_effort"] == "xhigh"
+    assert "model" not in payload["providers"]["codex_cli"]
+
+
+def test_update_settings_rejects_unknown_reasoning_effort():
+    from app.main import app
+
+    client = TestClient(app)
+    response = client.post("/api/settings", json={
+        "translation": {"primary_effort": "impossible"},
+    })
+
+    assert response.status_code == 400
+    assert "primary_effort" in response.json()["detail"]
 
 
 def test_update_settings_rejects_unknown_translation_provider():
@@ -664,6 +685,7 @@ def test_models_endpoint_returns_claude_cli_static_models_without_api_key():
     body = r.json()
     assert body["fallback"] is True
     assert body["models"] == [
+        "claude-fable-5",
         "claude-opus-4-7",
         "claude-sonnet-4-6",
         "claude-haiku-4-5",
@@ -679,6 +701,12 @@ def test_models_endpoint_returns_codex_cli_static_models_without_api_key():
     assert r.status_code == 200
     body = r.json()
     assert body["fallback"] is True
+    assert body["models"][:3] == [
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+    ]
+    assert "gpt-5.6" not in body["models"]
     assert "gpt-5.5" in body["models"]
     assert "gpt-5.4" in body["models"]
 

@@ -22,13 +22,15 @@ function app() {
       asr: {mode: 'speed', backend: 'auto'},
       translation: {
         quality_mode: 'professional',
+        primary_effort: 'auto',
+        polish_effort: 'auto',
         use_translation_memory: true,
         use_phrase_library: true,
         qa_auto_repair: true,
       },
       providers: {
-        claude_cli: { enabled: true, model: 'claude-opus-4-7', timeout_sec: 180 },
-        codex_cli: { enabled: true, model: 'gpt-5.5', timeout_sec: 180 },
+        claude_cli: { enabled: true, timeout_sec: 180 },
+        codex_cli: { enabled: true, timeout_sec: 180 },
       },
       app_info: { name: 'AI Sub Pro', version: '' },
     },
@@ -361,6 +363,14 @@ function app() {
       this.sidebarAutoCollapsed = false;
       if (nextView === 'projects') await this.loadProjects();
       if (nextView === 'knowledge') this.loadKbProjects();
+      if (nextView === 'settings' && this.settingsUsesLocalCli()) {
+        await Promise.all([
+          this.refreshCliProviderModelCatalog('claude_cli'),
+          this.refreshCliProviderModelCatalog('codex_cli'),
+          this.checkClaudeCliStatus(),
+          this.checkCodexCliStatus(),
+        ]);
+      }
       return true;
     },
 
@@ -890,6 +900,15 @@ function app() {
       normalized.translation.polish_provider = normalizeProvider(
         normalized.translation.polish_provider, ''
       );
+      const allowedEfforts = ['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+      for (const field of ['primary_effort', 'polish_effort']) {
+        const effort = typeof normalized.translation[field] === 'string'
+          ? normalized.translation[field].trim().toLowerCase()
+          : '';
+        normalized.translation[field] = allowedEfforts.includes(effort) ? effort : 'auto';
+      }
+      delete normalized.providers.claude_cli.model;
+      delete normalized.providers.codex_cli.model;
       const allowedAsrModes = ['speed', 'accuracy', 'offline'];
       const asrMode = typeof normalized.asr.mode === 'string'
         ? normalized.asr.mode.trim()
@@ -920,6 +939,8 @@ function app() {
     settingsPayload() {
       const payload = JSON.parse(JSON.stringify(this.settings || {}));
       if (payload && typeof payload === 'object') delete payload.app_info;
+      if (this.isPlainObject(payload?.providers?.claude_cli)) delete payload.providers.claude_cli.model;
+      if (this.isPlainObject(payload?.providers?.codex_cli)) delete payload.providers.codex_cli.model;
       return payload;
     },
 
@@ -1860,6 +1881,63 @@ function app() {
 
     settingsUsesLocalCli() {
       return this.settingsUsesClaudeCli() || this.settingsUsesCodexCli();
+    },
+
+    isLocalCliProvider(provider) {
+      return provider === 'claude_cli' || provider === 'codex_cli';
+    },
+
+    translationModelForProvider(provider, fallback) {
+      const translation = this.isPlainObject(this.settings.translation) ? this.settings.translation : {};
+      if (translation.primary_provider === provider && typeof translation.primary_model === 'string') {
+        return translation.primary_model.trim() || fallback;
+      }
+      if (translation.polish_provider === provider && typeof translation.polish_model === 'string') {
+        return translation.polish_model.trim() || fallback;
+      }
+      return fallback;
+    },
+
+    reasoningEffortOptions(provider, model) {
+      const labels = {
+        auto: '自动（模型默认）',
+        low: '低',
+        medium: '中',
+        high: '高',
+        xhigh: '超高',
+        max: '最大',
+        ultra: '极限（多代理）',
+      };
+      let levels = [];
+      if (provider === 'claude_cli') {
+        if (model === 'claude-fable-5' || model === 'claude-opus-4-7') {
+          levels = ['low', 'medium', 'high', 'xhigh', 'max'];
+        } else if (model === 'claude-sonnet-4-6') {
+          levels = ['low', 'medium', 'high', 'max'];
+        }
+      } else if (provider === 'codex_cli') {
+        if (model === 'gpt-5.6-sol' || model === 'gpt-5.6-terra') {
+          levels = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+        } else if (model === 'gpt-5.6-luna') {
+          levels = ['low', 'medium', 'high', 'xhigh', 'max'];
+        } else {
+          levels = ['low', 'medium', 'high', 'xhigh'];
+        }
+      }
+      return ['auto', ...levels].map(value => ({ value, label: labels[value] }));
+    },
+
+    normalizeReasoningEffort(targetKey) {
+      if (!this.isPlainObject(this.settings.translation)) this.settings.translation = {};
+      const isPrimary = targetKey === 'primary';
+      const provider = this.settings.translation[isPrimary ? 'primary_provider' : 'polish_provider'];
+      const model = this.settings.translation[isPrimary ? 'primary_model' : 'polish_model'];
+      const effortField = isPrimary ? 'primary_effort' : 'polish_effort';
+      const current = typeof this.settings.translation[effortField] === 'string'
+        ? this.settings.translation[effortField].trim().toLowerCase()
+        : 'auto';
+      const allowed = this.reasoningEffortOptions(provider, model).map(option => option.value);
+      this.settings.translation[effortField] = allowed.includes(current) ? current : 'auto';
     },
 
     systemTranslationReady() {
@@ -4331,6 +4409,38 @@ function app() {
       this.ensureSelectedModel(targetKey, safeModels);
     },
 
+    providerModelFallback(provider) {
+      const fallback = {
+        openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'o3-mini', 'o4-mini'],
+        deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+        gemini: ['gemini-3.1-pro-preview', 'gemini-3.1-flash-lite-preview', 'gemini-3-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'],
+        claude_cli: ['claude-fable-5', 'claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
+        codex_cli: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark'],
+      };
+      return fallback[provider] || [];
+    },
+
+    cliProviderModelOptions(provider) {
+      const cached = this.modelCache[provider];
+      const models = Array.isArray(cached) && cached.length > 0
+        ? cached
+        : this.providerModelFallback(provider);
+      return models.filter(model => typeof model === 'string' && model.trim()).map(model => model.trim());
+    },
+
+    async refreshCliProviderModelCatalog(provider) {
+      try {
+        const response = await this.api(`/api/models/${provider}`);
+        const models = Array.isArray(response.models)
+          ? response.models.filter(model => typeof model === 'string' && model.trim()).map(model => model.trim())
+          : [];
+        if (models.length > 0) this.modelCache[provider] = models;
+      } catch (error) {
+        console.warn(`refreshCliProviderModelCatalog failed for ${provider}:`, error);
+      }
+      return this.cliProviderModelOptions(provider);
+    },
+
     ensureSelectedModel(targetKey, models) {
       if (!this.isPlainObject(this.settings.translation)) this.settings.translation = {};
       const field = targetKey === 'primary' ? 'primary_model' : 'polish_model';
@@ -4339,11 +4449,13 @@ function app() {
         : '';
       if (targetKey === 'polish' && models.length === 0) {
         this.settings.translation.polish_model = '';
+        this.normalizeReasoningEffort(targetKey);
         return;
       }
       if (models.length > 0 && !models.includes(current)) {
         this.settings.translation[field] = models[0];
       }
+      this.normalizeReasoningEffort(targetKey);
     },
 
     async fetchModels(provider, target) {
@@ -4362,22 +4474,12 @@ function app() {
         return;
       }
       // Static fallback (used while loading or if no key)
-      const fallback = {
-        openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'o3-mini', 'o4-mini'],
-        deepseek: ['deepseek-chat', 'deepseek-reasoner'],
-        gemini: ['gemini-3.1-pro-preview', 'gemini-3.1-flash-lite-preview', 'gemini-3-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'],
-        claude_cli: ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
-        codex_cli: ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark'],
-      };
-      const fb = fallback[provider] || [];
+      const fb = this.providerModelFallback(provider);
       this.setModelOptions(targetKey, fb);
-      if (provider === 'claude_cli' || provider === 'codex_cli') {
-        this.modelLoading[targetKey] = false;
-        return;
-      }
       // Try fetching from API
       const apiKeys = this.isPlainObject(this.settings.api_keys) ? this.settings.api_keys : {};
-      if (!apiKeys[provider]) {
+      const requiresApiKey = provider !== 'claude_cli' && provider !== 'codex_cli';
+      if (requiresApiKey && !apiKeys[provider]) {
         this.modelLoading[targetKey] = false;
         return;
       }
@@ -4409,8 +4511,8 @@ function app() {
           openai: 'gpt-4o-mini',
           deepseek: 'deepseek-chat',
           gemini: 'gemini-2.5-flash',
-          claude_cli: this.settings.providers?.claude_cli?.model || 'claude-opus-4-7',
-          codex_cli: this.settings.providers?.codex_cli?.model || 'gpt-5.5',
+          claude_cli: this.translationModelForProvider('claude_cli', 'claude-opus-4-7'),
+          codex_cli: this.translationModelForProvider('codex_cli', 'gpt-5.5'),
         };
         const apiKeys = this.isPlainObject(this.settings.api_keys) ? this.settings.api_keys : {};
         const r = await this.api('/api/settings/test-key', 'POST', {

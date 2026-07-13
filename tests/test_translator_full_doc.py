@@ -65,7 +65,7 @@ def test_translator_strips_provider_model_and_key_config(monkeypatch):
 
 
 def test_translator_factory_builds_claude_cli_config(monkeypatch):
-    """For provider=claude_cli, config should have model + timeout but NO api_key."""
+    """Translation-stage model/effort own CLI behavior; provider settings only supply timeout."""
     from app.engines import translator as tmod
     captured = {}
 
@@ -82,7 +82,8 @@ def test_translator_factory_builds_claude_cli_config(monkeypatch):
     cfg = {
         "translation": {
             "primary_provider": "claude_cli",
-            "primary_model": "claude-opus-4-7",  # ignored in favor of providers.claude_cli.model
+            "primary_model": "claude-opus-4-7",
+            "primary_effort": "xhigh",
             "polish_provider": "",
             "batch_size": 0,
             "context_window": 3,
@@ -95,7 +96,8 @@ def test_translator_factory_builds_claude_cli_config(monkeypatch):
     tmod.SubtitleTranslator(cfg)
 
     assert captured["name"] == "claude_cli"
-    assert captured["config"]["model"] == "claude-sonnet-4-6"  # from providers.claude_cli.model
+    assert captured["config"]["model"] == "claude-opus-4-7"
+    assert captured["config"]["effort"] == "xhigh"
     assert captured["config"]["timeout_sec"] == 240
     assert "api_key" not in captured["config"]
 
@@ -118,7 +120,8 @@ def test_translator_factory_builds_codex_cli_config(monkeypatch):
     cfg = {
         "translation": {
             "primary_provider": "codex_cli",
-            "primary_model": "gpt-5.5",
+            "primary_model": "gpt-5.6-sol",
+            "primary_effort": "ultra",
             "polish_provider": "",
             "batch_size": 0,
             "context_window": 3,
@@ -131,9 +134,47 @@ def test_translator_factory_builds_codex_cli_config(monkeypatch):
     tmod.SubtitleTranslator(cfg)
 
     assert captured["name"] == "codex_cli"
-    assert captured["config"]["model"] == "gpt-5.4"
+    assert captured["config"]["model"] == "gpt-5.6-sol"
+    assert captured["config"]["effort"] == "ultra"
     assert captured["config"]["timeout_sec"] == 300
     assert "api_key" not in captured["config"]
+
+
+def test_translator_keeps_primary_and_polish_cli_model_effort_independent(monkeypatch):
+    from app.engines import translator as tmod
+
+    captured = []
+
+    def fake_get_provider(name, config):
+        captured.append((name, config))
+        provider = MagicMock()
+        provider.supports_full_document_mode = True
+        provider.context_window_tokens = 1_000_000
+        return provider
+
+    monkeypatch.setattr("app.engines.translator.get_provider", fake_get_provider)
+
+    tmod.SubtitleTranslator({
+        "translation": {
+            "primary_provider": "codex_cli",
+            "primary_model": "gpt-5.6-sol",
+            "primary_effort": "high",
+            "polish_provider": "codex_cli",
+            "polish_model": "gpt-5.6-luna",
+            "polish_effort": "low",
+        },
+        "providers": {
+            "codex_cli": {
+                "model": "gpt-5.4",
+                "timeout_sec": 240,
+            },
+        },
+    })
+
+    assert captured == [
+        ("codex_cli", {"model": "gpt-5.6-sol", "effort": "high", "timeout_sec": 240}),
+        ("codex_cli", {"model": "gpt-5.6-luna", "effort": "low", "timeout_sec": 240}),
+    ]
 
 
 def test_translator_normalizes_malformed_legacy_numeric_config(monkeypatch):

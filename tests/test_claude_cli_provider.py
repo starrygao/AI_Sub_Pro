@@ -1,6 +1,25 @@
 from unittest.mock import patch
 
 
+def test_claude_cli_models_include_fable_5():
+    from app.engines.providers.claude_cli import CLAUDE_CLI_MODELS, ClaudeCliProvider
+
+    assert CLAUDE_CLI_MODELS[0] == "claude-fable-5"
+    assert ClaudeCliProvider({"model": "claude-fable-5"}).model == "claude-fable-5"
+
+
+def test_claude_cli_login_probe_honors_explicit_logged_out_json():
+    from app.engines.providers.claude_cli import ClaudeCliProvider
+
+    completed = type("Completed", (), {
+        "returncode": 1,
+        "stdout": '{"loggedIn": false, "authMethod": "none"}',
+        "stderr": "",
+    })()
+    with patch("app.engines.providers.claude_cli.subprocess.run", return_value=completed):
+        assert ClaudeCliProvider.check_logged_in() is False
+
+
 def test_claude_cli_provider_cli_not_installed():
     from app.engines.providers.claude_cli import ClaudeCliProvider
     with patch.object(ClaudeCliProvider, "check_cli_available", return_value=False):
@@ -52,6 +71,31 @@ def test_claude_cli_provider_normalizes_non_object_and_non_string_model():
 
     assert ClaudeCliProvider(["bad"]).model == "claude-opus-4-7"
     assert ClaudeCliProvider({"model": ["bad"]}).model == "claude-opus-4-7"
+
+
+def test_claude_cli_provider_passes_explicit_effort_to_cli():
+    from app.engines.providers.claude_cli import ClaudeCliProvider
+
+    completed = type("Completed", (), {
+        "returncode": 0,
+        "stdout": '{"result":"[]"}',
+        "stderr": "",
+    })()
+    with patch("app.engines.providers.claude_cli.subprocess.run", return_value=completed) as run:
+        provider = ClaudeCliProvider({"model": "claude-fable-5", "effort": "xhigh"})
+        assert provider._invoke([], "system") == "[]"
+
+    command = run.call_args.args[0]
+    assert command[command.index("--effort") + 1] == "xhigh"
+
+
+def test_claude_cli_provider_omits_automatic_or_invalid_effort():
+    from app.engines.providers.claude_cli import ClaudeCliProvider
+
+    assert ClaudeCliProvider({"model": "claude-fable-5", "effort": "auto"}).effort == "auto"
+    assert ClaudeCliProvider({"model": "claude-fable-5", "effort": "ultra"}).effort == "auto"
+    assert ClaudeCliProvider({"model": "claude-haiku-4-5", "effort": "high"}).effort == "auto"
+    assert ClaudeCliProvider({"model": "claude-sonnet-4-6", "effort": "xhigh"}).effort == "auto"
 
 
 def test_claude_cli_provider_parse_response():

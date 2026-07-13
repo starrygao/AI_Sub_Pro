@@ -1447,8 +1447,11 @@ def test_normalize_settings_preserves_default_nested_objects():
         if (normalized.tmdb.language !== 'zh-CN') {
           throw new Error(`tmdb defaults lost: ${JSON.stringify(normalized.tmdb)}`);
         }
-        if (normalized.providers.claude_cli.model !== 'claude-opus-4-7' || normalized.providers.claude_cli.timeout_sec !== 240) {
+        if ('model' in normalized.providers.claude_cli || normalized.providers.claude_cli.timeout_sec !== 240) {
           throw new Error(`claude defaults not deeply merged: ${JSON.stringify(normalized.providers.claude_cli)}`);
+        }
+        if (normalized.translation.primary_effort !== 'auto' || normalized.translation.polish_effort !== 'auto') {
+          throw new Error(`reasoning effort defaults lost: ${JSON.stringify(normalized.translation)}`);
         }
         const malformed = state.normalizeSettings({
           translation: {primary_provider: {bad: 'shape'}, polish_provider: ' not-a-provider '},

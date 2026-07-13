@@ -16,13 +16,27 @@ from .result_contract import reconcile_translation_results, redact_error_message
 log = logging.getLogger(__name__)
 
 CODEX_CLI_MODELS = [
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     "gpt-5.5",
     "gpt-5.4",
     "gpt-5.4-mini",
     "gpt-5.3-codex",
     "gpt-5.3-codex-spark",
 ]
-DEFAULT_CODEX_CLI_MODEL = CODEX_CLI_MODELS[0]
+DEFAULT_CODEX_CLI_MODEL = "gpt-5.5"
+ALLOWED_CODEX_CLI_EFFORTS = {"auto", "low", "medium", "high", "xhigh", "max", "ultra"}
+CODEX_CLI_MODEL_EFFORTS = {
+    "gpt-5.6-sol": {"low", "medium", "high", "xhigh", "max", "ultra"},
+    "gpt-5.6-terra": {"low", "medium", "high", "xhigh", "max", "ultra"},
+    "gpt-5.6-luna": {"low", "medium", "high", "xhigh", "max"},
+    "gpt-5.5": {"low", "medium", "high", "xhigh"},
+    "gpt-5.4": {"low", "medium", "high", "xhigh"},
+    "gpt-5.4-mini": {"low", "medium", "high", "xhigh"},
+    "gpt-5.3-codex": {"low", "medium", "high", "xhigh"},
+    "gpt-5.3-codex-spark": {"low", "medium", "high", "xhigh"},
+}
 
 
 def _coerce_timeout(value) -> int:
@@ -43,6 +57,15 @@ def _coerce_model(value) -> str:
     return DEFAULT_CODEX_CLI_MODEL
 
 
+def _coerce_effort(value, model: str) -> str:
+    if not isinstance(value, str):
+        return "auto"
+    normalized = value.strip().lower()
+    if normalized == "auto":
+        return normalized
+    return normalized if normalized in CODEX_CLI_MODEL_EFFORTS.get(model, set()) else "auto"
+
+
 class CodexCliProvider(BaseProvider):
     """Translation via local `codex` CLI; uses the user's Codex login."""
 
@@ -51,6 +74,7 @@ class CodexCliProvider(BaseProvider):
     def __init__(self, config: dict):
         config = config if isinstance(config, dict) else {}
         self.model = _coerce_model(config.get("model"))
+        self.effort = _coerce_effort(config.get("effort"), self.model)
         self.timeout_sec = _coerce_timeout(config.get("timeout_sec", 180))
 
     @staticmethod
@@ -129,6 +153,11 @@ class CodexCliProvider(BaseProvider):
             "--ask-for-approval",
             "never",
             "exec",
+            "--ignore-user-config",
+        ]
+        if self.effort != "auto":
+            cmd.extend(["--config", f'model_reasoning_effort="{self.effort}"'])
+        cmd.extend([
             "--model",
             self.model,
             "--sandbox",
@@ -140,7 +169,7 @@ class CodexCliProvider(BaseProvider):
             "--output-last-message",
             output_path,
             "-",
-        ]
+        ])
         try:
             proc = subprocess.Popen(
                 cmd,

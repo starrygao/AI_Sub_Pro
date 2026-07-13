@@ -421,8 +421,13 @@ class SubtitleTranslator:
         # Primary provider — routed through the factory.
         primary_name = _coerce_provider_name(trans_cfg.get("primary_provider"), "openai")
         primary_model = _coerce_text_setting(trans_cfg.get("primary_model"), "gpt-4o")
+        primary_effort = _coerce_choice_setting(
+            trans_cfg.get("primary_effort"),
+            {"auto", "low", "medium", "high", "xhigh", "max", "ultra"},
+            "auto",
+        )
         primary_config = self._build_provider_config(
-            primary_name, primary_model, api_keys, providers_cfg
+            primary_name, primary_model, primary_effort, api_keys, providers_cfg
         )
         self.primary = get_provider(primary_name, primary_config)
 
@@ -434,9 +439,14 @@ class SubtitleTranslator:
             allow_empty=True,
         )
         polish_model = _coerce_text_setting(trans_cfg.get("polish_model"), primary_model)
+        polish_effort = _coerce_choice_setting(
+            trans_cfg.get("polish_effort"),
+            {"auto", "low", "medium", "high", "xhigh", "max", "ultra"},
+            "auto",
+        )
         if polish_name:
             polish_config = self._build_provider_config(
-                polish_name, polish_model, api_keys, providers_cfg
+                polish_name, polish_model, polish_effort, api_keys, providers_cfg
             )
             try:
                 self.polish = get_provider(polish_name, polish_config)
@@ -448,21 +458,23 @@ class SubtitleTranslator:
     @staticmethod
     def _build_provider_config(
         name: str,
-        fallback_model: str,
+        model: str,
+        effort: str,
         api_keys: dict,
         providers_cfg: dict,
     ) -> dict:
         """Compose a provider config dict from the various config sections.
 
         Local CLI providers are subscription-auth subprocess providers — they take
-        {model, timeout_sec} and explicitly NO api_key. OpenAI-compat providers
+        {model, effort, timeout_sec} and explicitly NO api_key. OpenAI-compat providers
         take {provider, model, api_key}.
         """
         if name in ("claude_cli", "codex_cli"):
             raw_cli = providers_cfg.get(name)
             cli = raw_cli if isinstance(raw_cli, dict) else {}
             return {
-                "model": _coerce_text_setting(cli.get("model"), fallback_model),
+                "model": model,
+                "effort": effort,
                 "timeout_sec": _coerce_int_setting(
                     cli.get("timeout_sec", 180),
                     180,
@@ -472,7 +484,7 @@ class SubtitleTranslator:
             }
         return {
             "provider": name,
-            "model": fallback_model,
+            "model": model,
             "api_key": _coerce_text_setting(api_keys.get(name), ""),
         }
 

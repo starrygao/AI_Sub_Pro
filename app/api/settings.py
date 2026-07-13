@@ -443,6 +443,18 @@ def _validate_settings_update(data: dict) -> None:
             )
         _require_non_blank_str("translation", translation, "primary_model")
         _require_str("translation", translation, "polish_model")
+        _validate_choice_field(
+            "translation",
+            translation,
+            "primary_effort",
+            allowed={"auto", "low", "medium", "high", "xhigh", "max", "ultra"},
+        )
+        _validate_choice_field(
+            "translation",
+            translation,
+            "polish_effort",
+            allowed={"auto", "low", "medium", "high", "xhigh", "max", "ultra"},
+        )
         _require_non_blank_str("translation", translation, "target_language")
         _require_int("translation", translation, "batch_size", min_value=0, max_value=200)
         _require_int("translation", translation, "context_window", min_value=0, max_value=50)
@@ -524,24 +536,9 @@ def _validate_settings_update(data: dict) -> None:
         if not isinstance(provider_cfg, dict):
             continue
         section = f"providers.{provider_name}"
+        provider_cfg.pop("model", None)
         _require_bool(section, provider_cfg, "enabled")
         _require_int(section, provider_cfg, "timeout_sec", min_value=5, max_value=3600)
-        if "model" not in provider_cfg:
-            continue
-        _require_non_blank_str(section, provider_cfg, "model")
-        provider_cfg["model"] = provider_cfg["model"].strip()
-
-    claude_cfg = providers.get("claude_cli")
-    if isinstance(claude_cfg, dict) and "model" in claude_cfg:
-        from app.engines.providers.claude_cli import ALLOWED_CLAUDE_CLI_MODELS
-
-        model = claude_cfg.get("model")
-        if model not in ALLOWED_CLAUDE_CLI_MODELS:
-            allowed = ", ".join(sorted(ALLOWED_CLAUDE_CLI_MODELS))
-            raise HTTPException(
-                status_code=400,
-                detail=f"Claude CLI model must be one of: {allowed}",
-            )
 
 
 @router.post("/settings")
