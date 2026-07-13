@@ -446,9 +446,10 @@ def test_quality_checks_mark_majority_proper_name_variant_as_repairable():
     flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
     repairable = [issue for issue in flagged if issue.expected]
 
-    assert report.status == "needs_review"
-    assert report.summary["blocking_issue_count"] == 1
-    assert report.summary["report_only_warning_count"] == 2
+    assert report.status == "ok"
+    assert report.summary["blocking_issue_count"] == 0
+    assert report.summary["report_only_warning_count"] == 3
+    assert report.unresolved_blocks == []
     assert [(issue.block_id, issue.expected) for issue in repairable] == [
         (3, "哈德逊奥克斯")
     ]

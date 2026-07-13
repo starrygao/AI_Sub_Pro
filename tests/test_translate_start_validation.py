@@ -256,6 +256,15 @@ def test_start_translate_keeps_running_when_kb_suggestions_are_rejected(tmp_proj
         json.dumps({"rejected_sources": sources}),
         encoding="utf-8",
     )
+    pfile = tmp_project_dir / pid / "project.json"
+    project = json.loads(pfile.read_text(encoding="utf-8"))
+    project.update({
+        "status": "created",
+        "error": None,
+        "pipeline_stage": None,
+        "progress_msg": "",
+    })
+    pfile.write_text(json.dumps(project), encoding="utf-8")
 
     r = client.post(f"/api/projects/{pid}/start-translate", json={"target_language": "English"})
 
@@ -424,6 +433,42 @@ def test_start_translate_persists_requested_target_language_before_launch(tmp_pr
     assert r.status_code == 200
     saved = json.loads(pfile.read_text(encoding="utf-8"))
     assert saved["target_language"] == "Japanese"
+
+
+def test_start_translate_clears_stale_failure_while_queued(tmp_project_dir, monkeypatch):
+    from app.api import translate as translate_api
+
+    client = _client(tmp_project_dir, monkeypatch)
+    _allow_translation(monkeypatch)
+    pid = _seed_project(tmp_project_dir)
+    pfile = tmp_project_dir / pid / "project.json"
+    data = json.loads(pfile.read_text(encoding="utf-8"))
+    data.update({
+        "status": "error",
+        "error": "old translation failure",
+        "progress": 100,
+        "progress_msg": "翻译质量未达标",
+        "translation_quality_status": "failed",
+        "translation_quality_message": "翻译质量未达标",
+    })
+    pfile.write_text(json.dumps(data), encoding="utf-8")
+
+    class DummyThread:
+        def start(self):
+            pass
+
+    monkeypatch.setattr(translate_api, "try_register_task", lambda *args, **kwargs: DummyThread())
+
+    response = client.post(f"/api/projects/{pid}/start-translate", json={"target_language": "简体中文"})
+
+    assert response.status_code == 200
+    saved = json.loads(pfile.read_text(encoding="utf-8"))
+    assert saved["status"] == "processing"
+    assert saved["error"] is None
+    assert saved["pipeline_stage"] == "translate"
+    assert saved["progress_msg"] == "等待翻译资源..."
+    assert saved["translation_quality_status"] is None
+    assert saved["translation_quality_message"] == ""
 
 
 def test_start_asr_persists_requested_language_and_audio_track_before_launch(tmp_project_dir, monkeypatch):

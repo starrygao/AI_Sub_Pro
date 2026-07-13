@@ -375,6 +375,24 @@ def _add_launch_stage(response: dict, stage: str) -> dict:
     return body
 
 
+def _mark_project_stage_queued(pid: str, stage: str, message: str) -> None:
+    def _update(project: dict) -> None:
+        project.update({
+            "status": "processing",
+            "error": None,
+            "pipeline_stage": stage,
+            "progress_msg": message,
+        })
+        if stage == "translate":
+            project.update({
+                "translation_quality_status": None,
+                "translation_quality_message": "",
+            })
+
+    mutate_project(pid, _update, normalize=_apply_safe_defaults)
+    _emit_progress(pid, stage, 0, message)
+
+
 def _persist_workflow_options(
     pid: str,
     *,
@@ -1527,7 +1545,7 @@ def _semantic_issue_from_verdict(item: dict, verdict: str, error: str = ""):
         reason = clean_verdict.split(":", 1)[-1].strip() if ":" in clean_verdict else clean_verdict
         return QualityIssue(
             type="semantic_mismatch",
-            severity="error",
+            severity="warning",
             block_id=block_id if isinstance(block_id, int) else None,
             message=reason or "translation does not match source meaning",
             source_text=source if isinstance(source, str) else "",
@@ -1696,19 +1714,7 @@ def _is_report_only_quality_warning(issue) -> bool:
         return _is_report_only_issue(issue)
     except Exception:
         pass
-    issue_type = getattr(issue, "type", "")
-    if issue_type in _QA_EXPECTED_REPAIRABLE_WARNING_TYPES:
-        expected = getattr(issue, "expected", "")
-        if not (isinstance(expected, str) and expected.strip()):
-            return True
-        try:
-            from app.engines.translation_qa import _cjk_compact_text, _clean_text
-            translation = _cjk_compact_text(_clean_text(getattr(issue, "translation", "")))
-            expected_signature = _cjk_compact_text(_clean_text(expected))
-            return bool(expected_signature and translation.endswith(expected_signature))
-        except Exception:
-            return False
-    return issue_type in _QA_REPORT_ONLY_WARNING_TYPES
+    return True
 
 
 def _finalize_quality_conclusion(report, repaired: list[dict], repair_enabled: bool) -> None:
@@ -2727,6 +2733,7 @@ def start_translate(pid: str = PathParam(pattern=PID_PATTERN), req: TranslateReq
     try:
         _persist_workflow_options(pid, target_language=target_lang)
         _reset_workflow_for_action(pid, "translate")
+        _mark_project_stage_queued(pid, "translate", "等待翻译资源...")
     except Exception:
         unregister_task(pid)
         raise

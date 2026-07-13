@@ -528,8 +528,11 @@ def test_translate_pipeline_writes_quality_report(tmp_path, monkeypatch):
     api_translate._run_translate_pipeline(pid, "简体中文")
 
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
-    assert report["status"] == "failed"
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["status"] == "translated"
+    assert report["status"] == "ok"
     assert report["summary"]["by_type"]["english_residue"] == 1
+    assert report["summary"]["quality_gate"]["passed"] is True
     assert (pdir / "translation_qa_report.md").exists()
 
 
@@ -608,6 +611,7 @@ def test_full_pipeline_stops_before_burn_when_quality_gate_fails(tmp_path, monke
         "status": "created",
         "target_language": "简体中文",
         "original_language": "en",
+        "manual_terms": "Hello=你好",
     }), encoding="utf-8")
     (pdir / "filtered.srt").write_text(
         "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n",
@@ -834,7 +838,7 @@ def test_translate_pipeline_blocks_export_when_cleaned_translation_is_empty(tmp_
     assert (pdir / "partial_bilingual.srt").exists()
 
 
-def test_translate_pipeline_semantic_mismatch_blocks_delivery(tmp_path, monkeypatch):
+def test_translate_pipeline_semantic_mismatch_is_report_only(tmp_path, monkeypatch):
     from app.api import translate as api_translate
     from app.utils import project_store
 
@@ -893,15 +897,18 @@ def test_translate_pipeline_semantic_mismatch_blocks_delivery(tmp_path, monkeypa
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
-    assert project["status"] == "error"
-    assert project["translation_quality_status"] == "failed"
-    assert "翻译质量未达标" in project["error"]
-    assert project["translated_srt"] is None
+    assert project["status"] == "translated"
+    assert project["translation_quality_status"] == "passed"
+    assert project["error"] is None
+    assert project["translated_srt"] == str(pdir / "translated.srt")
+    assert project["bilingual_srt"] == str(pdir / "bilingual.srt")
     assert report["summary"]["by_type"]["semantic_mismatch"] == 1
-    assert report["summary"]["quality_gate"]["passed"] is False
+    assert report["issues"][0]["severity"] == "warning"
+    assert report["summary"]["quality_gate"]["passed"] is True
     assert report["summary"]["quality_gate"]["requires_human_review"] is False
-    assert not (pdir / "translated.srt").exists()
-    assert (pdir / "partial_translated.srt").exists()
+    assert (pdir / "translated.srt").exists()
+    assert (pdir / "bilingual.srt").exists()
+    assert not (pdir / "partial_translated.srt").exists()
 
 
 def test_translate_pipeline_final_retry_repairs_missing_translation(tmp_path, monkeypatch):
@@ -1273,14 +1280,15 @@ def test_translate_pipeline_auto_repair_preserves_omitted_rows(tmp_path, monkeyp
     api_translate._run_translate_pipeline(pid, "简体中文")
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
-    partial = (pdir / "partial_translated.srt").read_text(encoding="utf-8")
+    translated = (pdir / "translated.srt").read_text(encoding="utf-8")
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
     assert attempted_batches == [[1, 2], [2]]
-    assert project["status"] == "error"
-    assert "你还好吗？" in partial
-    assert "Hello there." in partial
-    assert not (pdir / "translated.srt").exists()
+    assert project["status"] == "translated"
+    assert "你还好吗？" in translated
+    assert "Hello there." in translated
+    assert not (pdir / "partial_translated.srt").exists()
     assert report["repaired_blocks"] == [{"id": 1, "translation": "你还好吗？"}]
+    assert report["summary"]["quality_gate"]["passed"] is True
 
 
 def test_translate_pipeline_does_not_auto_repair_scientific_terms_without_expected(tmp_path, monkeypatch):
@@ -1516,7 +1524,40 @@ def test_quality_gate_does_not_block_expected_name_at_question_tail():
     assert report.summary["blocking_warning_count"] == 0
 
 
-def test_quality_gate_failure_is_unattended_not_human_review():
+def test_quality_gate_error_failure_is_unattended_not_human_review():
+    from app.api.translate import _finalize_quality_conclusion
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+
+    report = TranslationQaReport(
+        status="needs_review",
+        issues=[
+            QualityIssue(
+                type="missing_translation",
+                severity="error",
+                block_id=7,
+                message="source subtitle has no translation",
+                source_text="Long subtitle",
+                translation="",
+            )
+        ],
+        summary={},
+        unresolved_blocks=[7],
+    )
+
+    _finalize_quality_conclusion(report, [{"id": 7}], True)
+
+    gate = report.summary["quality_gate"]
+    assert report.status == "failed"
+    assert gate["verdict"] == "failed"
+    assert gate["passed"] is False
+    assert gate["requires_human_review"] is False
+    assert gate["delivery_mode"] == "unattended"
+    assert "人工" not in report.summary["conclusion"]
+    assert "审核" not in report.summary["conclusion"]
+    assert "自动交付未通过" in report.summary["conclusion"]
+
+
+def test_quality_gate_warning_passes_with_report_only_notice():
     from app.api.translate import _finalize_quality_conclusion
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
 
@@ -1536,17 +1577,14 @@ def test_quality_gate_failure_is_unattended_not_human_review():
         unresolved_blocks=[7],
     )
 
-    _finalize_quality_conclusion(report, [{"id": 7}], True)
+    _finalize_quality_conclusion(report, [], True)
 
     gate = report.summary["quality_gate"]
-    assert report.status == "failed"
-    assert gate["verdict"] == "failed"
-    assert gate["passed"] is False
-    assert gate["requires_human_review"] is False
-    assert gate["delivery_mode"] == "unattended"
-    assert "人工" not in report.summary["conclusion"]
-    assert "审核" not in report.summary["conclusion"]
-    assert "已停止交付" in report.summary["conclusion"]
+    assert report.status == "ok"
+    assert gate["verdict"] == "passed"
+    assert gate["passed"] is True
+    assert report.summary["blocking_warning_count"] == 0
+    assert "非阻塞提醒" in report.summary["conclusion"]
 
 
 def test_translate_pipeline_batches_auto_repair_and_records_trace(tmp_path, monkeypatch):
