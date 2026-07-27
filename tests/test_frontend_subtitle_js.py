@@ -39,6 +39,63 @@ def test_save_video_label_reflects_pending_state():
     )
 
 
+def test_persist_subtitles_refreshes_sound_description_metadata():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          state.currentProject = {id: 'p1'};
+          state.subtitles = [{
+            index: 1,
+            start: '00:00:00,000',
+            end: '00:00:01,000',
+            text: '[grunting]',
+            translation: '',
+            sound_description: false,
+            filtered: false,
+          }];
+          state.api = async (url, method) => {
+            if (url !== '/api/projects/p1/subtitles' || method !== 'PUT') {
+              throw new Error(`unexpected request ${method} ${url}`);
+            }
+            return {
+              status: 'ok',
+              count: 1,
+              blocks: [{
+                index: 1,
+                start: '00:00:00,000',
+                end: '00:00:01,000',
+                text: '[grunting]',
+                translation: '',
+                sound_description: true,
+                filtered: false,
+              }],
+            };
+          };
+
+          await state.persistSubtitles();
+
+          if (state.subtitles[0].sound_description !== true) {
+            throw new Error(`expected refreshed metadata ${JSON.stringify(state.subtitles[0])}`);
+          }
+          if (state.subtitleQualitySummary('translated').severe !== 0) {
+            throw new Error('refreshed sound cue should not be reported as missing');
+          }
+        })().catch((error) => {
+          console.error(error.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_subtitle_split_rolls_back_when_persist_fails():
     _run_node(
         """

@@ -4062,9 +4062,28 @@ function app() {
       return Number.isInteger(idx) && idx >= 0 && idx < this.subtitles.length;
     },
 
+    syncSubtitleServerMetadata(savedBlocks) {
+      const soundByIndex = new Map();
+      if (Array.isArray(savedBlocks)) {
+        savedBlocks.forEach((block) => {
+          if (!this.isPlainObject(block) || !Number.isInteger(block.index)) return;
+          soundByIndex.set(block.index, block.sound_description === true);
+        });
+      }
+      this.subtitles.forEach((item) => {
+        if (!this.isPlainObject(item)) return;
+        item.sound_description = soundByIndex.get(item.index) === true;
+      });
+    },
+
     async persistSubtitles() {
       this.renumberSubtitles();
-      await this.api(`/api/projects/${this.currentProject.id}/subtitles`, 'PUT', { blocks: this.subtitles });
+      const data = await this.api(
+        `/api/projects/${this.currentProject.id}/subtitles`,
+        'PUT',
+        { blocks: this.subtitles },
+      );
+      this.syncSubtitleServerMetadata(data?.blocks);
     },
 
     async addSubtitleAfter(idx) {
