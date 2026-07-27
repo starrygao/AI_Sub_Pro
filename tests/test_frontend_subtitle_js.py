@@ -2483,6 +2483,85 @@ def test_export_quality_requires_confirmation_before_api_call_for_severe_issues(
     )
 
 
+def test_normal_blank_dialogue_blocks_export_before_api_call():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          Blob: function(parts, options) {
+            this.parts = parts;
+            this.options = options;
+          },
+          URL: {
+            createObjectURL: () => 'blob:quality-export',
+            revokeObjectURL: () => {},
+          },
+          document: {
+            body: { appendChild: () => {} },
+            createElement: () => ({ click: () => {}, remove: () => {} }),
+          },
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          let calls = 0;
+          let confirms = 0;
+          state.currentProject = {id: 'p1', status: 'translated'};
+          state.subtitles = [
+            {
+              index: 1,
+              start: '00:00:00,000',
+              end: '00:00:01,000',
+              text: 'This is ordinary dialogue.',
+              translation: '',
+              sound_description: false,
+              filtered: false,
+            },
+            {
+              index: 2,
+              start: '00:00:01,000',
+              end: '00:00:02,000',
+              text: 'This translated row makes export available.',
+              translation: '这行已有译文。',
+              sound_description: false,
+              filtered: false,
+            },
+          ];
+          state.toast = () => {};
+          state.askConfirm = async () => {
+            confirms += 1;
+            return false;
+          };
+          state.api = async () => {
+            calls += 1;
+            throw new Error('export API must not be called after declined confirmation');
+          };
+
+          const summary = state.subtitleQualitySummary('translated');
+          const missing = summary.issues.filter((issue) => issue.code === 'missing_translation');
+          if (summary.severe !== 1 || missing.length !== 1 || missing[0].index !== 1) {
+            throw new Error(`ordinary blank dialogue must be a severe missing translation: ${JSON.stringify(summary)}`);
+          }
+
+          await state.exportSrt('translated');
+          if (confirms !== 1 || calls !== 0) {
+            throw new Error(`declined ordinary-dialogue export must not call API: calls=${calls} confirms=${confirms}`);
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_subtitle_timeline_segments_use_project_duration_and_clamp_widths():
     _run_node(
         """
