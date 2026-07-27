@@ -1,5 +1,7 @@
 from datetime import timedelta
 
+import pytest
+
 from app.utils.srt import SubtitleBlock
 
 
@@ -116,6 +118,24 @@ def test_quality_checks_allow_blank_music_only_rows():
     assert report.status == "ok"
     assert report.issues == []
     assert report.unresolved_blocks == []
+
+
+@pytest.mark.parametrize("source", [
+    "[gunshots]\n[people shouting]",
+    "[tense music continues]\n[shouting]",
+    "[walkers groaning]",
+    "-[Negan grunting]\n-[walkers snarling]",
+    "[The Croat breathing heavily]",
+    "[Negan sighs]",
+    "[lock rattling]",
+    "[machines beeping]",
+    "[sobs hysterically]",
+    "[lively chatter]",
+])
+def test_sound_description_classifier_covers_export_regression_cues(source):
+    from app.engines.translation_qa import is_sound_description_source
+
+    assert is_sound_description_source(source) is True
 
 
 def test_quality_checks_do_not_treat_speaker_labels_as_sound_descriptions():
