@@ -4064,15 +4064,23 @@ function app() {
 
     syncSubtitleServerMetadata(savedBlocks) {
       const soundByIndex = new Map();
+      const invalidSoundIndexes = new Set();
       if (Array.isArray(savedBlocks)) {
         savedBlocks.forEach((block) => {
           if (!this.isPlainObject(block) || !Number.isInteger(block.index)) return;
+          if (soundByIndex.has(block.index)) {
+            soundByIndex.delete(block.index);
+            invalidSoundIndexes.add(block.index);
+            return;
+          }
+          if (invalidSoundIndexes.has(block.index)) return;
           soundByIndex.set(block.index, block.sound_description === true);
         });
       }
       this.subtitles.forEach((item) => {
         if (!this.isPlainObject(item)) return;
-        item.sound_description = soundByIndex.get(item.index) === true;
+        item.sound_description = !invalidSoundIndexes.has(item.index)
+          && soundByIndex.get(item.index) === true;
       });
     },
 

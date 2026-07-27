@@ -111,18 +111,28 @@ def test_sync_subtitle_server_metadata_fails_closed_for_malformed_sound_descript
           {index: 1, text: '[wind]', translation: '', sound_description: true, filtered: false},
           {index: 2, text: '[rain]', translation: '', sound_description: true, filtered: false},
           {index: 3, text: '[thunder]', translation: '', sound_description: true, filtered: false},
+          {index: 4, text: '[leaves]', translation: '', sound_description: true, filtered: false},
+          {index: 5, text: '[waves]', translation: '', sound_description: true, filtered: false},
+          {index: 6, text: '[birds]', translation: '', sound_description: true, filtered: false},
+          {index: 7, text: '[traffic]', translation: '', sound_description: true, filtered: false},
         ];
 
         state.syncSubtitleServerMetadata([
           {index: 1},
           {index: 2, sound_description: 'true'},
           {index: 3, sound_description: 1},
+          {index: 4, sound_description: false},
+          {index: 4, sound_description: true},
+          {index: 5, sound_description: true},
+          {index: 5, sound_description: false},
+          {sound_description: true},
+          {index: '7', sound_description: true},
         ]);
 
         if (state.subtitles.some((item) => item.sound_description !== false)) {
           throw new Error(`malformed server metadata must fail closed: ${JSON.stringify(state.subtitles)}`);
         }
-        if (state.subtitleQualitySummary('translated').severe !== 3) {
+        if (state.subtitleQualitySummary('translated').severe !== 7) {
           throw new Error('malformed server metadata must not suppress missing translations');
         }
         """
