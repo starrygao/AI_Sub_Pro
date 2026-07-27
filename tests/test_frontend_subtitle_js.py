@@ -96,6 +96,82 @@ def test_persist_subtitles_refreshes_sound_description_metadata():
     )
 
 
+def test_sync_subtitle_server_metadata_fails_closed_for_malformed_sound_description():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.subtitles = [
+          {index: 1, text: '[wind]', translation: '', sound_description: true, filtered: false},
+          {index: 2, text: '[rain]', translation: '', sound_description: true, filtered: false},
+          {index: 3, text: '[thunder]', translation: '', sound_description: true, filtered: false},
+        ];
+
+        state.syncSubtitleServerMetadata([
+          {index: 1},
+          {index: 2, sound_description: 'true'},
+          {index: 3, sound_description: 1},
+        ]);
+
+        if (state.subtitles.some((item) => item.sound_description !== false)) {
+          throw new Error(`malformed server metadata must fail closed: ${JSON.stringify(state.subtitles)}`);
+        }
+        if (state.subtitleQualitySummary('translated').severe !== 3) {
+          throw new Error('malformed server metadata must not suppress missing translations');
+        }
+        """
+    )
+
+
+def test_persist_subtitles_clears_stale_sound_description_from_server():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          state.currentProject = {id: 'p1'};
+          state.subtitles = [{
+            index: 1,
+            start: '00:00:00,000',
+            end: '00:00:01,000',
+            text: '[grunting]',
+            translation: '',
+            sound_description: true,
+            filtered: false,
+          }];
+          state.api = async () => ({
+            status: 'ok',
+            blocks: [{index: 1, sound_description: false}],
+          });
+
+          await state.persistSubtitles();
+
+          if (state.subtitles[0].sound_description !== false) {
+            throw new Error(`canonical false must clear stale local metadata: ${JSON.stringify(state.subtitles[0])}`);
+          }
+          if (state.subtitleQualitySummary('translated').severe !== 1) {
+            throw new Error('canonical non-sound row must report its missing translation');
+          }
+        })().catch((error) => {
+          console.error(error.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_subtitle_split_rolls_back_when_persist_fails():
     _run_node(
         """
