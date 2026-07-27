@@ -1974,6 +1974,47 @@ def test_subtitle_quality_summary_flags_timing_translation_and_reading_speed():
     )
 
 
+def test_subtitle_quality_uses_backend_sound_description_metadata():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.subtitles = [
+          {
+            index: 10,
+            start: '00:00:00,000',
+            end: '00:00:01,000',
+            text: '[gunshots]\\n[people shouting]',
+            translation: '',
+            sound_description: true,
+            filtered: false,
+          },
+          {
+            index: 11,
+            start: '00:00:01,000',
+            end: '00:00:02,000',
+            text: '[The Martian]',
+            translation: '',
+            sound_description: false,
+            filtered: false,
+          },
+        ];
+
+        const summary = state.subtitleQualitySummary('translated');
+        const missing = summary.issues.filter((issue) => issue.code === 'missing_translation');
+        if (summary.severe !== 1 || missing.length !== 1 || missing[0].index !== 11) {
+          throw new Error(`unexpected canonical classification result ${JSON.stringify(summary)}`);
+        }
+        """
+    )
+
+
 def test_translated_export_quality_ignores_sound_cues_and_source_only_length():
     _run_node(
         """
@@ -1992,6 +2033,7 @@ def test_translated_export_quality_ignores_sound_cues_and_source_only_length():
             end: '00:00:47,114',
             text: '[ Thunder crashes ]',
             translation: '',
+            sound_description: true,
             filtered: false,
             filter_reason: '',
           },
@@ -2001,6 +2043,7 @@ def test_translated_export_quality_ignores_sound_cues_and_source_only_length():
             end: '00:00:50,417',
             text: 'This English source line is deliberately long enough that it would be noisy if translated export checked source line length.',
             translation: '译文合格。',
+            sound_description: false,
             filtered: false,
             filter_reason: '',
           },
@@ -2010,6 +2053,7 @@ def test_translated_export_quality_ignores_sound_cues_and_source_only_length():
             end: '00:00:54,000',
             text: '♪♪',
             translation: '♪♪',
+            sound_description: true,
             filtered: false,
             filter_reason: '',
           },
@@ -2019,6 +2063,7 @@ def test_translated_export_quality_ignores_sound_cues_and_source_only_length():
             end: '00:00:59,000',
             text: '♪ I know ♪',
             translation: '',
+            sound_description: true,
             filtered: false,
             filter_reason: '',
           },
@@ -2028,6 +2073,7 @@ def test_translated_export_quality_ignores_sound_cues_and_source_only_length():
             end: '00:01:02,000',
             text: '-[inspiring music]\\n-[dinosaur soft roar]',
             translation: '',
+            sound_description: true,
             filtered: false,
             filter_reason: '',
           },
@@ -2037,6 +2083,7 @@ def test_translated_export_quality_ignores_sound_cues_and_source_only_length():
             end: '00:01:05,000',
             text: '♪ The evening breeze',
             translation: '',
+            sound_description: true,
             filtered: false,
             filter_reason: '',
           },
@@ -2046,6 +2093,7 @@ def test_translated_export_quality_ignores_sound_cues_and_source_only_length():
             end: '00:01:08,000',
             text: '-[shrieking]\\n-[roaring]',
             translation: '',
+            sound_description: true,
             filtered: false,
             filter_reason: '',
           },
@@ -2055,6 +2103,7 @@ def test_translated_export_quality_ignores_sound_cues_and_source_only_length():
             end: '00:01:11,000',
             text: '[buzzing]',
             translation: '',
+            sound_description: true,
             filtered: false,
             filter_reason: '',
           },
@@ -2064,6 +2113,7 @@ def test_translated_export_quality_ignores_sound_cues_and_source_only_length():
             end: '00:01:14,000',
             text: '[dinosaur snarls]',
             translation: '',
+            sound_description: true,
             filtered: false,
             filter_reason: '',
           },
@@ -2073,6 +2123,7 @@ def test_translated_export_quality_ignores_sound_cues_and_source_only_length():
             end: '00:01:17,000',
             text: '[squawking]',
             translation: '',
+            sound_description: true,
             filtered: false,
             filter_reason: '',
           },

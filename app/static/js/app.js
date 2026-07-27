@@ -3798,75 +3798,8 @@ function app() {
         .join('\n');
     },
 
-    isSoundDescriptionText(value) {
-      const text = String(value || '').trim();
-      if (!text) return false;
-      const musicRe = /[♪♫♬🎵🎶]+/;
-      if (musicRe.test(text)) return true;
-      const probe = text
-        .replace(/<[^>]+>/g, '')
-        .replace(/\{\\[^}]+\}/g, '')
-        .replace(/(^|\s)[-–—]\s*(?=[\[【（(])/g, '$1')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .replace(/^(?:[-–—]\s*)+/, '')
-        .replace(/(?:\s*[-–—])+$/, '')
-        .trim();
-      if (!probe) return false;
-
-      const bracketRe = /[\[【（(]([^\]】）)\r\n]{1,80})[\]】）)]/g;
-      const segments = [];
-      let match = null;
-      while ((match = bracketRe.exec(probe)) !== null) segments.push(match[1]);
-      if (segments.length) {
-        const remainder = probe.replace(bracketRe, '');
-        return this.isSubtitleSeparatorOnly(remainder)
-          && segments.every((label) => this.isSoundDescriptionLabel(label));
-      }
-      return this.isUnbracketedSoundDescriptionLabel(probe);
-    },
-
-    isSubtitleSeparatorOnly(value) {
-      return !String(value || '').replace(/[\s\-–—、，,。.!！?？:：;；/\\|~·]+/g, '');
-    },
-
-    isSoundDescriptionLabel(value) {
-      const text = String(value || '')
-        .replace(/<[^>]+>/g, '')
-        .replace(/\{\\[^}]+\}/g, '')
-        .replace(/[♪♫♬🎵🎶]+/g, '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .toLowerCase();
-      if (!text) return false;
-      const keywords = [
-        'music', 'song', 'singing', 'humming', 'hum', 'ring', 'ringing',
-        'roar', 'roaring', 'growl', 'growling', 'shriek', 'shrieking',
-        'snarl', 'snarls', 'snarling', 'hiss', 'hisses', 'hissing',
-        'squawk', 'squawks', 'squawking', 'buzz', 'buzzing',
-        'scream', 'screaming', 'yell', 'yelling', 'cry', 'cries', 'crying',
-        'laugh', 'laughing', 'giggle', 'giggles', 'chuckle', 'applause',
-        'thunder', 'explosion', 'gunshot', 'bullets', 'ricochet', 'thud',
-        'squelch', 'crash', 'crashes', 'creak', 'creaking', 'chirp',
-        'chirping', 'trilling', 'squeak', 'squeaking', 'chitter', 'chitters',
-        'rumbling', 'wind', 'waves', 'lapping', 'typing', 'phone',
-        'inaudible', 'speaking', 'arabic', 'sound', 'noise', 'musical',
-      ];
-      return keywords.some((keyword) => text.includes(keyword));
-    },
-
-    isUnbracketedSoundDescriptionLabel(value) {
-      const text = String(value || '').trim();
-      if (!this.isSoundDescriptionLabel(text)) return false;
-      if (/[\u3400-\u9fff]/.test(text)) {
-        const compact = text.replace(/\s+/g, '');
-        return compact.length > 0 && compact.length <= 12;
-      }
-      const words = text.match(/[A-Za-z]+/g) || [];
-      const letters = text.replace(/[^A-Za-z]/g, '');
-      if (/[.!?。！？]\s*$/.test(text) && letters !== letters.toUpperCase()) return false;
-      if (words.length <= 3) return true;
-      return !!letters && letters === letters.toUpperCase();
+    subtitleIsSoundDescription(item) {
+      return this.isPlainObject(item) && item.sound_description === true;
     },
 
     normalizeSubtitleQualityFormat(format) {
@@ -3881,7 +3814,7 @@ function app() {
       if (normalizedFormat === 'original') {
         parts.push(source);
       } else if (normalizedFormat === 'translated') {
-        parts.push(translation || (this.isSoundDescriptionText(source) ? source : ''));
+        parts.push(translation);
       } else {
         parts.push(source, translation);
       }
@@ -3914,7 +3847,7 @@ function app() {
         const durationMs = endMs - startMs;
         const sourceText = typeof item.text === 'string' ? item.text.trim() : '';
         const translationText = typeof item.translation === 'string' ? item.translation.trim() : '';
-        const sourceIsSoundDescription = this.isSoundDescriptionText(sourceText);
+        const sourceIsSoundDescription = this.subtitleIsSoundDescription(item);
 
         if (hasTiming && previous && startMs < previous.endMs) {
           addIssue(item, idx, 'overlap', 'severe', `第 ${idx + 1} 行与上一行时间重叠`);
