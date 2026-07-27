@@ -2416,6 +2416,165 @@ def test_apply_subtitle_replace_persists_and_rolls_back_on_failure():
     )
 
 
+def test_can_export_guard_blocks_stale_metadata_during_pending_source_edit():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        let releasePut;
+        let putCalls = 0;
+        let exportCalls = 0;
+        let confirmations = 0;
+        let saved = 0;
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          window: {
+            pywebview: {
+              api: {
+                save_text_file: async () => {
+                  saved += 1;
+                  return {ok: true, path: '/tmp/movie.translated.srt'};
+                },
+              },
+            },
+          },
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          state.currentProject = {id: 'p1', status: 'translated'};
+          state.subtitles = [
+            {
+              index: 1,
+              start: '00:00:00,000',
+              end: '00:00:01,000',
+              text: '[wind]',
+              translation: '',
+              sound_description: true,
+              filtered: false,
+              filter_reason: '',
+            },
+            {
+              index: 2,
+              start: '00:00:01,000',
+              end: '00:00:02,000',
+              text: 'This translated row keeps the export otherwise available.',
+              translation: '这行已有译文。',
+              sound_description: false,
+              filtered: false,
+              filter_reason: '',
+            },
+          ];
+          state.subtitleFindText = '[wind]';
+          state.subtitleReplaceText = 'This is ordinary dialogue.';
+          state.subtitleReplaceScope = 'source';
+          state.toast = () => {};
+          state.askConfirm = async () => {
+            confirmations += 1;
+            return confirmations > 1;
+          };
+          state.api = async (url, method, body) => {
+            if (url === '/api/projects/p1/subtitles' && method === 'PUT') {
+              putCalls += 1;
+              if (body?.blocks?.[0]?.text !== 'This is ordinary dialogue.') {
+                throw new Error(`PUT must contain the source edit: ${JSON.stringify(body)}`);
+              }
+              await new Promise((resolve) => { releasePut = resolve; });
+              return {
+                status: 'ok',
+                count: 2,
+                blocks: [
+                  {
+                    index: 1,
+                    start: '00:00:00,000',
+                    end: '00:00:01,000',
+                    text: 'This is ordinary dialogue.',
+                    translation: '',
+                    sound_description: false,
+                    filtered: false,
+                    filter_reason: '',
+                  },
+                  {
+                    index: 2,
+                    start: '00:00:01,000',
+                    end: '00:00:02,000',
+                    text: 'This translated row keeps the export otherwise available.',
+                    translation: '这行已有译文。',
+                    sound_description: false,
+                    filtered: false,
+                    filter_reason: '',
+                  },
+                ],
+              };
+            }
+            if (
+              method === 'POST'
+              && (
+                url === '/api/projects/p1/export?format=translated'
+                || url === '/api/projects/p1/export?format=translated&container=vtt'
+              )
+            ) {
+              exportCalls += 1;
+              return {content: 'Translated subtitle', filename: 'movie.translated.srt'};
+            }
+            throw new Error(`unexpected API call ${method} ${url}`);
+          };
+
+          const editPromise = state.applySubtitleReplace();
+          if (state.subtitles[0].text !== 'This is ordinary dialogue.') {
+            throw new Error(`expected source to mutate before PUT resolves: ${JSON.stringify(state.subtitles[0])}`);
+          }
+          if (!state.subtitleActionsDisabled() || putCalls !== 1) {
+            throw new Error(`expected unresolved PUT pending state, got ${state.subtitleActionPending}/${putCalls}`);
+          }
+
+          const canExportWhilePending = state.canExportSrt('translated');
+          await state.exportSrt('translated');
+          await state.exportSubtitle('translated', 'vtt');
+          if (canExportWhilePending) {
+            throw new Error('canExportSrt must be false while source metadata is stale');
+          }
+          if (exportCalls !== 0 || saved !== 0) {
+            throw new Error(`pending source edit must block all exports: API=${exportCalls} saved=${saved}`);
+          }
+
+          releasePut();
+          await editPromise;
+
+          if (state.subtitleActionsDisabled()) {
+            throw new Error(`expected subtitle pending state to clear, got ${state.subtitleActionPending}`);
+          }
+          if (!state.canExportSrt('translated')) {
+            throw new Error('export should resume after canonical metadata arrives');
+          }
+          const summary = state.subtitleQualitySummary('translated');
+          if (summary.severe !== 1 || state.subtitles[0].sound_description !== false) {
+            throw new Error(`canonical metadata must restore missing-translation rules: ${JSON.stringify(summary)}`);
+          }
+
+          await state.exportSrt('translated');
+          if (confirmations !== 1 || exportCalls !== 0) {
+            throw new Error(`declined post-save export must not call API: confirms=${confirmations} API=${exportCalls}`);
+          }
+          await state.exportSrt('translated');
+          if (confirmations !== 2 || exportCalls !== 1 || saved !== 1) {
+            throw new Error(
+              `accepted post-save export must resume normally: confirms=${confirmations} API=${exportCalls} saved=${saved}`
+            );
+          }
+        })().catch((err) => {
+          console.error(err.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
 def test_export_quality_requires_confirmation_before_api_call_for_severe_issues():
     _run_node(
         """

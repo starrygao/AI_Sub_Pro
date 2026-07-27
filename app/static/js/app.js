@@ -547,7 +547,11 @@ function app() {
     },
 
     canExportSrt(format) {
-      if (!this.currentProject || this.projectActionsDisabled(this.currentProject)) return false;
+      if (
+        !this.currentProject
+        || this.projectActionsDisabled(this.currentProject)
+        || this.subtitleActionsDisabled()
+      ) return false;
       if (format === 'original') return this.hasExportableOriginalSubtitles();
       if (format === 'translated' || format === 'bilingual') return this.hasExportableTranslatedSubtitles();
       return false;
