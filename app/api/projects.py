@@ -26,6 +26,7 @@ from app.engines.project_metadata import (
     should_skip_tmdb_enrichment,
 )
 from app.engines.translation_strategy import build_translation_strategy
+from app.engines.translation_qa import is_sound_description_source
 from app.engines.workflow_state import load_workflow_state, stage_log_path
 from app.utils.project_store import (
     project_dir as _ps_project_dir,
@@ -441,6 +442,12 @@ def _subtitle_bool_field(item: dict, field: str, default: bool = False) -> bool:
     if not isinstance(value, bool):
         raise HTTPException(400, f"{field} must be a boolean")
     return value
+
+
+def _subtitle_editor_payload(block: SubtitleBlock) -> dict:
+    payload = block.to_dict()
+    payload["sound_description"] = is_sound_description_source(block.text)
+    return payload
 
 
 def _editable_source_srt_path(pdir: Path) -> Path:
@@ -1740,7 +1747,10 @@ def get_subtitles(pid: str = PathParam(pattern=PID_PATTERN)):
                 blk.filtered = filtered if isinstance(filtered, bool) else False
                 blk.filter_reason = reason if isinstance(reason, str) else ""
 
-    return {"blocks": [b.to_dict() for b in blocks], "source": source_name}
+    return {
+        "blocks": [_subtitle_editor_payload(block) for block in blocks],
+        "source": source_name,
+    }
 
 
 @router.get("/{pid}/quality-report")
@@ -1824,7 +1834,11 @@ def save_subtitles(data: SubtitleEdit, pid: str = PathParam(pattern=PID_PATTERN)
     except Exception as e:
         log.warning("translation memory learning failed for %s: %s", pid, e)
 
-    return {"status": "ok", "count": len(blocks)}
+    return {
+        "status": "ok",
+        "count": len(blocks),
+        "blocks": [_subtitle_editor_payload(block) for block in blocks],
+    }
 
 
 @router.post("/{pid}/export")

@@ -287,6 +287,49 @@ def test_get_subtitles_reports_actual_source_file(client, tmp_project_dir):
     assert data["blocks"][0]["text"] == "Hello"
 
 
+def test_get_subtitles_returns_canonical_sound_description_metadata(client, tmp_project_dir):
+    pid = _seed_project(tmp_project_dir)
+    pdir = tmp_project_dir / pid
+    (pdir / "filtered.srt").write_text(
+        "1\n"
+        "00:00:00,000 --> 00:00:01,000\n"
+        "[gunshots]\n"
+        "[people shouting]\n\n"
+        "2\n"
+        "00:00:01,000 --> 00:00:02,000\n"
+        "[The Martian]\n\n",
+        encoding="utf-8",
+    )
+
+    response = client.get(f"/api/projects/{pid}/subtitles")
+
+    assert response.status_code == 200
+    blocks = response.json()["blocks"]
+    assert blocks[0]["sound_description"] is True
+    assert blocks[1]["sound_description"] is False
+
+
+def test_save_subtitles_returns_recomputed_sound_description_metadata(client, tmp_project_dir):
+    pid = _seed_project(tmp_project_dir)
+
+    response = client.put(f"/api/projects/{pid}/subtitles", json={
+        "blocks": [{
+            "index": 1,
+            "start": "00:00:00,000",
+            "end": "00:00:01,000",
+            "text": "[grunting]",
+            "translation": "",
+            "sound_description": False,
+        }],
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["count"] == 1
+    assert body["blocks"][0]["sound_description"] is True
+
+
 def test_get_subtitles_matches_translations_with_millisecond_tolerance(client, tmp_project_dir):
     pid = _seed_project(tmp_project_dir)
     pdir = tmp_project_dir / pid
