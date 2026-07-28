@@ -354,6 +354,54 @@ def test_sound_description_classifier_covers_export_regression_cues(source):
 
 
 @pytest.mark.parametrize(
+    ("source", "draft"),
+    [
+        ("♪ Never gonna give you up ♪", "♪ 永远不会放弃你 ♪"),
+        ("♪ 你问我爱你有多深 ♪", "♪ You ask how deep my love is ♪"),
+    ],
+)
+def test_note_wrapped_language_lyrics_remain_translatable(source, draft):
+    from app.engines.translation_qa import (
+        dialogue_only_qa_source_text,
+        is_sound_description_source,
+        normalize_sound_description_translations,
+        run_quality_checks,
+    )
+
+    assert is_sound_description_source(source) is False
+    assert dialogue_only_qa_source_text(source) == source
+
+    untranslated = run_quality_checks(
+        [_block(69, source, "")],
+        target_language="简体中文",
+        max_chars=40,
+    )
+    assert untranslated.summary["by_type"]["missing_translation"] == 1
+
+    translated_block = _block(70, source, draft)
+    applied = normalize_sound_description_translations([translated_block])
+    assert applied == []
+    assert translated_block.translation == draft
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "♪",
+        "♪ instrumental music ♪",
+    ],
+)
+def test_music_markers_without_language_lyrics_remain_pure_sound(source):
+    from app.engines.translation_qa import (
+        dialogue_only_qa_source_text,
+        is_sound_description_source,
+    )
+
+    assert is_sound_description_source(source) is True
+    assert dialogue_only_qa_source_text(source) == ""
+
+
+@pytest.mark.parametrize(
     "source",
     [
         "♪\n-Go!",

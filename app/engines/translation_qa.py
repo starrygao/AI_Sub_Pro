@@ -649,8 +649,6 @@ def _is_sound_description_line(source: str) -> bool:
     probe = _sound_description_probe_text(source)
     if not probe:
         return bool(_MUSIC_MARK_RE.search(source or ""))
-    if _MUSIC_MARK_RE.search(source or ""):
-        return True
 
     segments = list(_BRACKETED_TRANSLATION_SEGMENT_RE.finditer(probe))
     if segments:

@@ -47,7 +47,7 @@ def test_completion_counts_ignore_non_translatable_rows():
         _blk("-[shrieking]\n-[roaring]"),
         _blk("c", filtered=True),
     ]
-    assert _translation_completion_counts(blocks) == (2, 1, 1)
+    assert _translation_completion_counts(blocks) == (3, 1, 2)
 
 
 def test_incomplete_translation_message_reports_partial_missing_rows():

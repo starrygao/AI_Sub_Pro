@@ -1917,6 +1917,18 @@ def test_semantic_qa_uses_dialogue_only_items_and_bounded_authoritative_context(
             "translation": "-走！",
             "filtered": False,
         })(),
+        type("Block", (), {
+            "index": 88,
+            "text": "♪ Never gonna give you up ♪",
+            "translation": "♪ 永远不会放弃你 ♪",
+            "filtered": False,
+        })(),
+        type("Block", (), {
+            "index": 89,
+            "text": "♪ 你问我爱你有多深 ♪",
+            "translation": "♪ You ask how deep my love is ♪",
+            "filtered": False,
+        })(),
     ]
     captured = {}
 
@@ -1955,7 +1967,7 @@ def test_semantic_qa_uses_dialogue_only_items_and_bounded_authoritative_context(
     )
 
     assert issues == []
-    assert trace["requested_block_ids"] == [82, 83, 84, 85, 86, 87]
+    assert trace["requested_block_ids"] == [82, 83, 84, 85, 86, 87, 88, 89]
     assert trace["coverage_complete"] is True
     assert captured["items"] == [
         {
@@ -1972,6 +1984,16 @@ def test_semantic_qa_uses_dialogue_only_items_and_bounded_authoritative_context(
         {"id": 85, "original": "-Go!", "draft": "-走！"},
         {"id": 86, "original": "-Go!", "draft": "-走！"},
         {"id": 87, "original": "-Go!", "draft": "-走！"},
+        {
+            "id": 88,
+            "original": "♪ Never gonna give you up ♪",
+            "draft": "♪ 永远不会放弃你 ♪",
+        },
+        {
+            "id": 89,
+            "original": "♪ 你问我爱你有多深 ♪",
+            "draft": "♪ You ask how deep my love is ♪",
+        },
     ]
     prompt = captured["prompt"]
     assert "纯音效行不翻译" in prompt
