@@ -2822,6 +2822,14 @@ def _persist_translation_quality_report(
                     for issue in (getattr(report, "issues", []) or [])
                     if isinstance(getattr(issue, "block_id", None), int)
                 }
+                translation_before_round = {
+                    str(getattr(block, "index", "")): getattr(
+                        block,
+                        "translation",
+                        "",
+                    )
+                    for block in blocks or []
+                }
                 repair_rounds.append(round_trace)
                 repair_outcome = _auto_repair_quality_issues(
                     cfg,
@@ -2873,6 +2881,31 @@ def _persist_translation_quality_report(
                 )
                 current_score = _quality_score(report)
                 after_issue_count, after_error_count, after_warning_count = _quality_issue_counts(report)
+                model_candidate_ids = {
+                    item.get("id")
+                    for item in repair_outcome.changes
+                    if (
+                        isinstance(item, dict)
+                        and isinstance(item.get("id"), int)
+                        and not isinstance(item.get("id"), bool)
+                    )
+                }
+                translation_after_round = {
+                    str(getattr(block, "index", "")): getattr(
+                        block,
+                        "translation",
+                        "",
+                    )
+                    for block in blocks or []
+                }
+                net_changed_ids = sorted(
+                    block_id
+                    for block_id in model_candidate_ids
+                    if (
+                        translation_after_round.get(str(block_id))
+                        != translation_before_round.get(str(block_id))
+                    )
+                )
                 still_failing_ids = sorted({
                     issue.block_id
                     for issue in (getattr(report, "issues", []) or [])
@@ -2883,8 +2916,12 @@ def _persist_translation_quality_report(
                     "after_error_count": after_error_count,
                     "after_warning_count": after_warning_count,
                     "after_unresolved_blocks": len(getattr(report, "unresolved_blocks", []) or []),
+                    "changed_block_ids": net_changed_ids,
+                    "changed_unique_ids": len(net_changed_ids),
+                    "applied_blocks": len(net_changed_ids),
                     "improved_block_ids": sorted(
-                        before_failing_ids - set(still_failing_ids)
+                        (before_failing_ids - set(still_failing_ids))
+                        & set(net_changed_ids)
                     ),
                     "still_failing_block_ids": still_failing_ids,
                     "result": (
@@ -2892,7 +2929,10 @@ def _persist_translation_quality_report(
                         if not repair_outcome.completed
                         else (
                             "improved"
-                            if current_score < previous_score
+                            if (
+                                net_changed_ids
+                                and current_score < previous_score
+                            )
                             else "not_improved"
                         )
                     ),

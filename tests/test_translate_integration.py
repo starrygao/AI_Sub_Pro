@@ -2797,6 +2797,84 @@ def test_translate_pipeline_removes_sdh_reintroduced_by_model_repair(
     assert phases[-1] == "before_certification"
 
 
+def test_translate_pipeline_counts_model_changes_after_normalization(
+    tmp_path,
+    monkeypatch,
+):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transrepairnormalizedback"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:03,000\nHello.\n\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {
+            "qa_auto_repair": True,
+            "semantic_qa": True,
+        },
+    })
+
+    class Primary:
+        semantic_calls = 0
+
+        def translate_batch(self, items, prompt):
+            if "字幕语义质检员" in prompt:
+                self.semantic_calls += 1
+                verdict = (
+                    "MISMATCH: 译文与原文不对应"
+                    if self.semantic_calls == 1
+                    else "OK"
+                )
+                return [
+                    {"id": item["id"], "translation": verdict}
+                    for item in items
+                ]
+            return [{"id": 1, "translation": "[POUNDING] 你好。"}]
+
+    class Translator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            self.primary = Primary()
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "你好。"
+            return blocks
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", Translator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
+    translated = (pdir / "translated.srt").read_text(encoding="utf-8")
+    round_trace = report["trace"]["auto_repair_rounds"][0]
+    assert "你好。" in translated
+    assert "[POUNDING]" not in translated
+    assert round_trace["mutation_occurred"] is True
+    assert round_trace["changed_block_ids"] == []
+    assert round_trace["changed_unique_ids"] == 0
+    assert round_trace["improved_block_ids"] == []
+    assert round_trace["result"] == "not_improved"
+    assert report["summary"]["repair_stats"]["changed_unique_ids"] == 0
+    assert report["summary"]["quality_gate"]["auto_repaired_blocks"] == 0
+    assert "复检通过" not in report["summary"]["conclusion"]
+
+
 def test_translate_pipeline_rechecks_partial_multi_batch_repair_failure(
     tmp_path,
     monkeypatch,

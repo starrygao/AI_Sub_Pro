@@ -240,7 +240,9 @@ def test_clean_sound_description_translation_text_handles_safe_unbracketed_label
 
     assert clean_sound_description_translation_text("无可闻对白") == ""
     assert clean_sound_description_translation_text("无可闻对白 你好。") == "你好。"
+    assert clean_sound_description_translation_text("POUNDING") == ""
     assert clean_sound_description_translation_text("POUNDING ON DOOR - 你好。") == "你好。"
+    assert clean_sound_description_translation_text("NO AUDIBLE DIALOGUE") == ""
 
 
 @pytest.mark.parametrize(
@@ -250,6 +252,10 @@ def test_clean_sound_description_translation_text_handles_safe_unbracketed_label
         "听不到对白",
         "你好。门上有人重重敲打。",
         "That pounding headache is awful.",
+        "I laugh",
+        "We knock",
+        "Please whistle",
+        "Stop pounding - 你好。",
     ],
 )
 def test_clean_sound_description_translation_text_keeps_unbracketed_dialogue(dialogue):

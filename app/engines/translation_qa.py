@@ -709,6 +709,16 @@ def _is_unbracketed_sound_description_label(value: str) -> bool:
     return bool(letters and letters == letters.upper())
 
 
+def _is_high_confidence_unbracketed_target_label(value: str) -> bool:
+    text = _clean_text(value)
+    if text in _SAFE_UNBRACKETED_SOUND_LABELS:
+        return True
+    if _CJK_TEXT_RE.search(text) or not _is_sound_translation_label(text):
+        return False
+    letters = re.sub(r"[^A-Za-z]", "", text)
+    return bool(letters and letters == letters.upper())
+
+
 def _is_translation_separator_only(value: str) -> bool:
     text = _ASS_OVERRIDE_RE.sub("", value or "")
     text = re.sub(r"[\s\-–—、，,。.!！?？:：;；/\\|~·]+", "", text)
@@ -738,12 +748,9 @@ def clean_sound_description_translation_text(value: str) -> str:
             if remainder and re.match(r"^(?:\s+|[-–—:：])", remainder):
                 return clean_remainder(remainder)
         split = re.match(r"^(?P<label>.+?)\s+[-–—]\s+(?P<dialogue>.+)$", text)
-        if split and _is_unbracketed_sound_description_label(split.group("label")):
+        if split and _is_high_confidence_unbracketed_target_label(split.group("label")):
             return clean_remainder(split.group("dialogue"))
-        if (
-            not _CJK_TEXT_RE.search(text)
-            and _is_unbracketed_sound_description_label(text)
-        ):
+        if _is_high_confidence_unbracketed_target_label(text):
             return ""
         return text
 
