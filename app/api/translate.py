@@ -3204,18 +3204,6 @@ def _run_translate_pipeline(
 
             if incomplete_msg or not quality_passed:
                 _write_partial_outputs()
-            else:
-                _remove_safe_project_files(pid, ["partial_translated.srt", "partial_bilingual.srt"])
-                try:
-                    _publish_translation_artifacts(
-                        pid,
-                        blocks,
-                        write_bilingual=write_bilingual_srt,
-                    )
-                except Exception:
-                    _write_partial_outputs()
-                    raise
-                _mark_translation_artifacts(pid)
             try:
                 write_kb_usage_trace(Path(pdir), translator.get_kb_usage_trace())
             except Exception as e:
@@ -3238,24 +3226,43 @@ def _run_translate_pipeline(
             done_msg = f"翻译完成: {translated_count} 条"
             if failed_count > 0:
                 done_msg += f"(失败 {failed_count} 条)"
-            _emit_progress(pid, "translate", 100, done_msg)
 
-            mutate_project(
-                pid,
-                lambda p: p.update({
-                    "status": "translated",
-                    "error": None,
-                    "progress": 75 if burn_follows else 100,
-                    "progress_msg": done_msg,
-                    "translation_quality_status": "passed" if quality_passed else "failed",
-                    "translation_quality_message": quality_message,
-                    "translation_quality_run_id": quality_run_id,
-                    "translation_quality_content_hash": quality_hash,
-                    "pipeline_stage": None,
-                    **_translation_artifact_fields(pid),
-                }),
-                normalize=_apply_safe_defaults,
-            )
+            with translation_delivery_lock(pid) as delivery_acquired:
+                if not delivery_acquired:
+                    raise RuntimeError(
+                        "translation delivery lock acquisition failed"
+                    )
+                _remove_safe_project_files(
+                    pid,
+                    ["partial_translated.srt", "partial_bilingual.srt"],
+                )
+                try:
+                    _publish_translation_artifacts(
+                        pid,
+                        blocks,
+                        write_bilingual=write_bilingual_srt,
+                    )
+                except Exception:
+                    _write_partial_outputs()
+                    raise
+                _mark_translation_artifacts(pid)
+                _emit_progress(pid, "translate", 100, done_msg)
+                mutate_project(
+                    pid,
+                    lambda p: p.update({
+                        "status": "translated",
+                        "error": None,
+                        "progress": 75 if burn_follows else 100,
+                        "progress_msg": done_msg,
+                        "translation_quality_status": "passed",
+                        "translation_quality_message": quality_message,
+                        "translation_quality_run_id": quality_run_id,
+                        "translation_quality_content_hash": quality_hash,
+                        "pipeline_stage": None,
+                        **_translation_artifact_fields(pid),
+                    }),
+                    normalize=_apply_safe_defaults,
+                )
             _best_effort_finish_stage(
                 pid,
                 "translate",

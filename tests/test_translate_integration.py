@@ -648,14 +648,26 @@ def test_translate_pipeline_before_burn_stays_at_global_75(tmp_path, monkeypatch
     monkeypatch.setattr(
         api_translate.Config,
         "to_dict",
-        lambda: {"translation": {"quality_mode": "fast"}},
+        lambda: {"translation": {
+            "quality_mode": "professional",
+            "semantic_qa": True,
+            "qa_auto_repair": False,
+        }},
     )
+
+    class FakePrimary:
+        def translate_batch(self, items, system_prompt):
+            assert "字幕语义质检员" in system_prompt
+            return [
+                {"id": item["id"], "translation": "OK"}
+                for item in items
+            ]
 
     class FakeTranslator:
         last_quality_trace = None
 
         def __init__(self, cfg):
-            pass
+            self.primary = FakePrimary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             blocks[0].translation = "你好"
@@ -1007,6 +1019,119 @@ def test_save_subtitles_rejects_verify_to_clear_publish_window(
     }
     assert "发布译文" in (pdir / "translated.srt").read_text(encoding="utf-8")
     assert "编辑覆盖" not in (pdir / "translated.srt").read_text(encoding="utf-8")
+
+
+def test_subtitle_put_cannot_enter_publish_to_certification_window(
+    tmp_path,
+    monkeypatch,
+):
+    import threading
+
+    from fastapi.testclient import TestClient
+    from app.api import projects as projects_api
+    from app.api import translate as api_translate
+    from app.main import app
+    from app.utils import project_store
+
+    pid = "publishcertwindow"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello.\n\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(projects_api, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(
+        api_translate.Config,
+        "to_dict",
+        lambda: {"translation": {"quality_mode": "fast"}},
+    )
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            pass
+
+        def translate(
+            self,
+            blocks,
+            target_lang,
+            meta_info=None,
+            kb_data=None,
+            callback=None,
+        ):
+            blocks[0].translation = "流水线认证译文。"
+            return blocks
+
+        def get_kb_usage_trace(self):
+            return {"project": {}, "matches": []}
+
+    monkeypatch.setattr(
+        "app.engines.translator.SubtitleTranslator",
+        FakeTranslator,
+    )
+    published = threading.Event()
+    release_pipeline = threading.Event()
+    real_publish = api_translate._publish_translation_artifacts
+
+    def pause_after_publication(*args, **kwargs):
+        result = real_publish(*args, **kwargs)
+        published.set()
+        if not release_pipeline.wait(timeout=5):
+            raise RuntimeError(
+                "test timed out waiting to finish project certification"
+            )
+        return result
+
+    monkeypatch.setattr(
+        api_translate,
+        "_publish_translation_artifacts",
+        pause_after_publication,
+    )
+    pipeline_thread = threading.Thread(
+        target=api_translate._run_translate_pipeline,
+        args=(pid, "简体中文"),
+        kwargs={"burn_follows": False},
+    )
+    pipeline_thread.start()
+    try:
+        assert published.wait(timeout=5)
+        put_response = TestClient(app).put(
+            f"/api/projects/{pid}/subtitles",
+            json={"blocks": [{
+                "index": 1,
+                "start": "00:00:00,000",
+                "end": "00:00:01,000",
+                "text": "Hello.",
+                "translation": "未审校编辑覆盖。",
+            }]},
+        )
+    finally:
+        release_pipeline.set()
+        pipeline_thread.join(timeout=5)
+
+    assert not pipeline_thread.is_alive()
+    assert put_response.status_code == 409
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["translation_quality_status"] == "passed"
+
+    export_response = TestClient(app).post(
+        f"/api/projects/{pid}/export?format=translated"
+    )
+    assert export_response.status_code == 200
+    assert "流水线认证译文" in export_response.json()["content"]
+    assert "未审校编辑覆盖" not in export_response.json()["content"]
 
 
 def test_publish_first_promotion_failure_leaves_delivery_invalid(
