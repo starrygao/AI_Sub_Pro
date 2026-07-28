@@ -2426,6 +2426,224 @@ def test_quality_gate_warning_passes_with_report_only_notice():
     assert "非阻塞提醒" in report.summary["conclusion"]
 
 
+def test_quality_gate_never_claims_recheck_passed_after_not_improved_round():
+    from app.api.translate import _finalize_quality_conclusion
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+
+    report = TranslationQaReport(
+        status="needs_review",
+        issues=[
+            QualityIssue(
+                type="line_too_long",
+                severity="warning",
+                block_id=7,
+                message="translation line exceeds 32",
+                source_text="Long subtitle",
+                translation="这是一条仍然太长的字幕。",
+            )
+        ],
+        summary={},
+        unresolved_blocks=[7],
+        trace={
+            "auto_repair_rounds": [{
+                "round": 1,
+                "result": "not_improved",
+                "changed_block_ids": [7],
+                "still_failing_block_ids": [7],
+            }],
+        },
+    )
+
+    _finalize_quality_conclusion(report, [{"id": 7, "translation": "仍然太长"}], True)
+
+    assert report.summary["quality_gate"]["passed"] is True
+    assert "复检通过" not in report.summary["conclusion"]
+    assert "非阻塞提醒" in report.summary["conclusion"]
+
+
+def test_apply_repair_results_counts_nonempty_responses_and_changed_unique_ids():
+    from app.api.translate import _apply_nonempty_repair_results
+    from app.utils.srt import SubtitleBlock
+
+    blocks = [
+        SubtitleBlock(
+            index=1,
+            start=timedelta(seconds=0),
+            end=timedelta(seconds=1),
+            text="One.",
+            translation="原译一。",
+        ),
+        SubtitleBlock(
+            index=2,
+            start=timedelta(seconds=1),
+            end=timedelta(seconds=2),
+            text="Two.",
+            translation="原译二。",
+        ),
+    ]
+    trace = {}
+
+    applied = _apply_nonempty_repair_results(
+        blocks,
+        [
+            {"id": 1, "translation": "原译一。"},
+            {"id": 1, "translation": "新译一。"},
+            {"id": 2, "translation": ""},
+        ],
+        repair_trace=trace,
+    )
+
+    assert applied == [{"id": 1, "translation": "新译一。"}]
+    assert trace["nonempty_responses"] == 2
+    assert trace["changed_unique_ids"] == 1
+    assert trace["changed_block_ids"] == [1]
+    assert blocks[0].translation == "新译一。"
+    assert blocks[1].translation == "原译二。"
+
+
+def test_translate_pipeline_records_improved_and_still_failing_ids(
+    tmp_path,
+    monkeypatch,
+):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transrepairtruth"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "\n".join([
+            "1", "00:00:00,000 --> 00:00:03,000", "First line.", "",
+            "2", "00:00:03,000 --> 00:00:06,000", "Second line.", "",
+        ]),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {
+            "qa_auto_repair": True,
+            "qa_auto_repair_rounds": 3,
+            "semantic_qa": False,
+        },
+    })
+
+    class FakePrimary:
+        def translate_batch(self, items, system_prompt):
+            return [
+                {
+                    "id": item["id"],
+                    "translation": "第一行。" if item["id"] == 1 else item["draft"],
+                }
+                for item in items
+            ]
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            self.primary = FakePrimary()
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "First line."
+            blocks[1].translation = "Second line."
+            return blocks
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
+    rounds = report["trace"]["auto_repair_rounds"]
+    assert rounds[0]["attempted_blocks"] == 2
+    assert rounds[0]["nonempty_responses"] == 2
+    assert rounds[0]["changed_unique_ids"] == 1
+    assert rounds[0]["changed_block_ids"] == [1]
+    assert rounds[0]["improved_block_ids"] == [1]
+    assert rounds[0]["still_failing_block_ids"] == [2]
+    assert rounds[0]["result"] == "improved"
+    assert rounds[1]["attempted_blocks"] == 1
+    assert rounds[1]["nonempty_responses"] == 1
+    assert rounds[1]["changed_unique_ids"] == 0
+    assert rounds[1]["changed_block_ids"] == []
+    assert rounds[1]["improved_block_ids"] == []
+    assert rounds[1]["still_failing_block_ids"] == [2]
+    assert rounds[1]["result"] == "not_improved"
+    assert "复检通过" not in report["summary"]["conclusion"]
+
+
+def test_translate_pipeline_removes_sdh_reintroduced_by_model_repair(
+    tmp_path,
+    monkeypatch,
+):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transrepairsdh"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:03,000\nHello there.\n\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {
+            "qa_auto_repair": True,
+            "semantic_qa": False,
+        },
+    })
+
+    class FakePrimary:
+        def translate_batch(self, items, system_prompt):
+            return [{"id": 1, "translation": "[POUNDING ON DOOR] 你好。"}]
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            self.primary = FakePrimary()
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "Hello there."
+            return blocks
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    translated = (pdir / "translated.srt").read_text(encoding="utf-8")
+    report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
+    assert "[POUNDING ON DOOR]" not in translated
+    assert "你好。" in translated
+    assert report["summary"]["quality_gate"]["passed"] is True
+    phases = [
+        item["phase"]
+        for item in report["trace"]["deterministic_normalization_runs"]
+    ]
+    assert "after_model_repair" in phases
+    assert phases[-1] == "before_certification"
+
+
 def test_translate_pipeline_batches_auto_repair_and_records_trace(tmp_path, monkeypatch):
     from app.api import translate as api_translate
     from app.utils import project_store

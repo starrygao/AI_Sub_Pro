@@ -1848,6 +1848,60 @@ def _is_report_only_quality_warning(issue) -> bool:
     return True
 
 
+def _quality_repair_statistics(report, repaired: list[dict]) -> dict:
+    trace = getattr(report, "trace", {})
+    rounds = trace.get("auto_repair_rounds", []) if isinstance(trace, dict) else []
+    if not isinstance(rounds, list):
+        rounds = []
+    valid_rounds = [item for item in rounds if isinstance(item, dict)]
+    changed_ids = sorted({
+        block_id
+        for item in valid_rounds
+        for block_id in item.get("changed_block_ids", [])
+        if isinstance(block_id, int) and not isinstance(block_id, bool)
+    })
+    if not valid_rounds:
+        changed_ids = sorted({
+            item.get("id")
+            for item in (repaired or [])
+            if (
+                isinstance(item, dict)
+                and isinstance(item.get("id"), int)
+                and not isinstance(item.get("id"), bool)
+            )
+        })
+    improved_ids = sorted({
+        block_id
+        for item in valid_rounds
+        for block_id in item.get("improved_block_ids", [])
+        if isinstance(block_id, int) and not isinstance(block_id, bool)
+    })
+    still_failing_ids = sorted({
+        issue.block_id
+        for issue in (getattr(report, "issues", []) or [])
+        if isinstance(getattr(issue, "block_id", None), int)
+    })
+    return {
+        "repair_attempts": sum(
+            item.get("repair_attempts", item.get("attempted_blocks", 0))
+            for item in valid_rounds
+            if isinstance(
+                item.get("repair_attempts", item.get("attempted_blocks", 0)),
+                int,
+            )
+        ),
+        "nonempty_responses": sum(
+            item.get("nonempty_responses", 0)
+            for item in valid_rounds
+            if isinstance(item.get("nonempty_responses", 0), int)
+        ),
+        "changed_unique_ids": len(changed_ids),
+        "changed_block_ids": changed_ids,
+        "improved_block_ids": improved_ids,
+        "still_failing_block_ids": still_failing_ids,
+    }
+
+
 def _finalize_quality_conclusion(
     report,
     repaired: list[dict],
@@ -1857,7 +1911,17 @@ def _finalize_quality_conclusion(
 ) -> None:
     issue_count, error_count, warning_count = _quality_issue_counts(report)
     unresolved_count = len(getattr(report, "unresolved_blocks", []) or [])
-    repaired_count = len(repaired or [])
+    repair_stats = _quality_repair_statistics(report, repaired)
+    repaired_count = repair_stats["changed_unique_ids"]
+    repair_rounds = (
+        report.trace.get("auto_repair_rounds", [])
+        if isinstance(getattr(report, "trace", None), dict)
+        else []
+    )
+    has_not_improved_round = any(
+        isinstance(item, dict) and item.get("result") == "not_improved"
+        for item in repair_rounds
+    )
     blocking_warnings = [
         issue for issue in (getattr(report, "issues", []) or [])
         if getattr(issue, "severity", "") == "warning"
@@ -1943,8 +2007,10 @@ def _finalize_quality_conclusion(
         conclusion = "达标：自动检查通过。"
         if warning_count:
             conclusion = f"达标：自动检查通过，保留 {warning_count} 个非阻塞提醒。"
-        if repaired_count:
+        elif repaired_count and not has_not_improved_round:
             conclusion = f"达标：已自动重点返工 {repaired_count} 条并复检通过。"
+        elif repaired_count:
+            conclusion = f"达标：最终检查通过，已自动重点返工 {repaired_count} 条。"
 
     report.status = "ok" if verdict == "passed" else (
         "needs_review" if verdict == "needs_review" else "failed"
@@ -1955,6 +2021,7 @@ def _finalize_quality_conclusion(
         "warning_count": warning_count,
         "blocking_warning_count": len(blocking_warnings),
         "repaired_blocks": repaired_count,
+        "repair_stats": repair_stats,
         "unresolved_blocks": unresolved_count,
         "conclusion": conclusion,
         "quality_gate": {
@@ -2326,9 +2393,15 @@ def _mark_translation_quality_failed(
     _emit_progress(pid, "translate", 100, detail)
 
 
-def _apply_nonempty_repair_results(blocks, results) -> list[dict]:
+def _apply_nonempty_repair_results(
+    blocks,
+    results,
+    *,
+    repair_trace: dict | None = None,
+) -> list[dict]:
     by_id = {str(getattr(block, "index", "")): block for block in blocks or []}
-    applied = []
+    applied_by_id: dict[int, dict] = {}
+    nonempty_responses = 0
     unmatched = 0
     for result in results or []:
         if not isinstance(result, dict):
@@ -2336,16 +2409,30 @@ def _apply_nonempty_repair_results(blocks, results) -> list[dict]:
         translation = result.get("translation", "")
         if not isinstance(translation, str) or not translation.strip():
             continue
+        nonempty_responses += 1
         block = by_id.get(str(result.get("id", "")))
         if block is None:
             unmatched += 1
             continue
+        current = getattr(block, "translation", "")
+        if isinstance(current, str) and current == translation:
+            block.translation_error = ""
+            continue
         block.translation = translation
         block.translation_error = ""
-        applied.append({"id": getattr(block, "index", result.get("id")), "translation": translation})
+        block_id = getattr(block, "index", result.get("id"))
+        applied_by_id[block_id] = {"id": block_id, "translation": translation}
     if unmatched:
         log.warning("translation QA auto-repair ignored %d unmatched result id(s)", unmatched)
-    return applied
+    changed_ids = sorted(
+        block_id for block_id in applied_by_id
+        if isinstance(block_id, int) and not isinstance(block_id, bool)
+    )
+    if repair_trace is not None:
+        repair_trace["nonempty_responses"] = nonempty_responses
+        repair_trace["changed_block_ids"] = changed_ids
+        repair_trace["changed_unique_ids"] = len(changed_ids)
+    return list(applied_by_id.values())
 
 
 def _auto_repair_quality_issues(
@@ -2376,7 +2463,11 @@ def _auto_repair_quality_issues(
             repair_trace.update({
                 "candidate_blocks": len(all_repair_items),
                 "max_blocks": max_blocks,
+                "repair_attempts": 0,
                 "attempted_blocks": 0,
+                "nonempty_responses": 0,
+                "changed_unique_ids": 0,
+                "changed_block_ids": [],
                 "skipped_blocks": len(all_repair_items),
                 "batches": [],
             })
@@ -2394,6 +2485,8 @@ def _auto_repair_quality_issues(
 
         applied_results = []
         attempted_blocks = 0
+        nonempty_responses = 0
+        changed_block_ids: set[int] = set()
         batch_traces = repair_trace.get("batches") if isinstance(repair_trace, dict) else None
         for start in range(0, len(all_repair_items), max_blocks):
             repair_items = all_repair_items[start:start + max_blocks]
@@ -2411,8 +2504,15 @@ def _auto_repair_quality_issues(
                 raw_results if isinstance(raw_results, list) else [],
                 repair_items,
             )
-            batch_results = _apply_nonempty_repair_results(blocks, results)
+            batch_result_trace: dict = {}
+            batch_results = _apply_nonempty_repair_results(
+                blocks,
+                results,
+                repair_trace=batch_result_trace,
+            )
             applied_results.extend(batch_results)
+            nonempty_responses += batch_result_trace.get("nonempty_responses", 0)
+            changed_block_ids.update(batch_result_trace.get("changed_block_ids", []))
             if isinstance(batch_traces, list):
                 batch_traces.append({
                     "batch": len(batch_traces) + 1,
@@ -2420,15 +2520,92 @@ def _auto_repair_quality_issues(
                     "applied_blocks": len(batch_results),
                 })
         if repair_trace is not None:
+            repair_trace["repair_attempts"] = attempted_blocks
             repair_trace["attempted_blocks"] = attempted_blocks
+            repair_trace["nonempty_responses"] = nonempty_responses
+            repair_trace["changed_block_ids"] = sorted(changed_block_ids)
+            repair_trace["changed_unique_ids"] = len(changed_block_ids)
             repair_trace["skipped_blocks"] = max(0, len(all_repair_items) - attempted_blocks)
-            repair_trace["applied_blocks"] = len(applied_results)
+            repair_trace["applied_blocks"] = len(changed_block_ids)
         if not applied_results:
             return []
         return applied_results
     except Exception as e:
         log.warning("translation QA auto-repair failed: %s", e)
         return []
+
+
+def _run_deterministic_translation_normalizers(
+    blocks,
+    *,
+    target_language: str,
+    project_kb,
+    trace: dict,
+    repaired: list[dict],
+    phase: str,
+) -> list[dict]:
+    """Apply every deterministic translation normalizer and record this pass."""
+    from app.engines.proper_name_normalizer import normalize_inferred_proper_name_variants
+    from app.engines.translation_qa import (
+        annotate_contextual_speaker_translations,
+        normalize_curated_domain_term_translations,
+        normalize_scientific_term_translations,
+        normalize_sound_description_translations,
+    )
+
+    normalizers = (
+        (
+            "sound_description_blank_blocks",
+            lambda: normalize_sound_description_translations(blocks),
+        ),
+        (
+            "contextual_speaker_marked_blocks",
+            lambda: annotate_contextual_speaker_translations(
+                blocks,
+                target_language=target_language,
+            ),
+        ),
+        (
+            "curated_domain_term_normalized_blocks",
+            lambda: normalize_curated_domain_term_translations(
+                blocks,
+                project_kb=project_kb,
+            ),
+        ),
+        (
+            "scientific_term_normalized_blocks",
+            lambda: normalize_scientific_term_translations(blocks),
+        ),
+        (
+            "proper_name_normalized_blocks",
+            lambda: normalize_inferred_proper_name_variants(blocks),
+        ),
+    )
+    changes: list[dict] = []
+    postprocess = trace.setdefault("deterministic_postprocess", {})
+    for trace_key, normalize in normalizers:
+        applied = normalize()
+        if not applied:
+            continue
+        changes.extend(applied)
+        repaired.extend(applied)
+        postprocess.setdefault(trace_key, []).extend(applied)
+
+    changed_ids = sorted({
+        item.get("id")
+        for item in changes
+        if (
+            isinstance(item, dict)
+            and isinstance(item.get("id"), int)
+            and not isinstance(item.get("id"), bool)
+        )
+    })
+    trace.setdefault("deterministic_normalization_runs", []).append({
+        "phase": phase,
+        "change_count": len(changes),
+        "changed_block_ids": changed_ids,
+    })
+    return changes
 
 
 def _persist_translation_quality_report(
@@ -2448,12 +2625,7 @@ def _persist_translation_quality_report(
     """Run deterministic QA and persist the report for this translation run."""
     try:
         from app.engines.knowledge import _get_singleton
-        from app.engines.proper_name_normalizer import normalize_inferred_proper_name_variants
         from app.engines.translation_qa import (
-            annotate_contextual_speaker_translations,
-            normalize_curated_domain_term_translations,
-            normalize_scientific_term_translations,
-            normalize_sound_description_translations,
             quality_content_hash,
             save_quality_report,
         )
@@ -2486,42 +2658,14 @@ def _persist_translation_quality_report(
                     )
                 })
         repaired = []
-        sound_repaired = normalize_sound_description_translations(blocks)
-        if sound_repaired:
-            repaired.extend(sound_repaired)
-            trace.setdefault("deterministic_postprocess", {})[
-                "sound_description_blank_blocks"
-            ] = sound_repaired
-        contextual_marked = annotate_contextual_speaker_translations(
+        _run_deterministic_translation_normalizers(
             blocks,
             target_language=target_language,
-        )
-        if contextual_marked:
-            repaired.extend(contextual_marked)
-            trace.setdefault("deterministic_postprocess", {})[
-                "contextual_speaker_marked_blocks"
-            ] = contextual_marked
-        normalized_curated_terms = normalize_curated_domain_term_translations(
-            blocks,
             project_kb=project_kb,
+            trace=trace,
+            repaired=repaired,
+            phase="before_initial_qa",
         )
-        if normalized_curated_terms:
-            repaired.extend(normalized_curated_terms)
-            trace.setdefault("deterministic_postprocess", {})[
-                "curated_domain_term_normalized_blocks"
-            ] = normalized_curated_terms
-        normalized_science = normalize_scientific_term_translations(blocks)
-        if normalized_science:
-            repaired.extend(normalized_science)
-            trace.setdefault("deterministic_postprocess", {})[
-                "scientific_term_normalized_blocks"
-            ] = normalized_science
-        normalized_names = normalize_inferred_proper_name_variants(blocks)
-        if normalized_names:
-            repaired.extend(normalized_names)
-            trace.setdefault("deterministic_postprocess", {})[
-                "proper_name_normalized_blocks"
-            ] = normalized_names
         report = _run_quality_checks_with_semantics(
             cfg,
             translator,
@@ -2553,6 +2697,11 @@ def _persist_translation_quality_report(
                     "before_warning_count": warning_count,
                     "before_unresolved_blocks": len(getattr(report, "unresolved_blocks", []) or []),
                 }
+                before_failing_ids = {
+                    issue.block_id
+                    for issue in (getattr(report, "issues", []) or [])
+                    if isinstance(getattr(issue, "block_id", None), int)
+                }
                 repair_rounds.append(round_trace)
                 round_repaired = _auto_repair_quality_issues(
                     cfg,
@@ -2564,9 +2713,30 @@ def _persist_translation_quality_report(
                     repair_trace=round_trace,
                 )
                 if not round_repaired:
-                    round_trace["result"] = "no_repair_applied"
+                    round_trace["improved_block_ids"] = []
+                    round_trace["still_failing_block_ids"] = sorted(before_failing_ids)
+                    if round_trace.get("nonempty_responses", 0):
+                        round_trace.update({
+                            "after_issue_count": issue_count,
+                            "after_error_count": error_count,
+                            "after_warning_count": warning_count,
+                            "after_unresolved_blocks": len(
+                                getattr(report, "unresolved_blocks", []) or []
+                            ),
+                            "result": "not_improved",
+                        })
+                    else:
+                        round_trace["result"] = "no_repair_applied"
                     break
                 repaired.extend(round_repaired)
+                _run_deterministic_translation_normalizers(
+                    blocks,
+                    target_language=target_language,
+                    project_kb=project_kb,
+                    trace=trace,
+                    repaired=repaired,
+                    phase="after_model_repair",
+                )
                 report = _run_quality_checks_with_semantics(
                     cfg,
                     translator,
@@ -2580,11 +2750,20 @@ def _persist_translation_quality_report(
                 )
                 current_score = _quality_score(report)
                 after_issue_count, after_error_count, after_warning_count = _quality_issue_counts(report)
+                still_failing_ids = sorted({
+                    issue.block_id
+                    for issue in (getattr(report, "issues", []) or [])
+                    if isinstance(getattr(issue, "block_id", None), int)
+                })
                 round_trace.update({
                     "after_issue_count": after_issue_count,
                     "after_error_count": after_error_count,
                     "after_warning_count": after_warning_count,
                     "after_unresolved_blocks": len(getattr(report, "unresolved_blocks", []) or []),
+                    "improved_block_ids": sorted(
+                        before_failing_ids - set(still_failing_ids)
+                    ),
+                    "still_failing_block_ids": still_failing_ids,
                     "result": "improved" if current_score < previous_score else "not_improved",
                 })
                 if current_score >= previous_score:
@@ -2592,73 +2771,15 @@ def _persist_translation_quality_report(
                 previous_score = current_score
                 if current_score == (0, 0, 0):
                     break
-        post_normalized_curated_terms = normalize_curated_domain_term_translations(
-            blocks,
-            project_kb=project_kb,
-        )
-        if post_normalized_curated_terms:
-            repaired.extend(post_normalized_curated_terms)
-            trace.setdefault("deterministic_postprocess", {}).setdefault(
-                "curated_domain_term_normalized_blocks",
-                [],
-            ).extend(post_normalized_curated_terms)
-            report = _run_quality_checks_with_semantics(
-                cfg,
-                translator,
-                blocks,
-                target_language,
-                project_kb,
-                project,
-                trace,
-                progress_callback=progress_callback,
-                strict_quality_gate=strict_policy,
-            )
-        post_normalized_science = normalize_scientific_term_translations(blocks)
-        if post_normalized_science:
-            repaired.extend(post_normalized_science)
-            trace.setdefault("deterministic_postprocess", {}).setdefault(
-                "scientific_term_normalized_blocks",
-                [],
-            ).extend(post_normalized_science)
-            report = _run_quality_checks_with_semantics(
-                cfg,
-                translator,
-                blocks,
-                target_language,
-                project_kb,
-                project,
-                trace,
-                progress_callback=progress_callback,
-                strict_quality_gate=strict_policy,
-            )
-        post_normalized_names = normalize_inferred_proper_name_variants(blocks)
-        if post_normalized_names:
-            repaired.extend(post_normalized_names)
-            trace.setdefault("deterministic_postprocess", {}).setdefault(
-                "proper_name_normalized_blocks",
-                [],
-            ).extend(post_normalized_names)
-            report = _run_quality_checks_with_semantics(
-                cfg,
-                translator,
-                blocks,
-                target_language,
-                project_kb,
-                project,
-                trace,
-                progress_callback=progress_callback,
-                strict_quality_gate=strict_policy,
-            )
-        post_contextual_marked = annotate_contextual_speaker_translations(
+        final_normalizer_changes = _run_deterministic_translation_normalizers(
             blocks,
             target_language=target_language,
+            project_kb=project_kb,
+            trace=trace,
+            repaired=repaired,
+            phase="before_certification",
         )
-        if post_contextual_marked:
-            repaired.extend(post_contextual_marked)
-            trace.setdefault("deterministic_postprocess", {}).setdefault(
-                "contextual_speaker_marked_blocks",
-                [],
-            ).extend(post_contextual_marked)
+        if final_normalizer_changes:
             report = _run_quality_checks_with_semantics(
                 cfg,
                 translator,

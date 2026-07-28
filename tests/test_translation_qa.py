@@ -327,10 +327,107 @@ def test_repair_prompt_contains_only_failing_blocks():
     items = build_repair_items(blocks, issues)
     prompt = build_repair_prompt("简体中文", items, issues, kb_terms={"Hudson Oaks": "哈德逊奥克斯"})
 
-    assert items == [{"id": 2, "original": "Hudson Oaks", "draft": "哈德森橡树"}]
-    assert "Good" not in prompt
+    assert items == [{
+        "id": 2,
+        "original": "Hudson Oaks",
+        "draft": "哈德森橡树",
+        "preceding_context": [{
+            "id": 1,
+            "original": "Good",
+            "draft": "好",
+        }],
+        "following_context": [],
+    }]
+    assert '"preceding_context": [{"id": 1, "original": "Good"' in prompt
     assert "Hudson Oaks" in prompt
     assert "哈德逊奥克斯" in prompt
+
+
+def test_repair_items_include_bounded_context_and_group_adjacent_semantic_findings():
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(10, "He never came back.", "他再也没回来。"),
+        _block(11, "Not after what happened.", "那件事之后就没有。"),
+        _block(12, "You know why.", "你知道为什么。"),
+        _block(13, "I wish I did.", "我倒希望自己知道。"),
+        _block(14, "Let's go.", "走吧。"),
+    ]
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=11,
+            message="meaning crosses the cue boundary",
+        ),
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=12,
+            message="meaning crosses the cue boundary",
+        ),
+    ]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == [11, 12]
+    assert items[0]["preceding_context"] == [{
+        "id": 10,
+        "original": "He never came back.",
+        "draft": "他再也没回来。",
+    }]
+    assert items[0]["following_context"] == [{
+        "id": 12,
+        "original": "You know why.",
+        "draft": "你知道为什么。",
+    }]
+    assert items[1]["preceding_context"] == [{
+        "id": 11,
+        "original": "Not after what happened.",
+        "draft": "那件事之后就没有。",
+    }]
+    assert items[1]["following_context"] == [{
+        "id": 13,
+        "original": "I wish I did.",
+        "draft": "我倒希望自己知道。",
+    }]
+    assert items[0]["semantic_group_ids"] == [11, 12]
+    assert items[1]["semantic_group_ids"] == [11, 12]
+    assert all(14 not in item["semantic_group_ids"] for item in items)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "[POUNDING]",
+        "[WHISTLES]",
+        "[GURGLING]",
+        "[FROGS CROAKING]",
+        "[NO AUDIBLE DIALOGUE]",
+        "NO DISCERNIBLE DIALOGUE",
+    ],
+)
+def test_sound_description_source_recognizes_common_production_forms(source):
+    from app.engines.translation_qa import is_sound_description_source
+
+    assert is_sound_description_source(source) is True
+
+
+@pytest.mark.parametrize(
+    "translation",
+    [
+        "[POUNDING]",
+        "[WHISTLES]",
+        "[GURGLING]",
+        "[FROGS CROAKING]",
+        "[NO AUDIBLE DIALOGUE]",
+        "[无可闻对白]",
+    ],
+)
+def test_sound_description_target_recognizes_common_production_forms(translation):
+    from app.engines.translation_qa import clean_sound_description_translation_text
+
+    assert clean_sound_description_translation_text(translation) == ""
 
 
 def test_repair_prompt_gives_reading_speed_compression_guidance():

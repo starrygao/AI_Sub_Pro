@@ -257,6 +257,14 @@ _SOUND_LABEL_KEYWORDS = (
     "电台",
     "对话听不清",
     "对白听不清",
+    "无可闻对话",
+    "无可闻对白",
+    "无可听见对话",
+    "无可听见对白",
+    "听不到对话",
+    "听不到对白",
+    "无清晰对话",
+    "无清晰对白",
     "听不清",
     "说阿拉伯语",
     "说法语",
@@ -368,7 +376,9 @@ _SOUND_LABEL_EN_RE = re.compile(
     r"music|song|singing|humming|ring(?:s|ing)?|vibrat(?:e|es|ing|ed)?|"
     r"phone|bell|chime|alarm|siren|radio|broadcast|voice|voices|crowd|"
     r"in (?:arabic|farsi|persian|french|russian|spanish|german|italian|chinese|mandarin|cantonese)|"
-    r"sound(?:s)?|chatter|conversation|inaudible|indistinct(?:ly)?|applause|cheer(?:s|ing)?|"
+    r"sound(?:s)?|chatter|conversation|inaudible|indistinct(?:ly)?|"
+    r"(?:no|without) (?:audible|discernible|intelligible) dialogue|"
+    r"applause|cheer(?:s|ing)?|"
     r"speak(?:s|ing)?|talk(?:s|ing)?|plead(?:s|ing)?|"
     r"scoff(?:s|ing)?|clear(?:s|ing)? throat|throat|sniffle(?:s|ing)?|"
     r"inhale(?:s|d|ing)?|exhale(?:s|d|ing)?|gasp(?:s|ing)?|"
@@ -381,7 +391,9 @@ _SOUND_LABEL_EN_RE = re.compile(
     r"thunder|rumbl(?:e|es|ing)?|engine|rev(?:s|ving)?|"
     r"tire(?:s)?|screech(?:es|ing)?|key(?:s)?|jingle(?:s|ing)?|"
     r"line click(?:s|ing)?|click(?:s|ing)?|lock(?:s)?|hang(?:s|ing)? up|"
-    r"thump(?:s|ing)?|thudd(?:ing)?|squelch(?:es|ing)?|clang(?:s|ing)?|"
+    r"thump(?:s|ing)?|thudd(?:ing)?|pound(?:s|ed|ing)?|"
+    r"gurgl(?:e|es|ed|ing)?|croak(?:s|ed|ing)?|"
+    r"squelch(?:es|ing)?|clang(?:s|ing)?|"
     r"clunk(?:s|ing)?|bang(?:s|ing)?|snap(?:s|ping)?|"
     r"paper(?:s)?|crinkle(?:s|ing)?|shuffle(?:s|ing)?|"
     r"scratch(?:es|ing)?|scribbl(?:e|es|ing)?|typ(?:e|es|ing)?|"
@@ -1479,13 +1491,54 @@ def save_quality_report(
 
 def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dict]:
     failing_ids = {issue.block_id for issue in issues if isinstance(issue.block_id, int)}
+    semantic_ids = {
+        issue.block_id
+        for issue in issues
+        if (
+            issue.type in {"semantic_mismatch", "semantic_uncertain"}
+            and isinstance(issue.block_id, int)
+        )
+    }
     reading_speed_by_id = {
         issue.block_id: issue
         for issue in issues
         if issue.type == "reading_speed_too_fast" and isinstance(issue.block_id, int)
     }
+    active_blocks = [
+        block for block in (blocks or [])
+        if not getattr(block, "filtered", False)
+    ]
+    semantic_group_by_position: dict[int, list[int]] = {}
+    position = 0
+    while position < len(active_blocks):
+        block_id = getattr(active_blocks[position], "index", None)
+        if block_id not in semantic_ids:
+            position += 1
+            continue
+        end = position + 1
+        while (
+            end < len(active_blocks)
+            and getattr(active_blocks[end], "index", None) in semantic_ids
+        ):
+            end += 1
+        group_ids = list(dict.fromkeys(
+            getattr(active_blocks[item_position], "index", None)
+            for item_position in range(position, end)
+            if isinstance(getattr(active_blocks[item_position], "index", None), int)
+        ))
+        for item_position in range(position, end):
+            semantic_group_by_position[item_position] = group_ids
+        position = end
+
+    def context_item(block) -> dict:
+        return {
+            "id": getattr(block, "index", None),
+            "original": _clean_text(getattr(block, "text", "")),
+            "draft": _clean_text(getattr(block, "translation", "")),
+        }
+
     items = []
-    for block in blocks or []:
+    for position, block in enumerate(active_blocks):
         block_id = getattr(block, "index", None)
         if block_id not in failing_ids:
             continue
@@ -1494,7 +1547,19 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
             "id": block_id,
             "original": _clean_text(getattr(block, "text", "")),
             "draft": translation,
+            "preceding_context": (
+                [context_item(active_blocks[position - 1])]
+                if position > 0
+                else []
+            ),
+            "following_context": (
+                [context_item(active_blocks[position + 1])]
+                if position + 1 < len(active_blocks)
+                else []
+            ),
         }
+        if position in semantic_group_by_position:
+            item["semantic_group_ids"] = semantic_group_by_position[position]
         reading_issue = reading_speed_by_id.get(block_id)
         duration = _duration_seconds(block)
         if reading_issue is not None and duration > 0:
@@ -1574,6 +1639,10 @@ def build_repair_prompt(
         parts.append(
             "语义错位时必须抛弃 draft，严格按 original 重新翻译；"
             "不要沿用与原文无关的旧译文，不要合并相邻 id。"
+        )
+        parts.append(
+            "preceding_context 和 following_context 只用于理解上下文，不得输出这些上下文 id；"
+            "semantic_group_ids 相同的相邻失败项要连贯修复，但每个 id 必须分别输出且保持不变。"
         )
     if "scientific_term_inconsistent" in issue_types:
         parts.append("科学名不一致时必须使用 Issue 中 expected 指定的译名，只改必要的术语部分。")
