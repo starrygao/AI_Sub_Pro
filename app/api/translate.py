@@ -2263,6 +2263,95 @@ def _quality_score(report) -> tuple[int, int, int]:
     return error_count, issue_count, unresolved
 
 
+_AUTO_REPAIR_GUARDED_FUNCTIONAL_ISSUE_TYPES = frozenset({
+    "missing_translation",
+    "duplicate_id",
+    "kb_term_missing",
+    "manual_term_missing",
+    "canonical_term_missing",
+    "core_term_inconsistent",
+    "semantic_mismatch",
+    "semantic_uncertain",
+    "semantic_qa_failed",
+    "scientific_term_inconsistent",
+    "proper_name_inconsistent",
+    "speaker_line_structure_mismatch",
+    "context_term_missing",
+})
+_AUTO_REPAIR_ISSUE_SEVERITY_RANK = {
+    "warning": 1,
+    "error": 2,
+    "severe": 3,
+}
+_AUTO_REPAIR_MUST_IMPROVE_ISSUE_TYPES = frozenset({
+    "semantic_mismatch",
+    "semantic_uncertain",
+    "semantic_qa_failed",
+})
+
+
+def _auto_repair_functional_issue_profile(
+    report,
+    candidate_ids: set[int],
+) -> dict[int, dict[str, tuple[int, int]]]:
+    """Count guarded functional failures per candidate block and severity."""
+    profile: dict[int, dict[str, tuple[int, int]]] = {}
+    for issue in (getattr(report, "issues", []) or []):
+        block_id = getattr(issue, "block_id", None)
+        issue_type = getattr(issue, "type", "")
+        if block_id not in candidate_ids:
+            continue
+        if issue_type not in _AUTO_REPAIR_GUARDED_FUNCTIONAL_ISSUE_TYPES:
+            continue
+        block_profile = profile.setdefault(block_id, {})
+        count, max_rank = block_profile.get(issue_type, (0, 0))
+        severity_rank = _AUTO_REPAIR_ISSUE_SEVERITY_RANK.get(
+            getattr(issue, "severity", ""),
+            0,
+        )
+        block_profile[issue_type] = (
+            count + 1,
+            max(max_rank, severity_rank),
+        )
+    return profile
+
+
+def _auto_repair_functional_regressions(
+    before_report,
+    after_report,
+    candidate_ids: set[int],
+) -> dict[int, list[str]]:
+    """Return candidates that regress functional QA or fail semantic repair."""
+    before = _auto_repair_functional_issue_profile(
+        before_report,
+        candidate_ids,
+    )
+    after = _auto_repair_functional_issue_profile(
+        after_report,
+        candidate_ids,
+    )
+    regressions: dict[int, list[str]] = {}
+    for block_id in sorted(candidate_ids):
+        prior = before.get(block_id, {})
+        current = after.get(block_id, {})
+        worsened = sorted(
+            issue_type
+            for issue_type, (current_count, current_rank) in current.items()
+            if (
+                current_count > prior.get(issue_type, (0, 0))[0]
+                or current_rank > prior.get(issue_type, (0, 0))[1]
+                or (
+                    issue_type in _AUTO_REPAIR_MUST_IMPROVE_ISSUE_TYPES
+                    and (current_count, current_rank)
+                    == prior.get(issue_type, (0, 0))
+                )
+            )
+        )
+        if worsened:
+            regressions[block_id] = worsened
+    return regressions
+
+
 def _is_report_only_quality_warning(issue) -> bool:
     if getattr(issue, "severity", "") != "warning":
         return False
@@ -2280,10 +2369,34 @@ def _quality_repair_statistics(report, repaired: list[dict]) -> dict:
     if not isinstance(rounds, list):
         rounds = []
     valid_rounds = [item for item in rounds if isinstance(item, dict)]
+    proposed_ids = sorted({
+        block_id
+        for item in valid_rounds
+        for block_id in item.get(
+            "proposed_block_ids",
+            item.get("changed_block_ids", []),
+        )
+        if isinstance(block_id, int) and not isinstance(block_id, bool)
+    })
     changed_ids = sorted({
         block_id
         for item in valid_rounds
         for block_id in item.get("changed_block_ids", [])
+        if isinstance(block_id, int) and not isinstance(block_id, bool)
+    })
+    accepted_ids = sorted({
+        block_id
+        for item in valid_rounds
+        for block_id in item.get(
+            "accepted_block_ids",
+            item.get("changed_block_ids", []),
+        )
+        if isinstance(block_id, int) and not isinstance(block_id, bool)
+    })
+    rolled_back_ids = sorted({
+        block_id
+        for item in valid_rounds
+        for block_id in item.get("rolled_back_block_ids", [])
         if isinstance(block_id, int) and not isinstance(block_id, bool)
     })
     improved_ids = sorted({
@@ -2311,6 +2424,12 @@ def _quality_repair_statistics(report, repaired: list[dict]) -> dict:
             for item in valid_rounds
             if isinstance(item.get("nonempty_responses", 0), int)
         ),
+        "proposed_unique_ids": len(proposed_ids),
+        "proposed_block_ids": proposed_ids,
+        "accepted_unique_ids": len(accepted_ids),
+        "accepted_block_ids": accepted_ids,
+        "rolled_back_unique_ids": len(rolled_back_ids),
+        "rolled_back_block_ids": rolled_back_ids,
         "changed_unique_ids": len(changed_ids),
         "changed_block_ids": changed_ids,
         "improved_block_ids": improved_ids,
@@ -2364,6 +2483,10 @@ def _finalize_quality_conclusion(
     )
     has_not_improved_round = any(
         isinstance(item, dict) and item.get("result") == "not_improved"
+        for item in repair_rounds
+    )
+    has_incomplete_repair_round = any(
+        isinstance(item, dict) and item.get("repair_completed") is False
         for item in repair_rounds
     )
     blocking_warnings = [
@@ -2440,6 +2563,9 @@ def _finalize_quality_conclusion(
     elif error_count:
         verdict = "failed"
         conclusion = f"自动交付未通过：仍有 {error_count} 个错误、{unresolved_count} 个问题位置。"
+    elif has_incomplete_repair_round:
+        verdict = "failed"
+        conclusion = "自动交付未通过：自动返工未完整执行，已保留返工前译文并停止交付。"
     elif blocking_warnings:
         verdict = "failed"
         conclusion = (
@@ -3026,6 +3152,21 @@ def _persist_translation_quality_report(
                     except Exception:
                         pass
                 issue_count, error_count, warning_count = _quality_issue_counts(report)
+                report_before_round = report
+                observed_ids_before_round = trace.get(
+                    "semantic_uncertain_observed_block_ids",
+                    [],
+                )
+                if not isinstance(observed_ids_before_round, list):
+                    observed_ids_before_round = []
+                uncertain_ids_before_round = {
+                    block_id
+                    for block_id in observed_ids_before_round
+                    if (
+                        isinstance(block_id, int)
+                        and not isinstance(block_id, bool)
+                    )
+                }
                 round_trace = {
                     "round": round_number,
                     "reason": "quality_not_passed",
@@ -3033,6 +3174,13 @@ def _persist_translation_quality_report(
                     "before_error_count": error_count,
                     "before_warning_count": warning_count,
                     "before_unresolved_blocks": len(getattr(report, "unresolved_blocks", []) or []),
+                    "proposed_block_ids": [],
+                    "proposed_blocks": 0,
+                    "accepted_block_ids": [],
+                    "accepted_blocks": 0,
+                    "rolled_back_block_ids": [],
+                    "rolled_back_blocks": 0,
+                    "rollback_reasons": [],
                 }
                 before_failing_ids = {
                     issue.block_id
@@ -3076,13 +3224,22 @@ def _persist_translation_quality_report(
                     else:
                         round_trace["result"] = "no_repair_applied"
                     break
-                repaired.extend(repair_outcome.changes)
+                model_candidate_ids = {
+                    item.get("id")
+                    for item in repair_outcome.changes
+                    if (
+                        isinstance(item, dict)
+                        and isinstance(item.get("id"), int)
+                        and not isinstance(item.get("id"), bool)
+                    )
+                }
+                round_normalizer_repairs: list[dict] = []
                 _run_deterministic_translation_normalizers(
                     blocks,
                     target_language=target_language,
                     project_kb=project_kb,
                     trace=trace,
-                    repaired=repaired,
+                    repaired=round_normalizer_repairs,
                     phase="after_model_repair",
                 )
                 report = _run_quality_checks_with_semantics(
@@ -3096,17 +3253,67 @@ def _persist_translation_quality_report(
                     progress_callback=progress_callback,
                     strict_quality_gate=strict_policy,
                 )
-                current_score = _quality_score(report)
-                after_issue_count, after_error_count, after_warning_count = _quality_issue_counts(report)
-                model_candidate_ids = {
-                    item.get("id")
-                    for item in repair_outcome.changes
-                    if (
-                        isinstance(item, dict)
-                        and isinstance(item.get("id"), int)
-                        and not isinstance(item.get("id"), bool)
+                proposed_translation_by_id = {
+                    str(getattr(block, "index", "")): getattr(
+                        block,
+                        "translation",
+                        "",
                     )
+                    for block in blocks or []
                 }
+                proposed_ids = sorted(
+                    block_id
+                    for block_id in model_candidate_ids
+                    if (
+                        proposed_translation_by_id.get(str(block_id))
+                        != translation_before_round.get(str(block_id))
+                    )
+                )
+                regressions = _auto_repair_functional_regressions(
+                    report_before_round,
+                    report,
+                    set(proposed_ids),
+                )
+                rolled_back_ids = sorted(regressions)
+                if rolled_back_ids:
+                    rolled_back_set = set(rolled_back_ids)
+                    for block in blocks or []:
+                        block_id = getattr(block, "index", None)
+                        if block_id not in rolled_back_set:
+                            continue
+                        block.translation = translation_before_round.get(
+                            str(block_id),
+                            "",
+                        )
+                    observed_after_candidate = trace.get(
+                        "semantic_uncertain_observed_block_ids",
+                        [],
+                    )
+                    if not isinstance(observed_after_candidate, list):
+                        observed_after_candidate = []
+                    trace["semantic_uncertain_observed_block_ids"] = sorted({
+                        block_id
+                        for block_id in observed_after_candidate
+                        if (
+                            isinstance(block_id, int)
+                            and not isinstance(block_id, bool)
+                            and (
+                                block_id not in rolled_back_set
+                                or block_id in uncertain_ids_before_round
+                            )
+                        )
+                    })
+                    report = _run_quality_checks_with_semantics(
+                        cfg,
+                        translator,
+                        blocks,
+                        target_language,
+                        project_kb,
+                        project,
+                        trace,
+                        progress_callback=progress_callback,
+                        strict_quality_gate=strict_policy,
+                    )
                 translation_after_round = {
                     str(getattr(block, "index", "")): getattr(
                         block,
@@ -3123,6 +3330,41 @@ def _persist_translation_quality_report(
                         != translation_before_round.get(str(block_id))
                     )
                 )
+                accepted_model_changes = [
+                    {
+                        "id": block_id,
+                        "translation": translation_after_round[str(block_id)],
+                    }
+                    for block_id in net_changed_ids
+                ]
+                accepted_non_model_normalizations = [
+                    {
+                        "id": item.get("id"),
+                        "translation": translation_after_round.get(
+                            str(item.get("id")),
+                            item.get("translation", ""),
+                        ),
+                    }
+                    for item in round_normalizer_repairs
+                    if (
+                        isinstance(item, dict)
+                        and isinstance(item.get("id"), int)
+                        and not isinstance(item.get("id"), bool)
+                        and item.get("id") not in model_candidate_ids
+                        and (
+                            translation_after_round.get(str(item.get("id")))
+                            != translation_before_round.get(str(item.get("id")))
+                        )
+                    )
+                ]
+                repaired.extend(accepted_model_changes)
+                repaired.extend(accepted_non_model_normalizations)
+                current_score = _quality_score(report)
+                (
+                    after_issue_count,
+                    after_error_count,
+                    after_warning_count,
+                ) = _quality_issue_counts(report)
                 still_failing_ids = sorted({
                     issue.block_id
                     for issue in (getattr(report, "issues", []) or [])
@@ -3133,6 +3375,19 @@ def _persist_translation_quality_report(
                     "after_error_count": after_error_count,
                     "after_warning_count": after_warning_count,
                     "after_unresolved_blocks": len(getattr(report, "unresolved_blocks", []) or []),
+                    "proposed_block_ids": proposed_ids,
+                    "proposed_blocks": len(proposed_ids),
+                    "accepted_block_ids": net_changed_ids,
+                    "accepted_blocks": len(net_changed_ids),
+                    "rolled_back_block_ids": rolled_back_ids,
+                    "rolled_back_blocks": len(rolled_back_ids),
+                    "rollback_reasons": [
+                        {
+                            "id": block_id,
+                            "issue_types": regressions[block_id],
+                        }
+                        for block_id in rolled_back_ids
+                    ],
                     "changed_block_ids": net_changed_ids,
                     "changed_unique_ids": len(net_changed_ids),
                     "applied_blocks": len(net_changed_ids),
@@ -3145,12 +3400,24 @@ def _persist_translation_quality_report(
                         "partial_failure"
                         if not repair_outcome.completed
                         else (
-                            "improved"
-                            if (
-                                net_changed_ids
-                                and current_score < previous_score
+                            "rolled_back_regression"
+                            if rolled_back_ids and not net_changed_ids
+                            else (
+                                "improved_with_rollback"
+                                if (
+                                    rolled_back_ids
+                                    and net_changed_ids
+                                    and current_score < previous_score
+                                )
+                                else (
+                                    "improved"
+                                    if (
+                                        net_changed_ids
+                                        and current_score < previous_score
+                                    )
+                                    else "not_improved"
+                                )
                             )
-                            else "not_improved"
                         )
                     ),
                 })

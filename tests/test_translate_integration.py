@@ -75,6 +75,29 @@ def _run_semantic_pipeline_case(
     return project, report, pdir
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "[cup and ball clank]",
+        "[sniffling]\n[somber music continues]",
+        "-[walker snarling]\n-[Dillard whistling]",
+    ],
+)
+def test_semantic_qa_skips_regular_sound_verb_morphology(source):
+    from app.api import translate as api_translate
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=68,
+        start=timedelta(seconds=68),
+        end=timedelta(seconds=69),
+        text=source,
+        translation="不应送检",
+    )
+
+    assert api_translate._semantic_qa_requested_items([block]) == []
+
+
 def test_start_asr_initializes_workflow_state(tmp_project_dir, monkeypatch):
     from app.api import projects as projects_api
     from app.api import translate as api_translate
@@ -3689,6 +3712,12 @@ def test_quality_conclusion_separates_deterministic_normalization_from_model_rep
     assert report.summary["repair_stats"] == {
         "repair_attempts": 0,
         "nonempty_responses": 0,
+        "proposed_unique_ids": 0,
+        "proposed_block_ids": [],
+        "accepted_unique_ids": 0,
+        "accepted_block_ids": [],
+        "rolled_back_unique_ids": 0,
+        "rolled_back_block_ids": [],
         "changed_unique_ids": 0,
         "changed_block_ids": [],
         "improved_block_ids": [],
@@ -4068,9 +4097,12 @@ def test_translate_pipeline_rechecks_partial_multi_batch_repair_failure(
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
     round_trace = report["trace"]["auto_repair_rounds"][0]
     assert round_trace["result"] == "partial_failure"
-    assert round_trace["changed_block_ids"] == [1]
+    assert round_trace["proposed_block_ids"] == [1]
+    assert round_trace["accepted_block_ids"] == []
+    assert round_trace["rolled_back_block_ids"] == [1]
+    assert round_trace["changed_block_ids"] == []
     assert round_trace["repair_completed"] is False
-    assert report["summary"]["by_type"]["manual_term_missing"] == 1
+    assert report["summary"]["by_type"].get("manual_term_missing", 0) == 0
     assert report["summary"]["quality_gate"]["passed"] is False
     assert project["translation_quality_status"] == "failed"
     assert not (pdir / "translated.srt").exists()
@@ -4181,6 +4213,308 @@ def test_translate_pipeline_limits_auto_repair_rounds(tmp_path, monkeypatch):
     assert translate_api._repair_item_limit({"translation": {"qa_auto_repair_max_blocks": -1}}) == 0
     assert translate_api._repair_item_limit({"translation": {"qa_auto_repair_max_blocks": 2}}) == 2
     assert translate_api._repair_item_limit({"translation": {"qa_auto_repair_max_blocks": 99}}) == 50
+
+
+def _run_auto_repair_semantic_guard_case(
+    tmp_path,
+    monkeypatch,
+    *,
+    initial_translation,
+    candidate_translation,
+    issues_by_qa_call,
+):
+    from copy import deepcopy
+
+    from app.api import translate as api_translate
+    from app.engines import knowledge, translation_qa
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=350,
+        start=timedelta(seconds=350),
+        end=timedelta(seconds=351),
+        text="[Croat] You're saying Ginny\nwas only seven months pregnant!",
+        translation=initial_translation,
+    )
+    qa_calls = []
+    auto_repair_calls = []
+    saved_reports = []
+
+    monkeypatch.setattr(
+        knowledge,
+        "_get_singleton",
+        lambda: type(
+            "Knowledge",
+            (),
+            {"select_for_project": lambda self, project: None},
+        )(),
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_run_deterministic_translation_normalizers",
+        lambda *args, **kwargs: [],
+    )
+
+    def fake_quality_checks(
+        cfg,
+        translator,
+        blocks,
+        target_language,
+        project_kb,
+        project,
+        trace,
+        **kwargs,
+    ):
+        call_number = len(qa_calls) + 1
+        qa_calls.append(call_number)
+        specs = issues_by_qa_call[min(call_number - 1, len(issues_by_qa_call) - 1)]
+        issues = [
+            QualityIssue(
+                type=issue_type,
+                severity=severity,
+                block_id=350,
+                message=issue_type,
+                source_text=block.text,
+                translation=block.translation,
+            )
+            for issue_type, severity in specs
+        ]
+        by_type = {}
+        for issue in issues:
+            by_type[issue.type] = by_type.get(issue.type, 0) + 1
+        if any(issue.type == "semantic_uncertain" for issue in issues):
+            observed = trace.setdefault(
+                "semantic_uncertain_observed_block_ids",
+                [],
+            )
+            if 350 not in observed:
+                observed.append(350)
+        unresolved = sorted({
+            issue.block_id
+            for issue in issues
+            if issue.severity in {"error", "severe"}
+        })
+        return TranslationQaReport(
+            status="needs_review" if issues else "ok",
+            issues=issues,
+            unresolved_blocks=unresolved,
+            summary={"by_type": by_type},
+            trace=trace,
+        )
+
+    def fake_auto_repair(
+        cfg,
+        translator,
+        blocks,
+        report,
+        target_language,
+        project_kb,
+        repair_trace=None,
+    ):
+        auto_repair_calls.append(350)
+        block.translation = candidate_translation
+        repair_trace.update({
+            "repair_attempts": 1,
+            "attempted_blocks": 1,
+            "nonempty_responses": 1,
+            "changed_block_ids": [350],
+            "changed_unique_ids": 1,
+            "applied_blocks": 1,
+        })
+        return api_translate.AutoRepairOutcome(
+            [{"id": 350, "translation": candidate_translation}],
+            True,
+            True,
+        )
+
+    monkeypatch.setattr(
+        api_translate,
+        "_run_quality_checks_with_semantics",
+        fake_quality_checks,
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_auto_repair_quality_issues",
+        fake_auto_repair,
+    )
+    monkeypatch.setattr(
+        translation_qa,
+        "save_quality_report",
+        lambda report, **kwargs: saved_reports.append(deepcopy(report.to_dict())),
+    )
+
+    repaired = api_translate._persist_translation_quality_report(
+        pid="semantic-rollback",
+        pdir=str(tmp_path),
+        project={},
+        blocks=[block],
+        target_language="简体中文",
+        translator=object(),
+        cfg={
+            "translation": {
+                "qa_auto_repair": True,
+                "qa_auto_repair_rounds": 3,
+            },
+        },
+        strict_quality_gate=True,
+    )
+    return {
+        "block": block,
+        "qa_calls": qa_calls,
+        "auto_repair_calls": auto_repair_calls,
+        "repaired": repaired,
+        "report": saved_reports[-1],
+    }
+
+
+def test_auto_repair_rolls_back_new_semantic_mismatch_per_block(tmp_path, monkeypatch):
+    correct = "[克罗地亚人] 你说伊薇特\n才怀孕七个月！"
+    compressed = "[克罗地亚人]七个月！"
+
+    result = _run_auto_repair_semantic_guard_case(
+        tmp_path,
+        monkeypatch,
+        initial_translation=correct,
+        candidate_translation=compressed,
+        issues_by_qa_call=[
+            [("reading_speed_too_fast", "warning")],
+            [("semantic_mismatch", "error")],
+            [("reading_speed_too_fast", "warning")],
+        ],
+    )
+
+    round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
+    assert result["block"].translation == correct
+    assert result["qa_calls"] == [1, 2, 3]
+    assert result["auto_repair_calls"] == [350]
+    assert result["repaired"] == []
+    assert result["report"]["repaired_blocks"] == []
+    assert round_trace["proposed_block_ids"] == [350]
+    assert round_trace["accepted_block_ids"] == []
+    assert round_trace["rolled_back_block_ids"] == [350]
+    assert round_trace["changed_block_ids"] == []
+    assert round_trace["changed_unique_ids"] == 0
+    assert round_trace["applied_blocks"] == 0
+    assert round_trace["result"] == "rolled_back_regression"
+    assert result["report"]["summary"]["repair_stats"]["repair_attempts"] == 1
+    assert result["report"]["summary"]["repair_stats"]["nonempty_responses"] == 1
+    assert result["report"]["summary"]["repair_stats"]["proposed_block_ids"] == [350]
+    assert result["report"]["summary"]["repair_stats"]["accepted_block_ids"] == []
+    assert result["report"]["summary"]["repair_stats"]["rolled_back_block_ids"] == [350]
+    assert result["report"]["summary"]["repair_stats"]["changed_unique_ids"] == 0
+
+
+def test_auto_repair_keeps_valid_semantic_improvement(tmp_path, monkeypatch):
+    compressed = "[克罗地亚人]七个月！"
+    correct = "[克罗地亚人] 你说伊薇特\n才怀孕七个月！"
+
+    result = _run_auto_repair_semantic_guard_case(
+        tmp_path,
+        monkeypatch,
+        initial_translation=compressed,
+        candidate_translation=correct,
+        issues_by_qa_call=[
+            [("semantic_mismatch", "error")],
+            [],
+        ],
+    )
+
+    round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
+    assert result["block"].translation == correct
+    assert result["qa_calls"] == [1, 2]
+    assert result["repaired"] == [{"id": 350, "translation": correct}]
+    assert round_trace["proposed_block_ids"] == [350]
+    assert round_trace["accepted_block_ids"] == [350]
+    assert round_trace["rolled_back_block_ids"] == []
+    assert round_trace["changed_block_ids"] == [350]
+    assert round_trace["result"] == "improved"
+    assert result["report"]["summary"]["quality_gate"]["passed"] is True
+
+
+def test_auto_repair_preserves_prior_candidate_when_semantic_failure_is_unchanged(
+    tmp_path,
+    monkeypatch,
+):
+    prior = "[克罗地亚人] 伊薇特没有怀孕七个月。"
+    destructive = "[克罗地亚人]七个月。"
+
+    result = _run_auto_repair_semantic_guard_case(
+        tmp_path,
+        monkeypatch,
+        initial_translation=prior,
+        candidate_translation=destructive,
+        issues_by_qa_call=[
+            [("semantic_mismatch", "error")],
+            [("semantic_mismatch", "error")],
+            [("semantic_mismatch", "error")],
+        ],
+    )
+
+    round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
+    assert result["block"].translation == prior
+    assert result["qa_calls"] == [1, 2, 3]
+    assert result["repaired"] == []
+    assert round_trace["rolled_back_block_ids"] == [350]
+    assert round_trace["accepted_block_ids"] == []
+    assert round_trace["result"] == "rolled_back_regression"
+
+
+def test_auto_repair_provider_failure_rolls_back_and_fails_closed(tmp_path, monkeypatch):
+    original = "[克罗地亚人] 你说伊薇特\n才怀孕七个月！"
+    candidate = "[克罗地亚人]七个月！"
+
+    result = _run_auto_repair_semantic_guard_case(
+        tmp_path,
+        monkeypatch,
+        initial_translation=original,
+        candidate_translation=candidate,
+        issues_by_qa_call=[
+            [("reading_speed_too_fast", "warning")],
+            [("semantic_qa_failed", "error")],
+            [("semantic_qa_failed", "error")],
+        ],
+    )
+
+    round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
+    assert result["block"].translation == original
+    assert result["qa_calls"] == [1, 2, 3]
+    assert result["auto_repair_calls"] == [350]
+    assert result["repaired"] == []
+    assert round_trace["rolled_back_block_ids"] == [350]
+    assert round_trace["result"] == "rolled_back_regression"
+    assert result["report"]["summary"]["by_type"]["semantic_qa_failed"] == 1
+    assert result["report"]["summary"]["quality_gate"]["passed"] is False
+
+
+def test_rejected_auto_repair_uncertainty_does_not_latch(tmp_path, monkeypatch):
+    original = "[克罗地亚人] 你说伊薇特\n才怀孕七个月！"
+    candidate = "[克罗地亚人]七个月！"
+
+    result = _run_auto_repair_semantic_guard_case(
+        tmp_path,
+        monkeypatch,
+        initial_translation=original,
+        candidate_translation=candidate,
+        issues_by_qa_call=[
+            [("reading_speed_too_fast", "warning")],
+            [("semantic_uncertain", "warning")],
+            [("reading_speed_too_fast", "warning")],
+        ],
+    )
+
+    round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
+    assert result["block"].translation == original
+    assert result["qa_calls"] == [1, 2, 3]
+    assert round_trace["rolled_back_block_ids"] == [350]
+    assert (
+        result["report"]["trace"].get(
+            "semantic_uncertain_observed_block_ids",
+            [],
+        )
+        == []
+    )
+    assert result["report"]["summary"]["quality_gate"]["requires_human_review"] is False
 
 
 @pytest.mark.parametrize("initial_run_id", ["same-quality-run", "stale-quality-run"])
@@ -4344,6 +4678,12 @@ def test_quality_run_state_enforces_total_auto_repair_budget_across_persists(
     assert final_report["summary"]["repair_stats"] == {
         "repair_attempts": 3,
         "nonempty_responses": 3,
+        "proposed_unique_ids": 3,
+        "proposed_block_ids": [1, 2, 3],
+        "accepted_unique_ids": 3,
+        "accepted_block_ids": [1, 2, 3],
+        "rolled_back_unique_ids": 0,
+        "rolled_back_block_ids": [],
         "changed_unique_ids": 3,
         "changed_block_ids": [1, 2, 3],
         "improved_block_ids": [1, 2, 3],

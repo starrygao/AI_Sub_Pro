@@ -354,6 +354,59 @@ def test_sound_description_classifier_covers_export_regression_cues(source):
 
 
 @pytest.mark.parametrize(
+    "source",
+    [
+        "[cup and ball clank]",
+        "[sniffling]\n[somber music continues]",
+        "-[walker snarling]\n-[Dillard whistling]",
+    ],
+)
+def test_sound_description_classifier_covers_regular_sound_verb_morphology(source):
+    from app.engines.translation_qa import (
+        dialogue_only_qa_source_text,
+        is_sound_description_source,
+        run_quality_checks,
+    )
+
+    assert is_sound_description_source(source) is True
+    assert dialogue_only_qa_source_text(source) == ""
+
+    report = run_quality_checks(
+        [_block(68, source, "")],
+        target_language="简体中文",
+        max_chars=40,
+    )
+    assert report.summary["by_type"].get("missing_translation", 0) == 0
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "The cups clank when we toast.",
+        "We keep sniffling because of the dust.",
+        "Dillard is whistling a tune.",
+        "- Dillard is whistling.\n- I can hear him.",
+    ],
+)
+def test_sound_verb_morphology_does_not_swallow_real_dialogue(source):
+    from app.engines.translation_qa import (
+        dialogue_only_qa_source_text,
+        is_sound_description_source,
+        run_quality_checks,
+    )
+
+    assert is_sound_description_source(source) is False
+    assert dialogue_only_qa_source_text(source) == source
+
+    report = run_quality_checks(
+        [_block(68, source, "")],
+        target_language="简体中文",
+        max_chars=40,
+    )
+    assert report.summary["by_type"]["missing_translation"] == 1
+
+
+@pytest.mark.parametrize(
     ("source", "draft"),
     [
         ("♪ Never gonna give you up ♪", "♪ 永远不会放弃你 ♪"),
