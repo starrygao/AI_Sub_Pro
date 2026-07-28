@@ -2565,7 +2565,10 @@ def _finalize_quality_conclusion(
         conclusion = f"自动交付未通过：仍有 {error_count} 个错误、{unresolved_count} 个问题位置。"
     elif has_incomplete_repair_round:
         verdict = "failed"
-        conclusion = "自动交付未通过：自动返工未完整执行，已保留返工前译文并停止交付。"
+        conclusion = (
+            "自动交付未通过：自动返工未完整执行，已保留经复检接受的局部改动，"
+            "仅输出 partial 并停止正式交付。"
+        )
     elif blocking_warnings:
         verdict = "failed"
         conclusion = (
@@ -2772,6 +2775,28 @@ class AutoRepairOutcome:
     completed: bool
 
 
+def _auto_repair_semantic_groups(items: list[dict]) -> list[list[int]]:
+    groups: list[list[int]] = []
+    seen: set[tuple[int, ...]] = set()
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        raw_group = item.get("semantic_group_ids")
+        if not isinstance(raw_group, list):
+            continue
+        group = list(dict.fromkeys(
+            block_id
+            for block_id in raw_group
+            if isinstance(block_id, int) and not isinstance(block_id, bool)
+        ))
+        key = tuple(group)
+        if len(group) <= 1 or key in seen:
+            continue
+        seen.add(key)
+        groups.append(group)
+    return groups
+
+
 def _repair_batch_positions(items: list[dict], max_blocks: int) -> list[list[int]]:
     units: list[list[int]] = []
     position = 0
@@ -2830,6 +2855,12 @@ def _auto_repair_quality_issues(
     def finish_outcome(completed: bool) -> AutoRepairOutcome:
         changes = []
         changed_ids = []
+        semantic_groups = _auto_repair_semantic_groups(all_repair_items)
+        semantic_group_by_id = {
+            str(block_id): group_ids
+            for group_ids in semantic_groups
+            for block_id in group_ids
+        }
         ordered_ids = list(dict.fromkeys(
             str(item.get("id", "")) for item in all_repair_items
         ))
@@ -2841,7 +2872,11 @@ def _auto_repair_quality_issues(
             if translation == initial_translation_by_id.get(item_id):
                 continue
             block_id = getattr(block, "index", item_id)
-            changes.append({"id": block_id, "translation": translation})
+            change = {"id": block_id, "translation": translation}
+            group_ids = semantic_group_by_id.get(str(block_id))
+            if group_ids:
+                change["semantic_group_ids"] = list(group_ids)
+            changes.append(change)
             if isinstance(block_id, int) and not isinstance(block_id, bool):
                 changed_ids.append(block_id)
         changed_ids = sorted(set(changed_ids))
@@ -2859,6 +2894,7 @@ def _auto_repair_quality_issues(
                 ),
                 "applied_blocks": len(changed_ids),
                 "repair_completed": completed,
+                "semantic_groups": semantic_groups,
             })
         return AutoRepairOutcome(changes, mutation_occurred, completed)
 
@@ -3180,6 +3216,9 @@ def _persist_translation_quality_report(
                     "accepted_blocks": 0,
                     "rolled_back_block_ids": [],
                     "rolled_back_blocks": 0,
+                    "semantic_groups": [],
+                    "accepted_semantic_groups": [],
+                    "rolled_back_semantic_groups": [],
                     "rollback_reasons": [],
                 }
                 before_failing_ids = {
@@ -3233,6 +3272,10 @@ def _persist_translation_quality_report(
                         and not isinstance(item.get("id"), bool)
                     )
                 }
+                semantic_groups = _auto_repair_semantic_groups(
+                    repair_outcome.changes,
+                )
+                round_trace["semantic_groups"] = semantic_groups
                 round_normalizer_repairs: list[dict] = []
                 _run_deterministic_translation_normalizers(
                     blocks,
@@ -3269,14 +3312,44 @@ def _persist_translation_quality_report(
                         != translation_before_round.get(str(block_id))
                     )
                 )
+                proposed_id_set = set(proposed_ids)
+                guard_candidate_ids = set(proposed_id_set)
+                for group_ids in semantic_groups:
+                    if proposed_id_set.intersection(group_ids):
+                        guard_candidate_ids.update(group_ids)
                 regressions = _auto_repair_functional_regressions(
                     report_before_round,
                     report,
-                    set(proposed_ids),
+                    guard_candidate_ids,
                 )
-                rolled_back_ids = sorted(regressions)
+                direct_rejected_ids = set(regressions)
+                rolled_back_semantic_groups = [
+                    group_ids
+                    for group_ids in semantic_groups
+                    if (
+                        proposed_id_set.intersection(group_ids)
+                        and direct_rejected_ids.intersection(group_ids)
+                    )
+                ]
+                rolled_back_set = direct_rejected_ids.intersection(
+                    proposed_id_set,
+                )
+                for group_ids in rolled_back_semantic_groups:
+                    rolled_back_set.update(
+                        proposed_id_set.intersection(group_ids)
+                    )
+                rolled_back_ids = sorted(rolled_back_set)
+                rollback_reasons = {
+                    block_id: list(issue_types)
+                    for block_id, issue_types in regressions.items()
+                }
+                for group_ids in rolled_back_semantic_groups:
+                    for block_id in proposed_id_set.intersection(group_ids):
+                        rollback_reasons.setdefault(
+                            block_id,
+                            ["semantic_group_atomic_rollback"],
+                        )
                 if rolled_back_ids:
-                    rolled_back_set = set(rolled_back_ids)
                     for block in blocks or []:
                         block_id = getattr(block, "index", None)
                         if block_id not in rolled_back_set:
@@ -3330,6 +3403,17 @@ def _persist_translation_quality_report(
                         != translation_before_round.get(str(block_id))
                     )
                 )
+                net_changed_id_set = set(net_changed_ids)
+                accepted_semantic_groups = [
+                    group_ids
+                    for group_ids in semantic_groups
+                    if (
+                        proposed_id_set.intersection(group_ids)
+                        and proposed_id_set.intersection(group_ids).issubset(
+                            net_changed_id_set
+                        )
+                    )
+                ]
                 accepted_model_changes = [
                     {
                         "id": block_id,
@@ -3381,10 +3465,13 @@ def _persist_translation_quality_report(
                     "accepted_blocks": len(net_changed_ids),
                     "rolled_back_block_ids": rolled_back_ids,
                     "rolled_back_blocks": len(rolled_back_ids),
+                    "semantic_groups": semantic_groups,
+                    "accepted_semantic_groups": accepted_semantic_groups,
+                    "rolled_back_semantic_groups": rolled_back_semantic_groups,
                     "rollback_reasons": [
                         {
                             "id": block_id,
-                            "issue_types": regressions[block_id],
+                            "issue_types": rollback_reasons[block_id],
                         }
                         for block_id in rolled_back_ids
                     ],

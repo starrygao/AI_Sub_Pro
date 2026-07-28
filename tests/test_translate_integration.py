@@ -3805,9 +3805,22 @@ def test_auto_repair_keeps_semantic_group_atomic_and_refreshes_later_context():
 
     assert outcome.completed is True
     assert outcome.mutation_occurred is True
-    assert [item["id"] for item in outcome.changes] == [2, 3, 4]
+    assert outcome.changes == [
+        {
+            "id": 2,
+            "translation": "新译2",
+            "semantic_group_ids": [2, 3],
+        },
+        {
+            "id": 3,
+            "translation": "新译3",
+            "semantic_group_ids": [2, 3],
+        },
+        {"id": 4, "translation": "新译4"},
+    ]
     assert [[item["id"] for item in call] for call in calls] == [[2, 3], [4]]
     assert trace["attempted_blocks"] == 3
+    assert trace["semantic_groups"] == [[2, 3]]
 
 
 def test_translate_pipeline_records_improved_and_still_failing_ids(
@@ -4075,7 +4088,7 @@ def test_translate_pipeline_rechecks_partial_multi_batch_repair_failure(
         def translate_batch(self, items, prompt):
             self.calls += 1
             if self.calls == 1:
-                return [{"id": items[0]["id"], "translation": "Broken English remains"}]
+                return [{"id": items[0]["id"], "translation": "第一行术语。"}]
             raise RuntimeError("provider failed on second repair batch")
 
     class Translator:
@@ -4098,11 +4111,18 @@ def test_translate_pipeline_rechecks_partial_multi_batch_repair_failure(
     round_trace = report["trace"]["auto_repair_rounds"][0]
     assert round_trace["result"] == "partial_failure"
     assert round_trace["proposed_block_ids"] == [1]
-    assert round_trace["accepted_block_ids"] == []
-    assert round_trace["rolled_back_block_ids"] == [1]
-    assert round_trace["changed_block_ids"] == []
+    assert round_trace["accepted_block_ids"] == [1]
+    assert round_trace["rolled_back_block_ids"] == []
+    assert round_trace["changed_block_ids"] == [1]
     assert round_trace["repair_completed"] is False
     assert report["summary"]["by_type"].get("manual_term_missing", 0) == 0
+    assert report["summary"]["repair_stats"]["accepted_block_ids"] == [1]
+    assert report["summary"]["repair_stats"]["rolled_back_block_ids"] == []
+    assert report["repaired_blocks"] == [{"id": 1, "translation": "第一行术语。"}]
+    assert report["summary"]["conclusion"] == (
+        "自动交付未通过：自动返工未完整执行，已保留经复检接受的局部改动，"
+        "仅输出 partial 并停止正式交付。"
+    )
     assert report["summary"]["quality_gate"]["passed"] is False
     assert project["translation_quality_status"] == "failed"
     assert not (pdir / "translated.srt").exists()
@@ -4366,6 +4386,352 @@ def _run_auto_repair_semantic_guard_case(
         "repaired": repaired,
         "report": saved_reports[-1],
     }
+
+
+def _run_auto_repair_group_guard_case(
+    tmp_path,
+    monkeypatch,
+    *,
+    initial_translations,
+    candidate_translations,
+    semantic_groups,
+    issues_by_qa_call,
+):
+    from copy import deepcopy
+    from types import SimpleNamespace
+
+    from app.api import translate as api_translate
+    from app.engines import knowledge, translation_qa
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    blocks = [
+        SubtitleBlock(
+            index=block_id,
+            start=timedelta(seconds=block_id),
+            end=timedelta(seconds=block_id + 1),
+            text=f"Source {block_id}.",
+            translation=translation,
+        )
+        for block_id, translation in sorted(initial_translations.items())
+    ]
+    block_by_id = {block.index: block for block in blocks}
+    qa_calls = []
+    saved_reports = []
+
+    monkeypatch.setattr(
+        knowledge,
+        "_get_singleton",
+        lambda: type(
+            "Knowledge",
+            (),
+            {"select_for_project": lambda self, project: None},
+        )(),
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_run_deterministic_translation_normalizers",
+        lambda *args, **kwargs: [],
+    )
+
+    def fake_quality_checks(
+        cfg,
+        translator,
+        blocks,
+        target_language,
+        project_kb,
+        project,
+        trace,
+        **kwargs,
+    ):
+        call_number = len(qa_calls) + 1
+        qa_calls.append(call_number)
+        specs = issues_by_qa_call[min(call_number - 1, len(issues_by_qa_call) - 1)]
+        issues = [
+            QualityIssue(
+                type=issue_type,
+                severity=severity,
+                block_id=block_id,
+                message=issue_type,
+                source_text=block_by_id[block_id].text,
+                translation=block_by_id[block_id].translation,
+            )
+            for block_id, issue_type, severity in specs
+        ]
+        observed = trace.setdefault(
+            "semantic_uncertain_observed_block_ids",
+            [],
+        )
+        for issue in issues:
+            if issue.type == "semantic_uncertain" and issue.block_id not in observed:
+                observed.append(issue.block_id)
+        by_type = {}
+        for issue in issues:
+            by_type[issue.type] = by_type.get(issue.type, 0) + 1
+        unresolved = sorted({
+            issue.block_id
+            for issue in issues
+            if issue.severity in {"error", "severe"}
+        })
+        return TranslationQaReport(
+            status="needs_review" if issues else "ok",
+            issues=issues,
+            unresolved_blocks=unresolved,
+            summary={"by_type": by_type},
+            trace=trace,
+        )
+
+    def fake_auto_repair(
+        cfg,
+        translator,
+        blocks,
+        report,
+        target_language,
+        project_kb,
+        repair_trace=None,
+    ):
+        changes = []
+        for block_id, translation in sorted(candidate_translations.items()):
+            block_by_id[block_id].translation = translation
+            change = {"id": block_id, "translation": translation}
+            for group_ids in semantic_groups:
+                if block_id in group_ids:
+                    change["semantic_group_ids"] = list(group_ids)
+                    break
+            changes.append(change)
+        changed_ids = sorted(candidate_translations)
+        repair_trace.update({
+            "repair_attempts": len(changed_ids),
+            "attempted_blocks": len(changed_ids),
+            "nonempty_responses": len(changed_ids),
+            "changed_block_ids": changed_ids,
+            "changed_unique_ids": len(changed_ids),
+            "applied_blocks": len(changed_ids),
+            "semantic_groups": [list(group_ids) for group_ids in semantic_groups],
+        })
+        return SimpleNamespace(
+            changes=changes,
+            mutation_occurred=True,
+            completed=True,
+        )
+
+    monkeypatch.setattr(
+        api_translate,
+        "_run_quality_checks_with_semantics",
+        fake_quality_checks,
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_auto_repair_quality_issues",
+        fake_auto_repair,
+    )
+    monkeypatch.setattr(
+        translation_qa,
+        "save_quality_report",
+        lambda report, **kwargs: saved_reports.append(deepcopy(report.to_dict())),
+    )
+
+    repaired = api_translate._persist_translation_quality_report(
+        pid="semantic-group-rollback",
+        pdir=str(tmp_path),
+        project={},
+        blocks=blocks,
+        target_language="简体中文",
+        translator=object(),
+        cfg={
+            "translation": {
+                "qa_auto_repair": True,
+                "qa_auto_repair_rounds": 3,
+            },
+        },
+        strict_quality_gate=True,
+    )
+    return {
+        "translations": {
+            block.index: block.translation
+            for block in blocks
+        },
+        "qa_calls": qa_calls,
+        "repaired": repaired,
+        "report": saved_reports[-1],
+    }
+
+
+def test_auto_repair_rolls_back_entire_semantic_group_when_one_member_regresses(
+    tmp_path,
+    monkeypatch,
+):
+    result = _run_auto_repair_group_guard_case(
+        tmp_path,
+        monkeypatch,
+        initial_translations={1: "旧译1", 2: "旧译2"},
+        candidate_translations={1: "正确新译1", 2: "退化新译2"},
+        semantic_groups=[[1, 2]],
+        issues_by_qa_call=[
+            [(1, "semantic_mismatch", "error")],
+            [(2, "semantic_uncertain", "warning")],
+            [(1, "semantic_mismatch", "error")],
+        ],
+    )
+
+    round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
+    assert result["translations"] == {1: "旧译1", 2: "旧译2"}
+    assert result["qa_calls"] == [1, 2, 3]
+    assert result["repaired"] == []
+    assert round_trace["semantic_groups"] == [[1, 2]]
+    assert round_trace["proposed_block_ids"] == [1, 2]
+    assert round_trace["accepted_block_ids"] == []
+    assert round_trace["rolled_back_block_ids"] == [1, 2]
+    assert round_trace["accepted_semantic_groups"] == []
+    assert round_trace["rolled_back_semantic_groups"] == [[1, 2]]
+    assert (
+        result["report"]["trace"]["semantic_uncertain_observed_block_ids"]
+        == []
+    )
+
+
+def test_auto_repair_accepts_entire_semantic_group_when_all_members_improve(
+    tmp_path,
+    monkeypatch,
+):
+    result = _run_auto_repair_group_guard_case(
+        tmp_path,
+        monkeypatch,
+        initial_translations={1: "旧译1", 2: "旧译2"},
+        candidate_translations={1: "正确新译1", 2: "正确新译2"},
+        semantic_groups=[[1, 2]],
+        issues_by_qa_call=[
+            [
+                (1, "semantic_mismatch", "error"),
+                (2, "semantic_mismatch", "error"),
+            ],
+            [],
+        ],
+    )
+
+    round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
+    assert result["translations"] == {1: "正确新译1", 2: "正确新译2"}
+    assert result["qa_calls"] == [1, 2]
+    assert result["repaired"] == [
+        {"id": 1, "translation": "正确新译1"},
+        {"id": 2, "translation": "正确新译2"},
+    ]
+    assert round_trace["semantic_groups"] == [[1, 2]]
+    assert round_trace["accepted_block_ids"] == [1, 2]
+    assert round_trace["rolled_back_block_ids"] == []
+    assert round_trace["accepted_semantic_groups"] == [[1, 2]]
+    assert round_trace["rolled_back_semantic_groups"] == []
+
+
+def test_auto_repair_rolls_back_changed_group_member_when_unchanged_member_qa_fails(
+    tmp_path,
+    monkeypatch,
+):
+    result = _run_auto_repair_group_guard_case(
+        tmp_path,
+        monkeypatch,
+        initial_translations={1: "旧译1", 2: "旧译2"},
+        candidate_translations={1: "正确新译1", 2: "旧译2"},
+        semantic_groups=[[1, 2]],
+        issues_by_qa_call=[
+            [(1, "semantic_mismatch", "error")],
+            [(2, "semantic_qa_failed", "error")],
+            [(1, "semantic_mismatch", "error")],
+        ],
+    )
+
+    round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
+    assert result["translations"] == {1: "旧译1", 2: "旧译2"}
+    assert result["repaired"] == []
+    assert round_trace["proposed_block_ids"] == [1]
+    assert round_trace["accepted_block_ids"] == []
+    assert round_trace["rolled_back_block_ids"] == [1]
+    assert round_trace["rolled_back_semantic_groups"] == [[1, 2]]
+    assert result["report"]["summary"]["quality_gate"]["passed"] is False
+
+
+def test_auto_repair_isolates_atomic_decisions_across_semantic_groups(
+    tmp_path,
+    monkeypatch,
+):
+    result = _run_auto_repair_group_guard_case(
+        tmp_path,
+        monkeypatch,
+        initial_translations={
+            1: "旧译1",
+            2: "旧译2",
+            3: "旧译3",
+            4: "旧译4",
+            5: "旧译5",
+        },
+        candidate_translations={
+            1: "正确新译1",
+            2: "退化新译2",
+            3: "正确新译3",
+            4: "正确新译4",
+            5: "正确新译5",
+        },
+        semantic_groups=[[1, 2], [3, 4]],
+        issues_by_qa_call=[
+            [
+                (1, "semantic_mismatch", "error"),
+                (3, "semantic_mismatch", "error"),
+                (4, "semantic_mismatch", "error"),
+                (5, "semantic_mismatch", "error"),
+            ],
+            [(2, "semantic_mismatch", "error")],
+            [(1, "semantic_mismatch", "error")],
+        ],
+    )
+
+    round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
+    assert result["translations"] == {
+        1: "旧译1",
+        2: "旧译2",
+        3: "正确新译3",
+        4: "正确新译4",
+        5: "正确新译5",
+    }
+    assert result["repaired"] == [
+        {"id": 3, "translation": "正确新译3"},
+        {"id": 4, "translation": "正确新译4"},
+        {"id": 5, "translation": "正确新译5"},
+    ]
+    assert round_trace["semantic_groups"] == [[1, 2], [3, 4]]
+    assert round_trace["accepted_block_ids"] == [3, 4, 5]
+    assert round_trace["rolled_back_block_ids"] == [1, 2]
+    assert round_trace["accepted_semantic_groups"] == [[3, 4]]
+    assert round_trace["rolled_back_semantic_groups"] == [[1, 2]]
+
+
+def test_auto_repair_keeps_independent_block_acceptance_per_block(
+    tmp_path,
+    monkeypatch,
+):
+    result = _run_auto_repair_group_guard_case(
+        tmp_path,
+        monkeypatch,
+        initial_translations={1: "旧译1", 2: "旧译2"},
+        candidate_translations={1: "退化新译1", 2: "正确新译2"},
+        semantic_groups=[],
+        issues_by_qa_call=[
+            [
+                (1, "semantic_mismatch", "error"),
+                (2, "semantic_mismatch", "error"),
+            ],
+            [(1, "semantic_mismatch", "error")],
+            [(1, "semantic_mismatch", "error")],
+        ],
+    )
+
+    round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
+    assert result["translations"] == {1: "旧译1", 2: "正确新译2"}
+    assert result["repaired"] == [{"id": 2, "translation": "正确新译2"}]
+    assert round_trace["semantic_groups"] == []
+    assert round_trace["accepted_block_ids"] == [2]
+    assert round_trace["rolled_back_block_ids"] == [1]
+    assert round_trace["accepted_semantic_groups"] == []
+    assert round_trace["rolled_back_semantic_groups"] == []
 
 
 def test_auto_repair_rolls_back_new_semantic_mismatch_per_block(tmp_path, monkeypatch):
