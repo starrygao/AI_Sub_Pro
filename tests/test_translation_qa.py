@@ -353,6 +353,33 @@ def test_sound_description_classifier_covers_export_regression_cues(source):
     assert is_sound_description_source(source) is True
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "♪\n-Go!",
+        "♪ instrumental music ♪\n-Go!",
+        "RUNNING WATER\n-Go!",
+        "APPLAUSE\n-Go!",
+    ],
+)
+def test_mixed_sound_lines_keep_dialogue_translatable_and_visible_to_qa(source):
+    from app.engines.translation_qa import (
+        dialogue_only_qa_source_text,
+        is_sound_description_source,
+        run_quality_checks,
+    )
+
+    assert is_sound_description_source(source) is False
+    assert dialogue_only_qa_source_text(source) == "-Go!"
+
+    report = run_quality_checks(
+        [_block(70, source, "")],
+        target_language="简体中文",
+        max_chars=40,
+    )
+    assert report.summary["by_type"]["missing_translation"] == 1
+
+
 def test_quality_checks_exclude_pure_sound_rows_from_translation_and_term_contracts():
     from app.engines.kb_models import ProjectKb, TermEntry
     from app.engines.translation_qa import run_quality_checks
@@ -413,6 +440,68 @@ def test_mixed_sound_and_dialogue_rows_allow_omitted_sound_without_speaker_misma
     assert block.translation == expected
     assert "speaker_line_structure_mismatch" not in report.summary["by_type"]
     assert "missing_translation" not in report.summary["by_type"]
+
+
+def test_mixed_sound_cue_terms_are_not_dialogue_terminology_obligations():
+    from app.engines.kb_models import ProjectKb, TermEntry
+    from app.engines.translation_qa import run_quality_checks
+
+    source = "-[Hershel coughing]\n-Go!"
+    term_context = {
+        "project_kb": ProjectKb(
+            characters=[TermEntry(source="Hershel", target="赫歇尔")],
+        ),
+        "meta_info": {"manual_terms": "Hershel=赫歇尔"},
+        "trace": {
+            "kb_hits": [{
+                "source": "Hershel",
+                "target": "赫歇尔",
+                "scope": "project",
+            }],
+        },
+    }
+
+    sound_report = run_quality_checks(
+        [_block(74, source, "-走！")],
+        target_language="简体中文",
+        max_chars=40,
+        **term_context,
+    )
+    dialogue_report = run_quality_checks(
+        [_block(75, "-[Maggie] Hershel, go!", "-[玛吉] 走！")],
+        target_language="简体中文",
+        max_chars=40,
+        **term_context,
+    )
+    sound_core_domain_report = run_quality_checks(
+        [
+            _block(76, "-[D-Day explosion]\n-Go!", "-走！"),
+            _block(77, "-[Pangaea rumbling]\n-Go!", "-走！"),
+        ],
+        target_language="简体中文",
+        max_chars=40,
+    )
+    dialogue_core_domain_report = run_quality_checks(
+        [_block(78, "-[Maggie] D-Day and Pangaea, go!", "-[玛吉] 走！")],
+        target_language="简体中文",
+        max_chars=40,
+    )
+
+    term_issue_types = {
+        "kb_term_missing",
+        "manual_term_missing",
+        "context_term_missing",
+    }
+    assert term_issue_types.isdisjoint(sound_report.summary["by_type"])
+    assert term_issue_types <= set(dialogue_report.summary["by_type"])
+    assert {
+        "core_term_inconsistent",
+        "canonical_term_missing",
+    }.isdisjoint(sound_core_domain_report.summary["by_type"])
+    assert {
+        "core_term_inconsistent",
+        "canonical_term_missing",
+    } <= set(dialogue_core_domain_report.summary["by_type"])
 
 
 def test_quality_checks_still_require_both_real_dialogue_speaker_lines():

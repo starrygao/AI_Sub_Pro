@@ -645,7 +645,7 @@ def _sound_description_probe_text(value: str) -> str:
     return text
 
 
-def _is_sound_description(source: str) -> bool:
+def _is_sound_description_line(source: str) -> bool:
     probe = _sound_description_probe_text(source)
     if not probe:
         return bool(_MUSIC_MARK_RE.search(source or ""))
@@ -661,6 +661,16 @@ def _is_sound_description(source: str) -> bool:
         )
 
     return _is_unbracketed_sound_description_label(probe)
+
+
+def _is_sound_description(source: str) -> bool:
+    lines = [
+        line
+        for line in (source or "").splitlines()
+        if _sound_description_probe_text(line)
+        or _MUSIC_MARK_RE.search(line)
+    ]
+    return bool(lines) and all(_is_sound_description_line(line) for line in lines)
 
 
 def is_sound_description_source(source: str) -> bool:
@@ -826,10 +836,17 @@ def dialogue_only_qa_source_text(source: str) -> str:
         return ""
     if _is_sound_description(source):
         return ""
-    return clean_sound_description_translation_text(
-        source,
-        source_text=source,
-    )
+    dialogue_lines: list[str] = []
+    for line in source.splitlines():
+        if _is_sound_description_line(line):
+            continue
+        cleaned = clean_sound_description_translation_text(
+            line,
+            source_text=line,
+        )
+        if cleaned:
+            dialogue_lines.append(cleaned)
+    return "\n".join(dialogue_lines).strip()
 
 
 def normalize_sound_description_translations(blocks: Iterable) -> list[dict]:
@@ -1392,10 +1409,11 @@ def run_quality_checks(
         source = _clean_text(getattr(block, "text", ""))
         translation = _clean_text(getattr(block, "translation", ""))
         sound_description = _is_sound_description(source)
+        qa_source = dialogue_only_qa_source_text(source)
 
-        if isinstance(block_id, int) and not sound_description:
+        if isinstance(block_id, int) and qa_source:
             block_key = str(block_id)
-            source_by_id.setdefault(block_key, source)
+            source_by_id.setdefault(block_key, qa_source)
             translation_by_id.setdefault(block_key, translation)
 
         if isinstance(block_id, int):
@@ -1431,7 +1449,7 @@ def run_quality_checks(
             ))
 
         speaker_contract = (
-            classify_speaker_lines(dialogue_only_qa_source_text(source))
+            classify_speaker_lines(qa_source)
             if source and translation and not sound_description
             else None
         )
@@ -1549,7 +1567,7 @@ def run_quality_checks(
         for term_source, term_target in kb_terms:
             if (
                 not sound_description
-                and _term_present(source, term_source)
+                and _term_present(qa_source, term_source)
                 and not _term_present(translation, term_target)
             ):
                 issues.append(QualityIssue(
@@ -1565,7 +1583,7 @@ def run_quality_checks(
         for term_source, term_target in manual_terms:
             if (
                 not sound_description
-                and _term_present(source, term_source)
+                and _term_present(qa_source, term_source)
                 and not _term_present(translation, term_target)
             ):
                 issues.append(QualityIssue(
@@ -1581,7 +1599,7 @@ def run_quality_checks(
         for term_source, term_target in context_terms:
             if (
                 not sound_description
-                and _term_present(source, term_source)
+                and _term_present(qa_source, term_source)
                 and not _term_present(translation, term_target)
             ):
                 issues.append(QualityIssue(
@@ -1596,11 +1614,11 @@ def run_quality_checks(
 
         if chinese_target and source and translation and not sound_description:
             issues.extend(_core_term_issues(
-                source,
+                qa_source,
                 translation,
                 block_id if isinstance(block_id, int) else None,
             ))
-            for match in find_domain_terms(source):
+            for match in find_domain_terms(qa_source):
                 if match_is_overridden_by_project_kb(match, project_kb):
                     continue
                 term = match.term
