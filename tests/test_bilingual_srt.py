@@ -121,6 +121,69 @@ def test_translated_srt_preserves_short_structural_dialogue_line_breaks(tmp_path
     assert "玛丽：你来了？\n约翰：刚到。" in mono_text
 
 
+def test_translated_srt_compacts_single_marker_continuation_wrap(tmp_path):
+    from app.utils.srt import write_srt
+
+    block = _make_block(
+        4,
+        "One speaker continued across a visual wrap",
+        "- 等等，\n这只是同一人的续句。",
+    )
+    out = tmp_path / "translated.srt"
+
+    write_srt([block], str(out), use_translation=True)
+
+    text = out.read_text(encoding="utf-8")
+    assert "- 等等，这只是同一人的续句。" in text
+    assert "- 等等，\n这只是同一人的续句。" not in text
+
+
+def test_translated_srt_preserves_long_and_mixed_speaker_labels(tmp_path):
+    from app.utils.srt import write_srt
+
+    blocks = [
+        _make_block(
+            5,
+            "Long speaker labels",
+            "ABCDEFGHIJKLM:甲\nNOPQRSTUVWXYZ:乙",
+        ),
+        _make_block(
+            6,
+            "Mixed speaker forms",
+            "-无空格标记\nSECONDARY COORDINATOR:回应",
+        ),
+        _make_block(
+            7,
+            "Dash variants",
+            "–第一位\n—第二位",
+        ),
+    ]
+    out = tmp_path / "translated.srt"
+
+    write_srt(blocks, str(out), use_translation=True)
+
+    text = out.read_text(encoding="utf-8")
+    assert "ABCDEFGHIJKLM:甲\nNOPQRSTUVWXYZ:乙" in text
+    assert "-无空格标记\nSECONDARY COORDINATOR:回应" in text
+    assert "–第一位\n—第二位" in text
+
+
+def test_srt_cleanup_preserves_source_interruption_but_removes_translation_dash_noise(tmp_path):
+    from app.utils.srt import write_srt
+
+    block = _make_block(8, "I was going to--", "我本来要说--")
+    source_out = tmp_path / "source.srt"
+    translated_out = tmp_path / "translated.srt"
+
+    write_srt([block], str(source_out), use_translation=False)
+    write_srt([block], str(translated_out), use_translation=True)
+
+    assert "I was going to--" in source_out.read_text(encoding="utf-8")
+    translated = translated_out.read_text(encoding="utf-8")
+    assert "我本来要说\n" in translated
+    assert "我本来要说--" not in translated
+
+
 def test_bilingual_srt_collapses_translation_only(tmp_path):
     from app.utils.srt import write_bilingual_srt
 

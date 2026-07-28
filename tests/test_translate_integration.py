@@ -1,6 +1,7 @@
 from unittest.mock import patch
 import json
 from datetime import timedelta
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 import pytest
@@ -605,6 +606,116 @@ def test_translate_pipeline_writes_quality_report(tmp_path, monkeypatch):
         ],
     }
     assert (pdir / "translation_qa_report.md").exists()
+
+
+@pytest.mark.parametrize(
+    "failure_stage",
+    [
+        "bilingual_write",
+        "mapping_persist",
+        "bilingual_promote",
+        "mapping_promote",
+    ],
+)
+def test_translate_pipeline_final_artifacts_are_transactional_on_publish_failure(
+    tmp_path,
+    monkeypatch,
+    failure_stage,
+):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+    from app.utils import srt as srt_utils
+
+    pid = f"publishfail-{failure_stage}"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "7\n00:00:00,000 --> 00:00:02,000\nHello\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {"qa_auto_repair": False},
+    })
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            pass
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "你好"
+            return blocks
+
+        def get_kb_usage_trace(self):
+            return {"project": {}, "matches": []}
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    if failure_stage == "bilingual_write":
+        real_write_bilingual = srt_utils.write_bilingual_srt
+
+        def fail_staged_bilingual(blocks, path):
+            name = Path(path).name
+            if name == "bilingual.srt" or name.startswith(".bilingual.srt."):
+                raise OSError("injected bilingual staging failure")
+            return real_write_bilingual(blocks, path)
+
+        monkeypatch.setattr(srt_utils, "write_bilingual_srt", fail_staged_bilingual)
+    elif failure_stage == "mapping_persist":
+        monkeypatch.setattr(
+            api_translate,
+            "_persist_translated_srt_id_mapping",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                OSError("injected mapping persistence failure")
+            ),
+        )
+    else:
+        real_replace = api_translate.os.replace
+
+        def fail_final_promote(source, destination):
+            destination_name = Path(destination).name
+            source_name = Path(source).name
+            if (
+                failure_stage == "bilingual_promote"
+                and destination_name == "bilingual.srt"
+            ):
+                raise OSError("injected bilingual promotion failure")
+            if (
+                failure_stage == "mapping_promote"
+                and destination_name == "translation_qa_report.json"
+                and source_name.startswith(".translation_qa_report.json.")
+            ):
+                raise OSError("injected mapping promotion failure")
+            return real_replace(source, destination)
+
+        monkeypatch.setattr(api_translate.os, "replace", fail_final_promote)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
+    assert project["status"] == "error"
+    assert not (pdir / "translated.srt").exists()
+    assert not (pdir / "bilingual.srt").exists()
+    assert "subtitle_id_mapping" not in report
+    assert (pdir / "partial_translated.srt").exists()
+    assert (pdir / "partial_bilingual.srt").exists()
+    assert not [
+        path for path in pdir.iterdir()
+        if path.name.startswith((".translated.srt.", ".bilingual.srt.", ".translation_qa_report."))
+    ]
 
 
 def test_translate_pipeline_marks_contextual_background_speakers(tmp_path, monkeypatch):

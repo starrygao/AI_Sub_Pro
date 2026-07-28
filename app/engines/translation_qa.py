@@ -22,6 +22,10 @@ from app.engines.subtitle_style_profiles import (
     infer_subtitle_style_profile,
 )
 from app.utils.project_store import atomic_write_json
+from app.utils.subtitle_structure import (
+    classify_speaker_lines,
+    preserves_speaker_line_structure,
+)
 
 
 @dataclass
@@ -125,8 +129,6 @@ _CJK_TEXT_RE = re.compile(r"[\u3400-\u9fff]+")
 _REPEATED_CJK_RE = re.compile(r"([\u4e00-\u9fff])(?:[，,、\s]*\1){2,}")
 _ASCII_PUNCT_RE = re.compile(r"[?!,;:]")
 _SENTENCE_END_PUNCT_RE = re.compile(r"[.!?。！？]\s*$")
-_SPEAKER_DIALOGUE_LINE_RE = re.compile(r"^\s*[-–—](?![-–—])\s*\S")
-_SPEAKER_LABEL_LINE_RE = re.compile(r"^\s*[^:：\r\n]{1,24}[:：]\s*\S")
 _SCIENTIFIC_TARGET_SUFFIXES = (
     "兽",
     "獸",
@@ -866,15 +868,31 @@ def _kb_terms(project_kb: Optional[ProjectKb]) -> list[tuple[str, str]]:
     return pairs
 
 
-def _source_term_present(source: str, term: str) -> bool:
-    source = _clean_text(source)
-    term = _clean_text(term)
-    if not source or not term:
+def _term_present(text: str, term: str) -> bool:
+    normalized_text = re.sub(r"\s+", " ", _clean_text(text))
+    normalized_term = re.sub(r"\s+", " ", _clean_text(term))
+    if not normalized_text or not normalized_term:
         return False
-    escaped = re.escape(term)
-    prefix = r"(?<!\w)" if term[0].isascii() and term[0].isalnum() else ""
-    suffix = r"(?!\w)" if term[-1].isascii() and term[-1].isalnum() else ""
-    return re.search(f"{prefix}{escaped}{suffix}", source, re.IGNORECASE) is not None
+    escaped = re.escape(normalized_term)
+    ascii_token = r"A-Za-z0-9_"
+    prefix = (
+        rf"(?<![{ascii_token}])"
+        if re.match(rf"[{ascii_token}]", normalized_term[0])
+        else ""
+    )
+    suffix = (
+        rf"(?![{ascii_token}])"
+        if re.match(rf"[{ascii_token}]", normalized_term[-1])
+        else ""
+    )
+    return (
+        re.search(
+            f"{prefix}{escaped}{suffix}",
+            normalized_text,
+            re.IGNORECASE,
+        )
+        is not None
+    )
 
 
 def _context_selected_terms(trace: Optional[dict]) -> list[tuple[str, str]]:
@@ -1304,33 +1322,6 @@ def _subtitle_lines(value: str) -> list[str]:
     return [line.strip() for line in (value or "").splitlines() if line.strip()]
 
 
-def _speaker_line_contract(value: str) -> tuple[str, int] | None:
-    lines = _subtitle_lines(value)
-    if len(lines) < 2:
-        return None
-    if all(_SPEAKER_DIALOGUE_LINE_RE.match(line) for line in lines):
-        return ("dialogue-marker", len(lines))
-    if all(_SPEAKER_LABEL_LINE_RE.match(line) for line in lines):
-        return ("speaker-label", len(lines))
-    return None
-
-
-def _preserves_speaker_line_contract(
-    translation: str,
-    contract: tuple[str, int],
-) -> bool:
-    kind, expected_count = contract
-    lines = _subtitle_lines(translation)
-    if len(lines) != expected_count:
-        return False
-    matcher = (
-        _SPEAKER_DIALOGUE_LINE_RE
-        if kind == "dialogue-marker"
-        else _SPEAKER_LABEL_LINE_RE
-    )
-    return all(matcher.match(line) for line in lines)
-
-
 def _duration_seconds(block) -> float:
     start = getattr(block, "start", None)
     end = getattr(block, "end", None)
@@ -1427,26 +1418,25 @@ def run_quality_checks(
             ))
 
         speaker_contract = (
-            _speaker_line_contract(source)
+            classify_speaker_lines(source)
             if source and translation and not sound_description
             else None
         )
         if (
             speaker_contract is not None
-            and not _preserves_speaker_line_contract(translation, speaker_contract)
+            and not preserves_speaker_line_structure(translation, speaker_contract)
         ):
-            kind, expected_count = speaker_contract
             issues.append(QualityIssue(
                 type="speaker_line_structure_mismatch",
                 severity="error",
                 block_id=block_id if isinstance(block_id, int) else None,
                 message=(
                     "translation must preserve one line per source speaker "
-                    f"and retain {kind} structure"
+                    "and retain its marker/label structure"
                 ),
                 source_text=source,
                 translation=translation,
-                expected=f"{expected_count} {kind} lines",
+                expected=speaker_contract.expected_description(),
             ))
 
         if (
@@ -1544,7 +1534,10 @@ def run_quality_checks(
                 ))
 
         for term_source, term_target in kb_terms:
-            if _source_term_present(source, term_source) and term_target not in translation:
+            if _term_present(source, term_source) and not _term_present(
+                translation,
+                term_target,
+            ):
                 issues.append(QualityIssue(
                     type="kb_term_missing",
                     severity="error",
@@ -1556,7 +1549,10 @@ def run_quality_checks(
                 ))
 
         for term_source, term_target in manual_terms:
-            if _source_term_present(source, term_source) and term_target not in translation:
+            if _term_present(source, term_source) and not _term_present(
+                translation,
+                term_target,
+            ):
                 issues.append(QualityIssue(
                     type="manual_term_missing",
                     severity="error",
@@ -1568,7 +1564,10 @@ def run_quality_checks(
                 ))
 
         for term_source, term_target in context_terms:
-            if _source_term_present(source, term_source) and term_target not in translation:
+            if _term_present(source, term_source) and not _term_present(
+                translation,
+                term_target,
+            ):
                 issues.append(QualityIssue(
                     type="context_term_missing",
                     severity="error",

@@ -7,6 +7,8 @@ from datetime import timedelta
 from math import isfinite
 from typing import List, Optional
 
+from app.utils.subtitle_structure import classify_speaker_lines
+
 
 @dataclass
 class SubtitleBlock:
@@ -48,8 +50,6 @@ _TIME_RE = re.compile(r"^(\d+):(\d{2}):(\d{2})[,.](\d{3})$")
 _VTT_TIME_RE = re.compile(r"^(?:(\d+):)?(\d{2}):(\d{2})\.(\d{3})$")
 _ASS_TIME_RE = re.compile(r"^(\d+):(\d{2}):(\d{2})\.(\d{1,3})$")
 _MUSIC_SYMBOL_RE = re.compile(r"[♪♫♬🎵🎶]+")
-_DIALOGUE_MARKER_RE = re.compile(r"^\s*[-–—](?![-–—])\s*\S")
-_SPEAKER_LABEL_RE = re.compile(r"^[^:：\n]{1,12}[:：]\s*\S")
 _CJK_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
 _TRANSLATION_SINGLE_LINE_MAX_CHARS = 32
 
@@ -414,6 +414,7 @@ def write_srt(
             text = _subtitle_text(
                 getattr(b, "translation", "") if use_translation else getattr(b, "text", ""),
                 single_line=use_translation,
+                is_translation=use_translation,
             )
             if not text:
                 _append_report_id(report.empty_text_ids, b)
@@ -457,6 +458,7 @@ def write_mono_srt(blocks, out_path: str, use_translation: bool = True) -> int:
         text = _subtitle_text(
             getattr(b, "translation", "") if use_translation else getattr(b, "text", ""),
             single_line=use_translation,
+            is_translation=use_translation,
         )
         if not text:
             continue
@@ -480,7 +482,11 @@ def write_bilingual_srt(blocks: List[SubtitleBlock], path: str):
             if _is_source_sound_description(getattr(b, "text", "")):
                 continue
             text = _subtitle_text(getattr(b, "text", ""))
-            translation = _subtitle_text(getattr(b, "translation", ""), single_line=True)
+            translation = _subtitle_text(
+                getattr(b, "translation", ""),
+                single_line=True,
+                is_translation=True,
+            )
             if not text and not translation:
                 continue
             start = getattr(b, "start", timedelta(0))
@@ -515,7 +521,12 @@ def apply_offset(blocks: List[SubtitleBlock], offset_ms: int) -> List[SubtitleBl
     return shifted
 
 
-def _subtitle_text(value, *, single_line: bool = False) -> str:
+def _subtitle_text(
+    value,
+    *,
+    single_line: bool = False,
+    is_translation: bool = False,
+) -> str:
     if not isinstance(value, str):
         return ""
     text = _MUSIC_SYMBOL_RE.sub("", value)
@@ -524,6 +535,8 @@ def _subtitle_text(value, *, single_line: bool = False) -> str:
         cleaned = re.sub(r"\s{2,}", " ", line).strip()
         if re.fullmatch(r"[-–—\s]+", cleaned):
             continue
+        if is_translation:
+            cleaned = re.sub(r"\s*-+$", "", cleaned).strip()
         if cleaned:
             lines.append(cleaned)
     if single_line:
@@ -543,10 +556,7 @@ def _single_line_translation(lines: list[str]) -> list[str]:
 
 
 def _has_structural_line_break(lines: list[str]) -> bool:
-    if any(_DIALOGUE_MARKER_RE.match(line) for line in lines):
-        return True
-    speaker_lines = sum(1 for line in lines if _SPEAKER_LABEL_RE.match(line))
-    return speaker_lines >= 2
+    return classify_speaker_lines(lines) is not None
 
 
 def _join_subtitle_lines(lines: list[str]) -> str:

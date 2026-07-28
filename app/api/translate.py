@@ -941,7 +941,12 @@ def _translation_export_integrity_message(blocks, write_report) -> Optional[str]
     )
 
 
-def _persist_translated_srt_id_mapping(pid: str, write_report) -> None:
+def _persist_translated_srt_id_mapping(
+    pid: str,
+    write_report,
+    *,
+    output_path: Optional[Path] = None,
+) -> Path:
     report_path = _safe_project_artifact_path(pid, "translation_qa_report.json")
     try:
         report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -968,8 +973,72 @@ def _persist_translated_srt_id_mapping(pid: str, write_report) -> None:
                 "source_block_id": source_block_id,
                 "output_id": output_id,
             })
+    destination = Path(output_path) if output_path is not None else report_path
     report["subtitle_id_mapping"] = {"translated_srt": mapping}
-    atomic_write_json(report_path, report)
+    atomic_write_json(destination, report)
+    return destination
+
+
+def _new_staged_artifact_path(pdir: Path, final_name: str) -> Path:
+    handle = tempfile.NamedTemporaryFile(
+        dir=pdir,
+        prefix=f".{final_name}.",
+        suffix=".tmp",
+        delete=False,
+    )
+    path = Path(handle.name)
+    handle.close()
+    return path
+
+
+def _publish_translation_artifacts(
+    pid: str,
+    blocks,
+    *,
+    write_bilingual,
+):
+    pdir = project_dir(pid)
+    translated_stage = _new_staged_artifact_path(pdir, "translated.srt")
+    bilingual_stage = _new_staged_artifact_path(pdir, "bilingual.srt")
+    report_stage = _new_staged_artifact_path(pdir, "translation_qa_report.json")
+    staged = (translated_stage, bilingual_stage, report_stage)
+    finals = (
+        pdir / "translated.srt",
+        pdir / "bilingual.srt",
+    )
+    try:
+        write_report = write_srt(
+            blocks,
+            str(translated_stage),
+            use_translation=True,
+            return_report=True,
+        )
+        export_msg = _translation_export_integrity_message(blocks, write_report)
+        if export_msg:
+            raise RuntimeError(export_msg)
+        write_bilingual(blocks, str(bilingual_stage))
+        _persist_translated_srt_id_mapping(
+            pid,
+            write_report,
+            output_path=report_stage,
+        )
+        os.replace(translated_stage, finals[0])
+        os.replace(bilingual_stage, finals[1])
+        os.replace(
+            report_stage,
+            project_dir(pid) / "translation_qa_report.json",
+        )
+        return write_report
+    except Exception:
+        _remove_safe_project_files(pid, ["translated.srt", "bilingual.srt"])
+        raise
+    finally:
+        for path in staged:
+            try:
+                if path.is_file() and not path.is_symlink():
+                    path.unlink()
+            except OSError:
+                pass
 
 
 _FINAL_MISSING_TRANSLATION_RETRY_NOTE = (
@@ -3211,20 +3280,16 @@ def _run_translate_pipeline(
                 _write_partial_outputs()
             else:
                 _remove_safe_project_files(pid, ["partial_translated.srt", "partial_bilingual.srt"])
-                write_report = write_srt(
-                    blocks,
-                    os.path.join(pdir, "translated.srt"),
-                    use_translation=True,
-                    return_report=True,
-                )
-                export_msg = _translation_export_integrity_message(blocks, write_report)
-                if export_msg:
-                    incomplete_msg = export_msg
+                try:
+                    _publish_translation_artifacts(
+                        pid,
+                        blocks,
+                        write_bilingual=write_bilingual_srt,
+                    )
+                except Exception:
                     _write_partial_outputs()
-                else:
-                    write_bilingual_srt(blocks, os.path.join(pdir, "bilingual.srt"))
-                    _persist_translated_srt_id_mapping(pid, write_report)
-                    _mark_translation_artifacts(pid)
+                    raise
+                _mark_translation_artifacts(pid)
             try:
                 write_kb_usage_trace(Path(pdir), translator.get_kb_usage_trace())
             except Exception as e:

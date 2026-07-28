@@ -101,6 +101,50 @@ def test_quality_checks_accept_preserved_two_speaker_line_structure():
     assert "speaker_line_structure_mismatch" not in report.summary["by_type"]
 
 
+def test_quality_checks_detect_mixed_and_long_speaker_structures():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(
+            33,
+            "-No space after marker\nSECONDARY COORDINATOR: Hold.",
+            "先等等，协调员让我们别动。",
+        ),
+        _block(
+            34,
+            "INTERNATIONAL RESPONSE COORDINATOR: Hold.\n"
+            "SECONDARY OPERATIONS DIRECTOR: Go.",
+            "先等等，然后行动。",
+        ),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
+
+    issues = [
+        issue for issue in report.issues
+        if issue.type == "speaker_line_structure_mismatch"
+    ]
+    assert [issue.block_id for issue in issues] == [33, 34]
+
+
+def test_quality_checks_do_not_classify_single_marker_plus_continuation_as_two_speakers():
+    from app.engines.translation_qa import run_quality_checks
+
+    report = run_quality_checks(
+        [
+            _block(
+                35,
+                "- Wait,\nthis is still the same speaker.",
+                "等等，这仍然是同一个人说的话。",
+            ),
+        ],
+        target_language="简体中文",
+        max_chars=40,
+    )
+
+    assert "speaker_line_structure_mismatch" not in report.summary["by_type"]
+
+
 def test_quality_checks_enforce_context_selected_domain_term_drift():
     from app.engines.translation_qa import run_quality_checks
 
@@ -156,6 +200,60 @@ def test_quality_checks_enforce_repeated_cjk_project_place_term():
     issues = [issue for issue in report.issues if issue.type == "kb_term_missing"]
     assert [(issue.block_id, issue.expected) for issue in issues] == [
         (45, "North Harbor"),
+    ]
+
+
+def test_quality_checks_match_ascii_terms_inside_cjk_and_respect_ascii_boundaries():
+    from app.engines.kb_models import ProjectKb, TermEntry
+    from app.engines.translation_qa import run_quality_checks
+
+    kb = ProjectKb(
+        characters=[TermEntry(source="Ann", target="安")],
+        brands=[TermEntry(source="API", target="应用接口")],
+    )
+    blocks = [
+        _block(46, "调用API接口。", "调用接口。"),
+        _block(47, "Annette arrived.", "安妮特到了。"),
+    ]
+
+    report = run_quality_checks(
+        blocks,
+        project_kb=kb,
+        target_language="简体中文",
+        max_chars=40,
+    )
+
+    issues = [issue for issue in report.issues if issue.type == "kb_term_missing"]
+    assert [(issue.block_id, issue.expected) for issue in issues] == [
+        (46, "应用接口"),
+    ]
+
+
+def test_quality_checks_normalize_target_whitespace_and_boundaries():
+    from app.engines.kb_models import ProjectKb, TermEntry
+    from app.engines.translation_qa import run_quality_checks
+
+    kb = ProjectKb(
+        characters=[TermEntry(source="阿安", target="Ann")],
+        places=[TermEntry(source="北港", target="North Harbor")],
+        brands=[TermEntry(source="接口", target="API")],
+    )
+    blocks = [
+        _block(48, "返回北港。", "Return to North\nHarbor."),
+        _block(49, "阿安到了。", "Annette arrived."),
+        _block(50, "调用接口。", "调用API接口。"),
+    ]
+
+    report = run_quality_checks(
+        blocks,
+        project_kb=kb,
+        target_language="English",
+        max_chars=40,
+    )
+
+    issues = [issue for issue in report.issues if issue.type == "kb_term_missing"]
+    assert [(issue.block_id, issue.expected) for issue in issues] == [
+        (49, "Ann"),
     ]
 
 
