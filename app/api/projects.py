@@ -1848,12 +1848,19 @@ def _save_subtitles_locked(
     # Save bilingual version
     write_bilingual_srt(blocks, str(pdir / "bilingual.srt"))
     report_path = pdir / "translation_qa_report.json"
-    if report_path.is_file() or project.get("translation_quality_status"):
-        mutate_project(
+    quality_policy = project.get("translation_quality_policy")
+    updated_project = project
+    if (
+        quality_policy == "strict"
+        or report_path.is_file()
+        or project.get("translation_quality_status")
+    ):
+        updated_project = mutate_project(
             pid,
             lambda current: current.update({
                 "translation_quality_status": "stale",
                 "translation_quality_message": "字幕已编辑，需要重新运行翻译质量检查。",
+                "translation_quality_content_hash": "",
             }),
             normalize=_apply_safe_defaults,
         )
@@ -1869,11 +1876,20 @@ def _save_subtitles_locked(
     except Exception as e:
         log.warning("translation memory learning failed for %s: %s", pid, e)
 
-    return {
+    response = {
         "status": "ok",
         "count": len(blocks),
         "blocks": [_subtitle_editor_payload(block) for block in blocks],
     }
+    for field in (
+        "translation_quality_policy",
+        "translation_quality_status",
+        "translation_quality_message",
+        "translation_quality_run_id",
+        "translation_quality_content_hash",
+    ):
+        response[field] = updated_project.get(field)
+    return response
 
 
 @router.post("/{pid}/export")
@@ -1900,15 +1916,17 @@ def export_srt(
     else:
         report_path = pdir / "translation_qa_report.json"
         quality_status = project.get("translation_quality_status")
-        expects_certification = report_path.is_file() or (
+        quality_policy = project.get("translation_quality_policy")
+        persisted_policy = quality_policy if quality_policy in {"fast", "strict"} else ""
+        if quality_status in {"failed", "needs_review", "stale"}:
+            raise HTTPException(
+                409,
+                "Translation quality certification is not exportable; rerun quality checks",
+            )
+        expects_certification = persisted_policy == "strict" or report_path.is_file() or (
             isinstance(quality_status, str) and bool(quality_status.strip())
         )
         if expects_certification:
-            if quality_status == "stale":
-                raise HTTPException(
-                    409,
-                    "Translation quality certification is stale; rerun quality checks",
-                )
             decision = load_quality_report_decision(
                 report_path,
                 expected_run_id=(
@@ -1921,6 +1939,7 @@ def export_srt(
                     if isinstance(project.get("translation_quality_content_hash"), str)
                     else ""
                 ),
+                expected_policy=persisted_policy,
             )
             if not decision.passed:
                 raise HTTPException(

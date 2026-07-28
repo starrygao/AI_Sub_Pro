@@ -2336,13 +2336,37 @@ def _finalize_quality_conclusion(
     })
 
 
-def _begin_translation_quality_run(pid: str) -> str:
-    """Invalidate prior certification and return a fresh run identity."""
+def _begin_translation_quality_run(pid: str, *, expected_policy: str) -> str:
+    """Persist the expected policy and invalidate prior certification."""
+    if expected_policy not in {"fast", "strict"}:
+        raise ValueError("expected_policy must be fast or strict")
+    project = _load_project(pid)
+    reusable_run_id = project.get("translation_quality_run_id")
+    reuse_pending_identity = (
+        project.get("translation_quality_policy") == expected_policy
+        and project.get("translation_quality_status") is None
+        and project.get("translation_quality_content_hash") in {"", None}
+        and isinstance(reusable_run_id, str)
+        and bool(reusable_run_id.strip())
+        and _safe_project_artifact_path(pid, "translation_qa_report.json") is None
+    )
+    run_id = reusable_run_id if reuse_pending_identity else uuid.uuid4().hex
+    mutate_project(
+        pid,
+        lambda current: current.update({
+            "translation_quality_policy": expected_policy,
+            "translation_quality_status": None,
+            "translation_quality_message": "",
+            "translation_quality_run_id": run_id,
+            "translation_quality_content_hash": "",
+        }),
+        normalize=_apply_safe_defaults,
+    )
     _remove_safe_project_files(
         pid,
         ["translation_qa_report.json", "translation_qa_report.md"],
     )
-    return uuid.uuid4().hex
+    return run_id
 
 
 def _translation_quality_gate_decision(
@@ -3003,7 +3027,10 @@ def _run_translate_pipeline(
             pdir = str(PROJECTS_DIR / pid)
             cfg = Config.to_dict()
             strict_policy = _strict_quality_policy(cfg, strict_quality_gate)
-            quality_run_id = _begin_translation_quality_run(pid)
+            quality_run_id = _begin_translation_quality_run(
+                pid,
+                expected_policy="strict" if strict_policy else "fast",
+            )
             quality_run_state = {
                 "run_id": quality_run_id,
                 "semantic_uncertain_observed_block_ids": [],
@@ -3601,7 +3628,8 @@ def start_translate(pid: str = PathParam(pattern=PID_PATTERN), req: TranslateReq
         "target_language",
     )
     require_translation_ready()
-    _ensure_kb_review_ready(pid, project, as_http=True, config=Config.to_dict())
+    cfg = Config.to_dict()
+    _ensure_kb_review_ready(pid, project, as_http=True, config=cfg)
     try:
         t = try_register_task(pid, lambda: threading.Thread(
             target=_run_translate_pipeline,
@@ -3615,6 +3643,12 @@ def start_translate(pid: str = PathParam(pattern=PID_PATTERN), req: TranslateReq
     try:
         _persist_workflow_options(pid, target_language=target_lang)
         _reset_workflow_for_action(pid, "translate")
+        _begin_translation_quality_run(
+            pid,
+            expected_policy=(
+                "strict" if _strict_quality_policy(cfg) else "fast"
+            ),
+        )
         _mark_project_stage_queued(pid, "translate", "等待翻译资源...")
     except Exception:
         unregister_task(pid)
@@ -3678,6 +3712,7 @@ def start_full(pid: str = PathParam(pattern=PID_PATTERN), req: FullPipelineReque
             workflow_mode=workflow_mode,
         )
         _reset_workflow_for_action(pid, "full")
+        _begin_translation_quality_run(pid, expected_policy="strict")
     except Exception:
         unregister_task(pid)
         raise
@@ -3700,6 +3735,7 @@ def start_transcribe_translate(pid: str = PathParam(pattern=PID_PATTERN), req: F
         "target_language",
     )
     require_translation_ready()
+    cfg = Config.to_dict()
     try:
         t = try_register_task(pid, lambda: threading.Thread(
             target=_run_asr_translate_pipeline,
@@ -3717,6 +3753,12 @@ def start_transcribe_translate(pid: str = PathParam(pattern=PID_PATTERN), req: F
             workflow_mode=workflow_mode,
         )
         _reset_workflow_for_action(pid, "asr_translate")
+        _begin_translation_quality_run(
+            pid,
+            expected_policy=(
+                "strict" if _strict_quality_policy(cfg) else "fast"
+            ),
+        )
     except Exception:
         unregister_task(pid)
         raise

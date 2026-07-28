@@ -137,6 +137,7 @@ def _seed_strict_certification(tmp_project_dir, pid, verdict, *, warning=False):
     project_path = pdir / "project.json"
     project = json.loads(project_path.read_text(encoding="utf-8"))
     project.update({
+        "translation_quality_policy": "strict",
         "translation_quality_status": (
             "passed" if verdict == "passed" else verdict
         ),
@@ -352,6 +353,24 @@ def test_export_original_ignores_failed_strict_translation_certification(
     assert "Original" in response.json()["content"]
 
 
+def test_export_allows_explicit_fast_policy_without_report(
+    client,
+    tmp_project_dir,
+):
+    pid = _seed_project(tmp_project_dir, "fast-no-report")
+    project_path = tmp_project_dir / pid / "project.json"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    project.update({
+        "translation_quality_policy": "fast",
+        "translation_quality_status": None,
+    })
+    project_path.write_text(json.dumps(project), encoding="utf-8")
+
+    response = client.post(f"/api/projects/{pid}/export?format=translated")
+
+    assert response.status_code == 200
+
+
 def test_export_allows_valid_strict_warning_certification_without_server_ack(
     client,
     tmp_project_dir,
@@ -409,6 +428,74 @@ def test_export_rejects_stale_strict_run_identity(
     assert "quality" in response.json()["detail"].lower()
 
 
+@pytest.mark.parametrize("format", ["translated", "bilingual"])
+def test_export_rejects_missing_report_while_new_strict_run_is_loading(
+    client,
+    tmp_project_dir,
+    format,
+):
+    pid = _seed_project(tmp_project_dir, f"strict-loading-{format}")
+    pdir = tmp_project_dir / pid
+    (pdir / "bilingual.srt").write_text("old bilingual", encoding="utf-8")
+    project_path = pdir / "project.json"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    project.update({
+        "status": "processing",
+        "pipeline_stage": "translate",
+        "translation_quality_policy": "strict",
+        "translation_quality_run_id": "run-new",
+    })
+    project.pop("translation_quality_status", None)
+    project_path.write_text(json.dumps(project), encoding="utf-8")
+
+    response = client.post(f"/api/projects/{pid}/export?format={format}")
+
+    assert response.status_code == 409
+    assert "quality" in response.json()["detail"].lower()
+
+
+def test_export_rejects_report_from_substituted_fast_policy(
+    client,
+    tmp_project_dir,
+):
+    pid = _seed_strict_certification(
+        tmp_project_dir,
+        "strict-policy-substitution",
+        "passed",
+    )
+    report_path = tmp_project_dir / pid / "translation_qa_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["summary"]["quality_gate"]["policy"] = "fast"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    response = client.post(f"/api/projects/{pid}/export?format=translated")
+
+    assert response.status_code == 409
+    assert "quality" in response.json()["detail"].lower()
+
+
+@pytest.mark.parametrize("quality_status", ["failed", "needs_review", "stale"])
+def test_export_rejects_explicit_non_exportable_project_quality_status(
+    client,
+    tmp_project_dir,
+    quality_status,
+):
+    pid = _seed_strict_certification(
+        tmp_project_dir,
+        f"strict-explicit-{quality_status}",
+        "passed",
+    )
+    project_path = tmp_project_dir / pid / "project.json"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    project["translation_quality_status"] = quality_status
+    project_path.write_text(json.dumps(project), encoding="utf-8")
+
+    response = client.post(f"/api/projects/{pid}/export?format=translated")
+
+    assert response.status_code == 409
+    assert "quality" in response.json()["detail"].lower()
+
+
 def test_put_subtitles_invalidates_strict_certification_before_export(
     client,
     tmp_project_dir,
@@ -429,6 +516,9 @@ def test_put_subtitles_invalidates_strict_certification_before_export(
         }],
     })
     assert put_response.status_code == 200
+    assert put_response.json()["translation_quality_policy"] == "strict"
+    assert put_response.json()["translation_quality_status"] == "stale"
+    assert "重新运行" in put_response.json()["translation_quality_message"]
 
     response = client.post(f"/api/projects/{pid}/export?format=translated")
 

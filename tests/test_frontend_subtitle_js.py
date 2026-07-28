@@ -2763,8 +2763,18 @@ def test_quality_view_recomputes_all_states_from_backend_and_local_edits():
 
         setReport('ok', [], {policy: 'strict', verdict: 'passed', passed: true, requires_human_review: false});
         state.subtitles[0].translation = '';
-        if (state.subtitleQualityView('translated').status !== 'blocked') {
+        const localBlockedView = state.subtitleQualityView('translated');
+        if (localBlockedView.status !== 'blocked') {
           throw new Error('unsaved local severe edit must override stale passed report');
+        }
+        const localGate = localBlockedView.summary.quality_gate;
+        if (localGate.passed !== false
+            || localGate.verdict !== 'failed'
+            || localGate.requires_human_review !== false
+            || localBlockedView.summary.unresolved_blocks !== localBlockedView.summary.error_count
+            || (localBlockedView.summary.conclusion || '').startsWith('达标')
+            || (localBlockedView.summary.conclusion || '').includes('可导出')) {
+          throw new Error(`authoritative summary must agree with local block: ${JSON.stringify(localBlockedView.summary)}`);
         }
         const summary = state.qaReportSummaryText();
         const nextAction = state.qaReportNextAction();
@@ -2947,6 +2957,172 @@ def test_professional_report_loading_fails_closed_for_translation_export():
         if (!state.canExportSubtitle('original')) {
           throw new Error('strict report loading must not block clean original export');
         }
+        """
+    )
+
+
+def test_persist_subtitles_applies_canonical_stale_quality_and_blocks_export():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          let exportCalls = 0;
+          state.currentProject = {
+            id: 'p1',
+            status: 'translated',
+            translation_quality_policy: 'strict',
+            translation_quality_status: 'passed',
+            translation_quality_run_id: 'run-current',
+            translation_quality_content_hash: 'sha256:current',
+          };
+          state.subtitles = [{
+            index: 1,
+            start: '00:00:00,000',
+            end: '00:00:02,000',
+            text: 'Hello',
+            translation: '语义上已被编辑，但结构仍然有效。',
+            filtered: false,
+          }];
+          state.qaReport = state.normalizeQualityReport({
+            status: 'ok',
+            issues: [],
+            summary: {
+              issue_count: 0,
+              unresolved_blocks: 0,
+              conclusion: '达标：可导出。',
+              quality_gate: {
+                policy: 'strict',
+                verdict: 'passed',
+                passed: true,
+                requires_human_review: false,
+              },
+            },
+          });
+          state.toast = () => {};
+          state.api = async (url, method) => {
+            if (method === 'PUT' && url === '/api/projects/p1/subtitles') {
+              return {
+                status: 'ok',
+                blocks: state.subtitles,
+                translation_quality_policy: 'strict',
+                translation_quality_status: 'stale',
+                translation_quality_message: '字幕已编辑，需要重新运行翻译质量检查。',
+                translation_quality_run_id: 'run-current',
+                translation_quality_content_hash: '',
+              };
+            }
+            if (method === 'POST' && url.includes('/export')) {
+              exportCalls += 1;
+              return {content: 'must not export', filename: 'bad.srt'};
+            }
+            throw new Error(`unexpected request ${method} ${url}`);
+          };
+
+          await state.persistSubtitles();
+
+          const view = state.subtitleQualityView('translated');
+          if (state.currentProject.translation_quality_status !== 'stale'
+              || view.status !== 'blocked'
+              || view.summary.quality_gate.passed !== false
+              || view.summary.quality_gate.verdict !== 'failed'
+              || state.canExportSubtitle('translated')) {
+            throw new Error(`canonical stale response must block: ${JSON.stringify({project: state.currentProject, view})}`);
+          }
+          await state.exportSubtitle('translated');
+          if (exportCalls !== 0) {
+            throw new Error(`stale direct export reached API ${exportCalls} time(s)`);
+          }
+        })().catch((error) => {
+          console.error(error.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_persist_subtitles_ignores_stale_report_and_project_switch_responses():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          const passedReport = {
+            status: 'ok',
+            issues: [],
+            summary: {
+              issue_count: 0,
+              quality_gate: {policy: 'strict', verdict: 'passed', passed: true, requires_human_review: false},
+            },
+          };
+          const stalePut = {
+            status: 'ok',
+            blocks: [{index: 1, start: '00:00:00,000', end: '00:00:02,000', text: 'Hello', translation: '编辑', filtered: false}],
+            translation_quality_policy: 'strict',
+            translation_quality_status: 'stale',
+            translation_quality_message: '需要重新检查',
+            translation_quality_run_id: 'run-p1',
+            translation_quality_content_hash: '',
+          };
+          state.currentProject = {id: 'p1', translation_quality_policy: 'strict', translation_quality_status: 'passed'};
+          state.subtitles = stalePut.blocks;
+          state.qaReport = state.normalizeQualityReport(passedReport);
+
+          let releaseReport;
+          state.api = async (url, method) => {
+            if (url === '/api/projects/p1/quality-report') {
+              return await new Promise((resolve) => { releaseReport = () => resolve(passedReport); });
+            }
+            if (url === '/api/projects/p1/subtitles' && method === 'PUT') return stalePut;
+            throw new Error(`unexpected request ${method} ${url}`);
+          };
+          const reportLoad = state.loadQualityReport();
+          await Promise.resolve();
+          await state.persistSubtitles();
+          releaseReport();
+          await reportLoad;
+          if (state.currentProject.translation_quality_status !== 'stale'
+              || state.subtitleQualityView('translated').status !== 'blocked') {
+            throw new Error('older passed report response overwrote stale PUT truth');
+          }
+
+          let releasePut;
+          state.currentProject = {id: 'p1', translation_quality_policy: 'strict', translation_quality_status: 'passed'};
+          state.qaReport = state.normalizeQualityReport(passedReport);
+          state.api = async (url, method) => {
+            if (url === '/api/projects/p1/subtitles' && method === 'PUT') {
+              return await new Promise((resolve) => { releasePut = () => resolve(stalePut); });
+            }
+            throw new Error(`unexpected request ${method} ${url}`);
+          };
+          const pendingPut = state.persistSubtitles();
+          await Promise.resolve();
+          state.currentProject = {id: 'p2', translation_quality_policy: 'strict', translation_quality_status: 'passed'};
+          state.qaReport = state.normalizeQualityReport(passedReport);
+          state.subtitles = [{index: 1, start: '00:00:00,000', end: '00:00:02,000', text: 'Other', translation: '其他', filtered: false}];
+          releasePut();
+          await pendingPut;
+          if (state.currentProject.id !== 'p2'
+              || state.currentProject.translation_quality_status !== 'passed'
+              || state.subtitleQualityView('translated').status !== 'passed') {
+            throw new Error(`stale p1 PUT response mutated p2: ${JSON.stringify(state.currentProject)}`);
+          }
+        })().catch((error) => {
+          console.error(error.message);
+          process.exit(1);
+        });
         """
     )
 

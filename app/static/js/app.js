@@ -99,6 +99,7 @@ function app() {
     editingIdx: -1,
     editText: '',
     subtitleActionPending: '',
+    subtitlePersistRequestSeq: 0,
     subtitleFindText: '',
     subtitleReplaceText: '',
     subtitleReplaceScope: 'translation',
@@ -2269,10 +2270,11 @@ function app() {
         ? this.qaReport.summary.quality_gate
         : {};
       const qualityStatus = String(this.currentProject?.translation_quality_status || '').trim();
-      return strategy.quality_mode?.professional === true
+      return this.currentProject?.translation_quality_policy === 'strict'
+        || strategy.quality_mode?.professional === true
         || strategy.quality_mode?.quality_gate === true
         || gate.policy === 'strict'
-        || ['passed', 'failed', 'needs_review'].includes(qualityStatus);
+        || ['passed', 'failed', 'needs_review', 'stale'].includes(qualityStatus);
     },
 
     subtitleQualityView(format = 'translated') {
@@ -2319,22 +2321,62 @@ function app() {
         const gateBlocked = gate.verdict === 'failed'
           || gate.passed === false && !reviewRequired
           || report.status === 'failed'
-          || qualityStatus === 'failed';
+          || qualityStatus === 'failed'
+          || report.status === 'stale'
+          || qualityStatus === 'stale';
         const reportUnavailable = this.expectsStrictQualityReport()
           && (this.qaReportLoading || report.status === 'missing');
         if (gateBlocked || reportUnavailable || errorCount) status = 'blocked';
         else if (reviewRequired) status = 'needs-review';
       }
 
+      const reportGate = this.isPlainObject(report.summary?.quality_gate)
+        ? report.summary.quality_gate
+        : {};
+      const persistedPolicy = this.currentProject?.translation_quality_policy;
+      const policy = persistedPolicy === 'strict' || persistedPolicy === 'fast'
+        ? persistedPolicy
+        : (reportGate.policy === 'strict' || reportGate.policy === 'fast'
+          ? reportGate.policy
+          : (this.expectsStrictQualityReport() ? 'strict' : 'fast'));
+      const requiresHumanReview = status === 'needs-review';
+      const passed = status === 'passed' || status === 'passed-with-warnings';
+      const unresolvedBlocks = passed
+        ? 0
+        : issues.filter(issue =>
+          ['error', 'severe'].includes(issue.severity)
+          || issue.type === 'semantic_uncertain'
+          || issue.type === 'requires_human_review'
+        ).length;
+      const conclusion = {
+        blocked: '未达标：仍有阻塞问题，需要修正并重新运行质量检查。',
+        'needs-review': '需要人工复核，复核完成前不能交付。',
+        'passed-with-warnings': '达标：质量检查通过，但仍有非阻塞警告。',
+        passed: '达标：质量检查通过。',
+      }[status];
+      const qualityGate = {
+        policy,
+        verdict: requiresHumanReview ? 'needs_review' : (passed ? 'passed' : 'failed'),
+        passed,
+        requires_human_review: requiresHumanReview,
+        delivery_mode: requiresHumanReview ? 'human_review' : 'unattended',
+        unresolved_blocks: unresolvedBlocks,
+        next_action: requiresHumanReview
+          ? 'human_review'
+          : (passed ? 'deliver' : 'auto_retry_or_stop'),
+      };
       return {
         status,
         issues,
         summary: {
-          ...report.summary,
           issue_count: issues.length,
           error_count: errorCount,
           warning_count: warningCount,
           by_type: byType,
+          repaired_blocks: report.summary.repaired_blocks,
+          unresolved_blocks: unresolvedBlocks,
+          conclusion,
+          quality_gate: qualityGate,
         },
       };
     },
@@ -4216,12 +4258,43 @@ function app() {
 
     async persistSubtitles() {
       this.renumberSubtitles();
+      const projectId = String(this.currentProject?.id || '');
+      if (!projectId) return;
+      const requestId = ++this.subtitlePersistRequestSeq;
       const data = await this.api(
-        `/api/projects/${this.currentProject.id}/subtitles`,
+        `/api/projects/${projectId}/subtitles`,
         'PUT',
         { blocks: this.subtitles },
       );
+      if (
+        this.subtitlePersistRequestSeq !== requestId
+        || String(this.currentProject?.id || '') !== projectId
+      ) return data;
       this.syncSubtitleServerMetadata(data?.blocks);
+      const qualityFields = [
+        'translation_quality_policy',
+        'translation_quality_status',
+        'translation_quality_message',
+        'translation_quality_run_id',
+        'translation_quality_content_hash',
+      ];
+      qualityFields.forEach((field) => {
+        if (Object.prototype.hasOwnProperty.call(data || {}, field)) {
+          this.currentProject[field] = data[field];
+        }
+      });
+      const qualityStatus = String(
+        data?.translation_quality_status
+          ?? this.currentProject?.translation_quality_status
+          ?? ''
+      ).trim();
+      if (qualityStatus === 'stale') {
+        this.qaReportRequestSeq += 1;
+        this.qaReportLoading = false;
+        this.qaReportError = '';
+        this.qaReport = this.normalizeQualityReport({status: 'stale'});
+      }
+      return data;
     },
 
     async addSubtitleAfter(idx) {

@@ -2341,16 +2341,32 @@ def test_translation_start_invalidates_prior_certification(tmp_path, monkeypatch
     pid = "invalidateqa"
     pdir = tmp_path / pid
     pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "status": "translated",
+        "translation_quality_policy": "fast",
+        "translation_quality_status": "passed",
+        "translation_quality_run_id": "old-run",
+        "translation_quality_content_hash": "sha256:old",
+    }), encoding="utf-8")
     (pdir / "translation_qa_report.json").write_text('{"status":"ok"}', encoding="utf-8")
     (pdir / "translation_qa_report.md").write_text("# old", encoding="utf-8")
     monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
     monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
 
-    run_id = api_translate._begin_translation_quality_run(pid)
+    run_id = api_translate._begin_translation_quality_run(
+        pid,
+        expected_policy="strict",
+    )
 
     assert isinstance(run_id, str) and run_id
     assert not (pdir / "translation_qa_report.json").exists()
     assert not (pdir / "translation_qa_report.md").exists()
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["translation_quality_policy"] == "strict"
+    assert project["translation_quality_run_id"] == run_id
+    assert project["translation_quality_status"] is None
+    assert project["translation_quality_content_hash"] == ""
 
 
 def test_translate_pipeline_does_not_swallow_quality_report_persistence_failure(

@@ -227,6 +227,63 @@ def test_start_translate_professional_mode_generates_suggestions_without_blockin
     assert r.json()["status"] == "started"
     saved = json.loads((tmp_project_dir / pid / "kb_suggestions.json").read_text(encoding="utf-8"))
     assert len(saved["suggestions"]) > 0
+    project = json.loads(
+        (tmp_project_dir / pid / "project.json").read_text(encoding="utf-8")
+    )
+    assert project["translation_quality_policy"] == "strict"
+
+
+def test_full_and_transcribe_translate_persist_strict_policy_before_workers_start(
+    tmp_project_dir,
+    monkeypatch,
+):
+    from app.api import translate as translate_api
+
+    client = _client(tmp_project_dir, monkeypatch)
+    _allow_translation(monkeypatch)
+    monkeypatch.setattr(
+        translate_api.Config,
+        "to_dict",
+        lambda: {"translation": {"quality_mode": "professional"}},
+    )
+
+    class DummyThread:
+        def start(self):
+            pass
+
+    monkeypatch.setattr(
+        translate_api,
+        "try_register_task",
+        lambda *args, **kwargs: DummyThread(),
+    )
+
+    full_pid = _seed_project(tmp_project_dir, pid="strictfull")
+    audio_pid = _seed_project(tmp_project_dir, pid="strictaudio")
+    audio_path = tmp_project_dir / audio_pid / "project.json"
+    audio_project = json.loads(audio_path.read_text(encoding="utf-8"))
+    audio_project.update({"source_type": "audio", "video_path": None})
+    audio_path.write_text(json.dumps(audio_project), encoding="utf-8")
+
+    full_response = client.post(
+        f"/api/projects/{full_pid}/start-full",
+        json={"target_language": "English", "workflow_mode": "translate_burn"},
+    )
+    audio_response = client.post(
+        f"/api/projects/{audio_pid}/start-transcribe-translate",
+        json={"target_language": "English", "workflow_mode": "translate_only"},
+    )
+
+    assert full_response.status_code == 200
+    assert audio_response.status_code == 200
+    for pid in (full_pid, audio_pid):
+        project = json.loads(
+            (tmp_project_dir / pid / "project.json").read_text(encoding="utf-8")
+        )
+        assert project["translation_quality_policy"] == "strict"
+        assert project["translation_quality_status"] is None
+        assert project["translation_quality_content_hash"] == ""
+        assert isinstance(project["translation_quality_run_id"], str)
+        assert project["translation_quality_run_id"]
 
 
 def test_start_translate_keeps_running_when_kb_suggestions_are_rejected(tmp_project_dir, monkeypatch):
