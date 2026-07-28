@@ -2899,14 +2899,31 @@ def test_warning_confirmation_is_required_every_time_and_review_states_block_dir
           let calls = 0;
           let confirms = 0;
           const toasts = [];
-          state.currentProject = {id: 'p1', status: 'translated', translation_quality_status: 'passed'};
+          state.currentProject = {
+            id: 'p1',
+            status: 'translated',
+            translation_quality_policy: 'strict',
+            translation_quality_status: 'passed',
+            translation_quality_run_id: 'run-current',
+            translation_quality_content_hash: 'sha256:current',
+          };
           state.subtitles = [{index: 1, start: '00:00:00,000', end: '00:00:02,000', text: 'Hi', translation: '嗨', filtered: false}];
           state.qaReport = state.normalizeQualityReport({
+            run_id: 'run-current',
+            content_hash: 'sha256:current',
             status: 'ok',
             issues: [{type: 'punctuation_style', severity: 'warning', block_id: 1, message: 'warning'}],
             summary: {
               issue_count: 1,
-              quality_gate: {policy: 'strict', verdict: 'passed', passed: true, requires_human_review: false},
+              quality_gate: {
+                policy: 'strict',
+                verdict: 'passed',
+                passed: true,
+                requires_human_review: false,
+                delivery_mode: 'unattended',
+                unresolved_blocks: 0,
+                next_action: 'deliver',
+              },
             },
           });
           state.toast = (message, type) => { toasts.push({message, type}); };
@@ -2927,11 +2944,21 @@ def test_warning_confirmation_is_required_every_time_and_review_states_block_dir
 
           state.currentProject.translation_quality_status = 'needs_review';
           state.qaReport = state.normalizeQualityReport({
+            run_id: 'run-current',
+            content_hash: 'sha256:current',
             status: 'needs_review',
             issues: [{type: 'semantic_uncertain', severity: 'warning', block_id: 1, message: 'uncertain'}],
             summary: {
               issue_count: 1,
-              quality_gate: {policy: 'strict', verdict: 'needs_review', passed: false, requires_human_review: true},
+              quality_gate: {
+                policy: 'strict',
+                verdict: 'needs_review',
+                passed: false,
+                requires_human_review: true,
+                delivery_mode: 'human_review',
+                unresolved_blocks: 1,
+                next_action: 'human_review',
+              },
             },
           });
           if (state.canExportSubtitle('translated')) {
@@ -3011,6 +3038,52 @@ def test_professional_report_loading_fails_closed_for_translation_export():
         }
         if (!state.canExportSubtitle('original')) {
           throw new Error('strict report loading must not block clean original export');
+        }
+        """
+    )
+
+
+def test_malformed_strict_certificate_is_invalid_and_never_ready_for_export():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.currentProject = {
+          id: 'p1',
+          status: 'translated',
+          translation_quality_policy: 'strict',
+          translation_quality_status: 'passed',
+          translation_quality_run_id: 'run-current',
+          translation_quality_content_hash: 'sha256:current',
+        };
+        state.subtitles = [{
+          index: 1,
+          start: '00:00:00,000',
+          end: '00:00:02,000',
+          text: 'Hello',
+          translation: '你好',
+          filtered: false,
+        }];
+        state.qaReport = state.normalizeQualityReport({
+          status: 'ok',
+          issues: [],
+          summary: {},
+        });
+
+        const view = state.subtitleQualityView('translated');
+        const summary = state.qaReportSummaryText();
+        const nextAction = state.qaReportNextAction();
+        if (view.status !== 'blocked'
+            || view.certificate_status !== 'invalid'
+            || state.canExportSubtitle('translated')
+            || /质量检查通过|可继续导出|可导出/.test(`${summary} ${nextAction}`)) {
+          throw new Error(`malformed strict certificate must fail closed: ${JSON.stringify({view, summary, nextAction})}`);
         }
         """
     )
@@ -3115,11 +3188,21 @@ def test_persist_subtitles_ignores_stale_report_and_project_switch_responses():
         (async () => {
           const state = context.app();
           const passedReport = {
+            run_id: 'run-current',
+            content_hash: 'sha256:current',
             status: 'ok',
             issues: [],
             summary: {
               issue_count: 0,
-              quality_gate: {policy: 'strict', verdict: 'passed', passed: true, requires_human_review: false},
+              quality_gate: {
+                policy: 'strict',
+                verdict: 'passed',
+                passed: true,
+                requires_human_review: false,
+                delivery_mode: 'unattended',
+                unresolved_blocks: 0,
+                next_action: 'deliver',
+              },
             },
           };
           const stalePut = {
@@ -3131,7 +3214,13 @@ def test_persist_subtitles_ignores_stale_report_and_project_switch_responses():
             translation_quality_run_id: 'run-p1',
             translation_quality_content_hash: '',
           };
-          state.currentProject = {id: 'p1', translation_quality_policy: 'strict', translation_quality_status: 'passed'};
+          state.currentProject = {
+            id: 'p1',
+            translation_quality_policy: 'strict',
+            translation_quality_status: 'passed',
+            translation_quality_run_id: 'run-current',
+            translation_quality_content_hash: 'sha256:current',
+          };
           state.subtitles = stalePut.blocks;
           state.qaReport = state.normalizeQualityReport(passedReport);
 
@@ -3154,7 +3243,13 @@ def test_persist_subtitles_ignores_stale_report_and_project_switch_responses():
           }
 
           let releasePut;
-          state.currentProject = {id: 'p1', translation_quality_policy: 'strict', translation_quality_status: 'passed'};
+          state.currentProject = {
+            id: 'p1',
+            translation_quality_policy: 'strict',
+            translation_quality_status: 'passed',
+            translation_quality_run_id: 'run-current',
+            translation_quality_content_hash: 'sha256:current',
+          };
           state.qaReport = state.normalizeQualityReport(passedReport);
           state.api = async (url, method) => {
             if (url === '/api/projects/p1/subtitles' && method === 'PUT') {
@@ -3164,7 +3259,13 @@ def test_persist_subtitles_ignores_stale_report_and_project_switch_responses():
           };
           const pendingPut = state.persistSubtitles();
           await Promise.resolve();
-          state.currentProject = {id: 'p2', translation_quality_policy: 'strict', translation_quality_status: 'passed'};
+          state.currentProject = {
+            id: 'p2',
+            translation_quality_policy: 'strict',
+            translation_quality_status: 'passed',
+            translation_quality_run_id: 'run-current',
+            translation_quality_content_hash: 'sha256:current',
+          };
           state.qaReport = state.normalizeQualityReport(passedReport);
           state.subtitles = [{index: 1, start: '00:00:00,000', end: '00:00:02,000', text: 'Other', translation: '其他', filtered: false}];
           releasePut();

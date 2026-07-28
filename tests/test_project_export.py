@@ -455,6 +455,86 @@ def test_export_rejects_missing_report_while_new_strict_run_is_loading(
     assert "quality" in response.json()["detail"].lower()
 
 
+@pytest.mark.parametrize("format", ["translated", "bilingual"])
+def test_new_strict_report_cannot_certify_old_delivery_artifact(
+    client,
+    tmp_project_dir,
+    monkeypatch,
+    format,
+):
+    from app.api import translate as translate_api
+    from app.utils import project_store
+
+    pid = _seed_strict_certification(
+        tmp_project_dir,
+        f"strict-old-artifact-{format}",
+        "passed",
+    )
+    pdir = tmp_project_dir / pid
+    (pdir / "translated.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nOLD TRANSLATED ARTIFACT\n\n",
+        encoding="utf-8",
+    )
+    (pdir / "bilingual.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nOLD SOURCE\nOLD BILINGUAL ARTIFACT\n\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(translate_api, "PROJECTS_DIR", tmp_project_dir)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_project_dir)
+
+    new_run_id = translate_api._begin_translation_quality_run(
+        pid,
+        expected_policy="strict",
+    )
+    new_report = _strict_quality_report("passed")
+    new_report.update({
+        "run_id": new_run_id,
+        "content_hash": "sha256:new-generation",
+    })
+    (pdir / "translation_qa_report.json").write_text(
+        json.dumps(new_report),
+        encoding="utf-8",
+    )
+
+    response = client.post(f"/api/projects/{pid}/export?format={format}")
+
+    assert response.status_code == 409
+    assert "OLD" not in str(response.json())
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["translation_quality_status"] is None
+    assert project["translation_quality_content_hash"] == ""
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "translation_quality_policy",
+        "translation_quality_status",
+        "translation_quality_run_id",
+        "translation_quality_content_hash",
+    ],
+)
+def test_certified_export_rejects_missing_project_identity(
+    client,
+    tmp_project_dir,
+    missing_field,
+):
+    pid = _seed_strict_certification(
+        tmp_project_dir,
+        f"strict-missing-{missing_field}",
+        "passed",
+    )
+    project_path = tmp_project_dir / pid / "project.json"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    project.pop(missing_field)
+    project_path.write_text(json.dumps(project), encoding="utf-8")
+
+    response = client.post(f"/api/projects/{pid}/export?format=translated")
+
+    assert response.status_code == 409
+    assert "quality" in response.json()["detail"].lower()
+
+
 def test_export_rejects_report_from_substituted_fast_policy(
     client,
     tmp_project_dir,
@@ -644,3 +724,50 @@ def test_quality_report_rejects_stale_mapping_while_delivery_sentinel_exists(
 
     assert response.status_code == 409
     assert "delivery" in response.json()["detail"].lower()
+
+
+@pytest.mark.parametrize("case", ["malformed", "mismatched"])
+def test_quality_report_exposes_invalid_strict_certificate(
+    client,
+    tmp_project_dir,
+    case,
+):
+    pid = _seed_strict_certification(
+        tmp_project_dir,
+        f"strict-invalid-presentation-{case}",
+        "passed",
+    )
+    report_path = tmp_project_dir / pid / "translation_qa_report.json"
+    if case == "malformed":
+        report = {"status": "ok", "issues": [], "summary": {}}
+    else:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["run_id"] = "run-other-generation"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    response = client.get(f"/api/projects/{pid}/quality-report")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "invalid"
+    assert response.json()["summary"]["quality_gate"]["passed"] is False
+    assert "validation_message" in response.json()
+
+
+@pytest.mark.parametrize("verdict", ["failed", "needs_review"])
+def test_quality_report_keeps_valid_nonpassing_strict_findings_visible(
+    client,
+    tmp_project_dir,
+    verdict,
+):
+    pid = _seed_strict_certification(
+        tmp_project_dir,
+        f"strict-visible-{verdict}",
+        verdict,
+    )
+
+    response = client.get(f"/api/projects/{pid}/quality-report")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == verdict
+    assert response.json()["issues"]
+    assert response.json()["summary"]["quality_gate"]["verdict"] == verdict

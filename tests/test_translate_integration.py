@@ -1676,6 +1676,10 @@ def test_translate_pipeline_professional_semantic_mismatch_blocks_delivery(tmp_p
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
     assert project["status"] == "error"
     assert project["translation_quality_status"] == "failed"
+    assert project["translation_quality_policy"] == "strict"
+    assert project["translation_quality_run_id"] == report["run_id"]
+    assert project["translation_quality_content_hash"] == report["content_hash"]
+    assert project["translation_quality_content_hash"]
     assert "翻译质量未达标" in project["error"]
     assert report["summary"]["by_type"]["semantic_mismatch"] == 1
     assert report["issues"][0]["severity"] == "error"
@@ -1774,6 +1778,10 @@ def test_professional_pipeline_latches_uncertainty_after_auto_repair(tmp_path, m
     gate = report["summary"]["quality_gate"]
     assert project["status"] == "error"
     assert project["translation_quality_status"] == "needs_review"
+    assert project["translation_quality_policy"] == "strict"
+    assert project["translation_quality_run_id"] == report["run_id"]
+    assert project["translation_quality_content_hash"] == report["content_hash"]
+    assert project["translation_quality_content_hash"]
     assert gate["passed"] is False
     assert gate["verdict"] == "needs_review"
     assert gate["requires_human_review"] is True

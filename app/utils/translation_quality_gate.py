@@ -9,10 +9,11 @@ class TranslationQualityGateDecision:
     passed: bool
     message: str
     requires_human_review: bool = False
+    valid: bool = True
 
 
 def _invalid(message: str) -> TranslationQualityGateDecision:
-    return TranslationQualityGateDecision(False, message, False)
+    return TranslationQualityGateDecision(False, message, False, False)
 
 
 def _valid_block_id_list(value) -> bool:

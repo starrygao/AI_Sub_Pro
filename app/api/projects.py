@@ -40,7 +40,10 @@ from app.utils.translation_delivery import (
     translation_delivery_lock,
     translation_delivery_is_invalid,
 )
-from app.utils.translation_quality_gate import load_quality_report_decision
+from app.utils.translation_quality_gate import (
+    load_quality_report_decision,
+    validate_quality_report,
+)
 from app.utils.media import get_tracks, get_duration, get_media_info, is_text_subtitle_codec
 from app.utils.srt import (
     fmt_time,
@@ -1764,20 +1767,96 @@ def get_subtitles(pid: str = PathParam(pattern=PID_PATTERN)):
 @router.get("/{pid}/quality-report")
 def get_quality_report(pid: str = PathParam(pattern=PID_PATTERN)):
     """Return the latest translation QA report for a project."""
-    _load_project(pid)
     pdir = _project_dir(pid)
-    if translation_delivery_is_invalid(pdir):
-        raise HTTPException(409, "Translation delivery is in progress or invalid")
-    path = pdir / "translation_qa_report.json"
-    if not path.exists():
-        return {"status": "missing", "issues": [], "summary": {"issue_count": 0}}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        raise HTTPException(400, "Quality report is invalid")
-    if not isinstance(data, dict):
-        raise HTTPException(400, "Quality report is invalid")
-    return data
+    with translation_delivery_lock(pid, blocking=False) as acquired:
+        if not acquired:
+            raise HTTPException(409, "Translation delivery is in progress or invalid")
+        project = _load_project(pid)
+        if translation_delivery_is_invalid(pdir):
+            raise HTTPException(409, "Translation delivery is in progress or invalid")
+        path = pdir / "translation_qa_report.json"
+        if not path.exists():
+            return {"status": "missing", "issues": [], "summary": {"issue_count": 0}}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return _invalid_quality_report_payload(
+                "翻译质量检查报告无效，已停止交付。",
+                project,
+            )
+        if not isinstance(data, dict):
+            return _invalid_quality_report_payload(
+                "翻译质量检查报告无效，已停止交付。",
+                project,
+            )
+
+        policy = project.get("translation_quality_policy")
+        quality_status = project.get("translation_quality_status")
+        run_id = project.get("translation_quality_run_id")
+        content_hash = project.get("translation_quality_content_hash")
+        if (
+            policy not in {"fast", "strict"}
+            or quality_status not in {"passed", "failed", "needs_review"}
+            or not isinstance(run_id, str)
+            or not run_id.strip()
+            or not isinstance(content_hash, str)
+            or not content_hash.strip()
+        ):
+            return _invalid_quality_report_payload(
+                "翻译质量认证身份不完整或仍在生成，已停止交付。",
+                project,
+            )
+
+        decision = validate_quality_report(
+            data,
+            expected_run_id=run_id,
+            expected_content_hash=content_hash,
+            expected_policy=policy,
+        )
+        if not decision.valid:
+            return _invalid_quality_report_payload(decision.message, project)
+
+        report_gate = data.get("summary", {}).get("quality_gate", {})
+        expected_project_status = {
+            "passed": "passed",
+            "failed": "failed",
+            "needs_review": "needs_review",
+        }.get(report_gate.get("verdict"))
+        if quality_status != expected_project_status:
+            return _invalid_quality_report_payload(
+                "翻译质量认证状态与报告不匹配，已停止交付。",
+                project,
+            )
+        return data
+
+
+def _invalid_quality_report_payload(message: str, project: dict) -> dict:
+    policy = project.get("translation_quality_policy")
+    if policy not in {"fast", "strict"}:
+        policy = "strict"
+    detail = message.strip() or "翻译质量检查报告无效，已停止交付。"
+    return {
+        "status": "invalid",
+        "validation_message": detail,
+        "issues": [],
+        "unresolved_blocks": [],
+        "summary": {
+            "issue_count": 0,
+            "error_count": 0,
+            "warning_count": 0,
+            "unresolved_blocks": 0,
+            "conclusion": detail,
+            "quality_gate": {
+                "policy": policy,
+                "verdict": "failed",
+                "passed": False,
+                "requires_human_review": False,
+                "delivery_mode": "unattended",
+                "unresolved_blocks": 0,
+                "next_action": "auto_retry_or_stop",
+            },
+        },
+    }
 
 
 @router.put("/{pid}/subtitles")
@@ -1927,30 +2006,35 @@ def export_srt(
         quality_status = project.get("translation_quality_status")
         quality_policy = project.get("translation_quality_policy")
         persisted_policy = quality_policy if quality_policy in {"fast", "strict"} else ""
-        if quality_status in {"failed", "needs_review", "stale"}:
-            raise HTTPException(
-                409,
-                "Translation quality certification is not exportable; rerun quality checks",
-            )
-        expects_certification = persisted_policy == "strict" or report_path.is_file() or (
-            isinstance(quality_status, str) and bool(quality_status.strip())
+        project_run_id = project.get("translation_quality_run_id")
+        project_content_hash = project.get("translation_quality_content_hash")
+        expects_certification = (
+            persisted_policy == "strict"
+            or report_path.is_file()
+            or isinstance(quality_status, str) and bool(quality_status.strip())
+            or isinstance(project_run_id, str) and bool(project_run_id.strip())
+            or isinstance(project_content_hash, str) and bool(project_content_hash.strip())
         )
         if expects_certification:
+            if (
+                persisted_policy not in {"fast", "strict"}
+                or quality_status != "passed"
+                or not isinstance(project_run_id, str)
+                or not project_run_id.strip()
+                or not isinstance(project_content_hash, str)
+                or not project_content_hash.strip()
+            ):
+                raise HTTPException(
+                    409,
+                    "Translation quality certification is incomplete or not exportable",
+                )
             decision = load_quality_report_decision(
                 report_path,
-                expected_run_id=(
-                    project.get("translation_quality_run_id")
-                    if isinstance(project.get("translation_quality_run_id"), str)
-                    else ""
-                ),
-                expected_content_hash=(
-                    project.get("translation_quality_content_hash")
-                    if isinstance(project.get("translation_quality_content_hash"), str)
-                    else ""
-                ),
+                expected_run_id=project_run_id,
+                expected_content_hash=project_content_hash,
                 expected_policy=persisted_policy,
             )
-            if not decision.passed:
+            if not decision.valid or not decision.passed:
                 raise HTTPException(
                     409,
                     f"Translation quality gate rejected export: {decision.message}",

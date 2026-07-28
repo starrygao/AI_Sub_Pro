@@ -2277,10 +2277,85 @@ function app() {
         || ['passed', 'failed', 'needs_review', 'stale'].includes(qualityStatus);
     },
 
+    strictQualityCertificateState(reportInput = null) {
+      const report = this.normalizeQualityReport(reportInput || this.qaReport || {});
+      const strategy = this.normalizeTranslationStrategy(this.translationStrategy || {});
+      const strictRequired = this.currentProject?.translation_quality_policy === 'strict'
+        || strategy.quality_mode?.professional === true
+        || strategy.quality_mode?.quality_gate === true;
+      if (!strictRequired) {
+        return {required: false, status: report.status === 'invalid' ? 'invalid' : 'not-required'};
+      }
+      if (this.qaReportLoading) return {required: true, status: 'loading'};
+      if (report.status === 'missing') return {required: true, status: 'missing'};
+      if (report.status === 'invalid') return {required: true, status: 'invalid'};
+
+      const project = this.currentProject || {};
+      const gate = this.isPlainObject(report.summary?.quality_gate)
+        ? report.summary.quality_gate
+        : {};
+      const projectRunId = typeof project.translation_quality_run_id === 'string'
+        ? project.translation_quality_run_id.trim()
+        : '';
+      const projectContentHash = typeof project.translation_quality_content_hash === 'string'
+        ? project.translation_quality_content_hash.trim()
+        : '';
+      const reportRunId = typeof report.run_id === 'string' ? report.run_id.trim() : '';
+      const reportContentHash = typeof report.content_hash === 'string'
+        ? report.content_hash.trim()
+        : '';
+      const verdict = gate.verdict;
+      const expected = {
+        passed: {
+          projectStatus: 'passed',
+          reportStatus: 'ok',
+          passed: true,
+          review: false,
+          deliveryMode: 'unattended',
+          nextAction: 'deliver',
+        },
+        failed: {
+          projectStatus: 'failed',
+          reportStatus: 'failed',
+          passed: false,
+          review: false,
+          deliveryMode: 'unattended',
+          nextAction: 'auto_retry_or_stop',
+        },
+        needs_review: {
+          projectStatus: 'needs_review',
+          reportStatus: 'needs_review',
+          passed: false,
+          review: true,
+          deliveryMode: 'human_review',
+          nextAction: 'human_review',
+        },
+      }[verdict];
+      const valid = project.translation_quality_policy === 'strict'
+        && projectRunId
+        && projectContentHash
+        && reportRunId === projectRunId
+        && reportContentHash === projectContentHash
+        && gate.policy === 'strict'
+        && expected
+        && report.status === expected.reportStatus
+        && project.translation_quality_status === expected.projectStatus
+        && gate.passed === expected.passed
+        && gate.requires_human_review === expected.review
+        && gate.delivery_mode === expected.deliveryMode
+        && gate.next_action === expected.nextAction
+        && Number.isInteger(gate.unresolved_blocks)
+        && gate.unresolved_blocks >= 0;
+      return {required: true, status: valid ? 'valid' : 'invalid'};
+    },
+
     subtitleQualityView(format = 'translated') {
       const normalizedFormat = this.normalizeSubtitleQualityFormat(format);
       const includeBackend = normalizedFormat !== 'original';
       const report = this.normalizeQualityReport(this.qaReport || {});
+      const certificate = includeBackend
+        ? this.strictQualityCertificateState(report)
+        : {required: false, status: 'not-required'};
       const merged = new Map();
       const addIssue = (rawIssue, source) => {
         const issue = this.normalizeQualityIssue(rawIssue, source);
@@ -2323,9 +2398,16 @@ function app() {
           || report.status === 'failed'
           || qualityStatus === 'failed'
           || report.status === 'stale'
-          || qualityStatus === 'stale';
+          || qualityStatus === 'stale'
+          || report.status === 'invalid'
+          || certificate.status === 'invalid';
         const reportUnavailable = this.expectsStrictQualityReport()
-          && (this.qaReportLoading || report.status === 'missing');
+          && (
+            this.qaReportLoading
+            || report.status === 'missing'
+            || certificate.status === 'loading'
+            || certificate.status === 'missing'
+          );
         if (gateBlocked || reportUnavailable || errorCount) status = 'blocked';
         else if (reviewRequired) status = 'needs-review';
       }
@@ -2370,6 +2452,7 @@ function app() {
       };
       return {
         status,
+        certificate_status: certificate.status,
         issues,
         summary: {
           issue_count: issues.length,
@@ -2414,6 +2497,9 @@ function app() {
       const errors = view.summary.error_count;
       const warnings = view.summary.warning_count;
       if (view.status === 'blocked') {
+        if (view.certificate_status === 'invalid') {
+          return '质量证书无效 · 已阻止交付';
+        }
         return `质量门阻止交付 · 问题 ${issueCount} 个${errors ? ` · 错误 ${errors}` : ''}`;
       }
       if (view.status === 'needs-review') {
@@ -2427,6 +2513,9 @@ function app() {
 
     qaReportNextAction() {
       const view = this.subtitleQualityView('translated');
+      if (view.certificate_status === 'invalid') {
+        return '质量证书无效或与当前字幕不匹配；重新运行质量检查后才能导出或烧录。';
+      }
       if (view.status === 'blocked') return '仍有阻塞问题，修正并重新质检后才能导出或烧录。';
       if (view.status === 'needs-review') return '需要人工复核，复核完成前不能导出或烧录。';
       if (view.status === 'passed-with-warnings') return '质量检查已通过但仍有警告；导出时需要逐次确认。';

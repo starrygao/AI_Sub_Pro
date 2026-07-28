@@ -2406,6 +2406,9 @@ def _mark_translation_quality_failed(
     message: str,
     *,
     requires_human_review: bool = False,
+    quality_policy: str,
+    quality_run_id: str,
+    quality_content_hash: str,
 ) -> None:
     detail = message.strip() or "翻译质量未达标，已停止交付。"
     _best_effort_fail_stage(pid, "translate", detail)
@@ -2418,6 +2421,9 @@ def _mark_translation_quality_failed(
             "progress_msg": detail,
             "translation_quality_status": "needs_review" if requires_human_review else "failed",
             "translation_quality_message": detail,
+            "translation_quality_policy": quality_policy,
+            "translation_quality_run_id": quality_run_id,
+            "translation_quality_content_hash": quality_content_hash,
             "pipeline_stage": None,
             **_translation_artifact_fields(pid),
         }),
@@ -3223,6 +3229,9 @@ def _run_translate_pipeline(
                     pid,
                     quality_message,
                     requires_human_review=quality_decision.requires_human_review,
+                    quality_policy="strict" if strict_policy else "fast",
+                    quality_run_id=quality_run_id,
+                    quality_content_hash=quality_hash,
                 )
                 return
 
