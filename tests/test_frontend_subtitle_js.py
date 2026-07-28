@@ -2710,6 +2710,61 @@ def test_quality_view_merges_aliases_deduplicates_and_keeps_backend_detail():
     )
 
 
+def test_quality_view_counts_unique_positive_unresolved_block_ids():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.currentProject = {
+          id: 'p1',
+          status: 'translated',
+          translation_quality_policy: 'strict',
+          translation_quality_status: 'failed',
+        };
+        state.subtitles = [{
+          index: 7,
+          start: '00:00:00,000',
+          end: '00:00:02,000',
+          text: 'Source',
+          translation: '译文',
+          filtered: false,
+        }];
+        state.qaReport = state.normalizeQualityReport({
+          status: 'failed',
+          issues: [
+            {type: 'semantic_mismatch', severity: 'error', block_id: 7, message: 'mismatch'},
+            {type: 'missing_translation', severity: 'severe', block_id: 7, message: 'second blocker'},
+            {type: 'semantic_uncertain', severity: 'warning', block_id: null, message: 'global review'},
+          ],
+          summary: {
+            issue_count: 3,
+            quality_gate: {
+              policy: 'strict',
+              verdict: 'failed',
+              passed: false,
+              requires_human_review: false,
+            },
+          },
+        });
+
+        const view = state.subtitleQualityView('translated');
+        if (view.status !== 'blocked'
+            || view.summary.issue_count !== 3
+            || view.summary.error_count !== 2
+            || view.summary.unresolved_blocks !== 1
+            || view.summary.quality_gate.unresolved_blocks !== 1) {
+          throw new Error(`unresolved blocks must be unique positive IDs: ${JSON.stringify(view)}`);
+        }
+        """
+    )
+
+
 def test_quality_view_recomputes_all_states_from_backend_and_local_edits():
     _run_node(
         """

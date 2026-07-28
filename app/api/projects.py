@@ -1905,15 +1905,24 @@ def export_srt(
         raise HTTPException(400, "invalid container")
 
     pdir = _project_dir(pid)
-    project = _load_project(pid)
 
     if format == "original":
+        project = _load_project(pid)
         for fname in ["filtered.srt", "raw.srt", "native.srt"]:
             if (pdir / fname).is_file():
                 return _subtitle_export_payload(pdir / fname, project, pid, ".srt", container)
-    elif translation_delivery_is_invalid(pdir):
-        raise HTTPException(409, "Translation delivery is incomplete")
-    else:
+        raise HTTPException(404, "No subtitle file available for export")
+
+    with translation_delivery_lock(pid, blocking=False) as acquired:
+        if not acquired:
+            raise HTTPException(
+                409,
+                "Translation delivery is in progress or invalid",
+            )
+        project = _load_project(pid)
+        if translation_delivery_is_invalid(pdir):
+            raise HTTPException(409, "Translation delivery is incomplete")
+
         report_path = pdir / "translation_qa_report.json"
         quality_status = project.get("translation_quality_status")
         quality_policy = project.get("translation_quality_policy")
@@ -1947,11 +1956,22 @@ def export_srt(
                     f"Translation quality gate rejected export: {decision.message}",
                 )
 
-    if format == "bilingual":
-        if (pdir / "bilingual.srt").is_file():
-            return _subtitle_export_payload(pdir / "bilingual.srt", project, pid, ".bilingual.srt", container)
-    elif format == "translated":
-        if (pdir / "translated.srt").is_file():
-            return _subtitle_export_payload(pdir / "translated.srt", project, pid, ".translated.srt", container)
+        if format == "bilingual":
+            if (pdir / "bilingual.srt").is_file():
+                return _subtitle_export_payload(
+                    pdir / "bilingual.srt",
+                    project,
+                    pid,
+                    ".bilingual.srt",
+                    container,
+                )
+        elif (pdir / "translated.srt").is_file():
+            return _subtitle_export_payload(
+                pdir / "translated.srt",
+                project,
+                pid,
+                ".translated.srt",
+                container,
+            )
 
-    raise HTTPException(404, "No subtitle file available for export")
+        raise HTTPException(404, "No subtitle file available for export")

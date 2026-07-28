@@ -1,4 +1,5 @@
 import json
+import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -524,6 +525,99 @@ def test_put_subtitles_invalidates_strict_certification_before_export(
 
     assert response.status_code == 409
     assert "quality" in response.json()["detail"].lower()
+
+
+def test_export_cannot_race_strict_subtitle_edit_before_certification_is_stale(
+    client,
+    tmp_project_dir,
+    monkeypatch,
+):
+    from app.api import projects as projects_api
+
+    pid = _seed_strict_certification(
+        tmp_project_dir,
+        "strict-edit-export-race",
+        "passed",
+    )
+    pdir = tmp_project_dir / pid
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nOld source\n\n",
+        encoding="utf-8",
+    )
+    (pdir / "bilingual.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nOld source\n旧译文\n\n",
+        encoding="utf-8",
+    )
+
+    artifacts_written = threading.Event()
+    release_put = threading.Event()
+    real_mutate_project = projects_api.mutate_project
+
+    def pause_before_quality_status_update(*args, **kwargs):
+        artifacts_written.set()
+        if not release_put.wait(timeout=5):
+            raise RuntimeError("test timed out waiting to invalidate certification")
+        return real_mutate_project(*args, **kwargs)
+
+    monkeypatch.setattr(
+        projects_api,
+        "mutate_project",
+        pause_before_quality_status_update,
+    )
+    put_result = {}
+
+    def save_edited_subtitles():
+        try:
+            put_result["response"] = client.put(
+                f"/api/projects/{pid}/subtitles",
+                json={"blocks": [{
+                    "index": 1,
+                    "start": "00:00:00,000",
+                    "end": "00:00:01,000",
+                    "text": "Edited source",
+                    "translation": "未经认证的新译文",
+                }]},
+            )
+        except Exception as exc:
+            put_result["error"] = exc
+
+    put_thread = threading.Thread(target=save_edited_subtitles)
+    put_thread.start()
+    try:
+        assert artifacts_written.wait(timeout=5)
+        assert "未经认证的新译文" in (
+            pdir / "translated.srt"
+        ).read_text(encoding="utf-8")
+
+        translated = client.post(
+            f"/api/projects/{pid}/export?format=translated"
+        )
+        bilingual = client.post(
+            f"/api/projects/{pid}/export?format=bilingual"
+        )
+        original = client.post(
+            f"/api/projects/{pid}/export?format=original"
+        )
+    finally:
+        release_put.set()
+        put_thread.join(timeout=5)
+
+    assert not put_thread.is_alive()
+    assert "error" not in put_result
+    assert translated.status_code == 409
+    assert bilingual.status_code == 409
+    assert original.status_code == 200
+    assert put_result["response"].status_code == 200
+    assert (
+        put_result["response"].json()["translation_quality_status"]
+        == "stale"
+    )
+
+    after_put = client.post(
+        f"/api/projects/{pid}/export?format=translated"
+    )
+    assert after_put.status_code == 409
+    assert "quality" in after_put.json()["detail"].lower()
 
 
 def test_quality_report_rejects_stale_mapping_while_delivery_sentinel_exists(

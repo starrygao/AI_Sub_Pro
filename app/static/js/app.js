@@ -2343,11 +2343,14 @@ function app() {
       const passed = status === 'passed' || status === 'passed-with-warnings';
       const unresolvedBlocks = passed
         ? 0
-        : issues.filter(issue =>
-          ['error', 'severe'].includes(issue.severity)
-          || issue.type === 'semantic_uncertain'
-          || issue.type === 'requires_human_review'
-        ).length;
+        : new Set(issues
+          .filter(issue =>
+            ['error', 'severe'].includes(issue.severity)
+            || issue.type === 'semantic_uncertain'
+            || issue.type === 'requires_human_review'
+          )
+          .map(issue => issue.block_id)
+          .filter(blockId => Number.isInteger(blockId) && blockId > 0)).size;
       const conclusion = {
         blocked: '未达标：仍有阻塞问题，需要修正并重新运行质量检查。',
         'needs-review': '需要人工复核，复核完成前不能交付。',
