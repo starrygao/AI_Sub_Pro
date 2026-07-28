@@ -2,6 +2,33 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.26 - Professional Translation Quality Gate
+
+Highlights:
+
+- Professional strict mode now fails closed across translation, certification,
+  subtitle editing, and translated/bilingual export; stale, incomplete, or
+  failed quality evidence cannot certify changed delivery artifacts.
+- Context-aware repair keeps semantic groups atomic, rechecks partial batches,
+  reports only net model changes, and reruns deterministic normalization after
+  every mutation so repair statistics and residual findings stay truthful.
+- Structural speaker lines and interruption punctuation survive subtitle
+  formatting, approved project/context terminology is enforced without
+  hard-coded series vocabulary, and per-project delivery transactions prevent
+  readers or editors from observing mixed artifact generations.
+- The editor now presents one authoritative merged quality view with visible
+  residual issues and fail-closed export controls; terminal progress is
+  reconciled across project, workflow, websocket, and persisted readers.
+
+Quality/Verification:
+
+- Release metadata and packaging consistency are covered by automated checks.
+- Local package target: `AI_Sub_Pro_v1.3.26.dmg`.
+
+Packages:
+
+- `AI_Sub_Pro_v1.3.26.dmg` is the macOS package name for this release line.
+
 ## v1.3.25 - Unattended Delivery Gate and Background Speaker Markers
 
 Highlights:
