@@ -17,6 +17,7 @@ from app.engines.kb_suggestions import (
 )
 from app.utils.project_store import atomic_write_json, project_dir, validate_pid
 from app.utils.srt import parse_srt_file
+from app.utils.translation_delivery import translation_delivery_is_invalid
 
 log = logging.getLogger(__name__)
 
@@ -231,6 +232,8 @@ def _normalize_usage_trace(data: dict) -> dict:
 
 
 def _load_quality_context_trace(pdir) -> dict:
+    if translation_delivery_is_invalid(pdir):
+        return {}
     report_path = pdir / "translation_qa_report.json"
     if not report_path.is_file():
         return {}

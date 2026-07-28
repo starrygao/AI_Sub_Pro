@@ -196,3 +196,29 @@ def test_export_original_remains_available_while_delivery_sentinel_exists(
 
     assert response.status_code == 200
     assert "Source" in response.json()["content"]
+
+
+def test_quality_report_rejects_stale_mapping_while_delivery_sentinel_exists(
+    client,
+    tmp_project_dir,
+):
+    pid = _seed_project(tmp_project_dir)
+    pdir = tmp_project_dir / pid
+    (pdir / "translation_qa_report.json").write_text(
+        json.dumps({
+            "status": "ok",
+            "subtitle_id_mapping": {
+                "translated_srt": [{"source_block_id": 7, "output_id": 1}],
+            },
+        }),
+        encoding="utf-8",
+    )
+    (pdir / ".translation_delivery_in_progress").write_text(
+        '{"status":"invalid"}',
+        encoding="utf-8",
+    )
+
+    response = client.get(f"/api/projects/{pid}/quality-report")
+
+    assert response.status_code == 409
+    assert "delivery" in response.json()["detail"].lower()

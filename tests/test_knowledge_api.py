@@ -320,6 +320,49 @@ def test_kb_usage_trace_endpoint_merges_translation_quality_context(tmp_project_
     assert data["auto_repair_rounds"] == [{"candidate_blocks": 5, "attempted_blocks": 2}]
 
 
+def test_kb_usage_trace_ignores_quality_context_while_delivery_is_invalid(
+    tmp_project_dir,
+    patched_kb_file,
+):
+    import json
+
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+
+    client = TestClient(app)
+    pid = "project_trace_invalid_delivery"
+    pdir = tmp_project_dir / pid
+    atomic_write_json(pdir / "project.json", {"id": pid, "name": "Moonlit Case"})
+    (pdir / "kb_usage_trace.json").write_text(json.dumps({
+        "project": {"show_title": "Moonlit Case"},
+        "matches": [{"category": "characters", "source": "Maya Chen", "target": "玛雅·陈"}],
+    }), encoding="utf-8")
+    (pdir / "translation_qa_report.json").write_text(json.dumps({
+        "status": "ok",
+        "trace": {
+            "phrase_hits": [{"source_text": "Stale phrase.", "target_text": "旧短语。"}],
+            "profile_hits": [{"id": "stale_profile", "label": "Stale"}],
+        },
+        "subtitle_id_mapping": {
+            "translated_srt": [{"source_block_id": 7, "output_id": 1}],
+        },
+    }), encoding="utf-8")
+    (pdir / ".translation_delivery_in_progress").write_text(
+        '{"status":"invalid"}',
+        encoding="utf-8",
+    )
+
+    response = client.get(f"/api/knowledge/projects/{pid}/usage-trace")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "project": {"show_title": "Moonlit Case"},
+        "matches": [
+            {"category": "characters", "source": "Maya Chen", "target": "玛雅·陈"},
+        ],
+    }
+
+
 def test_kb_usage_trace_endpoint_missing_file_returns_empty_trace(tmp_project_dir, patched_kb_file):
     from app.main import app
     from app.utils.project_store import atomic_write_json

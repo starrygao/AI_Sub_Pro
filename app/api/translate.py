@@ -38,6 +38,7 @@ from app.utils.translation_delivery import (
     TRANSLATION_DELIVERY_ARTIFACTS,
     hide_invalid_translation_artifact_fields,
     mark_translation_delivery_invalid,
+    translation_delivery_lock,
     translation_delivery_is_invalid,
 )
 from app.engines.kb_trace import write_kb_usage_trace
@@ -991,15 +992,49 @@ def _persist_translated_srt_id_mapping(
     return destination
 
 
+class _StagedArtifactAllocationError(RuntimeError):
+    def __init__(self, message: str, path: Optional[Path]):
+        super().__init__(message)
+        self.path = path
+
+
 def _new_staged_artifact_path(pdir: Path, final_name: str) -> Path:
-    handle = tempfile.NamedTemporaryFile(
-        dir=pdir,
-        prefix=f".{final_name}.",
-        suffix=".tmp",
-        delete=False,
-    )
-    path = Path(handle.name)
-    handle.close()
+    path = None
+    try:
+        handle = tempfile.NamedTemporaryFile(
+            dir=pdir,
+            prefix=f".{final_name}.",
+            suffix=".tmp",
+            delete=False,
+        )
+        path = Path(handle.name)
+        handle.close()
+        return path
+    except Exception as allocation_error:
+        cleanup_error = None
+        if path is not None:
+            try:
+                _unlink_delivery_path(path)
+            except Exception as exc:
+                cleanup_error = exc
+        message = f"stage allocation failed: {_safe_error_message(allocation_error)}"
+        if cleanup_error is not None:
+            message += f"; cleanup failed: {_safe_error_message(cleanup_error)}"
+        raise _StagedArtifactAllocationError(message, path) from allocation_error
+
+
+def _new_registered_staged_artifact(
+    pdir: Path,
+    final_name: str,
+    staged: list[Path],
+) -> Path:
+    try:
+        path = _new_staged_artifact_path(pdir, final_name)
+    except _StagedArtifactAllocationError as exc:
+        if exc.path is not None:
+            staged.append(exc.path)
+        raise
+    staged.append(path)
     return path
 
 
@@ -1070,7 +1105,7 @@ def _verify_published_translation_artifacts(
         raise RuntimeError("translation delivery verification failed: invalid subtitle id mapping")
 
 
-def _publish_translation_artifacts(
+def _publish_translation_artifacts_locked(
     pid: str,
     blocks,
     *,
@@ -1090,12 +1125,15 @@ def _publish_translation_artifacts(
         snapshots = _snapshot_delivery_artifacts(finals)
         sentinel = mark_translation_delivery_invalid(pdir)
 
-        translated_stage = _new_staged_artifact_path(pdir, "translated.srt")
-        staged.append(translated_stage)
-        bilingual_stage = _new_staged_artifact_path(pdir, "bilingual.srt")
-        staged.append(bilingual_stage)
-        report_stage = _new_staged_artifact_path(pdir, "translation_qa_report.json")
-        staged.append(report_stage)
+        translated_stage = _new_registered_staged_artifact(
+            pdir, "translated.srt", staged
+        )
+        bilingual_stage = _new_registered_staged_artifact(
+            pdir, "bilingual.srt", staged
+        )
+        report_stage = _new_registered_staged_artifact(
+            pdir, "translation_qa_report.json", staged
+        )
 
         write_report = write_srt(
             blocks,
@@ -1154,6 +1192,22 @@ def _publish_translation_artifacts(
         if rollback_errors:
             message += "; rollback errors: " + "; ".join(rollback_errors)
         raise RuntimeError(message) from publish_error
+
+
+def _publish_translation_artifacts(
+    pid: str,
+    blocks,
+    *,
+    write_bilingual,
+):
+    with translation_delivery_lock(pid) as acquired:
+        if not acquired:
+            raise RuntimeError("translation delivery lock acquisition failed")
+        return _publish_translation_artifacts_locked(
+            pid,
+            blocks,
+            write_bilingual=write_bilingual,
+        )
 
 
 _FINAL_MISSING_TRANSLATION_RETRY_NOTE = (

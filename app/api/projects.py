@@ -37,6 +37,7 @@ from app.utils.project_store import (
 )
 from app.utils.translation_delivery import (
     hide_invalid_translation_artifact_fields,
+    translation_delivery_lock,
     translation_delivery_is_invalid,
 )
 from app.utils.media import get_tracks, get_duration, get_media_info, is_text_subtitle_codec
@@ -1763,7 +1764,10 @@ def get_subtitles(pid: str = PathParam(pattern=PID_PATTERN)):
 def get_quality_report(pid: str = PathParam(pattern=PID_PATTERN)):
     """Return the latest translation QA report for a project."""
     _load_project(pid)
-    path = _project_dir(pid) / "translation_qa_report.json"
+    pdir = _project_dir(pid)
+    if translation_delivery_is_invalid(pdir):
+        raise HTTPException(409, "Translation delivery is in progress or invalid")
+    path = pdir / "translation_qa_report.json"
     if not path.exists():
         return {"status": "missing", "issues": [], "summary": {"issue_count": 0}}
     try:
@@ -1778,8 +1782,22 @@ def get_quality_report(pid: str = PathParam(pattern=PID_PATTERN)):
 @router.put("/{pid}/subtitles")
 def save_subtitles(data: SubtitleEdit, pid: str = PathParam(pattern=PID_PATTERN)):
     """Save edited subtitles."""
-    project = _load_project(pid)
-    pdir = _project_dir(pid)
+    with translation_delivery_lock(pid, blocking=False) as acquired:
+        if not acquired:
+            raise HTTPException(409, "Translation delivery is in progress or invalid")
+        project = _load_project(pid)
+        pdir = _project_dir(pid)
+        if translation_delivery_is_invalid(pdir):
+            raise HTTPException(409, "Translation delivery is in progress or invalid")
+        return _save_subtitles_locked(data, pid, project, pdir)
+
+
+def _save_subtitles_locked(
+    data: SubtitleEdit,
+    pid: str,
+    project: dict,
+    pdir: Path,
+):
     pdir.mkdir(parents=True, exist_ok=True)
     previous_translated_blocks = []
     translated_path = pdir / "translated.srt"

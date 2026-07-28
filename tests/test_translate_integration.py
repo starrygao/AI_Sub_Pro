@@ -719,13 +719,17 @@ def test_translate_pipeline_final_artifacts_are_transactional_on_publish_failure
 
 
 @pytest.mark.parametrize("failed_allocation", [2, 3])
-def test_publish_cleans_stages_when_later_stage_allocation_fails(
+@pytest.mark.parametrize("first_cleanup_fails", [False, True])
+def test_publish_cleans_real_stage_when_handle_close_fails(
     tmp_path,
     monkeypatch,
     failed_allocation,
+    first_cleanup_fails,
 ):
     from app.api import translate as api_translate
     from app.utils import project_store
+    import tempfile as real_tempfile
+    from types import SimpleNamespace
 
     pid = f"allocfail{failed_allocation}"
     pdir = tmp_path / pid
@@ -733,30 +737,169 @@ def test_publish_cleans_stages_when_later_stage_allocation_fails(
     monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
     monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
 
-    real_allocate = api_translate._new_staged_artifact_path
     calls = 0
+    failed_path = None
 
-    def fail_allocation(project_path, final_name):
-        nonlocal calls
+    class CloseAfterCreateFailure:
+        def __init__(self, handle):
+            self._handle = handle
+            self.name = handle.name
+
+        def close(self):
+            self._handle.close()
+            raise PermissionError(
+                f"injected allocation {failed_allocation} close-after-create failure"
+            )
+
+    def named_temporary_file(*args, **kwargs):
+        nonlocal calls, failed_path
+        handle = real_tempfile.NamedTemporaryFile(*args, **kwargs)
         calls += 1
         if calls == failed_allocation:
-            raise OSError(f"injected allocation {failed_allocation} failure")
-        return real_allocate(project_path, final_name)
+            failed_path = Path(handle.name)
+            return CloseAfterCreateFailure(handle)
+        return handle
 
-    monkeypatch.setattr(api_translate, "_new_staged_artifact_path", fail_allocation)
+    monkeypatch.setattr(
+        api_translate,
+        "tempfile",
+        SimpleNamespace(NamedTemporaryFile=named_temporary_file),
+    )
+    if first_cleanup_fails:
+        real_unlink = Path.unlink
+        cleanup_attempted = False
 
-    with pytest.raises(RuntimeError, match=f"allocation {failed_allocation}"):
+        def fail_first_cleanup(path, *args, **kwargs):
+            nonlocal cleanup_attempted
+            if failed_path is not None and Path(path) == failed_path and not cleanup_attempted:
+                cleanup_attempted = True
+                raise PermissionError("injected close cleanup failure")
+            return real_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", fail_first_cleanup)
+
+    with pytest.raises(RuntimeError) as exc_info:
         api_translate._publish_translation_artifacts(
             pid,
             [],
             write_bilingual=lambda blocks, path: None,
         )
 
+    message = str(exc_info.value)
+    assert f"allocation {failed_allocation} close-after-create failure" in message
+    if first_cleanup_fails:
+        assert "close cleanup failure" in message
     assert not [
         path for path in pdir.iterdir()
         if path.name.endswith(".tmp")
     ]
     assert (pdir / ".translation_delivery_in_progress").is_file()
+
+
+def test_save_subtitles_rejects_verify_to_clear_publish_window(
+    tmp_path,
+    monkeypatch,
+):
+    import threading
+
+    from fastapi.testclient import TestClient
+    from app.api import projects as projects_api
+    from app.api import translate as api_translate
+    from app.main import app
+    from app.utils import project_store
+    from app.utils.srt import SubtitleBlock, write_bilingual_srt
+
+    pid = "publishsavewindow"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "translated",
+    }), encoding="utf-8")
+    (pdir / "raw.srt").write_text(
+        "7\n00:00:00,000 --> 00:00:01,000\nPublisher source\n\n",
+        encoding="utf-8",
+    )
+    (pdir / "translation_qa_report.json").write_text(
+        json.dumps({"status": "ok"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(projects_api, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+
+    verified = threading.Event()
+    allow_clear = threading.Event()
+    real_verify = api_translate._verify_published_translation_artifacts
+
+    def pause_after_verify(*paths):
+        real_verify(*paths)
+        verified.set()
+        if not allow_clear.wait(timeout=5):
+            raise RuntimeError("test timed out waiting to clear delivery sentinel")
+
+    monkeypatch.setattr(
+        api_translate,
+        "_verify_published_translation_artifacts",
+        pause_after_verify,
+    )
+    publish_result = {}
+
+    def publish():
+        try:
+            publish_result["report"] = api_translate._publish_translation_artifacts(
+                pid,
+                [
+                    SubtitleBlock(
+                        index=7,
+                        start=0,
+                        end=1,
+                        text="Publisher source",
+                        translation="发布译文",
+                    ),
+                ],
+                write_bilingual=write_bilingual_srt,
+            )
+        except Exception as exc:
+            publish_result["error"] = exc
+
+    thread = threading.Thread(target=publish)
+    thread.start()
+    assert verified.wait(timeout=5)
+    translated_after_verify = (pdir / "translated.srt").read_bytes()
+    bilingual_after_verify = (pdir / "bilingual.srt").read_bytes()
+
+    try:
+        response = TestClient(app).put(
+            f"/api/projects/{pid}/subtitles",
+            json={"blocks": [{
+                "index": 99,
+                "start": "00:00:00,000",
+                "end": "00:00:01,000",
+                "text": "Editor source",
+                "translation": "编辑覆盖",
+            }]},
+        )
+    finally:
+        allow_clear.set()
+        thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert response.status_code == 409
+    assert (pdir / "translated.srt").read_bytes() == translated_after_verify
+    assert (pdir / "bilingual.srt").read_bytes() == bilingual_after_verify
+    assert "error" not in publish_result
+    assert not (pdir / ".translation_delivery_in_progress").exists()
+    report = json.loads(
+        (pdir / "translation_qa_report.json").read_text(encoding="utf-8")
+    )
+    assert report["subtitle_id_mapping"] == {
+        "translated_srt": [{"source_block_id": 7, "output_id": 1}],
+    }
+    assert "发布译文" in (pdir / "translated.srt").read_text(encoding="utf-8")
+    assert "编辑覆盖" not in (pdir / "translated.srt").read_text(encoding="utf-8")
 
 
 def test_publish_first_promotion_failure_leaves_delivery_invalid(
