@@ -11,6 +11,7 @@ import re
 import tempfile
 import threading
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict
 
@@ -1799,6 +1800,24 @@ def _run_quality_checks_with_semantics(
     )
     if semantic_trace:
         trace["semantic_qa"] = semantic_trace
+        trace.setdefault("semantic_qa_history", []).append(dict(semantic_trace))
+    observed_uncertain_ids = {
+        issue.block_id
+        for issue in semantic_issues
+        if (
+            getattr(issue, "type", "") == "semantic_uncertain"
+            and isinstance(issue.block_id, int)
+        )
+    }
+    if observed_uncertain_ids:
+        prior_ids = trace.get("semantic_uncertain_observed_block_ids", [])
+        if not isinstance(prior_ids, list):
+            prior_ids = []
+        trace["semantic_uncertain_observed_block_ids"] = sorted({
+            block_id
+            for block_id in [*prior_ids, *observed_uncertain_ids]
+            if isinstance(block_id, int) and not isinstance(block_id, bool)
+        })
     if semantic_issues:
         report.issues.extend(semantic_issues)
         _refresh_quality_report_issue_summary(report)
@@ -1848,29 +1867,71 @@ def _finalize_quality_conclusion(
         issue for issue in (getattr(report, "issues", []) or [])
         if getattr(issue, "type", "") == "semantic_uncertain"
     ]
-    if strict_quality_gate:
-        blocking_warnings.extend(
-            issue for issue in semantic_uncertain if issue not in blocking_warnings
-        )
-        report.unresolved_blocks = sorted({
-            *list(getattr(report, "unresolved_blocks", []) or []),
+    semantic_trace = (
+        report.trace.get("semantic_qa")
+        if isinstance(getattr(report, "trace", None), dict)
+        else None
+    )
+    observed_uncertain_ids = (
+        report.trace.get("semantic_uncertain_observed_block_ids", [])
+        if isinstance(getattr(report, "trace", None), dict)
+        else []
+    )
+    if not isinstance(observed_uncertain_ids, list):
+        observed_uncertain_ids = []
+    observed_uncertain_ids = sorted({
+        block_id
+        for block_id in [
+            *observed_uncertain_ids,
             *[
                 issue.block_id
                 for issue in semantic_uncertain
                 if isinstance(issue.block_id, int)
             ],
+        ]
+        if isinstance(block_id, int) and not isinstance(block_id, bool)
+    })
+    semantic_coverage_incomplete = (
+        isinstance(semantic_trace, dict)
+        and semantic_trace.get("enabled") is True
+        and semantic_trace.get("coverage_complete") is not True
+    )
+    coverage_review_ids = []
+    if semantic_coverage_incomplete:
+        failed_ids = semantic_trace.get("failed_block_ids", [])
+        skipped_ids = semantic_trace.get("skipped_block_ids", [])
+        coverage_review_ids = [
+            block_id
+            for block_id in [*failed_ids, *skipped_ids]
+            if isinstance(block_id, int) and not isinstance(block_id, bool)
+        ]
+    if strict_quality_gate:
+        blocking_warnings.extend(
+            issue for issue in semantic_uncertain if issue not in blocking_warnings
+        )
+    requires_human_review = bool(
+        (strict_quality_gate and observed_uncertain_ids)
+        or (not strict_quality_gate and semantic_coverage_incomplete)
+    )
+    if requires_human_review:
+        report.unresolved_blocks = sorted({
+            *list(getattr(report, "unresolved_blocks", []) or []),
+            *observed_uncertain_ids,
+            *coverage_review_ids,
         })
         unresolved_count = len(report.unresolved_blocks)
-    requires_human_review = bool(strict_quality_gate and semantic_uncertain)
-    if error_count:
+    if requires_human_review:
+        verdict = "needs_review"
+        if observed_uncertain_ids:
+            conclusion = (
+                f"需要人工复核：本次运行曾发现 {len(observed_uncertain_ids)} 个语义不确定项，"
+                "已停止自动交付。"
+            )
+        else:
+            conclusion = "需要人工复核：语义质检覆盖不完整，已停止自动交付。"
+    elif error_count:
         verdict = "failed"
         conclusion = f"自动交付未通过：仍有 {error_count} 个错误、{unresolved_count} 个问题位置。"
-    elif requires_human_review:
-        verdict = "needs_review"
-        conclusion = (
-            f"需要人工复核：仍有 {len(semantic_uncertain)} 个语义不确定项，"
-            "已停止自动交付。"
-        )
     elif blocking_warnings:
         verdict = "failed"
         conclusion = (
@@ -1897,6 +1958,7 @@ def _finalize_quality_conclusion(
         "unresolved_blocks": unresolved_count,
         "conclusion": conclusion,
         "quality_gate": {
+            "policy": "strict" if strict_quality_gate else "fast",
             "verdict": verdict,
             "passed": verdict == "passed",
             "delivery_mode": "human_review" if requires_human_review else "unattended",
@@ -1904,6 +1966,7 @@ def _finalize_quality_conclusion(
             "auto_repair_enabled": bool(repair_enabled),
             "auto_repaired_blocks": repaired_count,
             "unresolved_blocks": unresolved_count,
+            "observed_semantic_uncertain_block_ids": observed_uncertain_ids,
             "next_action": (
                 "deliver"
                 if verdict == "passed"
@@ -1922,66 +1985,293 @@ def _begin_translation_quality_run(pid: str) -> str:
     return uuid.uuid4().hex
 
 
+@dataclass(frozen=True)
+class TranslationQualityGateDecision:
+    passed: bool
+    message: str
+    requires_human_review: bool = False
+
+
+def _invalid_quality_gate_decision(message: str) -> TranslationQualityGateDecision:
+    return TranslationQualityGateDecision(False, message, False)
+
+
+def _valid_block_id_list(value) -> bool:
+    return (
+        isinstance(value, list)
+        and all(
+            isinstance(block_id, int)
+            and not isinstance(block_id, bool)
+            and block_id > 0
+            for block_id in value
+        )
+        and len(value) == len(set(value))
+    )
+
+
+def _semantic_coverage_is_valid(trace: dict) -> bool:
+    semantic = trace.get("semantic_qa")
+    if not isinstance(semantic, dict):
+        return False
+    if semantic.get("enabled") is False:
+        return True
+    if semantic.get("enabled") is not True:
+        return False
+
+    count_to_ids = {
+        "requested_blocks": "requested_block_ids",
+        "checked_blocks": "checked_block_ids",
+        "failed_blocks": "failed_block_ids",
+        "skipped_blocks": "skipped_block_ids",
+    }
+    for count_field, ids_field in count_to_ids.items():
+        count = semantic.get(count_field)
+        ids = semantic.get(ids_field)
+        if (
+            not isinstance(count, int)
+            or isinstance(count, bool)
+            or count < 0
+            or not _valid_block_id_list(ids)
+            or count != len(ids)
+        ):
+            return False
+
+    requested = set(semantic["requested_block_ids"])
+    checked = set(semantic["checked_block_ids"])
+    failed = set(semantic["failed_block_ids"])
+    skipped = set(semantic["skipped_block_ids"])
+    if (
+        checked & failed
+        or checked & skipped
+        or failed & skipped
+        or requested != checked | failed | skipped
+    ):
+        return False
+    expected_complete = not failed and not skipped and checked == requested
+    return (
+        isinstance(semantic.get("coverage_complete"), bool)
+        and semantic["coverage_complete"] is expected_complete
+    )
+
+
+def _translation_quality_gate_decision(
+    pid: str,
+    *,
+    expected_run_id: str = "",
+    expected_content_hash: str = "",
+    expected_policy: str = "",
+) -> TranslationQualityGateDecision:
+    report_path = _safe_project_artifact_path(pid, "translation_qa_report.json")
+    if report_path is None:
+        return _invalid_quality_gate_decision("翻译质量检查未生成报告，已停止交付。")
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception:
+        return _invalid_quality_gate_decision("翻译质量检查报告无效，已停止交付。")
+    if not isinstance(report, dict):
+        return _invalid_quality_gate_decision("翻译质量检查报告无效，已停止交付。")
+    run_id = report.get("run_id")
+    if not isinstance(run_id, str) or not run_id.strip():
+        return _invalid_quality_gate_decision("翻译质量检查报告缺少运行身份，已停止交付。")
+    if expected_run_id:
+        if run_id != expected_run_id:
+            return _invalid_quality_gate_decision("翻译质量检查报告已过期，已停止交付。")
+    content_hash = report.get("content_hash")
+    if not isinstance(content_hash, str) or not content_hash.strip():
+        return _invalid_quality_gate_decision("翻译质量检查报告缺少内容哈希，已停止交付。")
+    if expected_content_hash:
+        if content_hash != expected_content_hash:
+            return _invalid_quality_gate_decision(
+                "翻译质量检查报告与当前字幕内容不匹配，已停止交付。"
+            )
+
+    issues = report.get("issues")
+    summary = report.get("summary")
+    unresolved_blocks = report.get("unresolved_blocks")
+    trace = report.get("trace")
+    observed_uncertain_ids = (
+        trace.get("semantic_uncertain_observed_block_ids", [])
+        if isinstance(trace, dict)
+        else None
+    )
+    if (
+        not isinstance(issues, list)
+        or not isinstance(summary, dict)
+        or not _valid_block_id_list(unresolved_blocks)
+        or not isinstance(trace, dict)
+        or not _valid_block_id_list(observed_uncertain_ids)
+        or not _semantic_coverage_is_valid(trace)
+    ):
+        return _invalid_quality_gate_decision(
+            "翻译质量检查报告无效或自相矛盾，已停止交付。"
+        )
+    if any(
+        not isinstance(issue, dict)
+        or not isinstance(issue.get("type"), str)
+        or not issue["type"].strip()
+        or issue.get("severity") not in {"warning", "error", "severe"}
+        or (
+            issue.get("block_id") is not None
+            and (
+                not isinstance(issue.get("block_id"), int)
+                or isinstance(issue.get("block_id"), bool)
+            )
+        )
+        for issue in issues
+    ):
+        return _invalid_quality_gate_decision(
+            "翻译质量检查报告无效或自相矛盾，已停止交付。"
+        )
+
+    gate = summary.get("quality_gate")
+    if not isinstance(gate, dict):
+        return _invalid_quality_gate_decision(
+            "翻译质量检查报告无效或自相矛盾，已停止交付。"
+        )
+    status = report.get("status")
+    policy = gate.get("policy")
+    verdict = gate.get("verdict")
+    passed = gate.get("passed")
+    requires_human_review = gate.get("requires_human_review")
+    delivery_mode = gate.get("delivery_mode")
+    next_action = gate.get("next_action")
+    if (
+        status not in {"ok", "failed", "needs_review"}
+        or policy not in {"fast", "strict"}
+        or verdict not in {"passed", "failed", "needs_review"}
+        or not isinstance(passed, bool)
+        or not isinstance(requires_human_review, bool)
+    ):
+        return _invalid_quality_gate_decision(
+            "翻译质量检查报告无效或自相矛盾，已停止交付。"
+        )
+    if expected_policy and policy != expected_policy:
+        return _invalid_quality_gate_decision(
+            "翻译质量检查报告策略不匹配，已停止交付。"
+        )
+    if policy == "strict" and trace["semantic_qa"].get("enabled") is not True:
+        return _invalid_quality_gate_decision(
+            "翻译质量检查报告无效或自相矛盾，已停止交付。"
+        )
+
+    if passed:
+        gate_consistent = (
+            status == "ok"
+            and verdict == "passed"
+            and requires_human_review is False
+            and delivery_mode == "unattended"
+            and next_action == "deliver"
+        )
+    elif requires_human_review:
+        gate_consistent = (
+            status == "needs_review"
+            and verdict == "needs_review"
+            and delivery_mode == "human_review"
+            and next_action == "human_review"
+        )
+    else:
+        gate_consistent = (
+            status == "failed"
+            and verdict == "failed"
+            and delivery_mode == "unattended"
+            and next_action == "auto_retry_or_stop"
+        )
+
+    actual_error_count = sum(
+        1 for issue in issues if issue.get("severity") in {"error", "severe"}
+    )
+    actual_warning_count = sum(
+        1 for issue in issues if issue.get("severity") == "warning"
+    )
+    summary_counts = {
+        "issue_count": len(issues),
+        "error_count": actual_error_count,
+        "warning_count": actual_warning_count,
+        "unresolved_blocks": len(unresolved_blocks),
+    }
+    counts_consistent = all(
+        isinstance(summary.get(field), int)
+        and not isinstance(summary.get(field), bool)
+        and summary[field] == expected
+        for field, expected in summary_counts.items()
+    )
+    unresolved_consistent = (
+        isinstance(gate.get("unresolved_blocks"), int)
+        and not isinstance(gate.get("unresolved_blocks"), bool)
+        and gate["unresolved_blocks"] == len(unresolved_blocks)
+    )
+    semantic_trace = trace["semantic_qa"]
+    semantic_uncertainty_requires_review = (
+        policy == "strict"
+        and (
+            bool(observed_uncertain_ids)
+            or any(issue.get("type") == "semantic_uncertain" for issue in issues)
+        )
+    )
+    incomplete_fast_semantics_requires_review = (
+        policy == "fast"
+        and semantic_trace.get("enabled") is True
+        and semantic_trace.get("coverage_complete") is False
+    )
+    review_classification_consistent = (
+        not semantic_uncertainty_requires_review
+        or requires_human_review is True
+    ) and (
+        not incomplete_fast_semantics_requires_review
+        or requires_human_review is True
+    )
+    coverage_allows_delivery = (
+        semantic_trace.get("enabled") is False
+        or semantic_trace.get("coverage_complete") is True
+        or passed is False
+    )
+    passed_issue_consistent = not passed or (
+        actual_error_count == 0
+        and not any(
+            issue.get("type") in {"semantic_uncertain", "semantic_qa_failed"}
+            for issue in issues
+        )
+    )
+    if not (
+        gate_consistent
+        and counts_consistent
+        and unresolved_consistent
+        and review_classification_consistent
+        and coverage_allows_delivery
+        and passed_issue_consistent
+    ):
+        return _invalid_quality_gate_decision(
+            "翻译质量检查报告无效或自相矛盾，已停止交付。"
+        )
+
+    conclusion = summary.get("conclusion")
+    if not isinstance(conclusion, str) or not conclusion.strip():
+        return _invalid_quality_gate_decision(
+            "翻译质量检查报告无效或自相矛盾，已停止交付。"
+        )
+    if passed:
+        return TranslationQualityGateDecision(True, conclusion.strip(), False)
+    return TranslationQualityGateDecision(
+        False,
+        f"翻译质量未达标：{conclusion.strip()} 已停止交付。",
+        requires_human_review,
+    )
+
+
 def _translation_quality_gate_status(
     pid: str,
     *,
     expected_run_id: str = "",
     expected_content_hash: str = "",
+    expected_policy: str = "",
 ) -> tuple[bool, str]:
-    report_path = _safe_project_artifact_path(pid, "translation_qa_report.json")
-    if report_path is None:
-        return False, "翻译质量检查未生成报告，已停止交付。"
-    try:
-        report = json.loads(report_path.read_text(encoding="utf-8"))
-    except Exception:
-        return False, "翻译质量检查报告无效，已停止交付。"
-    if not isinstance(report, dict):
-        return False, "翻译质量检查报告无效，已停止交付。"
-    if expected_run_id:
-        run_id = report.get("run_id")
-        if not isinstance(run_id, str) or not run_id.strip():
-            return False, "翻译质量检查报告缺少运行身份，已停止交付。"
-        if run_id != expected_run_id:
-            return False, "翻译质量检查报告已过期，已停止交付。"
-    if expected_content_hash:
-        content_hash = report.get("content_hash")
-        if not isinstance(content_hash, str) or not content_hash.strip():
-            return False, "翻译质量检查报告缺少内容哈希，已停止交付。"
-        if content_hash != expected_content_hash:
-            return False, "翻译质量检查报告与当前字幕内容不匹配，已停止交付。"
-
-    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
-    gate = summary.get("quality_gate") if isinstance(summary.get("quality_gate"), dict) else {}
-    issues = report.get("issues") if isinstance(report.get("issues"), list) else []
-    passed = gate.get("passed") is True or (report.get("status") == "ok" and not issues)
-    conclusion = summary.get("conclusion")
-    if not isinstance(conclusion, str) or not conclusion.strip():
-        conclusion = "翻译质量检查通过。" if passed else ""
-    if passed:
-        return True, conclusion.strip()
-
-    issue_count = summary.get("issue_count")
-    if not isinstance(issue_count, int) or isinstance(issue_count, bool):
-        issue_count = len(issues)
-    unresolved_count = summary.get("unresolved_blocks")
-    if not isinstance(unresolved_count, int) or isinstance(unresolved_count, bool):
-        unresolved_count = len(report.get("unresolved_blocks") or [])
-    if conclusion:
-        return False, f"翻译质量未达标：{conclusion.strip()} 已停止交付。"
-    return False, f"翻译质量未达标：仍有 {issue_count} 个问题、{unresolved_count} 个问题位置，已停止交付。"
-
-
-def _translation_quality_requires_human_review(pid: str) -> bool:
-    report_path = _safe_project_artifact_path(pid, "translation_qa_report.json")
-    if report_path is None:
-        return False
-    try:
-        report = json.loads(report_path.read_text(encoding="utf-8"))
-    except Exception:
-        return False
-    summary = report.get("summary") if isinstance(report, dict) else None
-    gate = summary.get("quality_gate") if isinstance(summary, dict) else None
-    return isinstance(gate, dict) and gate.get("requires_human_review") is True
+    decision = _translation_quality_gate_decision(
+        pid,
+        expected_run_id=expected_run_id,
+        expected_content_hash=expected_content_hash,
+        expected_policy=expected_policy,
+    )
+    return decision.passed, decision.message
 
 
 def _mark_translation_quality_failed(
@@ -2510,11 +2800,14 @@ def _run_translate_pipeline(
             active_count, translated_count, failed_count = _translation_completion_counts(blocks)
             incomplete_msg = _incomplete_translation_message(blocks)
             from app.engines.translation_qa import quality_content_hash
-            quality_passed, quality_message = _translation_quality_gate_status(
+            quality_decision = _translation_quality_gate_decision(
                 pid,
                 expected_run_id=quality_run_id,
                 expected_content_hash=quality_content_hash(blocks),
+                expected_policy="strict" if strict_policy else "fast",
             )
+            quality_passed = quality_decision.passed
+            quality_message = quality_decision.message
 
             # Save results
             _emit_progress(pid, "translate", 95, "正在保存结果...")
@@ -2559,7 +2852,7 @@ def _run_translate_pipeline(
                 _mark_translation_quality_failed(
                     pid,
                     quality_message,
-                    requires_human_review=_translation_quality_requires_human_review(pid),
+                    requires_human_review=quality_decision.requires_human_review,
                 )
                 return
 
