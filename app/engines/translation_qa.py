@@ -1,6 +1,7 @@
 """Deterministic subtitle translation QA and repair prompt helpers."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass, field
@@ -40,6 +41,8 @@ class QualityIssue:
 @dataclass
 class TranslationQaReport:
     status: str
+    run_id: str = ""
+    content_hash: str = ""
     issues: list[QualityIssue] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
     repaired_blocks: list[dict] = field(default_factory=list)
@@ -49,6 +52,8 @@ class TranslationQaReport:
     def to_dict(self) -> dict:
         return {
             "status": self.status,
+            "run_id": self.run_id,
+            "content_hash": self.content_hash,
             "issues": [issue.to_dict() for issue in self.issues],
             "summary": dict(self.summary),
             "repaired_blocks": list(self.repaired_blocks),
@@ -63,6 +68,10 @@ class TranslationQaReport:
             f"- Status: {self.status}",
             f"- Issues: {len(self.issues)}",
         ]
+        if self.run_id:
+            lines.append(f"- Run ID: {self.run_id}")
+        if self.content_hash:
+            lines.append(f"- Content Hash: {self.content_hash}")
         by_type = self.summary.get("by_type", {})
         if isinstance(by_type, dict) and by_type:
             lines.append("")
@@ -76,6 +85,29 @@ class TranslationQaReport:
                 block = f"#{issue.block_id}" if issue.block_id is not None else "global"
                 lines.append(f"- [{issue.severity}] {issue.type} {block}: {issue.message}")
         return "\n".join(lines) + "\n"
+
+
+def quality_content_hash(blocks: Iterable) -> str:
+    """Return a deterministic identity for the exact source/translation pairs."""
+    records = []
+    for block in blocks or []:
+        block_id = getattr(block, "index", None)
+        if not isinstance(block_id, int) or isinstance(block_id, bool):
+            continue
+        source = getattr(block, "text", "")
+        translation = getattr(block, "translation", "")
+        records.append({
+            "id": block_id,
+            "source": source if isinstance(source, str) else "",
+            "translation": translation if isinstance(translation, str) else "",
+        })
+    payload = json.dumps(
+        records,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"sha256:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
 
 
 def _clean_text(value) -> str:

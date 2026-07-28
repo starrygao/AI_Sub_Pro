@@ -838,7 +838,7 @@ def test_translate_pipeline_blocks_export_when_cleaned_translation_is_empty(tmp_
     assert (pdir / "partial_bilingual.srt").exists()
 
 
-def test_translate_pipeline_semantic_mismatch_is_report_only(tmp_path, monkeypatch):
+def test_translate_pipeline_professional_semantic_mismatch_blocks_delivery(tmp_path, monkeypatch):
     from app.api import translate as api_translate
     from app.utils import project_store
 
@@ -863,6 +863,7 @@ def test_translate_pipeline_semantic_mismatch_is_report_only(tmp_path, monkeypat
     monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
     monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
         "translation": {
+            "quality_mode": "professional",
             "qa_auto_repair": False,
             "semantic_qa": True,
             "semantic_qa_batch_size": 10,
@@ -897,18 +898,309 @@ def test_translate_pipeline_semantic_mismatch_is_report_only(tmp_path, monkeypat
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
-    assert project["status"] == "translated"
-    assert project["translation_quality_status"] == "passed"
-    assert project["error"] is None
-    assert project["translated_srt"] == str(pdir / "translated.srt")
-    assert project["bilingual_srt"] == str(pdir / "bilingual.srt")
+    assert project["status"] == "error"
+    assert project["translation_quality_status"] == "failed"
+    assert "翻译质量未达标" in project["error"]
     assert report["summary"]["by_type"]["semantic_mismatch"] == 1
-    assert report["issues"][0]["severity"] == "warning"
-    assert report["summary"]["quality_gate"]["passed"] is True
+    assert report["issues"][0]["severity"] == "error"
+    assert report["summary"]["quality_gate"]["passed"] is False
     assert report["summary"]["quality_gate"]["requires_human_review"] is False
-    assert (pdir / "translated.srt").exists()
-    assert (pdir / "bilingual.srt").exists()
-    assert not (pdir / "partial_translated.srt").exists()
+    assert not (pdir / "translated.srt").exists()
+    assert not (pdir / "bilingual.srt").exists()
+    assert (pdir / "partial_translated.srt").exists()
+
+
+def test_professional_semantic_uncertainty_requires_human_review():
+    from app.api.translate import (
+        _finalize_quality_conclusion,
+        _refresh_quality_report_issue_summary,
+        _run_semantic_quality_checks,
+    )
+    from app.engines.translation_qa import TranslationQaReport
+
+    blocks = [
+        type("Block", (), {
+            "index": 7,
+            "text": "Maybe he left.",
+            "translation": "也许他走了。",
+            "filtered": False,
+        })(),
+    ]
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            return [{"id": 7, "translation": "UNCERTAIN: 指代信息不足"}]
+
+    translator = type("Translator", (), {"primary": Primary()})()
+    issues, trace = _run_semantic_quality_checks(
+        {
+            "translation": {
+                "quality_mode": "professional",
+                "semantic_qa": True,
+            },
+        },
+        translator,
+        blocks,
+        "简体中文",
+        strict_quality_gate=True,
+    )
+    report = TranslationQaReport(status="ok", issues=issues, trace={"semantic_qa": trace})
+    _refresh_quality_report_issue_summary(report)
+    _finalize_quality_conclusion(
+        report,
+        [],
+        False,
+        strict_quality_gate=True,
+    )
+
+    assert trace["requested_block_ids"] == [7]
+    assert trace["checked_block_ids"] == [7]
+    assert trace["failed_block_ids"] == []
+    assert trace["skipped_block_ids"] == []
+    assert report.summary["quality_gate"]["passed"] is False
+    assert report.summary["quality_gate"]["verdict"] == "needs_review"
+    assert report.summary["quality_gate"]["requires_human_review"] is True
+    assert report.summary["quality_gate"]["delivery_mode"] == "human_review"
+    assert report.unresolved_blocks == [7]
+    assert report.summary["quality_gate"]["unresolved_blocks"] == 1
+
+
+def test_professional_semantic_provider_unavailable_fails_closed():
+    from app.api.translate import _run_semantic_quality_checks
+
+    blocks = [
+        type("Block", (), {
+            "index": 3,
+            "text": "Hello.",
+            "translation": "你好。",
+            "filtered": False,
+        })(),
+    ]
+    issues, trace = _run_semantic_quality_checks(
+        {
+            "translation": {
+                "quality_mode": "professional",
+                "semantic_qa": False,
+            },
+        },
+        object(),
+        blocks,
+        "简体中文",
+        strict_quality_gate=True,
+    )
+
+    assert [(issue.type, issue.severity, issue.block_id) for issue in issues] == [
+        ("semantic_qa_failed", "error", 3),
+    ]
+    assert trace["requested_block_ids"] == [3]
+    assert trace["checked_block_ids"] == []
+    assert trace["failed_block_ids"] == []
+    assert trace["skipped_block_ids"] == [3]
+    assert trace["coverage_complete"] is False
+
+
+def test_professional_semantic_batch_failure_tracks_failed_ids():
+    from app.api.translate import _run_semantic_quality_checks
+
+    blocks = [
+        type("Block", (), {
+            "index": block_id,
+            "text": f"Source {block_id}",
+            "translation": f"译文 {block_id}",
+            "filtered": False,
+        })()
+        for block_id in (1, 2)
+    ]
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            raise RuntimeError("provider unavailable")
+
+    translator = type("Translator", (), {"primary": Primary()})()
+    issues, trace = _run_semantic_quality_checks(
+        {"translation": {"quality_mode": "professional", "semantic_qa": True}},
+        translator,
+        blocks,
+        "简体中文",
+        strict_quality_gate=True,
+    )
+
+    assert {issue.block_id for issue in issues} == {1, 2}
+    assert all(issue.type == "semantic_qa_failed" for issue in issues)
+    assert trace["requested_block_ids"] == [1, 2]
+    assert trace["checked_block_ids"] == []
+    assert trace["failed_block_ids"] == [1, 2]
+    assert trace["skipped_block_ids"] == []
+    assert trace["coverage_complete"] is False
+
+
+def test_professional_semantic_partial_coverage_fails_closed():
+    from app.api.translate import _run_semantic_quality_checks
+
+    blocks = [
+        type("Block", (), {
+            "index": block_id,
+            "text": f"Source {block_id}",
+            "translation": f"译文 {block_id}",
+            "filtered": False,
+        })()
+        for block_id in (10, 11)
+    ]
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            return [{"id": 10, "translation": "OK"}]
+
+    translator = type("Translator", (), {"primary": Primary()})()
+    issues, trace = _run_semantic_quality_checks(
+        {
+            "translation": {
+                "quality_mode": "professional",
+                "semantic_qa": True,
+                "semantic_qa_max_blocks": 1,
+            },
+        },
+        translator,
+        blocks,
+        "简体中文",
+        strict_quality_gate=True,
+    )
+
+    assert [(issue.type, issue.severity, issue.block_id) for issue in issues] == [
+        ("semantic_qa_failed", "error", 11),
+    ]
+    assert trace["requested_block_ids"] == [10, 11]
+    assert trace["checked_block_ids"] == [10]
+    assert trace["failed_block_ids"] == []
+    assert trace["skipped_block_ids"] == [11]
+    assert trace["coverage_complete"] is False
+
+
+def test_quality_gate_rejects_stale_or_hash_mismatched_report(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "staleqareport"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    report = {
+        "run_id": "old-run",
+        "content_hash": "sha256:old",
+        "status": "ok",
+        "issues": [],
+        "summary": {
+            "conclusion": "达标：自动检查通过。",
+            "quality_gate": {"passed": True},
+        },
+    }
+    (pdir / "translation_qa_report.json").write_text(json.dumps(report), encoding="utf-8")
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+
+    passed, message = api_translate._translation_quality_gate_status(
+        pid,
+        expected_run_id="new-run",
+        expected_content_hash="sha256:old",
+    )
+    assert passed is False
+    assert "已过期" in message
+
+    passed, message = api_translate._translation_quality_gate_status(
+        pid,
+        expected_run_id="old-run",
+        expected_content_hash="sha256:new",
+    )
+    assert passed is False
+    assert "内容不匹配" in message
+
+
+def test_translation_start_invalidates_prior_certification(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "invalidateqa"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "translation_qa_report.json").write_text('{"status":"ok"}', encoding="utf-8")
+    (pdir / "translation_qa_report.md").write_text("# old", encoding="utf-8")
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+
+    run_id = api_translate._begin_translation_quality_run(pid)
+
+    assert isinstance(run_id, str) and run_id
+    assert not (pdir / "translation_qa_report.json").exists()
+    assert not (pdir / "translation_qa_report.md").exists()
+
+
+def test_translate_pipeline_does_not_swallow_quality_report_persistence_failure(
+    tmp_path,
+    monkeypatch,
+):
+    from app.api import translate as api_translate
+    from app.engines import translation_qa
+    from app.utils import project_store
+
+    pid = "qapersistfail"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello.\n\n",
+        encoding="utf-8",
+    )
+    (pdir / "translation_qa_report.json").write_text(json.dumps({
+        "run_id": "old-run",
+        "content_hash": "sha256:old",
+        "status": "ok",
+        "issues": [],
+        "summary": {"quality_gate": {"passed": True}},
+    }), encoding="utf-8")
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {
+            "quality_mode": "fast",
+            "qa_auto_repair": False,
+            "semantic_qa": False,
+        },
+    })
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            pass
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "你好。"
+            return blocks
+
+        def get_kb_usage_trace(self):
+            return {"project": {}, "matches": []}
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+    monkeypatch.setattr(
+        translation_qa,
+        "save_quality_report",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["status"] == "error"
+    assert "translation QA report failed" in project["error"]
+    assert not (pdir / "translation_qa_report.json").exists()
+    assert not (pdir / "translated.srt").exists()
 
 
 def test_translate_pipeline_final_retry_repairs_missing_translation(tmp_path, monkeypatch):
@@ -1103,11 +1395,31 @@ def test_translate_pipeline_retries_missing_created_after_quality_repair(tmp_pat
 
     persist_calls = []
 
-    def fake_persist(pid, pdir, project, blocks, target_language, translator, cfg, progress_callback=None):
+    def fake_persist(
+        pid,
+        pdir,
+        project,
+        blocks,
+        target_language,
+        translator,
+        cfg,
+        progress_callback=None,
+        *,
+        quality_run_id="",
+        strict_quality_gate=False,
+    ):
+        from app.engines.translation_qa import quality_content_hash
+
         persist_calls.append([block.translation for block in blocks])
         if len(persist_calls) == 1:
             blocks[1].translation = ""
-        report = {"status": "ok", "issues": [], "summary": {"quality_gate": {"passed": True}}}
+        report = {
+            "run_id": quality_run_id,
+            "content_hash": quality_content_hash(blocks),
+            "status": "ok",
+            "issues": [],
+            "summary": {"quality_gate": {"passed": True}},
+        }
         root = Path(pdir)
         (root / "translation_qa_report.json").write_text(json.dumps(report), encoding="utf-8")
         (root / "translation_qa_report.md").write_text("# Translation QA Report\n", encoding="utf-8")

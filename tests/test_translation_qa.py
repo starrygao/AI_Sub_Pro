@@ -1,4 +1,5 @@
 from datetime import timedelta
+import json
 
 import pytest
 
@@ -263,10 +264,20 @@ def test_annotate_contextual_speaker_translations_marks_background_sources():
 
 
 def test_quality_report_serializes_json_and_markdown(tmp_path):
-    from app.engines.translation_qa import QualityIssue, TranslationQaReport, save_quality_report
+    from app.engines.translation_qa import (
+        QualityIssue,
+        TranslationQaReport,
+        quality_content_hash,
+        save_quality_report,
+    )
 
     report = TranslationQaReport(
         status="needs_review",
+        run_id="qa-run-123",
+        content_hash=quality_content_hash([
+            _block(1, "Hello", "你好"),
+            _block(2, "World", "世界"),
+        ]),
         issues=[
             QualityIssue(
                 type="missing_translation",
@@ -284,9 +295,14 @@ def test_quality_report_serializes_json_and_markdown(tmp_path):
     md_path = tmp_path / "translation_qa_report.md"
     save_quality_report(report, json_path=json_path, markdown_path=md_path)
 
-    assert '"missing_translation"' in json_path.read_text(encoding="utf-8")
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["run_id"] == "qa-run-123"
+    assert payload["content_hash"] == "sha256:d2fdf133c0218be6633b3784826e140e2db21de774ccf4579c62bd671c386f52"
+    assert payload["issues"][0]["type"] == "missing_translation"
     markdown = md_path.read_text(encoding="utf-8")
     assert "# Translation QA Report" in markdown
+    assert "qa-run-123" in markdown
+    assert payload["content_hash"] in markdown
     assert "missing_translation" in markdown
 
 
