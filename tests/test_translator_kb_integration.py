@@ -170,6 +170,46 @@ def test_build_polish_prompt_includes_kb_snippet(monkeypatch):
     assert "鲍勃" in prompt
 
 
+def test_translation_and_polish_prompts_preserve_two_speaker_line_contract(monkeypatch):
+    from app.engines import translator as tmod
+    from app.engines.knowledge import KnowledgeBase
+
+    monkeypatch.setattr(tmod, "_shared_kb", KnowledgeBase(), raising=False)
+    cfg = {
+        "translation": {
+            "primary_provider": "openai",
+            "primary_model": "gpt-4o",
+            "polish_provider": "",
+            "batch_size": 10,
+            "context_window": 3,
+        },
+        "api_keys": {"openai": "sk-test"},
+    }
+    translator = tmod.SubtitleTranslator(cfg)
+
+    translation_prompt = translator._build_prompt(
+        target_lang="简体中文",
+        meta_info={"name": "Generic Drama"},
+        kb_data=None,
+        context_before=[],
+        context_after=[],
+        items=[{
+            "id": 1,
+            "original": "- Are you ready?\n- Ready.",
+        }],
+    )
+    polish_prompt = translator._build_polish_prompt(
+        target_lang="简体中文",
+        meta_info={"name": "Generic Drama"},
+        kb_data=None,
+    )
+
+    for prompt in (translation_prompt, polish_prompt):
+        assert "每位说话人独占一行" in prompt
+        assert "不得合并说话人行" in prompt
+        assert "\\n" in prompt
+
+
 def test_translator_records_kb_usage_trace(monkeypatch):
     from app.engines import translator as tmod
     from app.engines.knowledge import KnowledgeBase

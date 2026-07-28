@@ -125,6 +125,8 @@ _CJK_TEXT_RE = re.compile(r"[\u3400-\u9fff]+")
 _REPEATED_CJK_RE = re.compile(r"([\u4e00-\u9fff])(?:[，,、\s]*\1){2,}")
 _ASCII_PUNCT_RE = re.compile(r"[?!,;:]")
 _SENTENCE_END_PUNCT_RE = re.compile(r"[.!?。！？]\s*$")
+_SPEAKER_DIALOGUE_LINE_RE = re.compile(r"^\s*[-–—](?![-–—])\s*\S")
+_SPEAKER_LABEL_LINE_RE = re.compile(r"^\s*[^:：\r\n]{1,24}[:：]\s*\S")
 _SCIENTIFIC_TARGET_SUFFIXES = (
     "兽",
     "獸",
@@ -864,6 +866,41 @@ def _kb_terms(project_kb: Optional[ProjectKb]) -> list[tuple[str, str]]:
     return pairs
 
 
+def _source_term_present(source: str, term: str) -> bool:
+    source = _clean_text(source)
+    term = _clean_text(term)
+    if not source or not term:
+        return False
+    escaped = re.escape(term)
+    prefix = r"(?<!\w)" if term[0].isascii() and term[0].isalnum() else ""
+    suffix = r"(?!\w)" if term[-1].isascii() and term[-1].isalnum() else ""
+    return re.search(f"{prefix}{escaped}{suffix}", source, re.IGNORECASE) is not None
+
+
+def _context_selected_terms(trace: Optional[dict]) -> list[tuple[str, str]]:
+    if not isinstance(trace, dict):
+        return []
+    pairs: list[tuple[str, str]] = []
+    seen = set()
+    for hit in trace.get("kb_hits", []) or []:
+        if not isinstance(hit, dict):
+            continue
+        if _clean_text(hit.get("scope")) not in {
+            "curated_domain",
+            "manual_terms",
+            "project",
+        }:
+            continue
+        source = _clean_text(hit.get("source"))
+        target = _clean_text(hit.get("target"))
+        key = (source.casefold(), re.sub(r"\s+", "", target).casefold())
+        if not source or not target or key in seen:
+            continue
+        seen.add(key)
+        pairs.append((source, target))
+    return pairs
+
+
 def _issue_counts(issues: list[QualityIssue]) -> dict:
     counts = {}
     for issue in issues:
@@ -904,6 +941,8 @@ _FAR_CATEGORY_BY_TYPE = {
     "semantic_qa_failed": "functional",
     "scientific_term_inconsistent": "functional",
     "proper_name_inconsistent": "functional",
+    "speaker_line_structure_mismatch": "functional",
+    "context_term_missing": "functional",
     "english_residue": "acceptability",
     "sound_description_translated": "acceptability",
     "punctuation_style": "acceptability",
@@ -1265,6 +1304,33 @@ def _subtitle_lines(value: str) -> list[str]:
     return [line.strip() for line in (value or "").splitlines() if line.strip()]
 
 
+def _speaker_line_contract(value: str) -> tuple[str, int] | None:
+    lines = _subtitle_lines(value)
+    if len(lines) < 2:
+        return None
+    if all(_SPEAKER_DIALOGUE_LINE_RE.match(line) for line in lines):
+        return ("dialogue-marker", len(lines))
+    if all(_SPEAKER_LABEL_LINE_RE.match(line) for line in lines):
+        return ("speaker-label", len(lines))
+    return None
+
+
+def _preserves_speaker_line_contract(
+    translation: str,
+    contract: tuple[str, int],
+) -> bool:
+    kind, expected_count = contract
+    lines = _subtitle_lines(translation)
+    if len(lines) != expected_count:
+        return False
+    matcher = (
+        _SPEAKER_DIALOGUE_LINE_RE
+        if kind == "dialogue-marker"
+        else _SPEAKER_LABEL_LINE_RE
+    )
+    return all(matcher.match(line) for line in lines)
+
+
 def _duration_seconds(block) -> float:
     start = getattr(block, "start", None)
     end = getattr(block, "end", None)
@@ -1305,6 +1371,7 @@ def run_quality_checks(
     seen_ids = set()
     kb_terms = _kb_terms(project_kb)
     manual_terms = manual_term_pairs(meta_info if isinstance(meta_info, dict) else {})
+    context_terms = _context_selected_terms(trace)
     chinese_target = _is_chinese_target(target_language)
     technical_tutorial_context = _has_technical_tutorial_context(meta_info)
     active_style_profile = style_profile or infer_subtitle_style_profile(target_language, meta_info)
@@ -1357,6 +1424,29 @@ def run_quality_checks(
                 message="sound-description block should be blank or handled by subtitle rules",
                 source_text=source,
                 translation=translation,
+            ))
+
+        speaker_contract = (
+            _speaker_line_contract(source)
+            if source and translation and not sound_description
+            else None
+        )
+        if (
+            speaker_contract is not None
+            and not _preserves_speaker_line_contract(translation, speaker_contract)
+        ):
+            kind, expected_count = speaker_contract
+            issues.append(QualityIssue(
+                type="speaker_line_structure_mismatch",
+                severity="error",
+                block_id=block_id if isinstance(block_id, int) else None,
+                message=(
+                    "translation must preserve one line per source speaker "
+                    f"and retain {kind} structure"
+                ),
+                source_text=source,
+                translation=translation,
+                expected=f"{expected_count} {kind} lines",
             ))
 
         if (
@@ -1453,9 +1543,8 @@ def run_quality_checks(
                     expected="Chinese punctuation",
                 ))
 
-        lower_source = source.lower()
         for term_source, term_target in kb_terms:
-            if term_source.lower() in lower_source and term_target not in translation:
+            if _source_term_present(source, term_source) and term_target not in translation:
                 issues.append(QualityIssue(
                     type="kb_term_missing",
                     severity="error",
@@ -1467,12 +1556,24 @@ def run_quality_checks(
                 ))
 
         for term_source, term_target in manual_terms:
-            if term_source.lower() in lower_source and term_target not in translation:
+            if _source_term_present(source, term_source) and term_target not in translation:
                 issues.append(QualityIssue(
                     type="manual_term_missing",
                     severity="error",
                     block_id=block_id if isinstance(block_id, int) else None,
                     message=f"expected manual term {term_source} -> {term_target}",
+                    source_text=source,
+                    translation=translation,
+                    expected=term_target,
+                ))
+
+        for term_source, term_target in context_terms:
+            if _source_term_present(source, term_source) and term_target not in translation:
+                issues.append(QualityIssue(
+                    type="context_term_missing",
+                    severity="error",
+                    block_id=block_id if isinstance(block_id, int) else None,
+                    message=f"expected selected term {term_source} → {term_target}",
                     source_text=source,
                     translation=translation,
                     expected=term_target,
@@ -1687,6 +1788,8 @@ def build_repair_prompt(
         f"你是一位{target_language}字幕审校。只修复下面列出的失败字幕块。",
         "必须保持 id 原样，不要新增、删除或重编号。",
         "仅输出 JSON 数组，格式: [{\"id\": N, \"translation\": \"修复后的译文\"}]。",
+        "original 含多个说话人行时，每位说话人独占一行并保持原顺序和 -/–/— 或“姓名:”标记；"
+        "不得合并说话人行，JSON 字符串中的换行写为 \\n。",
     ]
     if kb_terms:
         parts.append("必须遵守术语:")
@@ -1727,7 +1830,12 @@ def build_repair_prompt(
         parts.append("科学名不一致时必须使用 Issue 中 expected 指定的译名，只改必要的术语部分。")
     if "proper_name_inconsistent" in issue_types:
         parts.append("专名不一致时必须使用 Issue 中 expected 指定的译名，只改必要的专名部分，不要重写整句。")
-    if issue_types & {"kb_term_missing", "manual_term_missing", "canonical_term_missing"}:
+    if issue_types & {
+        "kb_term_missing",
+        "manual_term_missing",
+        "canonical_term_missing",
+        "context_term_missing",
+    }:
         parts.append("术语缺失时必须使用 Issue 中 expected 指定的译法；不要改写已审定或策展术语。")
     parts.append("")
     parts.append("待修复字幕:")

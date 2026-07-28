@@ -45,6 +45,120 @@ def test_quality_checks_detect_common_deterministic_issues():
     assert report.summary["far"]["readability"] >= 1
 
 
+def test_quality_checks_block_collapsed_or_unmarked_two_speaker_lines():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(
+            21,
+            "- Did you see it?\n- Yes.",
+            "你看见了吗？看见了。",
+        ),
+        _block(
+            22,
+            "MARA: Stay here.\nIVO: No.",
+            "玛拉：留在这里。伊沃：不。",
+        ),
+        _block(
+            23,
+            "This ordinary source wrap\nis not a speaker boundary.",
+            "这只是普通换行，不是说话人边界。",
+        ),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
+
+    issues = [
+        issue for issue in report.issues
+        if issue.type == "speaker_line_structure_mismatch"
+    ]
+    assert [(issue.block_id, issue.expected) for issue in issues] == [
+        (21, "2 dialogue-marker lines"),
+        (22, "2 speaker-label lines"),
+    ]
+    assert report.status == "needs_review"
+    assert report.unresolved_blocks == [21, 22]
+
+
+def test_quality_checks_accept_preserved_two_speaker_line_structure():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(
+            31,
+            "- Did you see it?\n- Yes.",
+            "- 你看见了吗？\n- 看见了。",
+        ),
+        _block(
+            32,
+            "MARA: Stay here.\nIVO: No.",
+            "玛拉：留在这里。\n伊沃：不。",
+        ),
+    ]
+
+    report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
+
+    assert "speaker_line_structure_mismatch" not in report.summary["by_type"]
+
+
+def test_quality_checks_enforce_context_selected_domain_term_drift():
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(41, "The Aether Gate is open.", "以太之门已经打开。"),
+        _block(42, "Return to the Aether Gate.", "回到艾瑟门。"),
+        _block(43, "Guard the Aether Gate.", "守住以太之门。"),
+    ]
+    trace = {
+        "kb_hits": [{
+            "source": "Aether Gate",
+            "target": "以太之门",
+            "scope": "curated_domain",
+        }],
+    }
+
+    report = run_quality_checks(
+        blocks,
+        target_language="简体中文",
+        max_chars=40,
+        trace=trace,
+    )
+
+    issues = [
+        issue for issue in report.issues
+        if issue.type == "context_term_missing"
+    ]
+    assert [(issue.block_id, issue.expected) for issue in issues] == [
+        (42, "以太之门"),
+    ]
+    assert report.status == "needs_review"
+
+
+def test_quality_checks_enforce_repeated_cjk_project_place_term():
+    from app.engines.kb_models import ProjectKb, TermEntry
+    from app.engines.translation_qa import run_quality_checks
+
+    blocks = [
+        _block(44, "北港已经封锁。", "North Harbor is closed."),
+        _block(45, "返回北港基地。", "Return to Northern Port base."),
+    ]
+    kb = ProjectKb(
+        places=[TermEntry(source="北港", target="North Harbor")],
+    )
+
+    report = run_quality_checks(
+        blocks,
+        project_kb=kb,
+        target_language="English",
+        max_chars=40,
+    )
+
+    issues = [issue for issue in report.issues if issue.type == "kb_term_missing"]
+    assert [(issue.block_id, issue.expected) for issue in issues] == [
+        (45, "North Harbor"),
+    ]
+
+
 def test_quality_checks_allow_uppercase_acronyms_in_chinese_subtitles():
     from app.engines.translation_qa import run_quality_checks
 
@@ -418,6 +532,46 @@ def test_repair_prompt_contains_only_failing_blocks():
     assert '"preceding_context": [{"id": 1, "original": "Good"' in prompt
     assert "Hudson Oaks" in prompt
     assert "哈德逊奥克斯" in prompt
+
+
+def test_repair_prompt_requires_speaker_line_structure_and_context_terms():
+    from app.engines.translation_qa import QualityIssue, build_repair_prompt
+
+    issues = [
+        QualityIssue(
+            type="speaker_line_structure_mismatch",
+            severity="error",
+            block_id=51,
+            message="two speaker lines were merged",
+            source_text="- Are you ready?\n- Ready.",
+            translation="准备好了吗？好了。",
+            expected="2 dialogue-marker lines",
+        ),
+        QualityIssue(
+            type="context_term_missing",
+            severity="error",
+            block_id=51,
+            message="expected selected term Aether Gate → 以太之门",
+            source_text="- Aether Gate?\n- Aether Gate.",
+            translation="- 艾瑟门？\n- 艾瑟门。",
+            expected="以太之门",
+        ),
+    ]
+
+    prompt = build_repair_prompt(
+        "简体中文",
+        [{
+            "id": 51,
+            "original": "- Aether Gate?\n- Aether Gate.",
+            "draft": "- 艾瑟门？\n- 艾瑟门。",
+        }],
+        issues,
+        kb_terms={"Aether Gate": "以太之门"},
+    )
+
+    assert "每位说话人独占一行" in prompt
+    assert "不得合并说话人行" in prompt
+    assert "expected 指定的译法" in prompt
 
 
 def test_repair_items_include_bounded_context_and_group_adjacent_semantic_findings():

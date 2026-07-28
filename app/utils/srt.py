@@ -41,13 +41,14 @@ class SrtWriteReport:
     omitted_sound_description_ids: List[int] = field(default_factory=list)
     empty_text_ids: List[int] = field(default_factory=list)
     invalid_duration_ids: List[int] = field(default_factory=list)
+    source_to_output_id: List[dict] = field(default_factory=list)
 
 
 _TIME_RE = re.compile(r"^(\d+):(\d{2}):(\d{2})[,.](\d{3})$")
 _VTT_TIME_RE = re.compile(r"^(?:(\d+):)?(\d{2}):(\d{2})\.(\d{3})$")
 _ASS_TIME_RE = re.compile(r"^(\d+):(\d{2}):(\d{2})\.(\d{1,3})$")
 _MUSIC_SYMBOL_RE = re.compile(r"[♪♫♬🎵🎶]+")
-_DIALOGUE_MARKER_RE = re.compile(r"^\s*[-–—]\s+\S")
+_DIALOGUE_MARKER_RE = re.compile(r"^\s*[-–—](?![-–—])\s*\S")
 _SPEAKER_LABEL_RE = re.compile(r"^[^:：\n]{1,12}[:：]\s*\S")
 _CJK_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
 _TRANSLATION_SINGLE_LINE_MAX_CHARS = 32
@@ -426,6 +427,12 @@ def write_srt(
             f.write(f"{fmt_time(start)} --> {fmt_time(end)}\n")
             f.write(f"{text}\n\n")
             _append_report_id(report.written_ids, b)
+            source_block_id = _report_block_id(b)
+            if source_block_id is not None:
+                report.source_to_output_id.append({
+                    "source_block_id": source_block_id,
+                    "output_id": seq,
+                })
             seq += 1
     if return_report:
         return report
@@ -515,8 +522,8 @@ def _subtitle_text(value, *, single_line: bool = False) -> str:
     lines = []
     for line in text.splitlines():
         cleaned = re.sub(r"\s{2,}", " ", line).strip()
-        cleaned = re.sub(r"^(?:[-–—]\s*){2,}", "", cleaned).strip()
-        cleaned = re.sub(r"(?:\s*[-–—])+$", "", cleaned).strip()
+        if re.fullmatch(r"[-–—\s]+", cleaned):
+            continue
         if cleaned:
             lines.append(cleaned)
     if single_line:
@@ -526,6 +533,8 @@ def _subtitle_text(value, *, single_line: bool = False) -> str:
 
 def _single_line_translation(lines: list[str]) -> list[str]:
     if len(lines) <= 1:
+        return lines
+    if _has_structural_line_break(lines):
         return lines
     joined = _join_subtitle_lines(lines)
     if _compact_subtitle_chars(joined) > _TRANSLATION_SINGLE_LINE_MAX_CHARS:

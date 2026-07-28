@@ -941,6 +941,37 @@ def _translation_export_integrity_message(blocks, write_report) -> Optional[str]
     )
 
 
+def _persist_translated_srt_id_mapping(pid: str, write_report) -> None:
+    report_path = _safe_project_artifact_path(pid, "translation_qa_report.json")
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(
+            f"translation QA report mapping update failed: {_safe_error_message(exc)}"
+        ) from exc
+    if not isinstance(report, dict):
+        raise RuntimeError("translation QA report mapping update failed: invalid report")
+    raw_mapping = getattr(write_report, "source_to_output_id", [])
+    mapping = []
+    for item in raw_mapping if isinstance(raw_mapping, list) else []:
+        if not isinstance(item, dict):
+            continue
+        source_block_id = item.get("source_block_id")
+        output_id = item.get("output_id")
+        if (
+            isinstance(source_block_id, int)
+            and not isinstance(source_block_id, bool)
+            and isinstance(output_id, int)
+            and not isinstance(output_id, bool)
+        ):
+            mapping.append({
+                "source_block_id": source_block_id,
+                "output_id": output_id,
+            })
+    report["subtitle_id_mapping"] = {"translated_srt": mapping}
+    atomic_write_json(report_path, report)
+
+
 _FINAL_MISSING_TRANSLATION_RETRY_NOTE = (
     "最终补翻要求: 这些字幕在主翻译和批内补翻后仍缺译。"
     "本轮只处理当前 JSON 中的条目；每个普通对白 id 必须返回非空 translation，"
@@ -3192,6 +3223,7 @@ def _run_translate_pipeline(
                     _write_partial_outputs()
                 else:
                     write_bilingual_srt(blocks, os.path.join(pdir, "bilingual.srt"))
+                    _persist_translated_srt_id_mapping(pid, write_report)
                     _mark_translation_artifacts(pid)
             try:
                 write_kb_usage_trace(Path(pdir), translator.get_kb_usage_trace())

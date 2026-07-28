@@ -598,6 +598,12 @@ def test_translate_pipeline_writes_quality_report(tmp_path, monkeypatch):
     assert report["status"] == "ok"
     assert report["summary"]["by_type"]["english_residue"] == 1
     assert report["summary"]["quality_gate"]["passed"] is True
+    assert report["subtitle_id_mapping"] == {
+        "translated_srt": [
+            {"source_block_id": 1, "output_id": 1},
+            {"source_block_id": 2, "output_id": 2},
+        ],
+    }
     assert (pdir / "translation_qa_report.md").exists()
 
 

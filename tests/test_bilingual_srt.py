@@ -98,8 +98,8 @@ def test_translated_srt_collapses_short_translation_line_breaks(tmp_path):
     assert "我们现在就走别再回头" in mono_text
 
 
-def test_translated_srt_collapses_short_structural_dialogue_line_breaks(tmp_path):
-    from app.utils.srt import write_srt
+def test_translated_srt_preserves_short_structural_dialogue_line_breaks(tmp_path):
+    from app.utils.srt import write_mono_srt, write_srt
 
     blocks = [
         _make_block(1, "Two speakers", "- 你看见了吗？\n- 看见了。"),
@@ -107,13 +107,18 @@ def test_translated_srt_collapses_short_structural_dialogue_line_breaks(tmp_path
         _make_block(3, "Long cue", "这是一条非常非常非常非常长的字幕\n它本来就不适合强行压成单行继续观看"),
     ]
     out = tmp_path / "translated.srt"
+    mono = tmp_path / "mono.srt"
 
     write_srt(blocks, str(out), use_translation=True)
+    write_mono_srt(blocks, str(mono), use_translation=True)
 
     text = out.read_text(encoding="utf-8")
-    assert "- 你看见了吗？- 看见了。" in text
-    assert "玛丽：你来了？约翰：刚到。" in text
+    mono_text = mono.read_text(encoding="utf-8")
+    assert "- 你看见了吗？\n- 看见了。" in text
+    assert "玛丽：你来了？\n约翰：刚到。" in text
     assert "这是一条非常非常非常非常长的字幕\n它本来就不适合强行压成单行继续观看" in text
+    assert "- 你看见了吗？\n- 看见了。" in mono_text
+    assert "玛丽：你来了？\n约翰：刚到。" in mono_text
 
 
 def test_bilingual_srt_collapses_translation_only(tmp_path):
@@ -128,6 +133,52 @@ def test_bilingual_srt_collapses_translation_only(tmp_path):
 
     text = out.read_text(encoding="utf-8")
     assert "第一句译文第二句译文\nFirst source line\nSecond source line" in text
+
+
+def test_bilingual_srt_preserves_structural_speaker_lines_and_source_interruption(tmp_path):
+    from app.utils.srt import write_bilingual_srt
+
+    blocks = [
+        _make_block(
+            7,
+            "- Did you call her?\n- I was going to--",
+            "- 你给她打电话了吗？\n- 我正准备打——",
+        ),
+        _make_block(
+            9,
+            "MARA: Stay here.\nIVO: No.",
+            "玛拉：留在这里。\n伊沃：不。",
+        ),
+    ]
+    out = tmp_path / "bilingual.srt"
+
+    write_bilingual_srt(blocks, str(out))
+
+    text = out.read_text(encoding="utf-8")
+    assert "- 你给她打电话了吗？\n- 我正准备打——" in text
+    assert "- Did you call her?\n- I was going to--" in text
+    assert "玛拉：留在这里。\n伊沃：不。" in text
+    assert "MARA: Stay here.\nIVO: No." in text
+
+
+def test_write_srt_report_maps_source_block_ids_to_output_sequence_ids(tmp_path):
+    from app.utils.srt import write_srt
+
+    filtered = _make_block(11, "Skip", "跳过")
+    filtered.filtered = True
+    blocks = [
+        filtered,
+        _make_block(20, "First", "第一条"),
+        _make_block(35, "Second", "第二条"),
+    ]
+    out = tmp_path / "translated.srt"
+
+    report = write_srt(blocks, str(out), use_translation=True, return_report=True)
+
+    assert report.source_to_output_id == [
+        {"source_block_id": 20, "output_id": 1},
+        {"source_block_id": 35, "output_id": 2},
+    ]
 
 
 def test_srt_writers_strip_music_decoration_symbols(tmp_path):

@@ -67,6 +67,11 @@ _MISSING_TRANSLATION_RETRY_NOTE = (
     "补翻要求: 上一轮这些字幕缺失或格式无效。本轮只翻译当前输入 JSON 中的条目，"
     "普通对白必须为每个 id 返回一个非空 translation；环境音/纯声音描述可按规则留空但仍必须返回 id。"
 )
+_SPEAKER_LINE_PROMPT_RULE = (
+    "原文含两个或更多说话人行（每行以 -/–/— 开头，或以“姓名:”标注）时，"
+    "每位说话人独占一行并保持原顺序和标记；不得合并说话人行，"
+    "JSON 字符串中的换行必须写为 \\n。"
+)
 
 _PHRASE_CONTEXT_KEYWORDS = {
     "medical": {
@@ -1113,7 +1118,9 @@ class SubtitleTranslator:
             "4. [sound]等环境音标记不翻译,留空",
             "5. 保持上下文语气连贯",
             "6. 删除音乐装饰符号,不要输出 ♪、♫、♬、🎵、🎶",
-            "7. 不要添加任何解释,只输出JSON",
+            f"7. {_SPEAKER_LINE_PROMPT_RULE}",
+            "8. 项目知识库和上下文选中的审定术语是硬约束；同一专名、地点或领域术语重复出现时必须使用同一译法",
+            "9. 不要添加任何解释,只输出JSON",
         ])
 
         return "\n".join(parts)
@@ -1316,7 +1323,8 @@ class SubtitleTranslator:
             "1. 输出JSON数组: [{\"id\": N, \"translation\": \"润色后译文\"}];"
             "id 必须原样照抄输入条目的 id,不得重新编号或省略任何条目",
             "2. 修正不自然的表达,使其更流畅",
-            "3. 确保术语统一",
-            "4. 只输出JSON,不要解释",
+            "3. 确保项目知识库和上下文选中的审定术语统一；不得改写已指定的专名、地点或领域术语",
+            f"4. {_SPEAKER_LINE_PROMPT_RULE}",
+            "5. 只输出JSON,不要解释",
         ])
         return "\n".join(parts)
