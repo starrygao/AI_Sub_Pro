@@ -135,6 +135,23 @@ def update_progress(pid: str, stage: str, local_pct: int, msg: str) -> None:
             )
 
 
+def complete_progress(pid: str, msg: str) -> None:
+    """Persist terminal workflow progress with no active stage."""
+    validate_pid(pid)
+    payload = {
+        "progress": 100,
+        "stage": "",
+        "message": msg if isinstance(msg, str) else "",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    with _progress_lock:
+        progress_store[pid] = payload
+    try:
+        atomic_write_json(project_dir(pid) / "progress.json", payload)
+    except Exception as e:
+        log.warning("persist terminal progress failed pid=%s: %s", pid, e)
+
+
 def _normalize_progress_payload(data: dict) -> dict:
     payload = {
         "progress": _normalize_number(data.get("progress", 0), default=0, minimum=0, maximum=100),

@@ -192,6 +192,33 @@ def test_update_progress_caps_local_pct_at_hundred(tmp_project_dir):
     assert get_progress("pid_big_pct")["progress"] == 40
 
 
+def test_complete_progress_reconciles_memory_disk_and_reader(tmp_project_dir):
+    from app.engines.scheduler import (
+        complete_progress,
+        get_progress,
+        progress_store,
+        update_progress,
+    )
+
+    pid = "pid_terminal"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir()
+    update_progress(pid, stage="translate", local_pct=100, msg="translation stage done")
+    assert get_progress(pid)["progress"] == 75
+
+    complete_progress(pid, msg="translation workflow complete")
+
+    expected = {
+        "progress": 100,
+        "stage": "",
+        "message": "translation workflow complete",
+    }
+    assert {key: progress_store[pid][key] for key in expected} == expected
+    assert {key: get_progress(pid)[key] for key in expected} == expected
+    persisted = json.loads((pdir / "progress.json").read_text(encoding="utf-8"))
+    assert {key: persisted[key] for key in expected} == expected
+
+
 def test_update_progress_threadsafe(tmp_project_dir):
     from app.engines.scheduler import update_progress, progress_store
 

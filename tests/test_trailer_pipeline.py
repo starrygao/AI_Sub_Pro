@@ -47,19 +47,27 @@ def test_run_trailer_pipeline_happy_path(patched_projects_dir, monkeypatch):
 
     monkeypatch.setattr(tp, "download_trailer", fake_download)
     monkeypatch.setattr(tp, "_run_asr_for_project", lambda pid_: asr_called.append(pid_))
-    monkeypatch.setattr(tp, "_run_translate_for_project", lambda pid_: translate_called.append(pid_))
+    monkeypatch.setattr(
+        tp,
+        "_run_translate_for_project",
+        lambda pid_, *, burn_follows: translate_called.append((pid_, burn_follows)),
+    )
     monkeypatch.setattr(tp, "_run_burn_for_project", lambda pid_: burn_called.append(pid_))
 
     tp.run_trailer_pipeline(pid)
 
     assert len(download_called) == 1
     assert asr_called == [pid]
-    assert translate_called == [pid]
+    assert translate_called == [(pid, True)]
     assert burn_called == [pid]
 
     p = _load_project(pid)
     assert p["video_path"] is not None
     assert p["status"] == "completed"
+    from app.engines.scheduler import get_progress
+    progress = get_progress(pid)
+    assert progress["progress"] == 100
+    assert progress["stage"] == ""
 
 
 def test_run_trailer_pipeline_translate_only_skips_burn(patched_projects_dir, monkeypatch):
@@ -89,18 +97,26 @@ def test_run_trailer_pipeline_translate_only_skips_burn(patched_projects_dir, mo
     burn_called = []
     monkeypatch.setattr(tp, "download_trailer", fake_download)
     monkeypatch.setattr(tp, "_run_asr_for_project", lambda pid_: asr_called.append(pid_))
-    monkeypatch.setattr(tp, "_run_translate_for_project", lambda pid_: translate_called.append(pid_))
+    monkeypatch.setattr(
+        tp,
+        "_run_translate_for_project",
+        lambda pid_, *, burn_follows: translate_called.append((pid_, burn_follows)),
+    )
     monkeypatch.setattr(tp, "_run_burn_for_project", lambda pid_: burn_called.append(pid_))
 
     tp.run_trailer_pipeline(pid)
 
     assert asr_called == [pid]
-    assert translate_called == [pid]
+    assert translate_called == [(pid, False)]
     assert burn_called == []
     p = _load_project(pid)
     assert p["status"] == "translated"
     assert p["pipeline_stage"] is None
     assert p["workflow_mode"] == "translate_only"
+    from app.engines.scheduler import get_progress
+    progress = get_progress(pid)
+    assert progress["progress"] == 100
+    assert progress["stage"] == ""
 
 
 def test_run_trailer_pipeline_download_failure_sets_error(patched_projects_dir, monkeypatch):
@@ -209,7 +225,8 @@ def test_run_trailer_pipeline_stops_on_translate_stage_error(patched_projects_di
         pathlib.Path(out).write_bytes(b"x")
         return out
 
-    def fake_translate_sets_error(pid_):
+    def fake_translate_sets_error(pid_, *, burn_follows):
+        assert burn_follows is True
         p = _load_project(pid_)
         p["status"] = "error"
         p["error"] = "Translate: provider failed"

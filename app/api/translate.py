@@ -41,8 +41,13 @@ from app.utils.translation_delivery import (
     translation_delivery_lock,
     translation_delivery_is_invalid,
 )
+from app.utils.translation_quality_gate import (
+    TranslationQualityGateDecision,
+    load_quality_report_decision,
+)
 from app.engines.kb_trace import write_kb_usage_trace
 from app.engines.scheduler import (
+    complete_progress as _scheduler_complete_progress,
     get_progress as _scheduler_get_progress,
     update_progress as _scheduler_update_progress,
     progress_store,  # re-export for compatibility with older internal imports
@@ -2340,86 +2345,6 @@ def _begin_translation_quality_run(pid: str) -> str:
     return uuid.uuid4().hex
 
 
-@dataclass(frozen=True)
-class TranslationQualityGateDecision:
-    passed: bool
-    message: str
-    requires_human_review: bool = False
-
-
-def _invalid_quality_gate_decision(message: str) -> TranslationQualityGateDecision:
-    return TranslationQualityGateDecision(False, message, False)
-
-
-def _valid_block_id_list(value) -> bool:
-    return (
-        isinstance(value, list)
-        and all(
-            isinstance(block_id, int)
-            and not isinstance(block_id, bool)
-            and block_id > 0
-            for block_id in value
-        )
-        and len(value) == len(set(value))
-    )
-
-
-def _semantic_coverage_is_valid(trace: dict) -> bool:
-    semantic = trace.get("semantic_qa")
-    if not isinstance(semantic, dict):
-        return False
-    if semantic.get("enabled") is False:
-        coverage_fields = {
-            "requested_blocks",
-            "checked_blocks",
-            "failed_blocks",
-            "skipped_blocks",
-            "requested_block_ids",
-            "checked_block_ids",
-            "failed_block_ids",
-            "skipped_block_ids",
-            "coverage_complete",
-        }
-        return not any(field in semantic for field in coverage_fields)
-    if semantic.get("enabled") is not True:
-        return False
-
-    count_to_ids = {
-        "requested_blocks": "requested_block_ids",
-        "checked_blocks": "checked_block_ids",
-        "failed_blocks": "failed_block_ids",
-        "skipped_blocks": "skipped_block_ids",
-    }
-    for count_field, ids_field in count_to_ids.items():
-        count = semantic.get(count_field)
-        ids = semantic.get(ids_field)
-        if (
-            not isinstance(count, int)
-            or isinstance(count, bool)
-            or count < 0
-            or not _valid_block_id_list(ids)
-            or count != len(ids)
-        ):
-            return False
-
-    requested = set(semantic["requested_block_ids"])
-    checked = set(semantic["checked_block_ids"])
-    failed = set(semantic["failed_block_ids"])
-    skipped = set(semantic["skipped_block_ids"])
-    if (
-        checked & failed
-        or checked & skipped
-        or failed & skipped
-        or requested != checked | failed | skipped
-    ):
-        return False
-    expected_complete = not failed and not skipped and checked == requested
-    return (
-        isinstance(semantic.get("coverage_complete"), bool)
-        and semantic["coverage_complete"] is expected_complete
-    )
-
-
 def _translation_quality_gate_decision(
     pid: str,
     *,
@@ -2428,215 +2353,11 @@ def _translation_quality_gate_decision(
     expected_policy: str = "",
 ) -> TranslationQualityGateDecision:
     report_path = _safe_project_artifact_path(pid, "translation_qa_report.json")
-    if report_path is None:
-        return _invalid_quality_gate_decision("翻译质量检查未生成报告，已停止交付。")
-    try:
-        report = json.loads(report_path.read_text(encoding="utf-8"))
-    except Exception:
-        return _invalid_quality_gate_decision("翻译质量检查报告无效，已停止交付。")
-    if not isinstance(report, dict):
-        return _invalid_quality_gate_decision("翻译质量检查报告无效，已停止交付。")
-    run_id = report.get("run_id")
-    if not isinstance(run_id, str) or not run_id.strip():
-        return _invalid_quality_gate_decision("翻译质量检查报告缺少运行身份，已停止交付。")
-    if expected_run_id:
-        if run_id != expected_run_id:
-            return _invalid_quality_gate_decision("翻译质量检查报告已过期，已停止交付。")
-    content_hash = report.get("content_hash")
-    if not isinstance(content_hash, str) or not content_hash.strip():
-        return _invalid_quality_gate_decision("翻译质量检查报告缺少内容哈希，已停止交付。")
-    if expected_content_hash:
-        if content_hash != expected_content_hash:
-            return _invalid_quality_gate_decision(
-                "翻译质量检查报告与当前字幕内容不匹配，已停止交付。"
-            )
-
-    issues = report.get("issues")
-    summary = report.get("summary")
-    unresolved_blocks = report.get("unresolved_blocks")
-    trace = report.get("trace")
-    observed_uncertain_ids = (
-        trace.get("semantic_uncertain_observed_block_ids", [])
-        if isinstance(trace, dict)
-        else None
-    )
-    if (
-        not isinstance(issues, list)
-        or not isinstance(summary, dict)
-        or not _valid_block_id_list(unresolved_blocks)
-        or not isinstance(trace, dict)
-        or not _valid_block_id_list(observed_uncertain_ids)
-        or not _semantic_coverage_is_valid(trace)
-    ):
-        return _invalid_quality_gate_decision(
-            "翻译质量检查报告无效或自相矛盾，已停止交付。"
-        )
-    required_issue_fields = {
-        "type",
-        "severity",
-        "block_id",
-        "message",
-        "source_text",
-        "translation",
-        "expected",
-    }
-    if any(
-        not isinstance(issue, dict)
-        or not required_issue_fields.issubset(issue)
-        or not isinstance(issue.get("type"), str)
-        or not issue["type"].strip()
-        or issue.get("severity") not in {"warning", "error", "severe"}
-        or not isinstance(issue.get("message"), str)
-        or not issue["message"].strip()
-        or not isinstance(issue.get("source_text"), str)
-        or not isinstance(issue.get("translation"), str)
-        or not isinstance(issue.get("expected"), str)
-        or (
-            issue.get("block_id") is not None
-            and (
-                not isinstance(issue.get("block_id"), int)
-                or isinstance(issue.get("block_id"), bool)
-                or issue["block_id"] <= 0
-            )
-        )
-        for issue in issues
-    ):
-        return _invalid_quality_gate_decision(
-            "翻译质量检查报告无效或自相矛盾，已停止交付。"
-        )
-
-    gate = summary.get("quality_gate")
-    if not isinstance(gate, dict):
-        return _invalid_quality_gate_decision(
-            "翻译质量检查报告无效或自相矛盾，已停止交付。"
-        )
-    status = report.get("status")
-    policy = gate.get("policy")
-    verdict = gate.get("verdict")
-    passed = gate.get("passed")
-    requires_human_review = gate.get("requires_human_review")
-    delivery_mode = gate.get("delivery_mode")
-    next_action = gate.get("next_action")
-    if (
-        status not in {"ok", "failed", "needs_review"}
-        or policy not in {"fast", "strict"}
-        or verdict not in {"passed", "failed", "needs_review"}
-        or not isinstance(passed, bool)
-        or not isinstance(requires_human_review, bool)
-    ):
-        return _invalid_quality_gate_decision(
-            "翻译质量检查报告无效或自相矛盾，已停止交付。"
-        )
-    if expected_policy and policy != expected_policy:
-        return _invalid_quality_gate_decision(
-            "翻译质量检查报告策略不匹配，已停止交付。"
-        )
-    if policy == "strict" and trace["semantic_qa"].get("enabled") is not True:
-        return _invalid_quality_gate_decision(
-            "翻译质量检查报告无效或自相矛盾，已停止交付。"
-        )
-
-    if passed:
-        gate_consistent = (
-            status == "ok"
-            and verdict == "passed"
-            and requires_human_review is False
-            and delivery_mode == "unattended"
-            and next_action == "deliver"
-        )
-    elif requires_human_review:
-        gate_consistent = (
-            status == "needs_review"
-            and verdict == "needs_review"
-            and delivery_mode == "human_review"
-            and next_action == "human_review"
-        )
-    else:
-        gate_consistent = (
-            status == "failed"
-            and verdict == "failed"
-            and delivery_mode == "unattended"
-            and next_action == "auto_retry_or_stop"
-        )
-
-    actual_error_count = sum(
-        1 for issue in issues if issue.get("severity") in {"error", "severe"}
-    )
-    actual_warning_count = sum(
-        1 for issue in issues if issue.get("severity") == "warning"
-    )
-    summary_counts = {
-        "issue_count": len(issues),
-        "error_count": actual_error_count,
-        "warning_count": actual_warning_count,
-        "unresolved_blocks": len(unresolved_blocks),
-    }
-    counts_consistent = all(
-        isinstance(summary.get(field), int)
-        and not isinstance(summary.get(field), bool)
-        and summary[field] == expected
-        for field, expected in summary_counts.items()
-    )
-    unresolved_consistent = (
-        isinstance(gate.get("unresolved_blocks"), int)
-        and not isinstance(gate.get("unresolved_blocks"), bool)
-        and gate["unresolved_blocks"] == len(unresolved_blocks)
-    )
-    semantic_trace = trace["semantic_qa"]
-    semantic_uncertainty_requires_review = (
-        policy == "strict"
-        and (
-            bool(observed_uncertain_ids)
-            or any(issue.get("type") == "semantic_uncertain" for issue in issues)
-        )
-    )
-    incomplete_fast_semantics_requires_review = (
-        policy == "fast"
-        and semantic_trace.get("enabled") is True
-        and semantic_trace.get("coverage_complete") is False
-    )
-    review_classification_consistent = (
-        not semantic_uncertainty_requires_review
-        or requires_human_review is True
-    ) and (
-        not incomplete_fast_semantics_requires_review
-        or requires_human_review is True
-    )
-    coverage_allows_delivery = (
-        semantic_trace.get("enabled") is False
-        or semantic_trace.get("coverage_complete") is True
-        or passed is False
-    )
-    passed_issue_consistent = not passed or (
-        actual_error_count == 0
-        and not any(
-            issue.get("type") in {"semantic_uncertain", "semantic_qa_failed"}
-            for issue in issues
-        )
-    )
-    if not (
-        gate_consistent
-        and counts_consistent
-        and unresolved_consistent
-        and review_classification_consistent
-        and coverage_allows_delivery
-        and passed_issue_consistent
-    ):
-        return _invalid_quality_gate_decision(
-            "翻译质量检查报告无效或自相矛盾，已停止交付。"
-        )
-
-    conclusion = summary.get("conclusion")
-    if not isinstance(conclusion, str) or not conclusion.strip():
-        return _invalid_quality_gate_decision(
-            "翻译质量检查报告无效或自相矛盾，已停止交付。"
-        )
-    if passed:
-        return TranslationQualityGateDecision(True, conclusion.strip(), False)
-    return TranslationQualityGateDecision(
-        False,
-        f"翻译质量未达标：{conclusion.strip()} 已停止交付。",
-        requires_human_review,
+    return load_quality_report_decision(
+        report_path,
+        expected_run_id=expected_run_id,
+        expected_content_hash=expected_content_hash,
+        expected_policy=expected_policy,
     )
 
 
@@ -2678,7 +2399,7 @@ def _mark_translation_quality_failed(
         }),
         normalize=_apply_safe_defaults,
     )
-    _emit_progress(pid, "translate", 100, detail)
+    _scheduler_complete_progress(pid, detail)
 
 
 def _apply_nonempty_repair_results(
@@ -3266,6 +2987,8 @@ def _run_translate_pipeline(
     target_language: str,
     owns_registration: bool = True,
     strict_quality_gate: bool = False,
+    *,
+    burn_follows: bool,
 ):
     """Run translation pipeline in background thread.
 
@@ -3422,10 +3145,11 @@ def _run_translate_pipeline(
             active_count, translated_count, failed_count = _translation_completion_counts(blocks)
             incomplete_msg = _incomplete_translation_message(blocks)
             from app.engines.translation_qa import quality_content_hash
+            quality_hash = quality_content_hash(blocks)
             quality_decision = _translation_quality_gate_decision(
                 pid,
                 expected_run_id=quality_run_id,
-                expected_content_hash=quality_content_hash(blocks),
+                expected_content_hash=quality_hash,
                 expected_policy="strict" if strict_policy else "fast",
             )
             quality_passed = quality_decision.passed
@@ -3485,10 +3209,12 @@ def _run_translate_pipeline(
                 lambda p: p.update({
                     "status": "translated",
                     "error": None,
-                    "progress": 100,
+                    "progress": 75 if burn_follows else 100,
                     "progress_msg": done_msg,
                     "translation_quality_status": "passed" if quality_passed else "failed",
                     "translation_quality_message": quality_message,
+                    "translation_quality_run_id": quality_run_id,
+                    "translation_quality_content_hash": quality_hash,
                     "pipeline_stage": None,
                     **_translation_artifact_fields(pid),
                 }),
@@ -3500,6 +3226,8 @@ def _run_translate_pipeline(
                 output_artifact="translated.srt",
                 resume_eligible=True,
             )
+            if not burn_follows:
+                _scheduler_complete_progress(pid, done_msg)
 
     except TaskCancelled as e:
         log.info("Translation pipeline cancelled for %s", pid)
@@ -3675,7 +3403,7 @@ def _run_burn_pipeline(pid: str):
                 reason = "翻译交付未完成，字幕文件暂不可用"
                 _mark_burn_unavailable(pid, reason)
                 _best_effort_fail_stage(pid, "burn", reason)
-                _emit_progress(pid, "burn", 100, "字幕烧录失败 (翻译交付未完成)")
+                _scheduler_complete_progress(pid, "字幕烧录失败 (翻译交付未完成)")
                 return
 
             if project.get("source_type") == "trailer":
@@ -3684,7 +3412,7 @@ def _run_burn_pipeline(pid: str):
                     reason = "无字幕文件可烧录"
                     _mark_burn_unavailable(pid, reason)
                     _best_effort_fail_stage(pid, "burn", reason)
-                    _emit_progress(pid, "burn", 100, "翻译完成 (无字幕文件可烧录)")
+                    _scheduler_complete_progress(pid, "翻译完成 (无字幕文件可烧录)")
                     return
                 tracks = _build_bilingual_tracks(pid)
             else:
@@ -3694,7 +3422,7 @@ def _run_burn_pipeline(pid: str):
                     reason = "无字幕文件可烧录"
                     _mark_burn_unavailable(pid, reason)
                     _best_effort_fail_stage(pid, "burn", reason)
-                    _emit_progress(pid, "burn", 100, "翻译完成 (无字幕文件可烧录)")
+                    _scheduler_complete_progress(pid, "翻译完成 (无字幕文件可烧录)")
                     return
                 tracks = [_build_upload_legacy_track(str(srt_path))]
 
@@ -3704,7 +3432,7 @@ def _run_burn_pipeline(pid: str):
                 reason = "字幕烧录失败: 输出路径无效"
                 _mark_burn_failed(pid, reason)
                 _best_effort_fail_stage(pid, "burn", reason)
-                _emit_progress(pid, "burn", 100, "翻译完成，但字幕烧录失败")
+                _scheduler_complete_progress(pid, "翻译完成，但字幕烧录失败")
                 return
             output_video = str(output_path)
             success = burn_subtitles(
@@ -3719,7 +3447,7 @@ def _run_burn_pipeline(pid: str):
                     output_artifact=output_video,
                     resume_eligible=True,
                 )
-                _emit_progress(pid, "burn", 100, "全部完成! 字幕已烧录到视频")
+                _scheduler_complete_progress(pid, "全部完成! 字幕已烧录到视频")
                 from app.engines.audio import cleanup_intermediate
                 cleanup_intermediate(pdir)
             else:
@@ -3727,7 +3455,7 @@ def _run_burn_pipeline(pid: str):
                 reason = "字幕烧录失败，但翻译已完成"
                 _mark_burn_failed(pid, reason)
                 _best_effort_fail_stage(pid, "burn", reason)
-                _emit_progress(pid, "burn", 100, "翻译完成，但字幕烧录失败")
+                _scheduler_complete_progress(pid, "翻译完成，但字幕烧录失败")
     except TaskCancelled as e:
         log.info("Burn pipeline cancelled for %s", pid)
         _best_effort_mark_exception(pid, "burn", e)
@@ -3756,6 +3484,7 @@ def _run_full_pipeline(pid: str, audio_track: int, language: str, target_languag
             target_language,
             owns_registration=False,
             strict_quality_gate=True,
+            burn_follows=True,
         )
 
         # Check if translation succeeded
@@ -3802,7 +3531,12 @@ def _run_asr_translate_pipeline(pid: str, audio_track: int, language: str, targe
         if project["status"] == "error":
             return
         _check_cancel(pid)
-        _run_translate_pipeline(pid, target_language, owns_registration=False)
+        _run_translate_pipeline(
+            pid,
+            target_language,
+            owns_registration=False,
+            burn_follows=False,
+        )
     except TaskCancelled as e:
         log.info("ASR+translate pipeline cancelled for %s", pid)
         stage = _stage_for_cancelled_exception(pid, "asr")
@@ -3870,7 +3604,11 @@ def start_translate(pid: str = PathParam(pattern=PID_PATTERN), req: TranslateReq
     _ensure_kb_review_ready(pid, project, as_http=True, config=Config.to_dict())
     try:
         t = try_register_task(pid, lambda: threading.Thread(
-            target=_run_translate_pipeline, args=(pid, target_lang), daemon=True),
+            target=_run_translate_pipeline,
+            args=(pid, target_lang),
+            kwargs={"burn_follows": False},
+            daemon=True,
+        ),
             reset_cancellation=True)
     except TaskAlreadyRunning:
         raise HTTPException(409, "Task already running for this project")

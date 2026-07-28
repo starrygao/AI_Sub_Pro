@@ -2476,7 +2476,7 @@ def test_can_export_guard_blocks_stale_metadata_during_pending_source_edit():
           state.toast = () => {};
           state.askConfirm = async () => {
             confirmations += 1;
-            return confirmations > 1;
+            return true;
           };
           state.api = async (url, method, body) => {
             if (url === '/api/projects/p1/subtitles' && method === 'PUT') {
@@ -2549,22 +2549,18 @@ def test_can_export_guard_blocks_stale_metadata_during_pending_source_edit():
           if (state.subtitleActionsDisabled()) {
             throw new Error(`expected subtitle pending state to clear, got ${state.subtitleActionPending}`);
           }
-          if (!state.canExportSrt('translated')) {
-            throw new Error('export should resume after canonical metadata arrives');
-          }
           const summary = state.subtitleQualitySummary('translated');
           if (summary.severe !== 1 || state.subtitles[0].sound_description !== false) {
             throw new Error(`canonical metadata must restore missing-translation rules: ${JSON.stringify(summary)}`);
           }
+          if (state.canExportSrt('translated')) {
+            throw new Error('canonical severe issue must keep translated export blocked');
+          }
 
           await state.exportSrt('translated');
-          if (confirmations !== 1 || exportCalls !== 0) {
-            throw new Error(`declined post-save export must not call API: confirms=${confirmations} API=${exportCalls}`);
-          }
-          await state.exportSrt('translated');
-          if (confirmations !== 2 || exportCalls !== 1 || saved !== 1) {
+          if (confirmations !== 0 || exportCalls !== 0 || saved !== 0) {
             throw new Error(
-              `accepted post-save export must resume normally: confirms=${confirmations} API=${exportCalls} saved=${saved}`
+              `severe post-save issue must block before confirmation/API: confirms=${confirmations} API=${exportCalls} saved=${saved}`
             );
           }
         })().catch((err) => {
@@ -2575,7 +2571,7 @@ def test_can_export_guard_blocks_stale_metadata_during_pending_source_edit():
     )
 
 
-def test_export_quality_requires_confirmation_before_api_call_for_severe_issues():
+def test_export_quality_blocks_severe_issues_even_if_confirmation_would_accept():
     _run_node(
         """
         const fs = require('fs');
@@ -2610,12 +2606,9 @@ def test_export_quality_requires_confirmation_before_api_call_for_severe_issues(
             {index: 1, start: '00:00:00,000', end: '00:00:00,000', text: '', translation: '可导出的译文', filtered: false},
           ];
           state.toast = () => {};
-          state.askConfirm = async (options) => {
+          state.askConfirm = async () => {
             confirms += 1;
-            if (!String(options.message || '').includes('严重问题')) {
-              throw new Error(`expected severe warning message, got ${JSON.stringify(options)}`);
-            }
-            return confirms > 1;
+            return true;
           };
           state.api = async (url, method) => {
             calls += 1;
@@ -2625,19 +2618,335 @@ def test_export_quality_requires_confirmation_before_api_call_for_severe_issues(
             return {content: 'Translated subtitle', filename: 'movie.translated.srt'};
           };
 
-          await state.exportSrt('translated');
-          if (calls !== 0 || confirms !== 1) {
-            throw new Error(`declined export should not call API, got calls=${calls} confirms=${confirms}`);
+          if (state.canExportSubtitle('translated')) {
+            throw new Error('severe structural issues must disable translated export');
           }
-
           await state.exportSrt('translated');
-          if (calls !== 1 || confirms !== 2) {
-            throw new Error(`accepted export should call API once, got calls=${calls} confirms=${confirms}`);
+          if (calls !== 0 || confirms !== 0) {
+            throw new Error(`severe export must fail before confirmation/API, got calls=${calls} confirms=${confirms}`);
           }
         })().catch((err) => {
           console.error(err.message);
           process.exit(1);
         });
+        """
+    )
+
+
+def test_quality_view_merges_aliases_deduplicates_and_keeps_backend_detail():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        const longText = '这是一个用于触发本地长度与阅读速度检查的非常非常非常非常非常非常非常非常长的译文';
+        state.currentProject = {id: 'p1', status: 'translated', translation_quality_status: 'passed'};
+        state.subtitles = [{
+          index: 7,
+          start: '00:00:00,000',
+          end: '00:00:01,000',
+          text: 'Source',
+          translation: longText,
+          filtered: false,
+        }];
+        state.qaReport = state.normalizeQualityReport({
+          status: 'ok',
+          issues: [
+            {type: 'line_too_long', severity: 'warning', block_id: 7, message: 'backend long-line detail', expected: '42'},
+            {type: 'reading_speed_too_fast', severity: 'warning', block_id: 7, message: 'backend speed detail', expected: '22'},
+            {type: 'kb_term_missing', severity: 'warning', block_id: 7, message: 'use 甲', expected: '甲'},
+            {type: 'kb_term_missing', severity: 'warning', block_id: 7, message: 'use 乙', expected: '乙'},
+          ],
+          summary: {
+            issue_count: 99,
+            by_type: {stale_backend_count: 99},
+            quality_gate: {
+              policy: 'strict',
+              verdict: 'passed',
+              passed: true,
+              requires_human_review: false,
+            },
+          },
+        });
+
+        const view = state.subtitleQualityView('translated');
+        if (view.status !== 'passed-with-warnings') {
+          throw new Error(`expected warning status, got ${JSON.stringify(view)}`);
+        }
+        if (view.summary.issue_count !== 4 || view.issues.length !== 4) {
+          throw new Error(`aliases must deduplicate to four findings: ${JSON.stringify(view)}`);
+        }
+        if (view.summary.by_type.line_too_long !== 1 || view.summary.by_type.reading_speed_too_fast !== 1) {
+          throw new Error(`expected canonical alias counts: ${JSON.stringify(view.summary.by_type)}`);
+        }
+        if ('stale_backend_count' in view.summary.by_type) {
+          throw new Error(`must not trust stale backend by_type: ${JSON.stringify(view.summary.by_type)}`);
+        }
+        const longIssue = view.issues.find((issue) => issue.type === 'line_too_long');
+        if (longIssue.message !== 'backend long-line detail') {
+          throw new Error(`backend detail must win deduplication: ${JSON.stringify(longIssue)}`);
+        }
+        const termIssues = view.issues.filter((issue) => issue.type === 'kb_term_missing');
+        if (termIssues.length !== 2 || termIssues.map((issue) => issue.expected).sort().join(',') !== '乙,甲') {
+          throw new Error(`different expected terms must remain distinct: ${JSON.stringify(termIssues)}`);
+        }
+        const labels = [
+          state.qaIssueLabel({type: 'semantic_mismatch'}),
+          state.qaIssueLabel({type: 'semantic_uncertain'}),
+          state.qaIssueLabel({type: 'uncertain'}),
+          state.qaIssueLabel({type: 'semantic_qa_failed'}),
+          state.qaIssueLabel({type: 'qa_failed'}),
+          state.qaIssueLabel({type: 'requires_human_review'}),
+        ];
+        if (labels.some((label) => !label || /semantic|uncertain|qa_failed|requires_human_review/.test(label))) {
+          throw new Error(`semantic/review labels must be Chinese: ${JSON.stringify(labels)}`);
+        }
+        """
+    )
+
+
+def test_quality_view_recomputes_all_states_from_backend_and_local_edits():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.currentProject = {id: 'p1', status: 'translated', translation_quality_status: 'passed'};
+        state.subtitles = [{
+          index: 1,
+          start: '00:00:00,000',
+          end: '00:00:02,000',
+          text: 'Hello',
+          translation: '你好',
+          filtered: false,
+        }];
+        const setReport = (status, issues, gate) => {
+          state.qaReport = state.normalizeQualityReport({
+            status,
+            issues,
+            summary: {issue_count: issues.length, by_type: {}, quality_gate: gate},
+          });
+        };
+
+        setReport('ok', [], {policy: 'strict', verdict: 'passed', passed: true, requires_human_review: false});
+        if (state.subtitleQualityView('translated').status !== 'passed') {
+          throw new Error('clean report should pass');
+        }
+
+        setReport('ok', [{type: 'punctuation_style', severity: 'warning', block_id: 1, message: 'warning'}],
+          {policy: 'strict', verdict: 'passed', passed: true, requires_human_review: false});
+        if (state.subtitleQualityView('translated').status !== 'passed-with-warnings') {
+          throw new Error('warning-only report should pass with warnings');
+        }
+
+        setReport('needs_review', [{type: 'semantic_uncertain', severity: 'warning', block_id: 1, message: 'uncertain'}],
+          {policy: 'strict', verdict: 'needs_review', passed: false, requires_human_review: true});
+        if (state.subtitleQualityView('translated').status !== 'needs-review') {
+          throw new Error('human review gate must require review');
+        }
+
+        setReport('failed', [{type: 'semantic_mismatch', severity: 'error', block_id: 1, message: 'mismatch'}],
+          {policy: 'strict', verdict: 'failed', passed: false, requires_human_review: false});
+        if (state.subtitleQualityView('translated').status !== 'blocked') {
+          throw new Error('failed quality gate must block');
+        }
+
+        setReport('ok', [], {policy: 'strict', verdict: 'passed', passed: true, requires_human_review: false});
+        state.subtitles[0].translation = '';
+        if (state.subtitleQualityView('translated').status !== 'blocked') {
+          throw new Error('unsaved local severe edit must override stale passed report');
+        }
+        const summary = state.qaReportSummaryText();
+        const nextAction = state.qaReportNextAction();
+        if (!summary.includes('阻止') || /可继续导出|可导出/.test(nextAction)) {
+          throw new Error(`blocked copy must not claim export availability: ${summary} / ${nextAction}`);
+        }
+        """
+    )
+
+
+def test_quality_view_exposes_every_issue_and_only_focus_limits_to_one():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.currentProject = {id: 'p1', status: 'translated', translation_quality_status: 'passed'};
+        state.subtitles = [{index: 1, start: '00:00:00,000', end: '00:00:02,000', text: 'Hi', translation: '嗨', filtered: false}];
+        state.qaReport = state.normalizeQualityReport({
+          status: 'ok',
+          issues: Array.from({length: 6}, (_, idx) => ({
+            type: `warning_${idx + 1}`,
+            severity: 'warning',
+            block_id: idx + 1,
+            message: `complete issue body ${idx + 1}`,
+          })),
+          summary: {
+            issue_count: 6,
+            quality_gate: {policy: 'strict', verdict: 'passed', passed: true, requires_human_review: false},
+          },
+        });
+
+        const visible = state.qaReportTopIssues();
+        if (visible.length !== 6 || visible[5].message !== 'complete issue body 6') {
+          throw new Error(`all residual issues must be visible: ${JSON.stringify(visible)}`);
+        }
+        let focused = null;
+        state.focusSubtitleById = (id) => { focused = id; };
+        state.focusFirstQaIssue();
+        if (focused !== 1) throw new Error(`focus should select only first issue, got ${focused}`);
+        """
+    )
+
+
+def test_warning_confirmation_is_required_every_time_and_review_states_block_direct_calls():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = {
+          console,
+          setTimeout,
+          clearTimeout,
+          window: {pywebview: {api: {save_text_file: async () => ({ok: true})}}},
+        };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        (async () => {
+          const state = context.app();
+          let calls = 0;
+          let confirms = 0;
+          const toasts = [];
+          state.currentProject = {id: 'p1', status: 'translated', translation_quality_status: 'passed'};
+          state.subtitles = [{index: 1, start: '00:00:00,000', end: '00:00:02,000', text: 'Hi', translation: '嗨', filtered: false}];
+          state.qaReport = state.normalizeQualityReport({
+            status: 'ok',
+            issues: [{type: 'punctuation_style', severity: 'warning', block_id: 1, message: 'warning'}],
+            summary: {
+              issue_count: 1,
+              quality_gate: {policy: 'strict', verdict: 'passed', passed: true, requires_human_review: false},
+            },
+          });
+          state.toast = (message, type) => { toasts.push({message, type}); };
+          state.askConfirm = async () => {
+            confirms += 1;
+            return confirms > 1;
+          };
+          state.api = async () => {
+            calls += 1;
+            return {content: 'subtitle', filename: 'movie.translated.srt'};
+          };
+
+          await state.exportSubtitle('translated');
+          await state.exportSubtitle('translated');
+          if (confirms !== 2 || calls !== 1) {
+            throw new Error(`warning export must confirm every attempt: confirms=${confirms} calls=${calls}`);
+          }
+
+          state.currentProject.translation_quality_status = 'needs_review';
+          state.qaReport = state.normalizeQualityReport({
+            status: 'needs_review',
+            issues: [{type: 'semantic_uncertain', severity: 'warning', block_id: 1, message: 'uncertain'}],
+            summary: {
+              issue_count: 1,
+              quality_gate: {policy: 'strict', verdict: 'needs_review', passed: false, requires_human_review: true},
+            },
+          });
+          if (state.canExportSubtitle('translated')) {
+            throw new Error('human-review state must disable translated export');
+          }
+          await state.exportSubtitle('translated');
+          if (calls !== 1) throw new Error('direct human-review export must not call API');
+          if (!toasts.some((item) => /人工复核/.test(item.message))) {
+            throw new Error(`expected review explanation, got ${JSON.stringify(toasts)}`);
+          }
+        })().catch((error) => {
+          console.error(error.message);
+          process.exit(1);
+        });
+        """
+    )
+
+
+def test_original_export_ignores_translation_gate_but_obeys_source_structure():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.currentProject = {id: 'p1', status: 'translated', translation_quality_status: 'failed'};
+        state.qaReport = state.normalizeQualityReport({
+          status: 'failed',
+          issues: [{type: 'semantic_mismatch', severity: 'error', block_id: 1, message: 'bad translation'}],
+          summary: {
+            issue_count: 1,
+            quality_gate: {policy: 'strict', verdict: 'failed', passed: false, requires_human_review: false},
+          },
+        });
+        state.subtitles = [{index: 1, start: '00:00:00,000', end: '00:00:02,000', text: 'Clean source', translation: '错误译文', filtered: false}];
+
+        if (!state.canExportSubtitle('original')) {
+          throw new Error('translation quality gate must not block a structurally clean original');
+        }
+        if (state.canExportSubtitle('translated') || state.canExportSubtitle('bilingual')) {
+          throw new Error('failed translation gate must block translated and bilingual exports');
+        }
+
+        state.subtitles[0].end = '00:00:00,000';
+        if (state.canExportSubtitle('original')) {
+          throw new Error('severe original-source structural issue must block original export');
+        }
+        """
+    )
+
+
+def test_professional_report_loading_fails_closed_for_translation_export():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const context = { console, setTimeout, clearTimeout };
+        vm.createContext(context);
+        vm.runInContext(code, context);
+
+        const state = context.app();
+        state.currentProject = {id: 'p1', status: 'translated'};
+        state.translationStrategy = state.normalizeTranslationStrategy({
+          quality_mode: {id: 'professional', professional: true, quality_gate: true},
+        });
+        state.qaReport = null;
+        state.qaReportLoading = true;
+        state.subtitles = [{index: 1, start: '00:00:00,000', end: '00:00:02,000', text: 'Hi', translation: '嗨', filtered: false}];
+
+        if (state.canExportSubtitle('translated') || state.canExportSubtitle('bilingual')) {
+          throw new Error('strict report loading must fail closed');
+        }
+        if (!state.canExportSubtitle('original')) {
+          throw new Error('strict report loading must not block clean original export');
+        }
         """
     )
 
@@ -2696,7 +3005,7 @@ def test_normal_blank_dialogue_blocks_export_before_api_call():
           state.toast = () => {};
           state.askConfirm = async () => {
             confirms += 1;
-            return false;
+            return true;
           };
           state.api = async () => {
             calls += 1;
@@ -2710,8 +3019,8 @@ def test_normal_blank_dialogue_blocks_export_before_api_call():
           }
 
           await state.exportSrt('translated');
-          if (confirms !== 1 || calls !== 0) {
-            throw new Error(`declined ordinary-dialogue export must not call API: calls=${calls} confirms=${confirms}`);
+          if (confirms !== 0 || calls !== 0) {
+            throw new Error(`severe ordinary-dialogue export must fail before confirmation/API: calls=${calls} confirms=${confirms}`);
           }
         })().catch((err) => {
           console.error(err.message);

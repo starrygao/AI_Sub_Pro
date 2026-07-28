@@ -552,8 +552,15 @@ function app() {
         || this.projectActionsDisabled(this.currentProject)
         || this.subtitleActionsDisabled()
       ) return false;
-      if (format === 'original') return this.hasExportableOriginalSubtitles();
-      if (format === 'translated' || format === 'bilingual') return this.hasExportableTranslatedSubtitles();
+      if (format === 'original') {
+        return this.hasExportableOriginalSubtitles()
+          && this.subtitleQualityView('original').status !== 'blocked';
+      }
+      if (format === 'translated' || format === 'bilingual') {
+        const status = this.subtitleQualityView(format).status;
+        return this.hasExportableTranslatedSubtitles()
+          && !['blocked', 'needs-review'].includes(status);
+      }
       return false;
     },
 
@@ -581,6 +588,14 @@ function app() {
       if (!this.currentProject) return '请先打开项目';
       if (this.isProjectBusy(this.currentProject)) return '项目处理中，完成后再导出';
       if (this.projectActionPending) return '当前操作未完成，请稍后再试';
+      if (format === 'original' && this.subtitleQualityView('original').status === 'blocked') {
+        return '原文字幕仍有严重结构问题，修正后才能导出';
+      }
+      if (format === 'translated' || format === 'bilingual') {
+        const status = this.subtitleQualityView(format).status;
+        if (status === 'needs-review') return '翻译质量需要人工复核，复核完成前不能导出';
+        if (status === 'blocked') return '翻译字幕质量未通过，修正并重新质检后才能导出';
+      }
       if (format === 'original') return '还没有可导出的原文字幕';
       if (format === 'translated' || format === 'bilingual') return '还没有可导出的翻译字幕';
       return '不支持的导出格式';
@@ -656,13 +671,14 @@ function app() {
         ? p.translation_quality_status.trim()
         : '';
       if (status === 'cancelled') return '已取消';
+      if (!stage && qualityStatus === 'needs_review') return '需人工复核';
+      if (!stage && qualityStatus === 'failed') return '质量未通过';
       if (status === 'error') return '失败';
       if (status === 'completed') return '已完成';
       if (stage === 'download') return '下载中';
       if (stage === 'asr') return '识别中';
       if (status === 'asr_done' && !stage) return '识别完成';
       if (stage === 'translate') return '翻译中';
-      if (status === 'translated' && !stage && ['needs_review', 'failed'].includes(qualityStatus)) return '待自动重试';
       if (status === 'translated' && !stage) return '翻译完成';
       if (stage === 'burn') return '烧录中';
       if (status === 'processing') return '处理中';
@@ -2171,9 +2187,10 @@ function app() {
     },
 
     qaIssueLabel(issue) {
-      const type = typeof issue?.type === 'string' && issue.type.trim()
+      const rawType = typeof issue?.type === 'string' && issue.type.trim()
         ? issue.type.trim()
         : (typeof issue?.code === 'string' ? issue.code.trim() : '');
+      const type = this.normalizeQualityIssueType(rawType);
       const labels = {
         missing_translation: '漏译',
         english_residue: '英文残留',
@@ -2192,8 +2209,134 @@ function app() {
         proper_name_inconsistent: '专名不一致',
         scientific_term_inconsistent: '科学术语不一致',
         repetition_not_compressed: '重复表达需压缩',
+        semantic_mismatch: '语义不匹配',
+        semantic_uncertain: '语义不确定',
+        semantic_qa_failed: '语义质检失败',
+        requires_human_review: '需要人工复核',
       };
       return labels[type] || type || '质量问题';
+    },
+
+    normalizeQualityIssueType(type) {
+      const value = typeof type === 'string' ? type.trim() : '';
+      return {
+        long_line: 'line_too_long',
+        reading_speed: 'reading_speed_too_fast',
+        uncertain: 'semantic_uncertain',
+        qa_failed: 'semantic_qa_failed',
+      }[value] || value;
+    },
+
+    qualitySeverityRank(severity) {
+      return { info: 0, warning: 1, error: 2, severe: 3 }[String(severity || '')] ?? 0;
+    },
+
+    normalizeQualityIssue(issue, source = 'backend') {
+      const raw = this.isPlainObject(issue) ? issue : {};
+      const type = this.normalizeQualityIssueType(raw.type || raw.code);
+      const blockValue = raw.block_id ?? raw.index;
+      const blockId = Number.isInteger(blockValue) && blockValue > 0 ? blockValue : null;
+      const severity = ['warning', 'error', 'severe'].includes(String(raw.severity || ''))
+        ? String(raw.severity)
+        : 'info';
+      return {
+        ...raw,
+        type,
+        code: type,
+        block_id: blockId,
+        index: blockId,
+        severity,
+        expected: typeof raw.expected === 'string' ? raw.expected : '',
+        _quality_source: source,
+      };
+    },
+
+    qualityIssueSemanticKey(issue) {
+      const type = this.normalizeQualityIssueType(issue?.type || issue?.code);
+      const blockId = Number.isInteger(issue?.block_id)
+        ? issue.block_id
+        : (Number.isInteger(issue?.index) ? issue.index : 'global');
+      const keepsExpected = /term|name_inconsistent/.test(type);
+      const expected = keepsExpected && typeof issue?.expected === 'string'
+        ? issue.expected.trim()
+        : '';
+      return `${type}:${blockId}:${expected}`;
+    },
+
+    expectsStrictQualityReport() {
+      const strategy = this.normalizeTranslationStrategy(this.translationStrategy || {});
+      const gate = this.isPlainObject(this.qaReport?.summary?.quality_gate)
+        ? this.qaReport.summary.quality_gate
+        : {};
+      const qualityStatus = String(this.currentProject?.translation_quality_status || '').trim();
+      return strategy.quality_mode?.professional === true
+        || strategy.quality_mode?.quality_gate === true
+        || gate.policy === 'strict'
+        || ['passed', 'failed', 'needs_review'].includes(qualityStatus);
+    },
+
+    subtitleQualityView(format = 'translated') {
+      const normalizedFormat = this.normalizeSubtitleQualityFormat(format);
+      const includeBackend = normalizedFormat !== 'original';
+      const report = this.normalizeQualityReport(this.qaReport || {});
+      const merged = new Map();
+      const addIssue = (rawIssue, source) => {
+        const issue = this.normalizeQualityIssue(rawIssue, source);
+        if (!issue.type) return;
+        const key = this.qualityIssueSemanticKey(issue);
+        const existing = merged.get(key);
+        if (!existing) {
+          merged.set(key, issue);
+          return;
+        }
+        if (this.qualitySeverityRank(issue.severity) > this.qualitySeverityRank(existing.severity)) {
+          merged.set(key, {...existing, severity: issue.severity});
+        }
+      };
+
+      if (includeBackend) report.issues.forEach(issue => addIssue(issue, 'backend'));
+      this.subtitleQualityIssues(normalizedFormat).forEach(issue => addIssue(issue, 'local'));
+      const issues = Array.from(merged.values());
+      const byType = {};
+      let errorCount = 0;
+      let warningCount = 0;
+      issues.forEach((issue) => {
+        byType[issue.type] = (byType[issue.type] || 0) + 1;
+        if (['error', 'severe'].includes(issue.severity)) errorCount += 1;
+        else if (issue.severity === 'warning') warningCount += 1;
+      });
+
+      let status = errorCount ? 'blocked' : (warningCount ? 'passed-with-warnings' : 'passed');
+      if (includeBackend) {
+        const gate = this.isPlainObject(report.summary?.quality_gate)
+          ? report.summary.quality_gate
+          : {};
+        const qualityStatus = String(this.currentProject?.translation_quality_status || '').trim();
+        const reviewRequired = gate.requires_human_review === true
+          || gate.verdict === 'needs_review'
+          || report.status === 'needs_review'
+          || qualityStatus === 'needs_review';
+        const gateBlocked = gate.verdict === 'failed'
+          || gate.passed === false && !reviewRequired
+          || report.status === 'failed'
+          || qualityStatus === 'failed';
+        const reportUnavailable = this.expectsStrictQualityReport()
+          && (this.qaReportLoading || report.status === 'missing');
+        if (gateBlocked || reportUnavailable || errorCount) status = 'blocked';
+        else if (reviewRequired) status = 'needs-review';
+      }
+
+      return {
+        status,
+        issues,
+        summary: {
+          ...report.summary,
+          issue_count: issues.length,
+          error_count: errorCount,
+          warning_count: warningCount,
+          by_type: byType,
+        },
+      };
     },
 
     qaIssueSeverityLabel(issue) {
@@ -2203,10 +2346,12 @@ function app() {
       return '提示';
     },
 
-    qaReportTopIssues(limit = 4) {
-      const report = this.normalizeQualityReport(this.qaReport || {});
-      const max = Number.isFinite(Number(limit)) ? Math.max(0, Number(limit)) : 4;
-      return report.issues.slice(0, max).map(issue => ({
+    qaReportTopIssues(limit = null) {
+      const view = this.subtitleQualityView('translated');
+      const issues = limit !== null && Number.isFinite(Number(limit))
+        ? view.issues.slice(0, Math.max(0, Number(limit)))
+        : view.issues;
+      return issues.map(issue => ({
         ...issue,
         label: this.qaIssueLabel(issue),
         severity_label: this.qaIssueSeverityLabel(issue),
@@ -2214,48 +2359,33 @@ function app() {
     },
 
     qaReportHasIssues() {
-      const report = this.normalizeQualityReport(this.qaReport || {});
-      return (report.summary?.issue_count || 0) > 0 || report.issues.length > 0;
+      return this.subtitleQualityView('translated').issues.length > 0;
     },
 
     qaReportSummaryText() {
       if (this.qaReportLoading) return '加载中...';
-      const report = this.normalizeQualityReport(this.qaReport || {});
-      if (report.status === 'missing') return '暂无报告';
-      const issues = report.issues;
-      const issueCount = report.summary.issue_count || issues.length;
-      const errors = issues.filter(item => ['error', 'severe'].includes(String(item.severity || ''))).length;
-      const warnings = issues.filter(item => String(item.severity || '') === 'warning').length;
-      const repaired = report.summary.repaired_blocks || 0;
-      const unresolved = report.summary.unresolved_blocks || 0;
-      const conclusion = typeof report.summary.conclusion === 'string' ? report.summary.conclusion.trim() : '';
-      if (conclusion) return conclusion;
-      if (!issueCount) {
-        return repaired ? `未发现遗留问题 · 已自动修复 ${repaired} 条` : '未发现确定性问题';
+      const view = this.subtitleQualityView('translated');
+      const issueCount = view.summary.issue_count;
+      const errors = view.summary.error_count;
+      const warnings = view.summary.warning_count;
+      if (view.status === 'blocked') {
+        return `质量门阻止交付 · 问题 ${issueCount} 个${errors ? ` · 错误 ${errors}` : ''}`;
       }
-      const parts = [`问题 ${issueCount} 个`];
-      if (errors) parts.push(`错误 ${errors}`);
-      if (warnings) parts.push(`警告 ${warnings}`);
-      if (repaired) parts.push(`已修复 ${repaired}`);
-      if (unresolved) parts.push(`未解决 ${unresolved}`);
-      return parts.join(' · ');
+      if (view.status === 'needs-review') {
+        return `需要人工复核 · 问题 ${issueCount} 个`;
+      }
+      if (view.status === 'passed-with-warnings') {
+        return `通过但有警告 · 警告 ${warnings} 个`;
+      }
+      return '质量检查通过';
     },
 
     qaReportNextAction() {
-      const report = this.normalizeQualityReport(this.qaReport || {});
-      if (!report || report.status === 'missing') return '';
-      const gate = this.isPlainObject(report.summary?.quality_gate) ? report.summary.quality_gate : {};
-      if (gate.passed === true) return '自动质检达标，可继续导出或烧录。';
-      const issues = report.issues;
-      const issueCount = report.summary.issue_count || issues.length;
-      if (!issueCount) return '可继续导出或烧录。';
-      if (gate.auto_repair_enabled && Number(gate.auto_repaired_blocks || 0) > 0) {
-        return '系统已自动重点返工并复检；仍未达标，已停止交付，可重新启动自动返工。';
-      }
-      const hasErrors = issues.some(item => ['error', 'severe'].includes(String(item.severity || '')));
-      if (hasErrors) return '仍有错误项，需重新自动返工后再导出或烧录。';
-      if ((report.summary.unresolved_blocks || 0) > 0) return '仍有未解决警告，已停止交付，需重新自动返工。';
-      return '仍有警告级问题，已停止交付，需重新自动返工。';
+      const view = this.subtitleQualityView('translated');
+      if (view.status === 'blocked') return '仍有阻塞问题，修正并重新质检后才能导出或烧录。';
+      if (view.status === 'needs-review') return '需要人工复核，复核完成前不能导出或烧录。';
+      if (view.status === 'passed-with-warnings') return '质量检查已通过但仍有警告；导出时需要逐次确认。';
+      return '质量检查通过，可继续导出或烧录。';
     },
 
     focusFirstQaIssue() {
@@ -3989,19 +4119,15 @@ function app() {
     },
 
     subtitleExportWarningMessage(format) {
-      const summary = this.subtitleQualitySummary(format);
-      if (!summary.total) return '';
-      const firstSevere = summary.issues.find((issue) => issue.severity === 'severe');
-      const issueText = firstSevere?.message || summary.issues[0]?.message || '字幕存在质量提示';
+      const view = this.subtitleQualityView(format);
+      if (view.status !== 'passed-with-warnings') return '';
+      const issueText = view.issues[0]?.message || '字幕存在质量提示';
       const formatLabel = {
         translated: '翻译字幕',
         bilingual: '双语字幕',
         original: '原文字幕',
       }[format] || '字幕';
-      if (summary.severe > 0) {
-        return `${formatLabel}仍有 ${summary.severe} 个严重问题、${summary.warning} 个提醒。${issueText}。是否继续导出？`;
-      }
-      return `${formatLabel}仍有 ${summary.warning} 个质量提醒。${issueText}。是否继续导出？`;
+      return `${formatLabel}质量检查已通过，但仍有 ${view.summary.warning_count} 个警告。${issueText}。是否继续导出？`;
     },
 
     subtitleTimelineDurationMs() {
@@ -4237,7 +4363,7 @@ function app() {
         return;
       }
       const warningMessage = this.subtitleExportWarningMessage(format);
-      if (this.hasSevereSubtitleIssues(format) && warningMessage) {
+      if (warningMessage) {
         const confirmed = await this.askConfirm({
           title: '继续导出字幕？',
           message: warningMessage,

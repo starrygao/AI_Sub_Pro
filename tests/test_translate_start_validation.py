@@ -346,19 +346,24 @@ def test_start_full_dispatches_audio_and_subtitle_sources_to_supported_workflows
     launched = {}
 
     class DummyThread:
-        def __init__(self, target=None, args=()):
+        def __init__(self, target=None, args=(), kwargs=None):
             self.target = target
             self.args = args
+            self.kwargs = kwargs or {}
 
         def start(self):
-            launched.setdefault("started", []).append((self.target, self.args))
+            launched.setdefault("started", []).append((self.target, self.args, self.kwargs))
 
     def fake_register(pid, factory, **kwargs):
         launched.setdefault("pids", []).append(pid)
         return factory()
 
     monkeypatch.setattr(translate_api, "try_register_task", fake_register)
-    monkeypatch.setattr(translate_api.threading, "Thread", lambda target, args=(), daemon=True: DummyThread(target, args))
+    monkeypatch.setattr(
+        translate_api.threading,
+        "Thread",
+        lambda target, args=(), kwargs=None, daemon=True: DummyThread(target, args, kwargs),
+    )
     client = _client(tmp_project_dir, monkeypatch)
 
     audio_pid = "audfull1"
@@ -383,7 +388,11 @@ def test_start_full_dispatches_audio_and_subtitle_sources_to_supported_workflows
 
     assert r.status_code == 200
     assert r.json()["stage"] == "asr_translate"
-    assert launched["started"][-1] == (translate_api._run_asr_translate_pipeline, (audio_pid, 0, "en", "English"))
+    assert launched["started"][-1] == (
+        translate_api._run_asr_translate_pipeline,
+        (audio_pid, 0, "en", "English"),
+        {},
+    )
 
     subtitle_pid = "subfull1"
     subtitle_dir = tmp_project_dir / subtitle_pid
@@ -411,7 +420,11 @@ def test_start_full_dispatches_audio_and_subtitle_sources_to_supported_workflows
 
     assert r.status_code == 200
     assert r.json()["stage"] == "translate"
-    assert launched["started"][-1] == (translate_api._run_translate_pipeline, (subtitle_pid, "Japanese"))
+    assert launched["started"][-1] == (
+        translate_api._run_translate_pipeline,
+        (subtitle_pid, "Japanese"),
+        {"burn_follows": False},
+    )
 
 
 def test_start_translate_persists_requested_target_language_before_launch(tmp_project_dir, monkeypatch):
@@ -562,20 +575,26 @@ def test_resume_audio_project_with_translated_srt_does_not_launch_burn(tmp_proje
     launched = {}
 
     class DummyThread:
-        def __init__(self, target=None, args=()):
+        def __init__(self, target=None, args=(), kwargs=None):
             self.target = target
             self.args = args
+            self.kwargs = kwargs or {}
 
         def start(self):
             launched["target"] = self.target
             launched["args"] = self.args
+            launched["kwargs"] = self.kwargs
 
     def fake_register(pid, factory, **kwargs):
         launched["pid"] = pid
         return factory()
 
     monkeypatch.setattr(translate_api, "try_register_task", fake_register)
-    monkeypatch.setattr(translate_api.threading, "Thread", lambda target, args, daemon: DummyThread(target, args))
+    monkeypatch.setattr(
+        translate_api.threading,
+        "Thread",
+        lambda target, args, kwargs=None, daemon=True: DummyThread(target, args, kwargs),
+    )
 
     client = _client(tmp_project_dir, monkeypatch)
     pid = "audresume"
@@ -607,6 +626,7 @@ def test_resume_audio_project_with_translated_srt_does_not_launch_burn(tmp_proje
     assert r.json()["stage"] == "translate"
     assert launched["target"] is translate_api._run_translate_pipeline
     assert launched["args"] == (pid, "简体中文")
+    assert launched["kwargs"] == {"burn_follows": False}
 
 
 def test_resolve_text_option_ignores_non_string_legacy_fallback():

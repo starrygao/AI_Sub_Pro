@@ -32,6 +32,125 @@ def _seed_project(tmp_project_dir, pid="exp123"):
     return pid
 
 
+def _strict_quality_report(verdict="passed", *, warning=False):
+    requires_review = verdict == "needs_review"
+    failed = verdict == "failed"
+    issues = []
+    unresolved = []
+    observed = []
+    if requires_review:
+        issues = [{
+            "type": "semantic_uncertain",
+            "severity": "warning",
+            "block_id": 1,
+            "message": "meaning is uncertain",
+            "source_text": "Maybe.",
+            "translation": "也许。",
+            "expected": "",
+        }]
+        unresolved = [1]
+        observed = [1]
+    elif failed:
+        issues = [{
+            "type": "semantic_mismatch",
+            "severity": "error",
+            "block_id": 1,
+            "message": "meaning does not match",
+            "source_text": "Hello.",
+            "translation": "再见。",
+            "expected": "",
+        }]
+        unresolved = [1]
+    elif warning:
+        issues = [{
+            "type": "punctuation_style",
+            "severity": "warning",
+            "block_id": 1,
+            "message": "prefer Chinese punctuation",
+            "source_text": "Hello.",
+            "translation": "你好.",
+            "expected": "Chinese punctuation",
+        }]
+
+    passed = verdict == "passed"
+    return {
+        "run_id": "run-current",
+        "content_hash": "sha256:current",
+        "status": "ok" if passed else verdict,
+        "issues": issues,
+        "unresolved_blocks": unresolved,
+        "summary": {
+            "issue_count": len(issues),
+            "error_count": sum(
+                issue["severity"] in {"error", "severe"} for issue in issues
+            ),
+            "warning_count": sum(issue["severity"] == "warning" for issue in issues),
+            "unresolved_blocks": len(unresolved),
+            "conclusion": (
+                "达标：自动检查通过，保留 1 个非阻塞提醒。"
+                if warning
+                else (
+                    "达标：自动检查通过。"
+                    if passed
+                    else (
+                        "需要人工复核。"
+                        if requires_review
+                        else "自动交付未通过。"
+                    )
+                )
+            ),
+            "quality_gate": {
+                "policy": "strict",
+                "verdict": verdict,
+                "passed": passed,
+                "delivery_mode": "human_review" if requires_review else "unattended",
+                "requires_human_review": requires_review,
+                "unresolved_blocks": len(unresolved),
+                "next_action": (
+                    "deliver"
+                    if passed
+                    else ("human_review" if requires_review else "auto_retry_or_stop")
+                ),
+            },
+        },
+        "trace": {
+            "semantic_qa": {
+                "enabled": True,
+                "requested_blocks": 1,
+                "checked_blocks": 1,
+                "failed_blocks": 0,
+                "skipped_blocks": 0,
+                "requested_block_ids": [1],
+                "checked_block_ids": [1],
+                "failed_block_ids": [],
+                "skipped_block_ids": [],
+                "coverage_complete": True,
+            },
+            "semantic_uncertain_observed_block_ids": observed,
+        },
+    }
+
+
+def _seed_strict_certification(tmp_project_dir, pid, verdict, *, warning=False):
+    _seed_project(tmp_project_dir, pid)
+    pdir = tmp_project_dir / pid
+    project_path = pdir / "project.json"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    project.update({
+        "translation_quality_status": (
+            "passed" if verdict == "passed" else verdict
+        ),
+        "translation_quality_run_id": "run-current",
+        "translation_quality_content_hash": "sha256:current",
+    })
+    project_path.write_text(json.dumps(project), encoding="utf-8")
+    (pdir / "translation_qa_report.json").write_text(
+        json.dumps(_strict_quality_report(verdict, warning=warning)),
+        encoding="utf-8",
+    )
+    return pid
+
+
 def test_export_rejects_unknown_format(client, tmp_project_dir):
     pid = _seed_project(tmp_project_dir)
 
@@ -196,6 +315,125 @@ def test_export_original_remains_available_while_delivery_sentinel_exists(
 
     assert response.status_code == 200
     assert "Source" in response.json()["content"]
+
+
+@pytest.mark.parametrize("verdict", ["failed", "needs_review"])
+@pytest.mark.parametrize("format", ["translated", "bilingual"])
+def test_export_rejects_strict_failed_or_review_certification(
+    client,
+    tmp_project_dir,
+    verdict,
+    format,
+):
+    pid = _seed_strict_certification(tmp_project_dir, f"strict-{verdict}-{format}", verdict)
+    pdir = tmp_project_dir / pid
+    (pdir / "bilingual.srt").write_text("source\ntranslation", encoding="utf-8")
+
+    response = client.post(f"/api/projects/{pid}/export?format={format}")
+
+    assert response.status_code == 409
+    assert "quality" in response.json()["detail"].lower()
+
+
+def test_export_original_ignores_failed_strict_translation_certification(
+    client,
+    tmp_project_dir,
+):
+    pid = _seed_strict_certification(tmp_project_dir, "strict-original", "failed")
+    pdir = tmp_project_dir / pid
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nOriginal\n\n",
+        encoding="utf-8",
+    )
+
+    response = client.post(f"/api/projects/{pid}/export?format=original")
+
+    assert response.status_code == 200
+    assert "Original" in response.json()["content"]
+
+
+def test_export_allows_valid_strict_warning_certification_without_server_ack(
+    client,
+    tmp_project_dir,
+):
+    pid = _seed_strict_certification(
+        tmp_project_dir,
+        "strict-warning",
+        "passed",
+        warning=True,
+    )
+
+    response = client.post(f"/api/projects/{pid}/export?format=translated")
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda report: report.update({"status": "failed"}),
+        lambda report: report["summary"].pop("quality_gate"),
+        lambda report: report.update({"issues": "invalid"}),
+    ],
+)
+def test_export_rejects_malformed_strict_certification(
+    client,
+    tmp_project_dir,
+    mutate,
+):
+    pid = _seed_strict_certification(tmp_project_dir, "strict-malformed", "passed")
+    report_path = tmp_project_dir / pid / "translation_qa_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    mutate(report)
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    response = client.post(f"/api/projects/{pid}/export?format=translated")
+
+    assert response.status_code == 409
+    assert "quality" in response.json()["detail"].lower()
+
+
+def test_export_rejects_stale_strict_run_identity(
+    client,
+    tmp_project_dir,
+):
+    pid = _seed_strict_certification(tmp_project_dir, "strict-stale", "passed")
+    report_path = tmp_project_dir / pid / "translation_qa_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["run_id"] = "run-old"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    response = client.post(f"/api/projects/{pid}/export?format=translated")
+
+    assert response.status_code == 409
+    assert "quality" in response.json()["detail"].lower()
+
+
+def test_put_subtitles_invalidates_strict_certification_before_export(
+    client,
+    tmp_project_dir,
+):
+    pid = _seed_strict_certification(tmp_project_dir, "strict-edit-bypass", "passed")
+    pdir = tmp_project_dir / pid
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n",
+        encoding="utf-8",
+    )
+    put_response = client.put(f"/api/projects/{pid}/subtitles", json={
+        "blocks": [{
+            "index": 1,
+            "start": "00:00:00,000",
+            "end": "00:00:01,000",
+            "text": "Hello",
+            "translation": "编辑后的译文",
+        }],
+    })
+    assert put_response.status_code == 200
+
+    response = client.post(f"/api/projects/{pid}/export?format=translated")
+
+    assert response.status_code == 409
+    assert "quality" in response.json()["detail"].lower()
 
 
 def test_quality_report_rejects_stale_mapping_while_delivery_sentinel_exists(

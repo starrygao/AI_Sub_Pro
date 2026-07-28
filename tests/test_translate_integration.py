@@ -65,7 +65,11 @@ def _run_semantic_pipeline_case(
         )
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(
+        pid,
+        "简体中文",
+        burn_follows=False,
+    )
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
     return project, report, pdir
@@ -455,7 +459,11 @@ def test_translate_pipeline_ignores_malformed_filter_entries_per_block(tmp_path,
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(
+        pid,
+        "简体中文",
+        burn_follows=False,
+    )
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     assert project["status"] == "translated"
@@ -506,7 +514,7 @@ def test_translate_pipeline_does_not_apply_stale_filter_state_to_filtered_srt(tm
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     translated = (pdir / "translated.srt").read_text(encoding="utf-8")
     assert "zh-1" in translated
@@ -547,7 +555,7 @@ def test_translate_pipeline_tolerates_malformed_progress_callback_values(tmp_pat
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     assert project["status"] == "translated"
@@ -591,11 +599,19 @@ def test_translate_pipeline_writes_quality_report(tmp_path, monkeypatch):
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(
+        pid,
+        "简体中文",
+        burn_follows=False,
+    )
 
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    progress = json.loads((pdir / "progress.json").read_text(encoding="utf-8"))
     assert project["status"] == "translated"
+    assert project["progress"] == 100
+    assert progress["progress"] == 100
+    assert progress["stage"] == ""
     assert report["status"] == "ok"
     assert report["summary"]["by_type"]["english_residue"] == 1
     assert report["summary"]["quality_gate"]["passed"] is True
@@ -606,6 +622,97 @@ def test_translate_pipeline_writes_quality_report(tmp_path, monkeypatch):
         ],
     }
     assert (pdir / "translation_qa_report.md").exists()
+
+
+def test_translate_pipeline_before_burn_stays_at_global_75(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transbeforeburn"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\nHello\n\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(
+        api_translate.Config,
+        "to_dict",
+        lambda: {"translation": {"quality_mode": "fast"}},
+    )
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            pass
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "你好"
+            return blocks
+
+        def get_kb_usage_trace(self):
+            return {"project": {}, "matches": []}
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
+
+    api_translate._run_translate_pipeline(
+        pid,
+        "简体中文",
+        burn_follows=True,
+    )
+
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    progress = json.loads((pdir / "progress.json").read_text(encoding="utf-8"))
+    assert project["status"] == "translated"
+    assert project["progress"] == 75
+    assert progress["progress"] == 75
+    assert progress["stage"] == "translate"
+
+
+def test_pipeline_orchestrators_pass_explicit_burn_followup(monkeypatch):
+    from app.api import translate as api_translate
+
+    calls = []
+    monkeypatch.setattr(api_translate, "_run_asr_pipeline", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        api_translate,
+        "_load_project",
+        lambda pid: {"status": "asr_done", "translation_quality_status": "passed"},
+    )
+    monkeypatch.setattr(api_translate, "_check_cancel", lambda pid: None)
+    monkeypatch.setattr(api_translate, "_run_burn_pipeline", lambda pid: None)
+    monkeypatch.setattr(api_translate, "unregister_task", lambda pid: None)
+
+    def fake_translate(pid, target_language, **kwargs):
+        calls.append((pid, kwargs))
+
+    monkeypatch.setattr(api_translate, "_run_translate_pipeline", fake_translate)
+
+    api_translate._run_asr_translate_pipeline("translate-only", 0, "en", "简体中文")
+    api_translate._run_full_pipeline("full-burn", 0, "en", "简体中文")
+
+    assert calls == [
+        ("translate-only", {
+            "owns_registration": False,
+            "burn_follows": False,
+        }),
+        ("full-burn", {
+            "owns_registration": False,
+            "strict_quality_gate": True,
+            "burn_follows": True,
+        }),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -702,7 +809,7 @@ def test_translate_pipeline_final_artifacts_are_transactional_on_publish_failure
 
         monkeypatch.setattr(api_translate.os, "replace", fail_final_promote)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
@@ -1246,7 +1353,7 @@ def test_translate_pipeline_marks_contextual_background_speakers(tmp_path, monke
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
@@ -1324,6 +1431,10 @@ def test_full_pipeline_stops_before_burn_when_quality_gate_fails(tmp_path, monke
     assert api_translate._resume_stage_for_project(pid, project) == "translate"
     assert report["summary"]["quality_gate"]["passed"] is False
     assert report["summary"]["quality_gate"]["requires_human_review"] is False
+    progress = json.loads((pdir / "progress.json").read_text(encoding="utf-8"))
+    assert project["progress"] == 100
+    assert progress["progress"] == 100
+    assert progress["stage"] == ""
     assert not (pdir / "translated.srt").exists()
     assert not (pdir / "bilingual.srt").exists()
     assert (pdir / "partial_translated.srt").exists()
@@ -1373,7 +1484,7 @@ def test_translate_done_message_ignores_blank_sound_descriptions(tmp_path, monke
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     assert progress_messages[-1] == ("translate", 100, "翻译完成: 1 条")
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
@@ -1433,7 +1544,7 @@ def test_translate_pipeline_marks_partial_translation_as_error(tmp_path, monkeyp
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     state = json.loads((pdir / "workflow_state.json").read_text(encoding="utf-8"))
@@ -1490,7 +1601,7 @@ def test_translate_pipeline_blocks_export_when_cleaned_translation_is_empty(tmp_
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     assert project["status"] == "error"
@@ -1559,7 +1670,7 @@ def test_translate_pipeline_professional_semantic_mismatch_blocks_delivery(tmp_p
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
@@ -2303,7 +2414,7 @@ def test_translate_pipeline_does_not_swallow_quality_report_persistence_failure(
         lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk full")),
     )
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     assert project["status"] == "error"
@@ -2378,7 +2489,7 @@ def test_translate_pipeline_final_retry_repairs_missing_translation(tmp_path, mo
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     translated = (pdir / "translated.srt").read_text(encoding="utf-8")
@@ -2453,7 +2564,7 @@ def test_translate_pipeline_skips_final_retry_when_missing_count_is_catastrophic
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     partial = (pdir / "partial_translated.srt").read_text(encoding="utf-8")
@@ -2580,7 +2691,7 @@ def test_translate_pipeline_retries_missing_created_after_quality_repair(tmp_pat
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     translated = (pdir / "translated.srt").read_text(encoding="utf-8")
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
@@ -2644,7 +2755,7 @@ def test_translate_pipeline_can_auto_repair_quality_issues(tmp_path, monkeypatch
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     translated = (pdir / "translated.srt").read_text(encoding="utf-8")
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
@@ -2716,7 +2827,7 @@ def test_translate_pipeline_auto_repair_preserves_omitted_rows(tmp_path, monkeyp
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     translated = (pdir / "translated.srt").read_text(encoding="utf-8")
@@ -2782,7 +2893,7 @@ def test_translate_pipeline_does_not_auto_repair_scientific_terms_without_expect
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
     assert report["summary"]["by_type"]["scientific_term_inconsistent"] == 2
@@ -2853,7 +2964,7 @@ def test_translate_pipeline_normalizes_curated_scientific_terms_before_model_rep
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     translated = (pdir / "translated.srt").read_text(encoding="utf-8")
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
@@ -2921,7 +3032,7 @@ def test_translate_pipeline_does_not_auto_repair_inferred_proper_names(tmp_path,
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
@@ -3313,7 +3424,7 @@ def test_translate_pipeline_records_improved_and_still_failing_ids(
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
     rounds = report["trace"]["auto_repair_rounds"]
@@ -3382,7 +3493,7 @@ def test_translate_pipeline_removes_sdh_reintroduced_by_model_repair(
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     translated = (pdir / "translated.srt").read_text(encoding="utf-8")
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
@@ -3458,7 +3569,7 @@ def test_translate_pipeline_counts_model_changes_after_normalization(
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", Translator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
     translated = (pdir / "translated.srt").read_text(encoding="utf-8")
@@ -3535,7 +3646,7 @@ def test_translate_pipeline_rechecks_partial_multi_batch_repair_failure(
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", Translator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
@@ -3610,7 +3721,7 @@ def test_translate_pipeline_batches_auto_repair_and_records_trace(tmp_path, monk
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
@@ -3687,7 +3798,7 @@ def test_translate_pipeline_redacts_exception_details_in_project_error(tmp_path,
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
 
-    api_translate._run_translate_pipeline(pid, "简体中文")
+    api_translate._run_translate_pipeline(pid, "简体中文", burn_follows=False)
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     assert project["status"] == "error"

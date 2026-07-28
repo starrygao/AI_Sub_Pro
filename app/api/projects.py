@@ -40,6 +40,7 @@ from app.utils.translation_delivery import (
     translation_delivery_lock,
     translation_delivery_is_invalid,
 )
+from app.utils.translation_quality_gate import load_quality_report_decision
 from app.utils.media import get_tracks, get_duration, get_media_info, is_text_subtitle_codec
 from app.utils.srt import (
     fmt_time,
@@ -1846,6 +1847,16 @@ def _save_subtitles_locked(
     write_srt(blocks, str(pdir / "translated.srt"), use_translation=True)
     # Save bilingual version
     write_bilingual_srt(blocks, str(pdir / "bilingual.srt"))
+    report_path = pdir / "translation_qa_report.json"
+    if report_path.is_file() or project.get("translation_quality_status"):
+        mutate_project(
+            pid,
+            lambda current: current.update({
+                "translation_quality_status": "stale",
+                "translation_quality_message": "字幕已编辑，需要重新运行翻译质量检查。",
+            }),
+            normalize=_apply_safe_defaults,
+        )
     try:
         from app.engines.translation_memory import record_edited_subtitles
         learned = record_edited_subtitles(
@@ -1886,10 +1897,41 @@ def export_srt(
                 return _subtitle_export_payload(pdir / fname, project, pid, ".srt", container)
     elif translation_delivery_is_invalid(pdir):
         raise HTTPException(409, "Translation delivery is incomplete")
-    elif format == "bilingual":
+    else:
+        report_path = pdir / "translation_qa_report.json"
+        quality_status = project.get("translation_quality_status")
+        expects_certification = report_path.is_file() or (
+            isinstance(quality_status, str) and bool(quality_status.strip())
+        )
+        if expects_certification:
+            if quality_status == "stale":
+                raise HTTPException(
+                    409,
+                    "Translation quality certification is stale; rerun quality checks",
+                )
+            decision = load_quality_report_decision(
+                report_path,
+                expected_run_id=(
+                    project.get("translation_quality_run_id")
+                    if isinstance(project.get("translation_quality_run_id"), str)
+                    else ""
+                ),
+                expected_content_hash=(
+                    project.get("translation_quality_content_hash")
+                    if isinstance(project.get("translation_quality_content_hash"), str)
+                    else ""
+                ),
+            )
+            if not decision.passed:
+                raise HTTPException(
+                    409,
+                    f"Translation quality gate rejected export: {decision.message}",
+                )
+
+    if format == "bilingual":
         if (pdir / "bilingual.srt").is_file():
             return _subtitle_export_payload(pdir / "bilingual.srt", project, pid, ".bilingual.srt", container)
-    else:
+    elif format == "translated":
         if (pdir / "translated.srt").is_file():
             return _subtitle_export_payload(pdir / "translated.srt", project, pid, ".translated.srt", container)
 

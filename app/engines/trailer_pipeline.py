@@ -10,7 +10,13 @@ from pathlib import Path
 from app.api.projects import _load_project
 from app.config import PROJECTS_DIR
 from app.utils.project_store import mutate_project
-from app.engines.scheduler import slot, update_progress, reset_cancel, is_cancelled
+from app.engines.scheduler import (
+    complete_progress,
+    is_cancelled,
+    reset_cancel,
+    slot,
+    update_progress,
+)
 from app.engines.trailer_downloader import download_trailer
 from app.utils.errors import redact_error_message
 
@@ -208,11 +214,11 @@ def _run_asr_for_project(pid: str) -> None:
     _run_asr_pipeline(pid, audio_track, language)
 
 
-def _run_translate_for_project(pid: str) -> None:
+def _run_translate_for_project(pid: str, *, burn_follows: bool) -> None:
     from app.api.translate import _run_translate_pipeline
     proj = _load_project(pid)
     target_lang = proj.get("target_language", "简体中文") or "简体中文"
-    _run_translate_pipeline(pid, target_lang)
+    _run_translate_pipeline(pid, target_lang, burn_follows=burn_follows)
 
 
 def _run_burn_for_project(pid: str) -> None:
@@ -329,14 +335,15 @@ def run_trailer_pipeline(pid: str) -> None:
         else:
             log.info("skipping ASR stage pid=%s (YouTube subtitles adopted)", pid)
 
+        burn_follows = _workflow_mode(_load_project(pid)) != "translate_only"
         _save_partial(pid, pipeline_stage="translate")
         _check_cancelled(pid)
-        _run_translate_for_project(pid)
+        _run_translate_for_project(pid, burn_follows=burn_follows)
         _check_stage_status(pid, "translate")
 
-        if _workflow_mode(_load_project(pid)) == "translate_only":
+        if not burn_follows:
             _save_partial(pid, status="translated", pipeline_stage=None)
-            update_progress(pid, "translate", 100, "translation complete; burn skipped")
+            complete_progress(pid, "translation complete; burn skipped")
             return
 
         _save_partial(pid, pipeline_stage="burn")
@@ -345,7 +352,7 @@ def run_trailer_pipeline(pid: str) -> None:
         _check_stage_status(pid, "burn")
 
         _save_partial(pid, status="completed", pipeline_stage=None)
-        update_progress(pid, "burn", 100, "trailer pipeline complete")
+        complete_progress(pid, "trailer pipeline complete")
     except Exception as e:
         log.exception("trailer pipeline failed pid=%s", pid)
         try:

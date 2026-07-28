@@ -222,11 +222,11 @@ def test_project_quality_helpers_load_suggestions_and_report():
           if (topIssues.length !== 3 || topIssues[0].label !== '阅读速度过快' || topIssues[1].label !== '专名不一致' || topIssues[2].severity_label !== '错误') {
             throw new Error(`expected normalized QA issue list, got ${JSON.stringify(topIssues)}`);
           }
-          if (!state.qaReportSummaryText().includes('未解决 1')) {
-            throw new Error(`expected QA summary to include unresolved count, got ${state.qaReportSummaryText()}`);
+          if (!state.qaReportSummaryText().includes('质量门阻止交付')) {
+            throw new Error(`expected merged QA summary to block on errors, got ${state.qaReportSummaryText()}`);
           }
-          if (!state.qaReportNextAction().includes('错误项')) {
-            throw new Error(`expected next action to prioritize errors, got ${state.qaReportNextAction()}`);
+          if (!state.qaReportNextAction().includes('阻塞问题')) {
+            throw new Error(`expected next action to prioritize blocking issues, got ${state.qaReportNextAction()}`);
           }
           state.qaReport.issues = [
             {type: 'proper_name_inconsistent', severity: 'warning', block_id: 9, message: 'name drift'},
@@ -234,13 +234,13 @@ def test_project_quality_helpers_load_suggestions_and_report():
           state.qaReport.summary.issue_count = 1;
           state.qaReport.summary.repaired_blocks = 0;
           state.qaReport.summary.unresolved_blocks = 1;
-          if (!state.qaReportNextAction().includes('重新自动返工') || state.qaReportNextAction().includes('继续交付')) {
-            throw new Error(`expected warning next action to recommend automatic rework, got ${state.qaReportNextAction()}`);
+          if (!state.qaReportNextAction().includes('人工复核') || state.qaReportNextAction().includes('继续交付')) {
+            throw new Error(`expected persisted review state to remain authoritative, got ${state.qaReportNextAction()}`);
           }
           state.qaReport.summary.repaired_blocks = 2;
           state.qaReport.summary.quality_gate = {passed: false, auto_repair_enabled: true, auto_repaired_blocks: 2};
-          if (!state.qaReportNextAction().includes('已停止交付') || state.qaReportNextAction().includes('抽查确认')) {
-            throw new Error(`expected repaired warning next action to stop delivery, got ${state.qaReportNextAction()}`);
+          if (!state.qaReportNextAction().includes('人工复核') || state.qaReportNextAction().includes('抽查确认')) {
+            throw new Error(`expected review state to keep delivery blocked, got ${state.qaReportNextAction()}`);
           }
           let focused = null;
           state.focusSubtitleById = (id) => { focused = id; };
@@ -253,11 +253,12 @@ def test_project_quality_helpers_load_suggestions_and_report():
           }
           state.qaReport.summary.conclusion = '达标：已自动重点返工 2 条并复检通过。';
           state.qaReport.summary.quality_gate = {passed: true, auto_repair_enabled: true, auto_repaired_blocks: 2};
-          if (state.qaReportSummaryText() !== '达标：已自动重点返工 2 条并复检通过。') {
-            throw new Error(`expected final conclusion first, got ${state.qaReportSummaryText()}`);
+          state.qaReport.status = 'ok';
+          if (!state.qaReportSummaryText().includes('通过但有警告')) {
+            throw new Error(`expected merged warning status, got ${state.qaReportSummaryText()}`);
           }
-          if (!state.qaReportNextAction().includes('自动质检达标')) {
-            throw new Error(`expected passed gate next action, got ${state.qaReportNextAction()}`);
+          if (!state.qaReportNextAction().includes('逐次确认')) {
+            throw new Error(`expected warning export confirmation guidance, got ${state.qaReportNextAction()}`);
           }
         })().catch((err) => {
           console.error(err.message);
