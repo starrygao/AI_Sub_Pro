@@ -719,13 +719,42 @@ def _is_high_confidence_unbracketed_target_label(value: str) -> bool:
     return bool(letters and letters == letters.upper())
 
 
+def _sound_description_label_match_key(value: str) -> str:
+    text = _sound_description_probe_text(value)
+    return re.sub(r"[^A-Za-z0-9\u3400-\u9fff]+", "", text).casefold()
+
+
+def _source_has_corresponding_sound_label(source_text: str, target_label: str) -> bool:
+    target_key = _sound_description_label_match_key(target_label)
+    if not target_key:
+        return False
+
+    for match in _BRACKETED_TRANSLATION_SEGMENT_RE.finditer(source_text or ""):
+        source_label = match.group(1)
+        if (
+            _is_sound_translation_label(source_label)
+            and _sound_description_label_match_key(source_label) == target_key
+        ):
+            return True
+
+    source_probe = _sound_description_probe_text(source_text)
+    return (
+        _is_high_confidence_unbracketed_target_label(source_probe)
+        and _sound_description_label_match_key(source_probe) == target_key
+    )
+
+
 def _is_translation_separator_only(value: str) -> bool:
     text = _ASS_OVERRIDE_RE.sub("", value or "")
     text = re.sub(r"[\s\-–—、，,。.!！?？:：;；/\\|~·]+", "", text)
     return not text
 
 
-def clean_sound_description_translation_text(value: str) -> str:
+def clean_sound_description_translation_text(
+    value: str,
+    *,
+    source_text: str = "",
+) -> str:
     """Remove safe sound-description labels while preserving dialogue."""
     if not isinstance(value, str) or not value:
         return ""
@@ -748,9 +777,19 @@ def clean_sound_description_translation_text(value: str) -> str:
             if remainder and re.match(r"^(?:\s+|[-–—:：])", remainder):
                 return clean_remainder(remainder)
         split = re.match(r"^(?P<label>.+?)\s+[-–—]\s+(?P<dialogue>.+)$", text)
-        if split and _is_high_confidence_unbracketed_target_label(split.group("label")):
+        if (
+            split
+            and _is_high_confidence_unbracketed_target_label(split.group("label"))
+            and _source_has_corresponding_sound_label(
+                source_text,
+                split.group("label"),
+            )
+        ):
             return clean_remainder(split.group("dialogue"))
-        if _is_high_confidence_unbracketed_target_label(text):
+        if (
+            _is_high_confidence_unbracketed_target_label(text)
+            and _source_has_corresponding_sound_label(source_text, text)
+        ):
             return ""
         return text
 
@@ -796,7 +835,10 @@ def normalize_sound_description_translations(blocks: Iterable) -> list[dict]:
                 "reason": "sound_description_blank",
             })
             continue
-        cleaned_translation = clean_sound_description_translation_text(translation)
+        cleaned_translation = clean_sound_description_translation_text(
+            translation,
+            source_text=source,
+        )
         if cleaned_translation != translation:
             block.translation = cleaned_translation
             applied.append({

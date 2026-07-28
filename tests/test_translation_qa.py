@@ -240,9 +240,29 @@ def test_clean_sound_description_translation_text_handles_safe_unbracketed_label
 
     assert clean_sound_description_translation_text("无可闻对白") == ""
     assert clean_sound_description_translation_text("无可闻对白 你好。") == "你好。"
-    assert clean_sound_description_translation_text("POUNDING") == ""
-    assert clean_sound_description_translation_text("POUNDING ON DOOR - 你好。") == "你好。"
-    assert clean_sound_description_translation_text("NO AUDIBLE DIALOGUE") == ""
+    assert clean_sound_description_translation_text("POUNDING") == "POUNDING"
+    assert (
+        clean_sound_description_translation_text("POUNDING ON DOOR - 你好。")
+        == "POUNDING ON DOOR - 你好。"
+    )
+    assert (
+        clean_sound_description_translation_text("NO AUDIBLE DIALOGUE")
+        == "NO AUDIBLE DIALOGUE"
+    )
+    assert (
+        clean_sound_description_translation_text(
+            "POUNDING",
+            source_text="POUNDING",
+        )
+        == ""
+    )
+    assert (
+        clean_sound_description_translation_text(
+            "POUNDING ON DOOR - 你好。",
+            source_text="[POUNDING ON DOOR]\nHello.",
+        )
+        == "你好。"
+    )
 
 
 @pytest.mark.parametrize(
@@ -262,6 +282,34 @@ def test_clean_sound_description_translation_text_keeps_unbracketed_dialogue(dia
     from app.engines.translation_qa import clean_sound_description_translation_text
 
     assert clean_sound_description_translation_text(dialogue) == dialogue
+
+
+def test_normalize_sound_description_translations_aligns_unbracketed_target_to_source():
+    from app.engines.translation_qa import normalize_sound_description_translations
+
+    blocks = [
+        _block(1, "I laugh.", "I LAUGH"),
+        _block(2, "We knock before entering.", "WE KNOCK"),
+        _block(3, "Please whistle when ready.", "PLEASE WHISTLE"),
+        _block(4, "Stop pounding and listen.", "STOP POUNDING - 你好。"),
+        _block(5, "The car is here.", "CAR IS HERE"),
+        _block(6, "[POUNDING ON DOOR]\nHello.", "POUNDING ON DOOR - 你好。"),
+        _block(7, "POUNDING", "POUNDING"),
+        _block(8, "Hello.", "无可闻对白 你好。"),
+    ]
+
+    normalize_sound_description_translations(blocks)
+
+    assert [block.translation for block in blocks] == [
+        "I LAUGH",
+        "WE KNOCK",
+        "PLEASE WHISTLE",
+        "STOP POUNDING - 你好。",
+        "CAR IS HERE",
+        "你好。",
+        "",
+        "你好。",
+    ]
 
 
 def test_annotate_contextual_speaker_translations_marks_background_sources():
