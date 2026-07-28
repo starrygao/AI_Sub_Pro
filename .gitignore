@@ -38,3 +38,4 @@ models/asr/
 
 # Logs
 *.log
+.superpowers/

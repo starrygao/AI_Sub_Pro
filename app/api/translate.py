@@ -1860,16 +1860,6 @@ def _quality_repair_statistics(report, repaired: list[dict]) -> dict:
         for block_id in item.get("changed_block_ids", [])
         if isinstance(block_id, int) and not isinstance(block_id, bool)
     })
-    if not valid_rounds:
-        changed_ids = sorted({
-            item.get("id")
-            for item in (repaired or [])
-            if (
-                isinstance(item, dict)
-                and isinstance(item.get("id"), int)
-                and not isinstance(item.get("id"), bool)
-            )
-        })
     improved_ids = sorted({
         block_id
         for item in valid_rounds
@@ -1902,6 +1892,33 @@ def _quality_repair_statistics(report, repaired: list[dict]) -> dict:
     }
 
 
+def _deterministic_normalization_statistics(report) -> dict:
+    trace = getattr(report, "trace", {})
+    runs = (
+        trace.get("deterministic_normalization_runs", [])
+        if isinstance(trace, dict)
+        else []
+    )
+    if not isinstance(runs, list):
+        runs = []
+    valid_runs = [item for item in runs if isinstance(item, dict)]
+    changed_ids = sorted({
+        block_id
+        for item in valid_runs
+        for block_id in item.get("changed_block_ids", [])
+        if isinstance(block_id, int) and not isinstance(block_id, bool)
+    })
+    return {
+        "change_events": sum(
+            item.get("change_count", 0)
+            for item in valid_runs
+            if isinstance(item.get("change_count", 0), int)
+        ),
+        "changed_unique_ids": len(changed_ids),
+        "changed_block_ids": changed_ids,
+    }
+
+
 def _finalize_quality_conclusion(
     report,
     repaired: list[dict],
@@ -1912,6 +1929,7 @@ def _finalize_quality_conclusion(
     issue_count, error_count, warning_count = _quality_issue_counts(report)
     unresolved_count = len(getattr(report, "unresolved_blocks", []) or [])
     repair_stats = _quality_repair_statistics(report, repaired)
+    normalization_stats = _deterministic_normalization_statistics(report)
     repaired_count = repair_stats["changed_unique_ids"]
     repair_rounds = (
         report.trace.get("auto_repair_rounds", [])
@@ -2022,6 +2040,7 @@ def _finalize_quality_conclusion(
         "blocking_warning_count": len(blocking_warnings),
         "repaired_blocks": repaired_count,
         "repair_stats": repair_stats,
+        "deterministic_normalization_stats": normalization_stats,
         "unresolved_blocks": unresolved_count,
         "conclusion": conclusion,
         "quality_gate": {
@@ -2400,8 +2419,12 @@ def _apply_nonempty_repair_results(
     repair_trace: dict | None = None,
 ) -> list[dict]:
     by_id = {str(getattr(block, "index", "")): block for block in blocks or []}
-    applied_by_id: dict[int, dict] = {}
+    initial_translation_by_id = {
+        block_id: getattr(block, "translation", "")
+        for block_id, block in by_id.items()
+    }
     nonempty_responses = 0
+    mutation_occurred = False
     unmatched = 0
     for result in results or []:
         if not isinstance(result, dict):
@@ -2418,21 +2441,70 @@ def _apply_nonempty_repair_results(
         if isinstance(current, str) and current == translation:
             block.translation_error = ""
             continue
+        mutation_occurred = True
         block.translation = translation
         block.translation_error = ""
-        block_id = getattr(block, "index", result.get("id"))
-        applied_by_id[block_id] = {"id": block_id, "translation": translation}
     if unmatched:
         log.warning("translation QA auto-repair ignored %d unmatched result id(s)", unmatched)
+    applied = []
+    for key, block in by_id.items():
+        translation = getattr(block, "translation", "")
+        if translation == initial_translation_by_id.get(key):
+            continue
+        applied.append({
+            "id": getattr(block, "index", key),
+            "translation": translation,
+        })
     changed_ids = sorted(
-        block_id for block_id in applied_by_id
-        if isinstance(block_id, int) and not isinstance(block_id, bool)
+        item["id"] for item in applied
+        if isinstance(item["id"], int) and not isinstance(item["id"], bool)
     )
     if repair_trace is not None:
         repair_trace["nonempty_responses"] = nonempty_responses
+        repair_trace["mutation_occurred"] = mutation_occurred
         repair_trace["changed_block_ids"] = changed_ids
         repair_trace["changed_unique_ids"] = len(changed_ids)
-    return list(applied_by_id.values())
+    return applied
+
+
+@dataclass(frozen=True)
+class AutoRepairOutcome:
+    changes: list[dict]
+    mutation_occurred: bool
+    completed: bool
+
+
+def _repair_batch_positions(items: list[dict], max_blocks: int) -> list[list[int]]:
+    units: list[list[int]] = []
+    position = 0
+    while position < len(items):
+        group_ids = items[position].get("semantic_group_ids")
+        if isinstance(group_ids, list) and len(group_ids) > 1:
+            end = position + 1
+            while (
+                end < len(items)
+                and items[end].get("semantic_group_ids") == group_ids
+            ):
+                end += 1
+            units.append(list(range(position, end)))
+            position = end
+            continue
+        units.append([position])
+        position += 1
+
+    batches: list[list[int]] = []
+    current: list[int] = []
+    for unit in units:
+        if current and len(current) + len(unit) > max_blocks:
+            batches.append(current)
+            current = []
+        current.extend(unit)
+        if len(current) >= max_blocks:
+            batches.append(current)
+            current = []
+    if current:
+        batches.append(current)
+    return batches
 
 
 def _auto_repair_quality_issues(
@@ -2443,11 +2515,55 @@ def _auto_repair_quality_issues(
     target_language: str,
     project_kb,
     repair_trace: dict | None = None,
-) -> list[dict]:
+) -> AutoRepairOutcome:
+    empty_outcome = AutoRepairOutcome([], False, True)
     if not _qa_auto_repair_enabled(cfg):
-        return []
+        return empty_outcome
     if not report.issues:
-        return []
+        return empty_outcome
+    all_repair_items: list[dict] = []
+    repair_issues = []
+    attempted_blocks = 0
+    nonempty_responses = 0
+    mutation_occurred = False
+    initial_translation_by_id: dict[str, str] = {}
+    blocks_by_id: dict[str, object] = {}
+
+    def finish_outcome(completed: bool) -> AutoRepairOutcome:
+        changes = []
+        changed_ids = []
+        ordered_ids = list(dict.fromkeys(
+            str(item.get("id", "")) for item in all_repair_items
+        ))
+        for item_id in ordered_ids:
+            block = blocks_by_id.get(item_id)
+            if block is None:
+                continue
+            translation = getattr(block, "translation", "")
+            if translation == initial_translation_by_id.get(item_id):
+                continue
+            block_id = getattr(block, "index", item_id)
+            changes.append({"id": block_id, "translation": translation})
+            if isinstance(block_id, int) and not isinstance(block_id, bool):
+                changed_ids.append(block_id)
+        changed_ids = sorted(set(changed_ids))
+        if repair_trace is not None:
+            repair_trace.update({
+                "repair_attempts": attempted_blocks,
+                "attempted_blocks": attempted_blocks,
+                "nonempty_responses": nonempty_responses,
+                "mutation_occurred": mutation_occurred,
+                "changed_block_ids": changed_ids,
+                "changed_unique_ids": len(changed_ids),
+                "skipped_blocks": max(
+                    0,
+                    len(all_repair_items) - attempted_blocks,
+                ),
+                "applied_blocks": len(changed_ids),
+                "repair_completed": completed,
+            })
+        return AutoRepairOutcome(changes, mutation_occurred, completed)
+
     try:
         from app.engines.providers.result_contract import reconcile_translation_results
         from app.engines.translation_qa import (
@@ -2458,6 +2574,14 @@ def _auto_repair_quality_issues(
 
         repair_issues = repairable_quality_issues(report.issues)
         all_repair_items = build_repair_items(blocks, repair_issues)
+        blocks_by_id = {
+            str(getattr(block, "index", "")): block
+            for block in blocks or []
+        }
+        initial_translation_by_id = {
+            block_id: getattr(block, "translation", "")
+            for block_id, block in blocks_by_id.items()
+        }
         max_blocks = _repair_item_limit(cfg)
         if repair_trace is not None:
             repair_trace.update({
@@ -2466,30 +2590,32 @@ def _auto_repair_quality_issues(
                 "repair_attempts": 0,
                 "attempted_blocks": 0,
                 "nonempty_responses": 0,
+                "mutation_occurred": False,
                 "changed_unique_ids": 0,
                 "changed_block_ids": [],
                 "skipped_blocks": len(all_repair_items),
                 "batches": [],
             })
         if not all_repair_items:
-            return []
+            return finish_outcome(True)
         if max_blocks <= 0:
             if repair_trace is not None:
                 repair_trace["skipped_reason"] = "repair_disabled_by_zero_limit"
-            return []
+            return finish_outcome(True)
         primary = getattr(translator, "primary", None)
         if primary is None or not hasattr(primary, "translate_batch"):
             if repair_trace is not None:
                 repair_trace["skipped_reason"] = "repair_provider_unavailable"
-            return []
+            return finish_outcome(True)
 
-        applied_results = []
-        attempted_blocks = 0
-        nonempty_responses = 0
-        changed_block_ids: set[int] = set()
         batch_traces = repair_trace.get("batches") if isinstance(repair_trace, dict) else None
-        for start in range(0, len(all_repair_items), max_blocks):
-            repair_items = all_repair_items[start:start + max_blocks]
+        for positions in _repair_batch_positions(all_repair_items, max_blocks):
+            current_items = build_repair_items(blocks, repair_issues)
+            repair_items = [
+                current_items[position]
+                for position in positions
+                if position < len(current_items)
+            ]
             if not repair_items:
                 continue
             attempted_blocks += len(repair_items)
@@ -2510,29 +2636,23 @@ def _auto_repair_quality_issues(
                 results,
                 repair_trace=batch_result_trace,
             )
-            applied_results.extend(batch_results)
             nonempty_responses += batch_result_trace.get("nonempty_responses", 0)
-            changed_block_ids.update(batch_result_trace.get("changed_block_ids", []))
+            mutation_occurred = (
+                mutation_occurred
+                or batch_result_trace.get("mutation_occurred") is True
+            )
             if isinstance(batch_traces, list):
                 batch_traces.append({
                     "batch": len(batch_traces) + 1,
                     "attempted_blocks": len(repair_items),
                     "applied_blocks": len(batch_results),
                 })
-        if repair_trace is not None:
-            repair_trace["repair_attempts"] = attempted_blocks
-            repair_trace["attempted_blocks"] = attempted_blocks
-            repair_trace["nonempty_responses"] = nonempty_responses
-            repair_trace["changed_block_ids"] = sorted(changed_block_ids)
-            repair_trace["changed_unique_ids"] = len(changed_block_ids)
-            repair_trace["skipped_blocks"] = max(0, len(all_repair_items) - attempted_blocks)
-            repair_trace["applied_blocks"] = len(changed_block_ids)
-        if not applied_results:
-            return []
-        return applied_results
+        return finish_outcome(True)
     except Exception as e:
         log.warning("translation QA auto-repair failed: %s", e)
-        return []
+        if repair_trace is not None:
+            repair_trace["failure"] = "provider_or_repair_error"
+        return finish_outcome(False)
 
 
 def _run_deterministic_translation_normalizers(
@@ -2703,7 +2823,7 @@ def _persist_translation_quality_report(
                     if isinstance(getattr(issue, "block_id", None), int)
                 }
                 repair_rounds.append(round_trace)
-                round_repaired = _auto_repair_quality_issues(
+                repair_outcome = _auto_repair_quality_issues(
                     cfg,
                     translator,
                     blocks,
@@ -2712,10 +2832,13 @@ def _persist_translation_quality_report(
                     project_kb,
                     repair_trace=round_trace,
                 )
-                if not round_repaired:
+                round_trace["repair_completed"] = repair_outcome.completed
+                if not repair_outcome.mutation_occurred:
                     round_trace["improved_block_ids"] = []
                     round_trace["still_failing_block_ids"] = sorted(before_failing_ids)
-                    if round_trace.get("nonempty_responses", 0):
+                    if not repair_outcome.completed:
+                        round_trace["result"] = "repair_failed"
+                    elif round_trace.get("nonempty_responses", 0):
                         round_trace.update({
                             "after_issue_count": issue_count,
                             "after_error_count": error_count,
@@ -2728,7 +2851,7 @@ def _persist_translation_quality_report(
                     else:
                         round_trace["result"] = "no_repair_applied"
                     break
-                repaired.extend(round_repaired)
+                repaired.extend(repair_outcome.changes)
                 _run_deterministic_translation_normalizers(
                     blocks,
                     target_language=target_language,
@@ -2764,8 +2887,18 @@ def _persist_translation_quality_report(
                         before_failing_ids - set(still_failing_ids)
                     ),
                     "still_failing_block_ids": still_failing_ids,
-                    "result": "improved" if current_score < previous_score else "not_improved",
+                    "result": (
+                        "partial_failure"
+                        if not repair_outcome.completed
+                        else (
+                            "improved"
+                            if current_score < previous_score
+                            else "not_improved"
+                        )
+                    ),
                 })
+                if not repair_outcome.completed:
+                    break
                 if current_score >= previous_score:
                     break
                 previous_score = current_score

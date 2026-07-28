@@ -235,6 +235,29 @@ def test_clean_sound_description_translation_text_keeps_speaker_labels():
     assert clean_sound_description_translation_text("[亨利] 还能查她的手机吗？") == "[亨利] 还能查她的手机吗？"
 
 
+def test_clean_sound_description_translation_text_handles_safe_unbracketed_labels():
+    from app.engines.translation_qa import clean_sound_description_translation_text
+
+    assert clean_sound_description_translation_text("无可闻对白") == ""
+    assert clean_sound_description_translation_text("无可闻对白 你好。") == "你好。"
+    assert clean_sound_description_translation_text("POUNDING ON DOOR - 你好。") == "你好。"
+
+
+@pytest.mark.parametrize(
+    "dialogue",
+    [
+        "我听不到对白里那句话。",
+        "听不到对白",
+        "你好。门上有人重重敲打。",
+        "That pounding headache is awful.",
+    ],
+)
+def test_clean_sound_description_translation_text_keeps_unbracketed_dialogue(dialogue):
+    from app.engines.translation_qa import clean_sound_description_translation_text
+
+    assert clean_sound_description_translation_text(dialogue) == dialogue
+
+
 def test_annotate_contextual_speaker_translations_marks_background_sources():
     from app.engines.translation_qa import annotate_contextual_speaker_translations
 

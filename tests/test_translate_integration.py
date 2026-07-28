@@ -2501,6 +2501,159 @@ def test_apply_repair_results_counts_nonempty_responses_and_changed_unique_ids()
     assert blocks[1].translation == "原译二。"
 
 
+def test_apply_repair_results_counts_only_net_changes_for_duplicate_ids():
+    from app.api.translate import _apply_nonempty_repair_results
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=1,
+        start=timedelta(seconds=0),
+        end=timedelta(seconds=1),
+        text="One.",
+        translation="A",
+    )
+    trace = {}
+
+    applied = _apply_nonempty_repair_results(
+        [block],
+        [
+            {"id": 1, "translation": "B"},
+            {"id": 1, "translation": "A"},
+        ],
+        repair_trace=trace,
+    )
+
+    assert applied == []
+    assert block.translation == "A"
+    assert trace == {
+        "nonempty_responses": 2,
+        "mutation_occurred": True,
+        "changed_block_ids": [],
+        "changed_unique_ids": 0,
+    }
+
+
+def test_quality_conclusion_separates_deterministic_normalization_from_model_repair():
+    from app.api.translate import _finalize_quality_conclusion
+    from app.engines.translation_qa import TranslationQaReport
+
+    normalization = {
+        "id": 1,
+        "source": "Hello.",
+        "from": "[POUNDING] 你好。",
+        "to": "你好。",
+        "reason": "translation_sound_description_clean",
+    }
+    report = TranslationQaReport(
+        status="ok",
+        issues=[],
+        summary={},
+        trace={
+            "deterministic_normalization_runs": [{
+                "phase": "before_certification",
+                "change_count": 1,
+                "changed_block_ids": [1],
+            }],
+        },
+    )
+
+    _finalize_quality_conclusion(report, [normalization], False)
+
+    assert report.summary["repair_stats"] == {
+        "repair_attempts": 0,
+        "nonempty_responses": 0,
+        "changed_unique_ids": 0,
+        "changed_block_ids": [],
+        "improved_block_ids": [],
+        "still_failing_block_ids": [],
+    }
+    assert report.summary["deterministic_normalization_stats"] == {
+        "change_events": 1,
+        "changed_unique_ids": 1,
+        "changed_block_ids": [1],
+    }
+    assert report.summary["quality_gate"]["auto_repaired_blocks"] == 0
+    assert "复检通过" not in report.summary["conclusion"]
+
+
+def test_auto_repair_keeps_semantic_group_atomic_and_refreshes_later_context():
+    from app.api.translate import _auto_repair_quality_issues
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    blocks = [
+        SubtitleBlock(
+            index=index,
+            start=timedelta(seconds=index),
+            end=timedelta(seconds=index + 1),
+            text=f"Source {index}.",
+            translation=f"旧译{index}",
+        )
+        for index in range(1, 5)
+    ]
+    report = TranslationQaReport(
+        status="needs_review",
+        issues=[
+            QualityIssue(
+                type="semantic_mismatch",
+                severity="error",
+                block_id=2,
+                message="paired meaning",
+            ),
+            QualityIssue(
+                type="semantic_mismatch",
+                severity="error",
+                block_id=3,
+                message="paired meaning",
+            ),
+            QualityIssue(
+                type="english_residue",
+                severity="error",
+                block_id=4,
+                message="English remains",
+            ),
+        ],
+    )
+    calls = []
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            calls.append(items)
+            if len(calls) == 1:
+                assert [item["id"] for item in items] == [2, 3]
+                return [
+                    {"id": 2, "translation": "新译2"},
+                    {"id": 3, "translation": "新译3"},
+                ]
+            assert [item["id"] for item in items] == [4]
+            assert items[0]["preceding_context"][0]["draft"] == "新译3"
+            return [{"id": 4, "translation": "新译4"}]
+
+    translator = type("Translator", (), {"primary": Primary()})()
+    trace = {}
+
+    outcome = _auto_repair_quality_issues(
+        {
+            "translation": {
+                "qa_auto_repair": True,
+                "qa_auto_repair_max_blocks": 1,
+            },
+        },
+        translator,
+        blocks,
+        report,
+        "简体中文",
+        None,
+        repair_trace=trace,
+    )
+
+    assert outcome.completed is True
+    assert outcome.mutation_occurred is True
+    assert [item["id"] for item in outcome.changes] == [2, 3, 4]
+    assert [[item["id"] for item in call] for call in calls] == [[2, 3], [4]]
+    assert trace["attempted_blocks"] == 3
+
+
 def test_translate_pipeline_records_improved_and_still_failing_ids(
     tmp_path,
     monkeypatch,
@@ -2642,6 +2795,81 @@ def test_translate_pipeline_removes_sdh_reintroduced_by_model_repair(
     ]
     assert "after_model_repair" in phases
     assert phases[-1] == "before_certification"
+
+
+def test_translate_pipeline_rechecks_partial_multi_batch_repair_failure(
+    tmp_path,
+    monkeypatch,
+):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transrepairpartialfailure"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+        "manual_terms": "First line=第一行术语",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "\n".join([
+            "1", "00:00:00,000 --> 00:00:04,000", "First line.", "",
+            "2", "00:00:04,000 --> 00:00:08,000", "Second line.", "",
+        ]),
+        encoding="utf-8",
+    )
+    long_translation = "第一行术语，这是一个" + ("非常" * 18) + "长的字幕。"
+
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {
+            "qa_auto_repair": True,
+            "qa_auto_repair_max_blocks": 1,
+            "semantic_qa": False,
+        },
+    })
+
+    class Primary:
+        calls = 0
+
+        def translate_batch(self, items, prompt):
+            self.calls += 1
+            if self.calls == 1:
+                return [{"id": items[0]["id"], "translation": "Broken English remains"}]
+            raise RuntimeError("provider failed on second repair batch")
+
+    class Translator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            self.primary = Primary()
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            for block in blocks:
+                block.translation = long_translation
+            return blocks
+
+    monkeypatch.setattr("app.engines.translator.SubtitleTranslator", Translator)
+
+    api_translate._run_translate_pipeline(pid, "简体中文")
+
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
+    round_trace = report["trace"]["auto_repair_rounds"][0]
+    assert round_trace["result"] == "partial_failure"
+    assert round_trace["changed_block_ids"] == [1]
+    assert round_trace["repair_completed"] is False
+    assert report["summary"]["by_type"]["manual_term_missing"] == 1
+    assert report["summary"]["quality_gate"]["passed"] is False
+    assert project["translation_quality_status"] == "failed"
+    assert not (pdir / "translated.srt").exists()
+    assert not (pdir / "bilingual.srt").exists()
 
 
 def test_translate_pipeline_batches_auto_repair_and_records_trace(tmp_path, monkeypatch):

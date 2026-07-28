@@ -424,6 +424,14 @@ _SOUND_LABEL_EN_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_SAFE_UNBRACKETED_SOUND_LABELS = (
+    "无可闻对话",
+    "无可闻对白",
+    "无可听见对话",
+    "无可听见对白",
+    "无清晰对话",
+    "无清晰对白",
+)
 _CONTEXTUAL_SPEAKER_PREFIX_RE = re.compile(
     r"^\s*(?:[-–—]\s*)?"
     r"(?P<label>[A-Za-z][A-Za-z0-9 ./'&-]{0,44}|[\u3400-\u9fff]{1,12})"
@@ -708,9 +716,36 @@ def _is_translation_separator_only(value: str) -> bool:
 
 
 def clean_sound_description_translation_text(value: str) -> str:
-    """Remove translated bracketed sound-description labels while preserving dialogue."""
+    """Remove safe sound-description labels while preserving dialogue."""
     if not isinstance(value, str) or not value:
         return ""
+
+    def clean_remainder(remainder: str) -> str:
+        cleaned = re.sub(r"\s{2,}", " ", remainder).strip()
+        cleaned = re.sub(r"^(?:[-–—:：]\s*)+", "", cleaned).strip()
+        cleaned = re.sub(r"(?:\s*[-–—])+$", "", cleaned).strip()
+        cleaned = re.sub(r"^[、，,。.!！?？:：;；]+\s*", "", cleaned).strip()
+        return "" if _is_translation_separator_only(cleaned) else cleaned
+
+    def clean_unbracketed(line: str) -> str:
+        text = line.strip()
+        if text in _SAFE_UNBRACKETED_SOUND_LABELS:
+            return ""
+        for label in _SAFE_UNBRACKETED_SOUND_LABELS:
+            if not text.startswith(label):
+                continue
+            remainder = text[len(label):]
+            if remainder and re.match(r"^(?:\s+|[-–—:：])", remainder):
+                return clean_remainder(remainder)
+        split = re.match(r"^(?P<label>.+?)\s+[-–—]\s+(?P<dialogue>.+)$", text)
+        if split and _is_unbracketed_sound_description_label(split.group("label")):
+            return clean_remainder(split.group("dialogue"))
+        if (
+            not _CJK_TEXT_RE.search(text)
+            and _is_unbracketed_sound_description_label(text)
+        ):
+            return ""
+        return text
 
     cleaned_lines: list[str] = []
     for line in value.splitlines():
@@ -726,14 +761,9 @@ def clean_sound_description_translation_text(value: str) -> str:
 
         cleaned = _BRACKETED_TRANSLATION_SEGMENT_RE.sub(replace_sound_label, line)
         if changed:
-            cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
-            cleaned = re.sub(r"^(?:[-–—]\s*)+", "", cleaned).strip()
-            cleaned = re.sub(r"(?:\s*[-–—])+$", "", cleaned).strip()
-            cleaned = re.sub(r"^[、，,。.!！?？:：;；]+\s*", "", cleaned).strip()
-            if _is_translation_separator_only(cleaned):
-                cleaned = ""
+            cleaned = clean_remainder(cleaned)
         else:
-            cleaned = line.strip()
+            cleaned = clean_unbracketed(line)
         if cleaned:
             cleaned_lines.append(cleaned)
     return "\n".join(cleaned_lines).strip()
