@@ -4396,6 +4396,7 @@ def _run_auto_repair_group_guard_case(
     candidate_translations,
     semantic_groups,
     issues_by_qa_call,
+    preexisting_uncertain_ids=None,
 ):
     from copy import deepcopy
     from types import SimpleNamespace
@@ -4531,13 +4532,26 @@ def _run_auto_repair_group_guard_case(
         lambda report, **kwargs: saved_reports.append(deepcopy(report.to_dict())),
     )
 
+    class InitialTrace:
+        def to_dict(self):
+            return {
+                "semantic_uncertain_observed_block_ids": list(
+                    preexisting_uncertain_ids or []
+                ),
+            }
+
+    translator = type(
+        "Translator",
+        (),
+        {"last_quality_trace": InitialTrace()},
+    )()
     repaired = api_translate._persist_translation_quality_report(
         pid="semantic-group-rollback",
         pdir=str(tmp_path),
         project={},
         blocks=blocks,
         target_language="简体中文",
-        translator=object(),
+        translator=translator,
         cfg={
             "translation": {
                 "qa_auto_repair": True,
@@ -4650,6 +4664,110 @@ def test_auto_repair_rolls_back_changed_group_member_when_unchanged_member_qa_fa
     assert result["report"]["summary"]["quality_gate"]["passed"] is False
 
 
+def test_group_rollback_clears_new_uncertainty_from_unchanged_member(
+    tmp_path,
+    monkeypatch,
+):
+    result = _run_auto_repair_group_guard_case(
+        tmp_path,
+        monkeypatch,
+        initial_translations={1: "旧译1", 2: "旧译2"},
+        candidate_translations={1: "正确新译1", 2: "旧译2"},
+        semantic_groups=[[1, 2]],
+        issues_by_qa_call=[
+            [(1, "semantic_mismatch", "error")],
+            [(2, "semantic_uncertain", "warning")],
+            [(1, "semantic_mismatch", "error")],
+        ],
+    )
+
+    round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
+    quality_gate = result["report"]["summary"]["quality_gate"]
+    assert result["translations"] == {1: "旧译1", 2: "旧译2"}
+    assert round_trace["proposed_block_ids"] == [1]
+    assert round_trace["rolled_back_block_ids"] == [1]
+    assert round_trace["rolled_back_semantic_groups"] == [[1, 2]]
+    assert (
+        result["report"]["trace"]["semantic_uncertain_observed_block_ids"]
+        == []
+    )
+    assert quality_gate["requires_human_review"] is False
+
+
+def test_group_rollback_preserves_preexisting_uncertainty_latch(
+    tmp_path,
+    monkeypatch,
+):
+    result = _run_auto_repair_group_guard_case(
+        tmp_path,
+        monkeypatch,
+        initial_translations={1: "旧译1", 2: "旧译2"},
+        candidate_translations={1: "正确新译1", 2: "旧译2"},
+        semantic_groups=[[1, 2]],
+        issues_by_qa_call=[
+            [(1, "semantic_mismatch", "error")],
+            [(2, "semantic_uncertain", "warning")],
+            [(1, "semantic_mismatch", "error")],
+        ],
+        preexisting_uncertain_ids=[2],
+    )
+
+    quality_gate = result["report"]["summary"]["quality_gate"]
+    assert (
+        result["report"]["trace"]["semantic_uncertain_observed_block_ids"]
+        == [2]
+    )
+    assert quality_gate["requires_human_review"] is True
+    assert quality_gate["observed_semantic_uncertain_block_ids"] == [2]
+
+
+def test_group_latch_cleanup_isolated_across_multiple_groups(
+    tmp_path,
+    monkeypatch,
+):
+    result = _run_auto_repair_group_guard_case(
+        tmp_path,
+        monkeypatch,
+        initial_translations={
+            1: "旧译1",
+            2: "旧译2",
+            3: "旧译3",
+            4: "旧译4",
+        },
+        candidate_translations={
+            1: "正确新译1",
+            2: "旧译2",
+            3: "正确新译3",
+            4: "旧译4",
+        },
+        semantic_groups=[[1, 2], [3, 4]],
+        issues_by_qa_call=[
+            [
+                (1, "semantic_mismatch", "error"),
+                (3, "semantic_mismatch", "error"),
+            ],
+            [(2, "semantic_uncertain", "warning")],
+            [(1, "semantic_mismatch", "error")],
+        ],
+    )
+
+    round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
+    assert result["translations"] == {
+        1: "旧译1",
+        2: "旧译2",
+        3: "正确新译3",
+        4: "旧译4",
+    }
+    assert round_trace["accepted_block_ids"] == [3]
+    assert round_trace["rolled_back_block_ids"] == [1]
+    assert round_trace["accepted_semantic_groups"] == [[3, 4]]
+    assert round_trace["rolled_back_semantic_groups"] == [[1, 2]]
+    assert (
+        result["report"]["trace"]["semantic_uncertain_observed_block_ids"]
+        == []
+    )
+
+
 def test_auto_repair_isolates_atomic_decisions_across_semantic_groups(
     tmp_path,
     monkeypatch,
@@ -4719,7 +4837,7 @@ def test_auto_repair_keeps_independent_block_acceptance_per_block(
                 (1, "semantic_mismatch", "error"),
                 (2, "semantic_mismatch", "error"),
             ],
-            [(1, "semantic_mismatch", "error")],
+            [(1, "semantic_uncertain", "warning")],
             [(1, "semantic_mismatch", "error")],
         ],
     )
@@ -4732,6 +4850,10 @@ def test_auto_repair_keeps_independent_block_acceptance_per_block(
     assert round_trace["rolled_back_block_ids"] == [1]
     assert round_trace["accepted_semantic_groups"] == []
     assert round_trace["rolled_back_semantic_groups"] == []
+    assert (
+        result["report"]["trace"]["semantic_uncertain_observed_block_ids"]
+        == []
+    )
 
 
 def test_auto_repair_rolls_back_new_semantic_mismatch_per_block(tmp_path, monkeypatch):

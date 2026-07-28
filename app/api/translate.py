@@ -3338,6 +3338,9 @@ def _persist_translation_quality_report(
                     rolled_back_set.update(
                         proposed_id_set.intersection(group_ids)
                     )
+                rollback_latch_ids = set(rolled_back_set)
+                for group_ids in rolled_back_semantic_groups:
+                    rollback_latch_ids.update(group_ids)
                 rolled_back_ids = sorted(rolled_back_set)
                 rollback_reasons = {
                     block_id: list(issue_types)
@@ -3371,7 +3374,7 @@ def _persist_translation_quality_report(
                             isinstance(block_id, int)
                             and not isinstance(block_id, bool)
                             and (
-                                block_id not in rolled_back_set
+                                block_id not in rollback_latch_ids
                                 or block_id in uncertain_ids_before_round
                             )
                         )
