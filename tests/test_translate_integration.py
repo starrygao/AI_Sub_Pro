@@ -1929,6 +1929,36 @@ def test_semantic_qa_uses_dialogue_only_items_and_bounded_authoritative_context(
             "translation": "♪ You ask how deep my love is ♪",
             "filtered": False,
         })(),
+        type("Block", (), {
+            "index": 90,
+            "text": "♪ Sing a song ♪",
+            "translation": "♪ 唱一首歌 ♪",
+            "filtered": False,
+        })(),
+        type("Block", (), {
+            "index": 91,
+            "text": "♪ We laugh together ♪",
+            "translation": "♪ 我们一起欢笑 ♪",
+            "filtered": False,
+        })(),
+        type("Block", (), {
+            "index": 92,
+            "text": "♪ Let it rain ♪",
+            "translation": "♪ 就让雨落下 ♪",
+            "filtered": False,
+        })(),
+        type("Block", (), {
+            "index": 93,
+            "text": "♪ 你笑起来真好看 ♪",
+            "translation": "♪ Your smile is beautiful ♪",
+            "filtered": False,
+        })(),
+        type("Block", (), {
+            "index": 94,
+            "text": "♪ 听见你的声音 ♪",
+            "translation": "♪ I hear your voice ♪",
+            "filtered": False,
+        })(),
     ]
     captured = {}
 
@@ -1967,7 +1997,9 @@ def test_semantic_qa_uses_dialogue_only_items_and_bounded_authoritative_context(
     )
 
     assert issues == []
-    assert trace["requested_block_ids"] == [82, 83, 84, 85, 86, 87, 88, 89]
+    assert trace["requested_block_ids"] == [
+        82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94,
+    ]
     assert trace["coverage_complete"] is True
     assert captured["items"] == [
         {
@@ -1993,6 +2025,31 @@ def test_semantic_qa_uses_dialogue_only_items_and_bounded_authoritative_context(
             "id": 89,
             "original": "♪ 你问我爱你有多深 ♪",
             "draft": "♪ You ask how deep my love is ♪",
+        },
+        {
+            "id": 90,
+            "original": "♪ Sing a song ♪",
+            "draft": "♪ 唱一首歌 ♪",
+        },
+        {
+            "id": 91,
+            "original": "♪ We laugh together ♪",
+            "draft": "♪ 我们一起欢笑 ♪",
+        },
+        {
+            "id": 92,
+            "original": "♪ Let it rain ♪",
+            "draft": "♪ 就让雨落下 ♪",
+        },
+        {
+            "id": 93,
+            "original": "♪ 你笑起来真好看 ♪",
+            "draft": "♪ Your smile is beautiful ♪",
+        },
+        {
+            "id": 94,
+            "original": "♪ 听见你的声音 ♪",
+            "draft": "♪ I hear your voice ♪",
         },
     ]
     prompt = captured["prompt"]

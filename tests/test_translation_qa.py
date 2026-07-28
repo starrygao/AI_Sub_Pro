@@ -358,6 +358,11 @@ def test_sound_description_classifier_covers_export_regression_cues(source):
     [
         ("♪ Never gonna give you up ♪", "♪ 永远不会放弃你 ♪"),
         ("♪ 你问我爱你有多深 ♪", "♪ You ask how deep my love is ♪"),
+        ("♪ Sing a song ♪", "♪ 唱一首歌 ♪"),
+        ("♪ We laugh together ♪", "♪ 我们一起欢笑 ♪"),
+        ("♪ Let it rain ♪", "♪ 就让雨落下 ♪"),
+        ("♪ 你笑起来真好看 ♪", "♪ Your smile is beautiful ♪"),
+        ("♪ 听见你的声音 ♪", "♪ I hear your voice ♪"),
     ],
 )
 def test_note_wrapped_language_lyrics_remain_translatable(source, draft):
@@ -389,6 +394,12 @@ def test_note_wrapped_language_lyrics_remain_translatable(source, draft):
     [
         "♪",
         "♪ instrumental music ♪",
+        "♪ tense music continues ♪",
+        "♪ gentle background music playing ♪",
+        "♪ theme music ♪",
+        "♪ 紧张音乐继续 ♪",
+        "♪ 轻柔背景音乐响起 ♪",
+        "♪ 主题音乐 ♪",
     ],
 )
 def test_music_markers_without_language_lyrics_remain_pure_sound(source):
@@ -406,6 +417,7 @@ def test_music_markers_without_language_lyrics_remain_pure_sound(source):
     [
         "♪\n-Go!",
         "♪ instrumental music ♪\n-Go!",
+        "♪ tense background music continues ♪\n-Go!",
         "RUNNING WATER\n-Go!",
         "APPLAUSE\n-Go!",
     ],

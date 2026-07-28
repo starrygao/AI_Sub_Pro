@@ -429,6 +429,14 @@ _SOUND_LABEL_EN_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_NOTE_WRAPPED_MUSIC_DESCRIPTION_EN_RE = re.compile(
+    r"^(?:(?:instrumental|tense|gentle|background|theme)\s+)*"
+    r"music(?:\s+(?:continues?|playing))?$",
+    re.IGNORECASE,
+)
+_NOTE_WRAPPED_MUSIC_DESCRIPTION_CJK_RE = re.compile(
+    r"^(?:(?:纯|背景|紧张|轻柔|主题)){0,3}音乐(?:继续|响起|播放|持续)?$"
+)
 _SAFE_UNBRACKETED_SOUND_LABELS = (
     "无可闻对话",
     "无可闻对白",
@@ -653,10 +661,22 @@ def _is_sound_description_line(source: str) -> bool:
     segments = list(_BRACKETED_TRANSLATION_SEGMENT_RE.finditer(probe))
     if segments:
         remainder = _BRACKETED_TRANSLATION_SEGMENT_RE.sub("", probe)
-        return (
+        if (
             _is_translation_separator_only(remainder)
             and all(_is_sound_translation_label(match.group(1)) for match in segments)
+        ):
+            return True
+
+    if _MUSIC_MARK_RE.search(source or ""):
+        normalized_probe = re.sub(r"\s+", " ", probe).strip()
+        compact_probe = re.sub(r"\s+", "", probe)
+        return bool(
+            _NOTE_WRAPPED_MUSIC_DESCRIPTION_EN_RE.fullmatch(normalized_probe)
+            or _NOTE_WRAPPED_MUSIC_DESCRIPTION_CJK_RE.fullmatch(compact_probe)
         )
+
+    if segments:
+        return False
 
     return _is_unbracketed_sound_description_label(probe)
 
