@@ -2014,7 +2014,18 @@ def _semantic_coverage_is_valid(trace: dict) -> bool:
     if not isinstance(semantic, dict):
         return False
     if semantic.get("enabled") is False:
-        return True
+        coverage_fields = {
+            "requested_blocks",
+            "checked_blocks",
+            "failed_blocks",
+            "skipped_blocks",
+            "requested_block_ids",
+            "checked_block_ids",
+            "failed_block_ids",
+            "skipped_block_ids",
+            "coverage_complete",
+        }
+        return not any(field in semantic for field in coverage_fields)
     if semantic.get("enabled") is not True:
         return False
 
@@ -2105,16 +2116,32 @@ def _translation_quality_gate_decision(
         return _invalid_quality_gate_decision(
             "翻译质量检查报告无效或自相矛盾，已停止交付。"
         )
+    required_issue_fields = {
+        "type",
+        "severity",
+        "block_id",
+        "message",
+        "source_text",
+        "translation",
+        "expected",
+    }
     if any(
         not isinstance(issue, dict)
+        or not required_issue_fields.issubset(issue)
         or not isinstance(issue.get("type"), str)
         or not issue["type"].strip()
         or issue.get("severity") not in {"warning", "error", "severe"}
+        or not isinstance(issue.get("message"), str)
+        or not issue["message"].strip()
+        or not isinstance(issue.get("source_text"), str)
+        or not isinstance(issue.get("translation"), str)
+        or not isinstance(issue.get("expected"), str)
         or (
             issue.get("block_id") is not None
             and (
                 not isinstance(issue.get("block_id"), int)
                 or isinstance(issue.get("block_id"), bool)
+                or issue["block_id"] <= 0
             )
         )
         for issue in issues
@@ -2416,6 +2443,7 @@ def _persist_translation_quality_report(
     *,
     quality_run_id: str = "",
     strict_quality_gate: bool = False,
+    quality_run_state: Optional[dict] = None,
 ) -> list[dict]:
     """Run deterministic QA and persist the report for this translation run."""
     try:
@@ -2436,6 +2464,27 @@ def _persist_translation_quality_report(
         trace = trace_obj.to_dict() if hasattr(trace_obj, "to_dict") else {}
         if not isinstance(trace, dict):
             trace = {}
+        matching_run_state = (
+            isinstance(quality_run_state, dict)
+            and isinstance(quality_run_id, str)
+            and bool(quality_run_id)
+            and quality_run_state.get("run_id") == quality_run_id
+        )
+        if matching_run_state:
+            latched_ids = quality_run_state.get(
+                "semantic_uncertain_observed_block_ids",
+                [],
+            )
+            if isinstance(latched_ids, list):
+                trace["semantic_uncertain_observed_block_ids"] = sorted({
+                    block_id
+                    for block_id in latched_ids
+                    if (
+                        isinstance(block_id, int)
+                        and not isinstance(block_id, bool)
+                        and block_id > 0
+                    )
+                })
         repaired = []
         sound_repaired = normalize_sound_description_translations(blocks)
         if sound_repaired:
@@ -2624,6 +2673,10 @@ def _persist_translation_quality_report(
         if repaired:
             report.repaired_blocks = repaired
         report.trace = trace
+        if matching_run_state:
+            quality_run_state["semantic_uncertain_observed_block_ids"] = list(
+                trace.get("semantic_uncertain_observed_block_ids", [])
+            )
         _finalize_quality_conclusion(
             report,
             repaired,
@@ -2665,6 +2718,10 @@ def _run_translate_pipeline(
             cfg = Config.to_dict()
             strict_policy = _strict_quality_policy(cfg, strict_quality_gate)
             quality_run_id = _begin_translation_quality_run(pid)
+            quality_run_state = {
+                "run_id": quality_run_id,
+                "semantic_uncertain_observed_block_ids": [],
+            }
             source_name, source_path = _find_subtitle_source(pid)
             _best_effort_start_stage(
                 pid,
@@ -2761,6 +2818,7 @@ def _run_translate_pipeline(
                 progress_callback=lambda pct, msg: _emit_progress(pid, "translate", pct, msg),
                 quality_run_id=quality_run_id,
                 strict_quality_gate=strict_policy,
+                quality_run_state=quality_run_state,
             )
             if repaired:
                 log.info("translation QA repaired %d block(s) for %s", len(repaired), pid)
@@ -2793,6 +2851,7 @@ def _run_translate_pipeline(
                     progress_callback=lambda pct, msg: _emit_progress(pid, "translate", pct, msg),
                     quality_run_id=quality_run_id,
                     strict_quality_gate=strict_policy,
+                    quality_run_state=quality_run_state,
                 )
                 if repaired:
                     log.info("translation QA repaired %d block(s) after post-QA retry for %s", len(repaired), pid)

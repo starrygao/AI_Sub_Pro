@@ -13,6 +13,7 @@ def _run_semantic_pipeline_case(
     pid,
     translation_cfg,
     primary=None,
+    supports_missing_retry=False,
 ):
     """Run the real translation pipeline while replacing only the model boundary."""
     from app.api import translate as api_translate
@@ -55,6 +56,12 @@ def _run_semantic_pipeline_case(
 
         def get_kb_usage_trace(self):
             return {"project": {}, "matches": []}
+
+    if supports_missing_retry:
+        FakeTranslator._build_prompt = (
+            lambda self, target_lang, meta_info, kb_data, context_before,
+            context_after, items=None: "retry missing translations"
+        )
 
     monkeypatch.setattr("app.engines.translator.SubtitleTranslator", FakeTranslator)
     api_translate._run_translate_pipeline(pid, "简体中文")
@@ -1066,6 +1073,93 @@ def test_professional_pipeline_latches_uncertainty_after_auto_repair(tmp_path, m
     assert (pdir / "partial_translated.srt").exists()
 
 
+def test_professional_pipeline_keeps_uncertainty_across_second_quality_persistence(
+    tmp_path,
+    monkeypatch,
+):
+    from app.engines import translation_qa
+
+    class Primary:
+        semantic_round = 0
+
+        def translate_batch(self, items, prompt):
+            if "字幕语义质检员" in prompt:
+                self.semantic_round += 1
+                verdict = "UNCERTAIN: 指代信息不足" if self.semantic_round == 1 else "OK"
+                return [
+                    {"id": item["id"], "translation": verdict}
+                    for item in items
+                ]
+            assert "最终补翻要求" in prompt
+            return [
+                {"id": item["id"], "translation": f"补翻译文{item['id']}"}
+                for item in items
+            ]
+
+    normalization_round = 0
+
+    def induce_one_post_quality_missing_translation(blocks):
+        nonlocal normalization_round
+        normalization_round += 1
+        if normalization_round != 1:
+            return []
+        blocks[1].translation = ""
+        return [{
+            "id": 2,
+            "source": blocks[1].text,
+            "from": "她留下了。",
+            "to": "",
+            "reason": "test_post_quality_normalization",
+        }]
+
+    persisted_reports = []
+    real_save_quality_report = translation_qa.save_quality_report
+
+    def capture_real_quality_report(report, *, json_path, markdown_path):
+        persisted_reports.append(report.to_dict())
+        return real_save_quality_report(
+            report,
+            json_path=json_path,
+            markdown_path=markdown_path,
+        )
+
+    monkeypatch.setattr(
+        translation_qa,
+        "normalize_sound_description_translations",
+        induce_one_post_quality_missing_translation,
+    )
+    monkeypatch.setattr(
+        translation_qa,
+        "save_quality_report",
+        capture_real_quality_report,
+    )
+    primary = Primary()
+    project, report, pdir = _run_semantic_pipeline_case(
+        tmp_path,
+        monkeypatch,
+        pid="uncertainsecondpersist",
+        translation_cfg={
+            "quality_mode": "professional",
+            "qa_auto_repair": False,
+            "semantic_qa": True,
+            "missing_translation_retries": 1,
+        },
+        primary=primary,
+        supports_missing_retry=True,
+    )
+
+    assert len(persisted_reports) == 2
+    assert persisted_reports[0]["status"] == "needs_review"
+    assert persisted_reports[1]["status"] == "needs_review"
+    assert primary.semantic_round == 2
+    assert project["status"] == "error"
+    assert project["translation_quality_status"] == "needs_review"
+    assert report["trace"]["semantic_uncertain_observed_block_ids"] == [1]
+    assert report["summary"]["quality_gate"]["requires_human_review"] is True
+    assert not (pdir / "translated.srt").exists()
+    assert (pdir / "partial_translated.srt").exists()
+
+
 def test_professional_semantic_provider_unavailable_fails_closed():
     from app.api.translate import _run_semantic_quality_checks
 
@@ -1313,6 +1407,47 @@ def test_quality_gate_rejects_stale_or_hash_mismatched_report(tmp_path, monkeypa
     assert "内容不匹配" in message
 
 
+def _add_incomplete_warning_issue(report):
+    report["issues"].append({
+        "type": "style_warning",
+        "severity": "warning",
+        "block_id": 1,
+    })
+    report["summary"].update({
+        "issue_count": 1,
+        "warning_count": 1,
+    })
+
+
+def _add_negative_id_warning_issue(report):
+    report["issues"].append({
+        "type": "style_warning",
+        "severity": "warning",
+        "block_id": -1,
+        "message": "warning",
+        "source_text": "source",
+        "translation": "译文",
+        "expected": "",
+    })
+    report["summary"].update({
+        "issue_count": 1,
+        "warning_count": 1,
+    })
+
+
+def _disable_semantics_but_keep_coverage_fields(report):
+    report["summary"]["quality_gate"]["policy"] = "fast"
+    report["trace"]["semantic_qa"]["enabled"] = False
+
+
+def _disable_semantics_with_incomplete_coverage(report):
+    report["summary"]["quality_gate"]["policy"] = "fast"
+    report["trace"]["semantic_qa"] = {
+        "enabled": False,
+        "coverage_complete": False,
+    }
+
+
 @pytest.mark.parametrize(
     "mutate_report",
     [
@@ -1340,6 +1475,10 @@ def test_quality_gate_rejects_stale_or_hash_mismatched_report(tmp_path, monkeypa
             "requested_block_ids": [-1],
             "checked_block_ids": [-1],
         }),
+        _add_incomplete_warning_issue,
+        _add_negative_id_warning_issue,
+        _disable_semantics_but_keep_coverage_fields,
+        _disable_semantics_with_incomplete_coverage,
     ],
 )
 def test_quality_gate_rejects_malformed_or_contradictory_certification(
@@ -1777,6 +1916,7 @@ def test_translate_pipeline_retries_missing_created_after_quality_repair(tmp_pat
         *,
         quality_run_id="",
         strict_quality_gate=False,
+        quality_run_state=None,
     ):
         from app.engines.translation_qa import quality_content_hash
 
