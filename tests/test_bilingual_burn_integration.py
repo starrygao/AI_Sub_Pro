@@ -202,3 +202,31 @@ def test_burn_without_subtitles_records_visible_error(patched_projects_dir):
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     assert project["status"] == "translated"
     assert "无字幕文件" in project["error"]
+
+
+def test_burn_rejects_translation_artifacts_while_delivery_sentinel_exists(
+    patched_projects_dir,
+    monkeypatch,
+):
+    from app.api import translate as api_translate
+
+    pid = "blockedburn"
+    pdir = _seed_project(patched_projects_dir, pid, source_type="upload")
+    (pdir / "bilingual.srt").write_text("old bilingual", encoding="utf-8")
+    (pdir / ".translation_delivery_in_progress").write_text(
+        '{"status":"invalid"}',
+        encoding="utf-8",
+    )
+    calls = []
+    monkeypatch.setattr(
+        api_translate,
+        "burn_subtitles",
+        lambda *args, **kwargs: calls.append(args) or True,
+    )
+
+    api_translate._run_burn_pipeline(pid)
+
+    assert calls == []
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["status"] == "translated"
+    assert "交付未完成" in project["error"]

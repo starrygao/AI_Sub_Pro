@@ -35,6 +35,10 @@ from app.utils.project_store import (
     atomic_write_json,
     PID_PATTERN,
 )
+from app.utils.translation_delivery import (
+    hide_invalid_translation_artifact_fields,
+    translation_delivery_is_invalid,
+)
 from app.utils.media import get_tracks, get_duration, get_media_info, is_text_subtitle_codec
 from app.utils.srt import (
     fmt_time,
@@ -664,7 +668,8 @@ def _load_project(pid: str) -> dict:
             raise HTTPException(400, "Invalid project id")
         raise HTTPException(400, "Project file is invalid")
     try:
-        return _merge_runtime_progress(pid, _apply_safe_defaults(project))
+        project = _merge_runtime_progress(pid, _apply_safe_defaults(project))
+        return hide_invalid_translation_artifact_fields(project, _project_dir(pid))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -939,6 +944,7 @@ def list_projects(include_archived: bool = Query(False)):
             try:
                 with open(pfile, "r", encoding="utf-8") as f:
                     project = _merge_runtime_progress(pdir.name, _apply_safe_defaults(json.load(f)))
+                    project = hide_invalid_translation_artifact_fields(project, pdir)
                     if project.get("archived") and not include_archived:
                         continue
                     projects.append(project)
@@ -1712,7 +1718,7 @@ def get_subtitles(pid: str = PathParam(pattern=PID_PATTERN)):
     # Load translations from translated.srt if it exists
     # Match by timestamp since indices may differ between files
     trans_path = pdir / "translated.srt"
-    if trans_path.exists():
+    if not translation_delivery_is_invalid(pdir) and trans_path.exists():
         try:
             trans_blocks = parse_srt_file(str(trans_path))
         except Exception as e:
@@ -1860,6 +1866,8 @@ def export_srt(
         for fname in ["filtered.srt", "raw.srt", "native.srt"]:
             if (pdir / fname).is_file():
                 return _subtitle_export_payload(pdir / fname, project, pid, ".srt", container)
+    elif translation_delivery_is_invalid(pdir):
+        raise HTTPException(409, "Translation delivery is incomplete")
     elif format == "bilingual":
         if (pdir / "bilingual.srt").is_file():
             return _subtitle_export_payload(pdir / "bilingual.srt", project, pid, ".bilingual.srt", container)

@@ -54,6 +54,40 @@ def test_legacy_project_gets_safe_defaults(patched_projects_dir):
     assert loaded["archived"] is False
 
 
+def test_project_discovery_hides_translation_fields_while_delivery_is_invalid(
+    patched_projects_dir,
+):
+    pid = "invaliddelivery"
+    pdir = patched_projects_dir / pid
+    pdir.mkdir()
+    translated = pdir / "translated.srt"
+    bilingual = pdir / "bilingual.srt"
+    translated.write_text("old translated", encoding="utf-8")
+    bilingual.write_text("old bilingual", encoding="utf-8")
+    (pdir / ".translation_delivery_in_progress").write_text(
+        '{"status":"invalid"}',
+        encoding="utf-8",
+    )
+    (pdir / "project.json").write_text(
+        json.dumps({
+            "id": pid,
+            "name": "invalid delivery",
+            "video_path": "/old.mp4",
+            "status": "error",
+            "translated_srt": str(translated),
+            "bilingual_srt": str(bilingual),
+        }),
+        encoding="utf-8",
+    )
+
+    loaded = _load_project(pid)
+
+    assert loaded["translated_srt"] is None
+    assert loaded["bilingual_srt"] is None
+    assert translated.is_file()
+    assert bilingual.is_file()
+
+
 def test_legacy_project_progress_fields_are_sanitized(patched_projects_dir):
     pid = "badprog1"
     pdir = patched_projects_dir / pid

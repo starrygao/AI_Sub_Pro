@@ -34,6 +34,12 @@ from app.api.projects import (
     _pick_subtitle_track,
 )
 from app.utils.project_store import atomic_write_json, mutate_project, PID_PATTERN, project_dir
+from app.utils.translation_delivery import (
+    TRANSLATION_DELIVERY_ARTIFACTS,
+    hide_invalid_translation_artifact_fields,
+    mark_translation_delivery_invalid,
+    translation_delivery_is_invalid,
+)
 from app.engines.kb_trace import write_kb_usage_trace
 from app.engines.scheduler import (
     get_progress as _scheduler_get_progress,
@@ -191,7 +197,8 @@ def _load_project(pid: str) -> dict:
             raise HTTPException(400, "Invalid project id")
         raise HTTPException(400, "Project file is invalid")
     try:
-        return _apply_safe_defaults(project)
+        project = _apply_safe_defaults(project)
+        return hide_invalid_translation_artifact_fields(project, project_dir(pid))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -207,6 +214,11 @@ def _safe_project_artifact_path(pid: str, filename: str) -> Optional[Path]:
         return None
     try:
         pdir = project_dir(pid)
+        if (
+            rel.as_posix() in TRANSLATION_DELIVERY_ARTIFACTS
+            and translation_delivery_is_invalid(pdir)
+        ):
+            return None
         candidate = pdir / rel
         if candidate.is_symlink():
             return None
@@ -991,6 +1003,73 @@ def _new_staged_artifact_path(pdir: Path, final_name: str) -> Path:
     return path
 
 
+def _path_lexists(path: Path) -> bool:
+    return os.path.lexists(path)
+
+
+def _unlink_delivery_path(path: Path) -> None:
+    if path.is_symlink():
+        raise RuntimeError(f"refusing to unlink symlink: {path.name}")
+    if path.is_dir():
+        raise RuntimeError(f"refusing to unlink directory: {path.name}")
+    if _path_lexists(path):
+        path.unlink()
+
+
+def _restore_delivery_artifact(path: Path, content: Optional[bytes]) -> None:
+    if content is None:
+        _unlink_delivery_path(path)
+        return
+
+    handle = tempfile.NamedTemporaryFile(
+        "wb",
+        dir=path.parent,
+        prefix=f".rollback-{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    )
+    staged_restore = Path(handle.name)
+    try:
+        with handle as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(staged_restore, path)
+    finally:
+        if _path_lexists(staged_restore):
+            _unlink_delivery_path(staged_restore)
+
+
+def _snapshot_delivery_artifacts(paths: tuple[Path, ...]) -> dict[Path, Optional[bytes]]:
+    snapshots: dict[Path, Optional[bytes]] = {}
+    for path in paths:
+        if path.is_symlink():
+            raise RuntimeError(f"translation delivery artifact is a symlink: {path.name}")
+        if path.is_dir():
+            raise RuntimeError(f"translation delivery artifact is a directory: {path.name}")
+        snapshots[path] = path.read_bytes() if path.is_file() else None
+    return snapshots
+
+
+def _verify_published_translation_artifacts(
+    translated_path: Path,
+    bilingual_path: Path,
+    report_path: Path,
+) -> None:
+    for path in (translated_path, bilingual_path, report_path):
+        if path.is_symlink() or not path.is_file():
+            raise RuntimeError(f"translation delivery verification failed: {path.name}")
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        mapping = report["subtitle_id_mapping"]["translated_srt"]
+    except Exception as exc:
+        raise RuntimeError(
+            f"translation delivery verification failed: {_safe_error_message(exc)}"
+        ) from exc
+    if not isinstance(mapping, list):
+        raise RuntimeError("translation delivery verification failed: invalid subtitle id mapping")
+
+
 def _publish_translation_artifacts(
     pid: str,
     blocks,
@@ -998,15 +1077,26 @@ def _publish_translation_artifacts(
     write_bilingual,
 ):
     pdir = project_dir(pid)
-    translated_stage = _new_staged_artifact_path(pdir, "translated.srt")
-    bilingual_stage = _new_staged_artifact_path(pdir, "bilingual.srt")
-    report_stage = _new_staged_artifact_path(pdir, "translation_qa_report.json")
-    staged = (translated_stage, bilingual_stage, report_stage)
+    staged: list[Path] = []
     finals = (
         pdir / "translated.srt",
         pdir / "bilingual.srt",
+        pdir / "translation_qa_report.json",
     )
+    snapshots: dict[Path, Optional[bytes]] = {}
+    sentinel: Optional[Path] = None
+    finals_touched = False
     try:
+        snapshots = _snapshot_delivery_artifacts(finals)
+        sentinel = mark_translation_delivery_invalid(pdir)
+
+        translated_stage = _new_staged_artifact_path(pdir, "translated.srt")
+        staged.append(translated_stage)
+        bilingual_stage = _new_staged_artifact_path(pdir, "bilingual.srt")
+        staged.append(bilingual_stage)
+        report_stage = _new_staged_artifact_path(pdir, "translation_qa_report.json")
+        staged.append(report_stage)
+
         write_report = write_srt(
             blocks,
             str(translated_stage),
@@ -1022,23 +1112,48 @@ def _publish_translation_artifacts(
             write_report,
             output_path=report_stage,
         )
+
+        finals_touched = True
         os.replace(translated_stage, finals[0])
         os.replace(bilingual_stage, finals[1])
-        os.replace(
-            report_stage,
-            project_dir(pid) / "translation_qa_report.json",
-        )
+        os.replace(report_stage, finals[2])
+        _verify_published_translation_artifacts(*finals)
+        _unlink_delivery_path(sentinel)
         return write_report
-    except Exception:
-        _remove_safe_project_files(pid, ["translated.srt", "bilingual.srt"])
-        raise
-    finally:
+    except Exception as publish_error:
+        rollback_errors = []
+        if sentinel is not None:
+            if not translation_delivery_is_invalid(pdir):
+                try:
+                    sentinel = mark_translation_delivery_invalid(pdir)
+                except Exception as sentinel_error:
+                    rollback_errors.append(
+                        "delivery sentinel: "
+                        f"{_safe_error_message(sentinel_error)}"
+                    )
+            if finals_touched:
+                for path in reversed(finals):
+                    try:
+                        _restore_delivery_artifact(path, snapshots.get(path))
+                    except Exception as rollback_error:
+                        rollback_errors.append(
+                            f"{path.name}: {_safe_error_message(rollback_error)}"
+                        )
         for path in staged:
             try:
-                if path.is_file() and not path.is_symlink():
-                    path.unlink()
-            except OSError:
-                pass
+                _unlink_delivery_path(path)
+            except Exception as cleanup_error:
+                rollback_errors.append(
+                    f"{path.name}: {_safe_error_message(cleanup_error)}"
+                )
+
+        if sentinel is None and not rollback_errors:
+            raise
+
+        message = f"translation artifact publish failed: {_safe_error_message(publish_error)}"
+        if rollback_errors:
+            message += "; rollback errors: " + "; ".join(rollback_errors)
+        raise RuntimeError(message) from publish_error
 
 
 _FINAL_MISSING_TRANSLATION_RETRY_NOTE = (
@@ -3502,6 +3617,13 @@ def _run_burn_pipeline(pid: str):
             _emit_progress(pid, "burn", 0, "正在烧录字幕到视频...")
             _check_cancel(pid)
 
+            if translation_delivery_is_invalid(Path(pdir)):
+                reason = "翻译交付未完成，字幕文件暂不可用"
+                _mark_burn_unavailable(pid, reason)
+                _best_effort_fail_stage(pid, "burn", reason)
+                _emit_progress(pid, "burn", 100, "字幕烧录失败 (翻译交付未完成)")
+                return
+
             if project.get("source_type") == "trailer":
                 # Trailer: bilingual (zh big on top, en small below).
                 if not _first_safe_project_artifact(pid, ["translated.srt", "filtered.srt"])[0]:
@@ -3901,6 +4023,13 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
 
                 _emit_progress(pid, "burn", 0, "正在烧录字幕到视频...")
                 _check_cancel(pid)
+
+                if translation_delivery_is_invalid(Path(pdir)):
+                    reason = "翻译交付未完成，字幕文件暂不可用"
+                    _mark_burn_unavailable(pid, reason)
+                    _best_effort_fail_stage(pid, "burn", reason)
+                    _emit_progress(pid, "burn", 0, "字幕烧录失败 (翻译交付未完成)")
+                    return
 
                 if project.get("source_type") == "trailer":
                     if not _first_safe_project_artifact(pid, ["translated.srt", "filtered.srt"])[0]:

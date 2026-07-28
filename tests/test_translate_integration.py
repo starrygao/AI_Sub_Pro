@@ -718,6 +718,346 @@ def test_translate_pipeline_final_artifacts_are_transactional_on_publish_failure
     ]
 
 
+@pytest.mark.parametrize("failed_allocation", [2, 3])
+def test_publish_cleans_stages_when_later_stage_allocation_fails(
+    tmp_path,
+    monkeypatch,
+    failed_allocation,
+):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = f"allocfail{failed_allocation}"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+
+    real_allocate = api_translate._new_staged_artifact_path
+    calls = 0
+
+    def fail_allocation(project_path, final_name):
+        nonlocal calls
+        calls += 1
+        if calls == failed_allocation:
+            raise OSError(f"injected allocation {failed_allocation} failure")
+        return real_allocate(project_path, final_name)
+
+    monkeypatch.setattr(api_translate, "_new_staged_artifact_path", fail_allocation)
+
+    with pytest.raises(RuntimeError, match=f"allocation {failed_allocation}"):
+        api_translate._publish_translation_artifacts(
+            pid,
+            [],
+            write_bilingual=lambda blocks, path: None,
+        )
+
+    assert not [
+        path for path in pdir.iterdir()
+        if path.name.endswith(".tmp")
+    ]
+    assert (pdir / ".translation_delivery_in_progress").is_file()
+
+
+def test_publish_first_promotion_failure_leaves_delivery_invalid(
+    tmp_path,
+    monkeypatch,
+):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+    from app.utils.srt import SubtitleBlock, write_bilingual_srt
+
+    pid = "firstpromotefail"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "translation_qa_report.json").write_text(
+        json.dumps({"status": "ok"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    real_replace = api_translate.os.replace
+
+    def fail_first_promotion(source, destination):
+        if (
+            Path(destination).name == "translated.srt"
+            and Path(source).name.startswith(".translated.srt.")
+        ):
+            raise PermissionError("injected translated promotion failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(api_translate.os, "replace", fail_first_promotion)
+    blocks = [
+        SubtitleBlock(
+            index=1,
+            start=0,
+            end=1,
+            text="Hello",
+            translation="你好",
+        ),
+    ]
+
+    with pytest.raises(RuntimeError, match="translated promotion failure"):
+        api_translate._publish_translation_artifacts(
+            pid,
+            blocks,
+            write_bilingual=write_bilingual_srt,
+        )
+
+    assert (pdir / ".translation_delivery_in_progress").is_file()
+    assert api_translate._translation_artifact_fields(pid) == {
+        "translated_srt": None,
+        "bilingual_srt": None,
+    }
+    assert not (pdir / "translated.srt").exists()
+    assert not (pdir / "bilingual.srt").exists()
+
+
+def test_publish_restores_old_artifacts_but_keeps_them_hidden_on_late_failure(
+    tmp_path,
+    monkeypatch,
+):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+    from app.utils.srt import SubtitleBlock, write_bilingual_srt
+
+    pid = "restoreold"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    old_report = {"status": "ok", "generation": "old"}
+    (pdir / "translated.srt").write_text("old translated", encoding="utf-8")
+    (pdir / "bilingual.srt").write_text("old bilingual", encoding="utf-8")
+    (pdir / "translation_qa_report.json").write_text(
+        json.dumps(old_report),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    real_replace = api_translate.os.replace
+
+    def fail_report_promotion(source, destination):
+        if (
+            Path(destination).name == "translation_qa_report.json"
+            and Path(source).name.startswith(".translation_qa_report.json.")
+        ):
+            raise OSError("injected report promotion failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(api_translate.os, "replace", fail_report_promotion)
+    blocks = [
+        SubtitleBlock(
+            index=1,
+            start=0,
+            end=1,
+            text="Hello",
+            translation="新翻译",
+        ),
+    ]
+
+    with pytest.raises(RuntimeError, match="report promotion failure"):
+        api_translate._publish_translation_artifacts(
+            pid,
+            blocks,
+            write_bilingual=write_bilingual_srt,
+        )
+
+    assert (pdir / "translated.srt").read_text(encoding="utf-8") == "old translated"
+    assert (pdir / "bilingual.srt").read_text(encoding="utf-8") == "old bilingual"
+    assert json.loads(
+        (pdir / "translation_qa_report.json").read_text(encoding="utf-8")
+    ) == old_report
+    assert (pdir / ".translation_delivery_in_progress").is_file()
+    assert api_translate._translation_artifact_fields(pid) == {
+        "translated_srt": None,
+        "bilingual_srt": None,
+    }
+
+
+def test_publish_reports_rollback_permission_error_and_hides_leftover(
+    tmp_path,
+    monkeypatch,
+):
+    from app.api import translate as api_translate
+    from app.api import projects as projects_api
+    from app.utils import project_store
+    from app.utils.srt import SubtitleBlock, write_bilingual_srt
+    from fastapi import HTTPException
+
+    pid = "rollbackpermission"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    video_path = pdir / "original.mp4"
+    video_path.write_bytes(b"video")
+    (pdir / "project.json").write_text(
+        json.dumps({
+            "id": pid,
+            "name": "movie",
+            "video_path": str(video_path),
+            "status": "translated",
+            "source_type": "upload",
+            "translated_srt": str(pdir / "translated.srt"),
+            "bilingual_srt": str(pdir / "bilingual.srt"),
+        }),
+        encoding="utf-8",
+    )
+    (pdir / "translated.srt").write_text("old translated", encoding="utf-8")
+    (pdir / "bilingual.srt").write_text("old bilingual", encoding="utf-8")
+    (pdir / "translation_qa_report.json").write_text(
+        json.dumps({"status": "ok", "generation": "old"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(projects_api, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    real_replace = api_translate.os.replace
+
+    def fail_report_promotion(source, destination):
+        if (
+            Path(destination).name == "translation_qa_report.json"
+            and Path(source).name.startswith(".translation_qa_report.json.")
+        ):
+            raise OSError("injected report promotion failure")
+        if (
+            Path(destination).name == "translated.srt"
+            and Path(source).name.startswith(".rollback-translated.srt.")
+        ):
+            raise PermissionError("injected rollback permission error")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(api_translate.os, "replace", fail_report_promotion)
+    blocks = [
+        SubtitleBlock(
+            index=1,
+            start=0,
+            end=1,
+            text="Hello",
+            translation="你好",
+        ),
+    ]
+
+    with pytest.raises(RuntimeError) as exc_info:
+        api_translate._publish_translation_artifacts(
+            pid,
+            blocks,
+            write_bilingual=write_bilingual_srt,
+        )
+
+    message = str(exc_info.value)
+    assert "report promotion failure" in message
+    assert "rollback" in message.lower()
+    assert "permission error" in message
+    assert (pdir / "translated.srt").is_file()
+    assert "你好" in (pdir / "translated.srt").read_text(encoding="utf-8")
+    assert (pdir / ".translation_delivery_in_progress").is_file()
+    assert api_translate._translation_artifact_fields(pid)["translated_srt"] is None
+
+    with pytest.raises(HTTPException) as export_error:
+        projects_api.export_srt(pid, format="translated")
+    assert export_error.value.status_code == 409
+
+    burn_calls = []
+    monkeypatch.setattr(
+        api_translate,
+        "burn_subtitles",
+        lambda *args, **kwargs: burn_calls.append(args) or True,
+    )
+    api_translate._run_burn_pipeline(pid)
+    assert burn_calls == []
+
+    discovered = projects_api._load_project(pid)
+    assert discovered["translated_srt"] is None
+    assert discovered["bilingual_srt"] is None
+
+
+def test_publish_success_removes_delivery_sentinel(tmp_path, monkeypatch):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+    from app.utils.srt import SubtitleBlock, write_bilingual_srt
+
+    pid = "publishsuccess"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "translation_qa_report.json").write_text(
+        json.dumps({"status": "ok"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+
+    api_translate._publish_translation_artifacts(
+        pid,
+        [
+            SubtitleBlock(
+                index=1,
+                start=0,
+                end=1,
+                text="Hello",
+                translation="你好",
+            ),
+        ],
+        write_bilingual=write_bilingual_srt,
+    )
+
+    assert (pdir / "translated.srt").is_file()
+    assert (pdir / "bilingual.srt").is_file()
+    assert not (pdir / ".translation_delivery_in_progress").exists()
+    assert api_translate._translation_artifact_fields(pid)["translated_srt"] == str(
+        pdir / "translated.srt"
+    )
+
+
+def test_publish_sentinel_clear_failure_rolls_back_and_remains_hidden(
+    tmp_path,
+    monkeypatch,
+):
+    from app.api import translate as api_translate
+    from app.utils import project_store
+    from app.utils.srt import SubtitleBlock, write_bilingual_srt
+
+    pid = "sentinelclearfail"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "translation_qa_report.json").write_text(
+        json.dumps({"status": "ok"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    real_unlink = Path.unlink
+    clear_attempts = 0
+
+    def fail_sentinel_clear(path, *args, **kwargs):
+        nonlocal clear_attempts
+        if Path(path) == pdir / ".translation_delivery_in_progress":
+            clear_attempts += 1
+            if clear_attempts == 1:
+                real_unlink(path, *args, **kwargs)
+            raise PermissionError("injected sentinel clear failure")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_sentinel_clear)
+
+    with pytest.raises(RuntimeError, match="sentinel clear failure"):
+        api_translate._publish_translation_artifacts(
+            pid,
+            [
+                SubtitleBlock(
+                    index=1,
+                    start=0,
+                    end=1,
+                    text="Hello",
+                    translation="你好",
+                ),
+            ],
+            write_bilingual=write_bilingual_srt,
+        )
+
+    assert (pdir / ".translation_delivery_in_progress").is_file()
+    assert not (pdir / "translated.srt").exists()
+    assert not (pdir / "bilingual.srt").exists()
+    assert api_translate._translation_artifact_fields(pid)["translated_srt"] is None
+
+
 def test_translate_pipeline_marks_contextual_background_speakers(tmp_path, monkeypatch):
     from app.api import translate as api_translate
     from app.utils import project_store

@@ -155,3 +155,44 @@ def test_export_original_as_webvtt_prefers_filtered_timeline(client, tmp_project
     assert "WEBVTT" in data["content"]
     assert "00:00:02.000 --> 00:00:03.000" in data["content"]
     assert "Filtered original" in data["content"]
+
+
+@pytest.mark.parametrize("format", ["translated", "bilingual"])
+def test_export_rejects_translation_delivery_while_sentinel_exists(
+    client,
+    tmp_project_dir,
+    format,
+):
+    pid = _seed_project(tmp_project_dir)
+    pdir = tmp_project_dir / pid
+    (pdir / "bilingual.srt").write_text("old bilingual", encoding="utf-8")
+    (pdir / ".translation_delivery_in_progress").write_text(
+        '{"status":"invalid"}',
+        encoding="utf-8",
+    )
+
+    response = client.post(f"/api/projects/{pid}/export?format={format}")
+
+    assert response.status_code == 409
+    assert "delivery" in response.json()["detail"].lower()
+
+
+def test_export_original_remains_available_while_delivery_sentinel_exists(
+    client,
+    tmp_project_dir,
+):
+    pid = _seed_project(tmp_project_dir)
+    pdir = tmp_project_dir / pid
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nSource\n\n",
+        encoding="utf-8",
+    )
+    (pdir / ".translation_delivery_in_progress").write_text(
+        '{"status":"invalid"}',
+        encoding="utf-8",
+    )
+
+    response = client.post(f"/api/projects/{pid}/export?format=original")
+
+    assert response.status_code == 200
+    assert "Source" in response.json()["content"]
