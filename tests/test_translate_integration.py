@@ -1870,6 +1870,93 @@ def test_professional_semantic_uncertainty_requires_human_review():
     assert report.summary["quality_gate"]["unresolved_blocks"] == 1
 
 
+def test_semantic_qa_uses_dialogue_only_items_and_bounded_authoritative_context():
+    from app.api.translate import _run_semantic_quality_checks
+    from app.engines.kb_models import ProjectKb, TermEntry
+
+    blocks = [
+        type("Block", (), {
+            "index": 81,
+            "text": "[cork popping]\n[cheering]",
+            "translation": "",
+            "filtered": False,
+        })(),
+        type("Block", (), {
+            "index": 82,
+            "text": "-[Maggie] Here.\n-[chuckling]",
+            "translation": "-[玛吉] 给你。",
+            "filtered": False,
+        })(),
+        type("Block", (), {
+            "index": 83,
+            "text": "-[Negan scoffing]\n-Armstrong...",
+            "translation": "-阿姆斯特朗……",
+            "filtered": False,
+        })(),
+    ]
+    captured = {}
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            captured["items"] = items
+            captured["prompt"] = prompt
+            return [{"id": item["id"], "translation": "OK"} for item in items]
+
+    translator = type("Translator", (), {"primary": Primary()})()
+    issues, trace = _run_semantic_quality_checks(
+        {
+            "translation": {
+                "quality_mode": "professional",
+                "semantic_qa": True,
+            },
+        },
+        translator,
+        blocks,
+        "简体中文",
+        strict_quality_gate=True,
+        meta_info={
+            "content_notes": "Mira says “Listen” before leaving. " + ("context " * 400),
+            "manual_terms": "Mira=米拉",
+        },
+        project_kb=ProjectKb(
+            characters=[TermEntry(source="Armstrong", target="阿姆斯特朗")],
+        ),
+        terminology_trace={
+            "kb_hits": [{
+                "source": "walkers",
+                "target": "行尸",
+                "scope": "project",
+            }],
+        },
+    )
+
+    assert issues == []
+    assert trace["requested_block_ids"] == [82, 83]
+    assert trace["coverage_complete"] is True
+    assert captured["items"] == [
+        {
+            "id": 82,
+            "original": "-[Maggie] Here.",
+            "draft": "-[玛吉] 给你。",
+        },
+        {
+            "id": 83,
+            "original": "-Armstrong...",
+            "draft": "-阿姆斯特朗……",
+        },
+    ]
+    prompt = captured["prompt"]
+    assert "纯音效行不翻译" in prompt
+    assert "混合字幕中的音效或动作描述可省略" in prompt
+    assert "content_notes 仅提供语境，不是术语映射" in prompt
+    assert "Mira says “Listen” before leaving." in prompt
+    assert "Mira -> 米拉" in prompt
+    assert "Armstrong -> 阿姆斯特朗" in prompt
+    assert "walkers -> 行尸" in prompt
+    assert "Mira -> 听着" not in prompt
+    assert len(prompt) < 6000
+
+
 def test_professional_pipeline_latches_uncertainty_after_auto_repair(tmp_path, monkeypatch):
     class Primary:
         semantic_calls = 0
@@ -3914,6 +4001,165 @@ def test_translate_pipeline_limits_auto_repair_rounds(tmp_path, monkeypatch):
     assert translate_api._repair_item_limit({"translation": {"qa_auto_repair_max_blocks": -1}}) == 0
     assert translate_api._repair_item_limit({"translation": {"qa_auto_repair_max_blocks": 2}}) == 2
     assert translate_api._repair_item_limit({"translation": {"qa_auto_repair_max_blocks": 99}}) == 50
+
+
+def test_quality_run_state_enforces_total_auto_repair_budget_across_persists(
+    tmp_path,
+    monkeypatch,
+):
+    from copy import deepcopy
+
+    from app.api import translate as api_translate
+    from app.engines import knowledge, translation_qa
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    blocks = [
+        SubtitleBlock(
+            index=block_id,
+            start=timedelta(seconds=block_id),
+            end=timedelta(seconds=block_id + 1),
+            text=f"Source {block_id}.",
+            translation=f"旧译{block_id}。",
+        )
+        for block_id in range(1, 5)
+    ]
+    quality_run_state = {
+        "run_id": "same-quality-run",
+        "semantic_uncertain_observed_block_ids": [],
+    }
+    qa_calls = []
+    auto_repair_calls = []
+    saved_reports = []
+
+    monkeypatch.setattr(
+        knowledge,
+        "_get_singleton",
+        lambda: type("Knowledge", (), {"select_for_project": lambda self, project: None})(),
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_run_deterministic_translation_normalizers",
+        lambda *args, **kwargs: [],
+    )
+
+    def fake_quality_checks(
+        cfg,
+        translator,
+        blocks,
+        target_language,
+        project_kb,
+        project,
+        trace,
+        **kwargs,
+    ):
+        qa_calls.append(len(qa_calls) + 1)
+        remaining_ids_by_call = {
+            1: [1, 2, 3, 4],
+            2: [2, 3, 4],
+            3: [3, 4],
+            4: [4],
+            5: [4],
+        }
+        remaining_ids = remaining_ids_by_call.get(len(qa_calls), [4])
+        issues = [
+            QualityIssue(
+                type="missing_translation",
+                severity="error",
+                block_id=block_id,
+                message="still failing",
+            )
+            for block_id in remaining_ids
+        ]
+        return TranslationQaReport(
+            status="needs_review",
+            issues=issues,
+            unresolved_blocks=list(remaining_ids),
+            summary={"by_type": {"missing_translation": len(issues)}},
+            trace=trace,
+        )
+
+    def fake_auto_repair(
+        cfg,
+        translator,
+        blocks,
+        report,
+        target_language,
+        project_kb,
+        repair_trace=None,
+    ):
+        attempt = len(auto_repair_calls) + 1
+        block_id = min(attempt, len(blocks))
+        auto_repair_calls.append(attempt)
+        blocks[block_id - 1].translation = f"新译{block_id}（返工{attempt}）。"
+        repair_trace.update({
+            "repair_attempts": 1,
+            "attempted_blocks": 1,
+            "nonempty_responses": 1,
+            "changed_block_ids": [block_id],
+            "changed_unique_ids": 1,
+        })
+        return api_translate.AutoRepairOutcome(
+            [{"id": block_id, "translation": blocks[block_id - 1].translation}],
+            True,
+            True,
+        )
+
+    monkeypatch.setattr(
+        api_translate,
+        "_run_quality_checks_with_semantics",
+        fake_quality_checks,
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_auto_repair_quality_issues",
+        fake_auto_repair,
+    )
+    monkeypatch.setattr(
+        translation_qa,
+        "save_quality_report",
+        lambda report, **kwargs: saved_reports.append(deepcopy(report.to_dict())),
+    )
+
+    call_kwargs = {
+        "pid": "quality-budget",
+        "pdir": str(tmp_path),
+        "project": {},
+        "blocks": blocks,
+        "target_language": "简体中文",
+        "translator": object(),
+        "cfg": {
+            "translation": {
+                "qa_auto_repair": True,
+                "qa_auto_repair_rounds": 3,
+            },
+        },
+        "quality_run_id": "same-quality-run",
+        "quality_run_state": quality_run_state,
+    }
+    api_translate._persist_translation_quality_report(**call_kwargs)
+    blocks[3].translation = "补翻译文。"
+    api_translate._persist_translation_quality_report(**call_kwargs)
+
+    assert qa_calls == [1, 2, 3, 4, 5]
+    assert auto_repair_calls == [1, 2, 3]
+    assert [item["round"] for item in quality_run_state["auto_repair_rounds"]] == [1, 2, 3]
+    assert quality_run_state["auto_repair_budget"] == {
+        "configured_rounds": 3,
+        "used_rounds": 3,
+        "remaining_rounds": 0,
+    }
+    final_report = saved_reports[-1]
+    assert [item["round"] for item in final_report["trace"]["auto_repair_rounds"]] == [1, 2, 3]
+    assert final_report["trace"]["auto_repair_budget"] == quality_run_state["auto_repair_budget"]
+    assert final_report["summary"]["repair_stats"] == {
+        "repair_attempts": 3,
+        "nonempty_responses": 3,
+        "changed_unique_ids": 3,
+        "changed_block_ids": [1, 2, 3],
+        "improved_block_ids": [1, 2, 3],
+        "still_failing_block_ids": [4],
+    }
 
 
 def test_translate_pipeline_redacts_exception_details_in_project_error(tmp_path, monkeypatch):

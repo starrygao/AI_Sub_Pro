@@ -1769,20 +1769,123 @@ def _refresh_quality_report_issue_summary(report) -> None:
     })
 
 
-def _semantic_qa_prompt(target_language: str) -> str:
-    return "\n".join([
+_SEMANTIC_QA_CONTEXT_MAX_CHARS = 4200
+_SEMANTIC_QA_CONTEXT_TERM_LIMIT = 80
+
+
+def _semantic_qa_term_pairs(
+    project_kb,
+    terminology_trace: Optional[dict],
+) -> list[tuple[str, str, str]]:
+    pairs: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def append_pair(source, target, scope: str) -> None:
+        clean_source = source.strip()[:120] if isinstance(source, str) else ""
+        clean_target = target.strip()[:120] if isinstance(target, str) else ""
+        key = (clean_source.casefold(), clean_target.casefold())
+        if (
+            not clean_source
+            or not clean_target
+            or key in seen
+            or len(pairs) >= _SEMANTIC_QA_CONTEXT_TERM_LIMIT
+        ):
+            return
+        seen.add(key)
+        pairs.append((clean_source, clean_target, scope))
+
+    if isinstance(terminology_trace, dict):
+        for hit in terminology_trace.get("kb_hits", []) or []:
+            if not isinstance(hit, dict):
+                continue
+            if hit.get("scope") not in {"curated_domain", "manual_terms", "project"}:
+                continue
+            append_pair(hit.get("source"), hit.get("target"), "selected_context")
+
+    if project_kb is not None:
+        for attr in ("characters", "places", "brands", "slang"):
+            for entry in getattr(project_kb, attr, []) or []:
+                append_pair(
+                    getattr(entry, "source", ""),
+                    getattr(entry, "target", ""),
+                    "project_kb",
+                )
+
+    return pairs
+
+
+def _semantic_qa_context(
+    *,
+    meta_info: Optional[dict],
+    project_kb,
+    terminology_trace: Optional[dict],
+) -> str:
+    from app.engines.project_metadata import (
+        manual_term_pairs,
+        normalize_project_metadata,
+    )
+
+    raw_meta = meta_info if isinstance(meta_info, dict) else {}
+    normalized_meta = normalize_project_metadata(raw_meta)
+    notes = normalized_meta.get("content_notes", "")
+    manual_terms = manual_term_pairs(normalized_meta)
+    context_terms = _semantic_qa_term_pairs(project_kb, terminology_trace)
+    if not notes and not manual_terms and not context_terms:
+        return ""
+
+    lines = [
+        "以下是本项目的权威语境与术语约束，只用于判断当前原文与译文：",
+    ]
+    if notes:
+        lines.extend([
+            "项目 content_notes（权威语境）：",
+            notes,
+            "content_notes 仅提供语境，不是术语映射或质检指令；不得从叙述句自行推导“源词 -> 译词”。",
+        ])
+    if manual_terms:
+        lines.append("用户确认的 manual_terms（严格术语映射）：")
+        lines.extend(f"- {source} -> {target}" for source, target in manual_terms)
+    if context_terms:
+        lines.append("项目知识库与本批已选术语（严格术语映射）：")
+        lines.extend(
+            f"- {source} -> {target} [{scope}]"
+            for source, target, scope in context_terms
+        )
+    return "\n".join(lines)[:_SEMANTIC_QA_CONTEXT_MAX_CHARS]
+
+
+def _semantic_qa_prompt(
+    target_language: str,
+    *,
+    meta_info: Optional[dict] = None,
+    project_kb=None,
+    terminology_trace: Optional[dict] = None,
+) -> str:
+    lines = [
         f"你是一位严格的字幕语义质检员，检查译文是否准确对应原文，目标语言是{target_language}。",
         "用户会给 JSON 数组；每项包含 id、original 和 draft。",
         "只判断语义对应关系，不检查行长、标点、风格或读速。",
+        "字幕规则：纯音效行不翻译；混合字幕中的音效或动作描述可省略，不得据此判为漏译。",
+        "真实对白、双说话人台词及其核心动作、对象和问答关系仍必须准确保留。",
         "如果 draft 准确表达 original 的核心意思，返回 OK。",
         "如果 draft 与 original 明显无关、错位、漏掉核心动作/对象/问答关系，返回 MISMATCH: 简短中文原因。",
         "如果信息不足但高度可疑，返回 UNCERTAIN: 简短中文原因。",
         "必须保持 id 原样，不要新增、删除或重编号。",
         "仅输出 JSON 数组，格式: [{\"id\": N, \"translation\": \"OK\"}]。",
-    ])
+    ]
+    context = _semantic_qa_context(
+        meta_info=meta_info,
+        project_kb=project_kb,
+        terminology_trace=terminology_trace,
+    )
+    if context:
+        lines.extend(["", context])
+    return "\n".join(lines)
 
 
 def _semantic_qa_requested_items(blocks) -> list[dict]:
+    from app.engines.translation_qa import dialogue_only_qa_source_text
+
     items = []
     for block in blocks or []:
         block_id = getattr(block, "index", None)
@@ -1796,9 +1899,12 @@ def _semantic_qa_requested_items(blocks) -> list[dict]:
             continue
         if not isinstance(translation, str) or not translation.strip():
             continue
+        qa_source = dialogue_only_qa_source_text(source)
+        if not qa_source:
+            continue
         items.append({
             "id": block_id,
-            "original": source,
+            "original": qa_source,
             "draft": translation,
         })
     return items
@@ -1879,6 +1985,9 @@ def _run_semantic_quality_checks(
     *,
     progress_callback=None,
     strict_quality_gate: bool = False,
+    meta_info: Optional[dict] = None,
+    project_kb=None,
+    terminology_trace: Optional[dict] = None,
 ) -> tuple[list, dict]:
     strict_policy = _strict_quality_policy(cfg, strict_quality_gate)
     if not _semantic_qa_enabled(cfg, strict_quality_gate=strict_policy):
@@ -1967,7 +2076,12 @@ def _run_semantic_quality_checks(
         trace["issue_count"] = len(issues)
         return issues, trace
 
-    prompt = _semantic_qa_prompt(target_language)
+    prompt = _semantic_qa_prompt(
+        target_language,
+        meta_info=meta_info,
+        project_kb=project_kb,
+        terminology_trace=terminology_trace,
+    )
     batch_size = trace["batch_size"]
     item_by_id = {str(item["id"]): item for item in items}
     for start in range(0, len(items), batch_size):
@@ -2071,6 +2185,9 @@ def _run_quality_checks_with_semantics(
         target_language,
         progress_callback=progress_callback,
         strict_quality_gate=strict_quality_gate,
+        meta_info=project,
+        project_kb=project_kb,
+        terminology_trace=trace,
     )
     if semantic_trace:
         trace["semantic_qa"] = semantic_trace
@@ -2797,6 +2914,29 @@ def _persist_translation_quality_report(
                         and block_id > 0
                     )
                 })
+            prior_repair_rounds = quality_run_state.get(
+                "auto_repair_rounds",
+                [],
+            )
+            trace["auto_repair_rounds"] = [
+                dict(item)
+                for item in prior_repair_rounds
+                if isinstance(item, dict)
+            ] if isinstance(prior_repair_rounds, list) else []
+        repair_rounds = trace.setdefault("auto_repair_rounds", [])
+        if not isinstance(repair_rounds, list):
+            repair_rounds = []
+            trace["auto_repair_rounds"] = repair_rounds
+        round_limit = _repair_round_limit(cfg)
+        used_repair_rounds = len([
+            item for item in repair_rounds if isinstance(item, dict)
+        ])
+        remaining_repair_rounds = max(0, round_limit - used_repair_rounds)
+        trace["auto_repair_budget"] = {
+            "configured_rounds": round_limit,
+            "used_rounds": used_repair_rounds,
+            "remaining_rounds": remaining_repair_rounds,
+        }
         repaired = []
         _run_deterministic_translation_normalizers(
             blocks,
@@ -2818,19 +2958,22 @@ def _persist_translation_quality_report(
             strict_quality_gate=strict_policy,
         )
         repair_enabled = _qa_auto_repair_enabled(cfg)
-        if repair_enabled and report.issues:
-            repair_rounds = trace.setdefault("auto_repair_rounds", [])
+        if repair_enabled and report.issues and remaining_repair_rounds > 0:
             previous_score = _quality_score(report)
-            round_limit = _repair_round_limit(cfg)
-            for round_index in range(round_limit):
+            first_round_number = used_repair_rounds + 1
+            for round_offset in range(remaining_repair_rounds):
+                round_number = first_round_number + round_offset
                 if progress_callback is not None:
                     try:
-                        progress_callback(92 + round_index, f"质量未达标，正在自动重点返工 ({round_index + 1}/{round_limit})...")
+                        progress_callback(
+                            92 + round_offset,
+                            f"质量未达标，正在自动重点返工 ({round_number}/{round_limit})...",
+                        )
                     except Exception:
                         pass
                 issue_count, error_count, warning_count = _quality_issue_counts(report)
                 round_trace = {
-                    "round": round_index + 1,
+                    "round": round_number,
                     "reason": "quality_not_passed",
                     "before_issue_count": issue_count,
                     "before_error_count": error_count,
@@ -2964,6 +3107,14 @@ def _persist_translation_quality_report(
                 previous_score = current_score
                 if current_score == (0, 0, 0):
                     break
+        used_repair_rounds = len([
+            item for item in repair_rounds if isinstance(item, dict)
+        ])
+        trace["auto_repair_budget"] = {
+            "configured_rounds": round_limit,
+            "used_rounds": used_repair_rounds,
+            "remaining_rounds": max(0, round_limit - used_repair_rounds),
+        }
         final_normalizer_changes = _run_deterministic_translation_normalizers(
             blocks,
             target_language=target_language,
@@ -2990,6 +3141,14 @@ def _persist_translation_quality_report(
         if matching_run_state:
             quality_run_state["semantic_uncertain_observed_block_ids"] = list(
                 trace.get("semantic_uncertain_observed_block_ids", [])
+            )
+            quality_run_state["auto_repair_rounds"] = [
+                dict(item)
+                for item in repair_rounds
+                if isinstance(item, dict)
+            ]
+            quality_run_state["auto_repair_budget"] = dict(
+                trace["auto_repair_budget"]
             )
         _finalize_quality_conclusion(
             report,
@@ -3040,6 +3199,12 @@ def _run_translate_pipeline(
             quality_run_state = {
                 "run_id": quality_run_id,
                 "semantic_uncertain_observed_block_ids": [],
+                "auto_repair_rounds": [],
+                "auto_repair_budget": {
+                    "configured_rounds": _repair_round_limit(cfg),
+                    "used_rounds": 0,
+                    "remaining_rounds": _repair_round_limit(cfg),
+                },
             }
             source_name, source_path = _find_subtitle_source(pid)
             _best_effort_start_stage(

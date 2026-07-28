@@ -336,6 +336,8 @@ def test_quality_checks_allow_blank_music_only_rows():
 @pytest.mark.parametrize("source", [
     "[gunshots]\n[people shouting]",
     "[tense music continues]\n[shouting]",
+    "[cork popping]\n[cheering]",
+    "[gentle music]\n[cup popping]",
     "[walkers groaning]",
     "-[Negan grunting]\n-[walkers snarling]",
     "[The Croat breathing heavily]",
@@ -349,6 +351,80 @@ def test_sound_description_classifier_covers_export_regression_cues(source):
     from app.engines.translation_qa import is_sound_description_source
 
     assert is_sound_description_source(source) is True
+
+
+def test_quality_checks_exclude_pure_sound_rows_from_translation_and_term_contracts():
+    from app.engines.kb_models import ProjectKb, TermEntry
+    from app.engines.translation_qa import run_quality_checks
+
+    source = "[Hershel coughing]\n[walkers growling]"
+    report = run_quality_checks(
+        [_block(71, source, "")],
+        project_kb=ProjectKb(
+            characters=[TermEntry(source="Hershel", target="赫歇尔")],
+        ),
+        target_language="简体中文",
+        meta_info={"manual_terms": "walkers=行尸"},
+        trace={
+            "kb_hits": [{
+                "source": "Hershel",
+                "target": "赫歇尔",
+                "scope": "project",
+            }],
+        },
+    )
+
+    forbidden = {
+        "missing_translation",
+        "kb_term_missing",
+        "manual_term_missing",
+        "context_term_missing",
+        "canonical_term_missing",
+    }
+    assert forbidden.isdisjoint(report.summary["by_type"])
+    assert report.status == "ok"
+
+
+@pytest.mark.parametrize(
+    ("source", "draft", "expected"),
+    [
+        ("-[Negan scoffing]\n-Armstrong...", "-[内根嗤笑]\n-阿姆斯特朗……", "-阿姆斯特朗……"),
+        ("-[Maggie] Here.\n-[chuckling]", "-[玛吉] 给你。\n-[轻笑]", "-[玛吉] 给你。"),
+    ],
+)
+def test_mixed_sound_and_dialogue_rows_allow_omitted_sound_without_speaker_mismatch(
+    source,
+    draft,
+    expected,
+):
+    from app.engines.translation_qa import (
+        normalize_sound_description_translations,
+        run_quality_checks,
+    )
+
+    block = _block(72, source, draft)
+    normalize_sound_description_translations([block])
+    report = run_quality_checks(
+        [block],
+        target_language="简体中文",
+        max_chars=40,
+    )
+
+    assert block.translation == expected
+    assert "speaker_line_structure_mismatch" not in report.summary["by_type"]
+    assert "missing_translation" not in report.summary["by_type"]
+
+
+def test_quality_checks_still_require_both_real_dialogue_speaker_lines():
+    from app.engines.translation_qa import run_quality_checks
+
+    report = run_quality_checks(
+        [_block(73, "- First answer.\n- Second answer.", "- 第一个回答。")],
+        target_language="简体中文",
+        max_chars=40,
+    )
+
+    assert report.summary["by_type"]["speaker_line_structure_mismatch"] == 1
 
 
 def test_quality_checks_do_not_treat_speaker_labels_as_sound_descriptions():

@@ -399,6 +399,7 @@ _SOUND_LABEL_EN_RE = re.compile(
     r"gurgl(?:e|es|ed|ing)?|croak(?:s|ed|ing)?|"
     r"squelch(?:es|ing)?|clang(?:s|ing)?|"
     r"clunk(?:s|ing)?|bang(?:s|ing)?|snap(?:s|ping)?|"
+    r"pop(?:s|ped|ping)?|"
     r"paper(?:s)?|crinkle(?:s|ing)?|shuffle(?:s|ing)?|"
     r"scratch(?:es|ing)?|scribbl(?:e|es|ing)?|typ(?:e|es|ing)?|"
     r"clack(?:s|ing)?|keyboard|computer|laptop|"
@@ -817,6 +818,18 @@ def clean_sound_description_translation_text(
         if cleaned:
             cleaned_lines.append(cleaned)
     return "\n".join(cleaned_lines).strip()
+
+
+def dialogue_only_qa_source_text(source: str) -> str:
+    """Return the dialogue-bearing source text under the sound-omission policy."""
+    if not isinstance(source, str) or not source.strip():
+        return ""
+    if _is_sound_description(source):
+        return ""
+    return clean_sound_description_translation_text(
+        source,
+        source_text=source,
+    )
 
 
 def normalize_sound_description_translations(blocks: Iterable) -> list[dict]:
@@ -1378,8 +1391,9 @@ def run_quality_checks(
         block_id = getattr(block, "index", None)
         source = _clean_text(getattr(block, "text", ""))
         translation = _clean_text(getattr(block, "translation", ""))
+        sound_description = _is_sound_description(source)
 
-        if isinstance(block_id, int):
+        if isinstance(block_id, int) and not sound_description:
             block_key = str(block_id)
             source_by_id.setdefault(block_key, source)
             translation_by_id.setdefault(block_key, translation)
@@ -1396,7 +1410,6 @@ def run_quality_checks(
                 ))
             seen_ids.add(block_id)
 
-        sound_description = _is_sound_description(source)
         if source and not translation and not sound_description:
             issues.append(QualityIssue(
                 type="missing_translation",
@@ -1418,7 +1431,7 @@ def run_quality_checks(
             ))
 
         speaker_contract = (
-            classify_speaker_lines(source)
+            classify_speaker_lines(dialogue_only_qa_source_text(source))
             if source and translation and not sound_description
             else None
         )
@@ -1534,9 +1547,10 @@ def run_quality_checks(
                 ))
 
         for term_source, term_target in kb_terms:
-            if _term_present(source, term_source) and not _term_present(
-                translation,
-                term_target,
+            if (
+                not sound_description
+                and _term_present(source, term_source)
+                and not _term_present(translation, term_target)
             ):
                 issues.append(QualityIssue(
                     type="kb_term_missing",
@@ -1549,9 +1563,10 @@ def run_quality_checks(
                 ))
 
         for term_source, term_target in manual_terms:
-            if _term_present(source, term_source) and not _term_present(
-                translation,
-                term_target,
+            if (
+                not sound_description
+                and _term_present(source, term_source)
+                and not _term_present(translation, term_target)
             ):
                 issues.append(QualityIssue(
                     type="manual_term_missing",
@@ -1564,9 +1579,10 @@ def run_quality_checks(
                 ))
 
         for term_source, term_target in context_terms:
-            if _term_present(source, term_source) and not _term_present(
-                translation,
-                term_target,
+            if (
+                not sound_description
+                and _term_present(source, term_source)
+                and not _term_present(translation, term_target)
             ):
                 issues.append(QualityIssue(
                     type="context_term_missing",
@@ -1578,7 +1594,7 @@ def run_quality_checks(
                     expected=term_target,
                 ))
 
-        if chinese_target and source and translation:
+        if chinese_target and source and translation and not sound_description:
             issues.extend(_core_term_issues(
                 source,
                 translation,
