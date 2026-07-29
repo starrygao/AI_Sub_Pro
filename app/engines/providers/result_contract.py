@@ -12,8 +12,11 @@ DUPLICATE_REQUEST_ID_ERROR = "duplicate id in translation request"
 _STRUCTURED_RESULT_FIELDS = (
     "verdict",
     "taxonomy",
+    "group_ids",
+    "group_content_hash",
     "source_evidence",
     "target_evidence",
+    "cross_block_evidence",
 )
 
 

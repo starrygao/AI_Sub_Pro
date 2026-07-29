@@ -1,3 +1,4 @@
+import json
 import subprocess
 import signal
 from unittest.mock import patch
@@ -190,6 +191,88 @@ def test_codex_cli_provider_parse_preserves_targeted_semantic_fields():
         "taxonomy": "none",
         "source_evidence": "No.",
         "target_evidence": "不。",
+    }]
+
+
+def test_codex_cli_provider_parse_preserves_group_semantic_bindings():
+    """Provider normalization must not strip group ids or the bound hash."""
+    from app.engines.providers.codex_cli import CodexCliProvider
+
+    group_hash = "sha256:" + ("a" * 64)
+    items = [{
+        "id": 396,
+        "group_ids": [396, 397],
+        "group_content_hash": group_hash,
+    }]
+    text = json.dumps([{
+        "id": 396,
+        "translation": "OK",
+        "verdict": "OK",
+        "taxonomy": "none",
+        "group_ids": [396, 397],
+        "group_content_hash": group_hash,
+        "source_evidence": [
+            {"id": 396, "text": "people stupid enough"},
+            {"id": 397, "text": "to have hope"},
+        ],
+        "target_evidence": [
+            {"id": 396, "text": "你难道还没明白"},
+            {"id": 397, "text": "心存希望的人"},
+        ],
+        "untrusted_extra": "must not pass through",
+    }])
+
+    out = CodexCliProvider._parse(text, items)
+
+    assert out == [{
+        "id": 396,
+        "translation": "OK",
+        "error": "",
+        "verdict": "OK",
+        "taxonomy": "none",
+        "group_ids": [396, 397],
+        "group_content_hash": group_hash,
+        "source_evidence": [
+            {"id": 396, "text": "people stupid enough"},
+            {"id": 397, "text": "to have hope"},
+        ],
+        "target_evidence": [
+            {"id": 396, "text": "你难道还没明白"},
+            {"id": 397, "text": "心存希望的人"},
+        ],
+    }]
+
+
+def test_codex_cli_provider_parse_preserves_cross_block_group_evidence():
+    from app.engines.providers.codex_cli import CodexCliProvider
+
+    group_hash = "sha256:" + ("a" * 64)
+    raw = json.dumps([{
+        "id": 396,
+        "translation": "MISMATCH: clause moved across cues",
+        "verdict": "MISMATCH: clause moved across cues",
+        "taxonomy": "cross_block_alignment",
+        "group_ids": [396, 397],
+        "group_content_hash": group_hash,
+        "source_evidence": [
+            {"id": 396, "text": "what happens"},
+            {"id": 397, "text": "to people"},
+        ],
+        "target_evidence": [
+            {"id": 396, "text": "在这个世界上"},
+            {"id": 397, "text": "下场吗"},
+        ],
+        "cross_block_evidence": [{
+            "source": {"id": 396, "text": "what happens"},
+            "target": {"id": 397, "text": "下场吗"},
+        }],
+    }], ensure_ascii=False)
+
+    parsed = CodexCliProvider._parse(raw, [{"id": 396}])
+
+    assert parsed[0]["cross_block_evidence"] == [{
+        "source": {"id": 396, "text": "what happens"},
+        "target": {"id": 397, "text": "下场吗"},
     }]
 
 

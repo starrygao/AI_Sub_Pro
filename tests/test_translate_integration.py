@@ -7515,6 +7515,7 @@ def _run_auto_repair_group_guard_case(
     preexisting_uncertain_ids=None,
     source_texts=None,
     actual_targeted_payload=None,
+    deterministic_issues_by_call=None,
 ):
     from copy import deepcopy
     from types import SimpleNamespace
@@ -7536,6 +7537,7 @@ def _run_auto_repair_group_guard_case(
     ]
     block_by_id = {block.index: block for block in blocks}
     qa_calls = []
+    deterministic_calls = []
     saved_reports = []
 
     monkeypatch.setattr(
@@ -7605,11 +7607,40 @@ def _run_auto_repair_group_guard_case(
         )
 
     def fake_deterministic_quality(*, trace, **kwargs):
+        call_number = len(deterministic_calls)
+        specs_by_call = deterministic_issues_by_call or []
+        specs = (
+            specs_by_call[min(call_number, len(specs_by_call) - 1)]
+            if specs_by_call
+            else []
+        )
+        deterministic_calls.append(call_number + 1)
+        issues = [
+            QualityIssue(
+                type=issue_type,
+                severity=severity,
+                block_id=block_id,
+                message=issue_type,
+                source_text=block_by_id[block_id].text,
+                translation=block_by_id[block_id].translation,
+            )
+            for block_id, issue_type, severity in specs
+        ]
         return TranslationQaReport(
-            status="ok",
-            issues=[],
-            unresolved_blocks=[],
-            summary={"by_type": {}},
+            status="needs_review" if issues else "ok",
+            issues=issues,
+            unresolved_blocks=sorted({
+                issue.block_id
+                for issue in issues
+                if issue.severity in {"error", "severe"}
+            }),
+            summary={"by_type": {
+                issue.type: sum(
+                    candidate.type == issue.type
+                    for candidate in issues
+                )
+                for issue in issues
+            }},
             trace=trace,
         )
 
@@ -7752,14 +7783,17 @@ def _run_auto_repair_group_guard_case(
                 assert "translation" in prompt
                 payload = []
                 for item in items:
-                    result = {
-                        "id": item["id"],
-                        "translation": "OK",
-                        "verdict": "OK",
-                        "taxonomy": "none",
-                        "source_evidence": item["original"],
-                        "target_evidence": item["draft"],
-                    }
+                    if item.get("review_kind") == "semantic_group":
+                        result = _semantic_group_response(item)
+                    else:
+                        result = {
+                            "id": item["id"],
+                            "translation": "OK",
+                            "verdict": "OK",
+                            "taxonomy": "none",
+                            "source_evidence": item["original"],
+                            "target_evidence": item["draft"],
+                        }
                     if actual_targeted_payload == "missing_translation":
                         result.pop("translation")
                     payload.append(result)
@@ -7797,6 +7831,7 @@ def _run_auto_repair_group_guard_case(
             for block in blocks
         },
         "qa_calls": qa_calls,
+        "deterministic_calls": deterministic_calls,
         "repaired": repaired,
         "report": saved_reports[-1],
     }
@@ -7913,6 +7948,65 @@ def test_auto_repair_accepts_cross_cue_group_after_codex_result_normalization(
     }
     assert round_trace["accepted_semantic_groups"] == [[35, 36]]
     assert round_trace["rolled_back_semantic_groups"] == []
+
+
+@pytest.mark.parametrize(
+    "deterministic_issue_type",
+    [
+        "speaker_line_structure_mismatch",
+        "translation_meta_contamination",
+    ],
+)
+def test_group_double_ok_cannot_override_deterministic_candidate_veto(
+    tmp_path,
+    monkeypatch,
+    deterministic_issue_type,
+):
+    """A deterministic defect rolls back the group despite two semantic OKs."""
+    result = _run_auto_repair_group_guard_case(
+        tmp_path,
+        monkeypatch,
+        initial_translations={35: "旧译一", 36: "旧译二"},
+        candidate_translations={35: "候选新译一", 36: "候选新译二"},
+        semantic_groups=[[35, 36]],
+        issues_by_qa_call=[
+            [(35, "semantic_mismatch", "error")],
+            [],
+        ],
+        source_texts={
+            35: "First source line.",
+            36: "Second source line.",
+        },
+        actual_targeted_payload="valid",
+        deterministic_issues_by_call=[
+            [(36, deterministic_issue_type, "error")],
+            [],
+        ],
+    )
+
+    round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
+    assert round_trace["targeted_semantic_qa"] == {
+        "requested_block_ids": [35, 36],
+        "verified_block_ids": [35, 36],
+        "issue_block_ids": [],
+        "focused_passes": 2,
+        "coverage_complete": True,
+    }
+    assert result["translations"] == {35: "旧译一", 36: "旧译二"}
+    assert result["repaired"] == []
+    assert round_trace["accepted_semantic_groups"] == []
+    assert round_trace["rolled_back_semantic_groups"] == [[35, 36]]
+    assert round_trace["rolled_back_block_ids"] == [35, 36]
+    assert round_trace["rollback_reasons"] == [
+        {
+            "id": 35,
+            "issue_types": ["semantic_group_atomic_rollback"],
+        },
+        {
+            "id": 36,
+            "issue_types": [deterministic_issue_type],
+        },
+    ]
 
 
 def test_auto_repair_rejects_cross_cue_group_when_codex_result_lacks_translation(
@@ -8377,7 +8471,7 @@ def test_strict_candidate_requires_two_explicit_focused_semantic_oks(
 
     class Primary:
         def translate_batch(self, items, prompt):
-            assert "候选译文专项语义复核" in prompt
+            assert "候选译文语义组专项复核" in prompt
             focused_calls.append({
                 "items": deepcopy(items),
                 "prompt": prompt,
@@ -8387,23 +8481,29 @@ def test_strict_candidate_requires_two_explicit_focused_semantic_oks(
             ]
             results = []
             for item in items:
-                source_evidence, target_evidence = (
-                    focused_evidence
-                    if focused_evidence is not None
-                    else (item["original"], item["draft"])
-                )
-                results.append({
-                    "id": item["id"],
-                    "translation": verdict,
-                    "verdict": verdict,
-                    "taxonomy": (
+                result = _semantic_group_response(
+                    item,
+                    verdict=verdict,
+                    taxonomy=(
                         "none"
                         if verdict == "OK"
                         else "possession_person_number"
                     ),
-                    "source_evidence": source_evidence,
-                    "target_evidence": target_evidence,
-                })
+                )
+                if verdict != "OK" and focused_evidence is None:
+                    result["source_evidence"][1]["text"] = "ours"
+                    result["target_evidence"][1]["text"] = "我的"
+                if focused_evidence is not None:
+                    source_evidence, target_evidence = focused_evidence
+                    result["source_evidence"] = [
+                        {"id": member["id"], "text": source_evidence}
+                        for member in item["group_members"]
+                    ]
+                    result["target_evidence"] = [
+                        {"id": member["id"], "text": target_evidence}
+                        for member in item["group_members"]
+                    ]
+                results.append(result)
             return results
 
     translator = type("Translator", (), {"primary": Primary()})()
@@ -8539,7 +8639,10 @@ def test_strict_candidate_requires_two_explicit_focused_semantic_oks(
     )
     assert all(
         next(
-            item for item in call["items"] if item["id"] == 356
+            member
+            for item in call["items"]
+            for member in item["group_members"]
+            if member["id"] == 356
         )["prior_issues"][0]["message"].startswith(
             "possession person/number mismatch"
         )
@@ -8915,6 +9018,676 @@ def test_targeted_semantic_items_include_complete_five_cue_group_context():
         == [33, 34, 35, 36, 37]
         for item in items
     )
+
+
+def test_targeted_semantic_five_member_group_payload_deduplicates_context():
+    """A five-member unit carries one bounded outer context, not five copies."""
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    blocks = [
+        SubtitleBlock(
+            index=31 + offset,
+            start=timedelta(seconds=offset),
+            end=timedelta(seconds=offset + 1),
+            text=f"source fragment {offset}",
+            translation=f"译文片段{offset}",
+        )
+        for offset in range(9)
+    ]
+    group_ids = [33, 34, 35, 36, 37]
+    member_items = api_translate._targeted_semantic_items(
+        blocks,
+        set(group_ids),
+        TranslationQaReport(status="needs_review", issues=[]),
+        [group_ids],
+    )
+
+    singleton_items, group_items = (
+        api_translate._targeted_semantic_verification_units(
+            member_items,
+            set(group_ids),
+            [group_ids],
+        )
+    )
+
+    assert singleton_items == []
+    assert len(group_items) == 1
+    group_item = group_items[0]
+    assert all(
+        "bounded_context" not in member
+        for member in group_item["group_members"]
+    )
+    assert [entry["id"] for entry in group_item["group_context"]] == [
+        31,
+        32,
+        38,
+        39,
+    ]
+    assert len(group_item["group_context"]) <= 4
+
+
+def _semantic_group_396_397_fixture():
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    blocks = [
+        SubtitleBlock(
+            index=396,
+            start=timedelta(seconds=1),
+            end=timedelta(seconds=3),
+            text=(
+                "Haven't you learned by now what\n"
+                "happens to people stupid enough"
+            ),
+            translation="你难道还没明白，在这个世界上，",
+        ),
+        SubtitleBlock(
+            index=397,
+            start=timedelta(seconds=3),
+            end=timedelta(seconds=5),
+            text="to have hope in this world?",
+            translation="蠢到心存希望的人会有什么下场吗？",
+        ),
+    ]
+    prior_report = TranslationQaReport(
+        status="needs_review",
+        issues=[
+            QualityIssue(
+                type="semantic_mismatch",
+                severity="error",
+                block_id=block.index,
+                message="historical per-cue scan rejected equivalent regrouping",
+                source_text=block.text,
+                translation=block.translation,
+            )
+            for block in blocks
+        ],
+    )
+    return blocks, prior_report
+
+
+def _semantic_group_response(
+    item,
+    *,
+    verdict="OK",
+    taxonomy="none",
+):
+    return {
+        "id": item["id"],
+        "translation": verdict,
+        "verdict": verdict,
+        "taxonomy": taxonomy,
+        "group_ids": list(item["group_ids"]),
+        "group_content_hash": item["group_content_hash"],
+        "source_evidence": [
+            {"id": member["id"], "text": member["original"]}
+            for member in item["group_members"]
+        ],
+        "target_evidence": [
+            {"id": member["id"], "text": member["draft"]}
+            for member in item["group_members"]
+        ],
+    }
+
+
+def test_targeted_semantic_group_double_ok_accepts_396_397_equivalent_regrouping():
+    """A two-cue sentence is certified by two bound group verdicts, not per cue."""
+    from app.api import translate as api_translate
+
+    blocks, prior_report = _semantic_group_396_397_fixture()
+
+    class Primary:
+        def __init__(self):
+            self.calls = []
+
+        def translate_batch(self, items, prompt):
+            self.calls.append((items, prompt))
+            assert len(items) == 1
+            assert items[0]["group_ids"] == [396, 397]
+            assert [member["id"] for member in items[0]["group_members"]] == [
+                396,
+                397,
+            ]
+            return [_semantic_group_response(items[0])]
+
+    primary = Primary()
+    issues, verified_ids, verified_hashes, traces = (
+        api_translate._run_targeted_semantic_verification(
+            {"translation": {"semantic_qa_batch_size": 4}},
+            type("Translator", (), {"primary": primary})(),
+            blocks,
+            "简体中文",
+            {396, 397},
+            prior_report,
+            [[396, 397]],
+            strict_quality_gate=True,
+        )
+    )
+
+    assert issues == []
+    assert verified_ids == {396, 397}
+    assert verified_hashes == {
+        block.index: api_translate._semantic_block_content_hash(block)
+        for block in blocks
+    }
+    assert len(primary.calls) == 2
+    assert len({
+        call_items[0]["group_content_hash"]
+        for call_items, _prompt in primary.calls
+    }) == 1
+    assert all(trace["coverage_complete"] is True for trace in traces)
+    assert all(trace["stage_codes_by_block_id"] == {
+        "396": "explicit_ok",
+        "397": "explicit_ok",
+    } for trace in traces)
+
+
+def test_targeted_semantic_group_pass_two_non_ok_rejects_every_member():
+    """One non-OK group pass prevents every member from being verified."""
+    from app.api import translate as api_translate
+
+    blocks, prior_report = _semantic_group_396_397_fixture()
+
+    class Primary:
+        def __init__(self):
+            self.calls = 0
+
+        def translate_batch(self, items, prompt):
+            self.calls += 1
+            if self.calls == 1:
+                return [_semantic_group_response(items[0])]
+            result = _semantic_group_response(
+                items[0],
+                verdict="MISMATCH: cross-cue order drift remains",
+                taxonomy="cross_block_alignment",
+            )
+            result["cross_block_evidence"] = [{
+                "source": {"id": 396, "text": "what happens"},
+                "target": {"id": 397, "text": "下场吗"},
+            }]
+            return [result]
+
+    issues, verified_ids, verified_hashes, traces = (
+        api_translate._run_targeted_semantic_verification(
+            {"translation": {}},
+            type("Translator", (), {"primary": Primary()})(),
+            blocks,
+            "简体中文",
+            {396, 397},
+            prior_report,
+            [[396, 397]],
+            strict_quality_gate=True,
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [(issue.block_id, issue.type) for issue in issues] == [
+        (396, "semantic_mismatch"),
+        (397, "semantic_mismatch"),
+    ]
+    assert traces[0]["stage_codes_by_block_id"] == {
+        "396": "explicit_ok",
+        "397": "explicit_ok",
+    }
+    assert traces[1]["stage_codes_by_block_id"] == {
+        "396": "valid_non_ok",
+        "397": "valid_non_ok",
+    }
+
+
+def test_targeted_semantic_two_groups_use_four_isolated_strict_calls():
+    """Each group gets its own provider request and cannot taint its peer."""
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    texts = {
+        1: ("Do not leave.", "不要离开。"),
+        2: ("Stay here.", "留在这里。"),
+        3: ("Alice called Bob.", "艾丽斯给鲍勃打了电话。"),
+        4: ("He answered.", "他接了电话。"),
+    }
+    blocks = [
+        SubtitleBlock(
+            index=block_id,
+            start=timedelta(seconds=block_id),
+            end=timedelta(seconds=block_id + 1),
+            text=original,
+            translation=draft,
+        )
+        for block_id, (original, draft) in texts.items()
+    ]
+    prior_report = TranslationQaReport(
+        status="needs_review",
+        issues=[
+            QualityIssue(
+                type="semantic_mismatch",
+                severity="error",
+                block_id=block_id,
+                message="historical group issue",
+            )
+            for block_id in texts
+        ],
+    )
+
+    class Primary:
+        def __init__(self):
+            self.group_calls = []
+
+        def translate_batch(self, items, prompt):
+            assert len(items) == 1
+            item = items[0]
+            self.group_calls.append(list(item["group_ids"]))
+            if item["group_ids"] == [1, 2]:
+                result = _semantic_group_response(
+                    item,
+                    verdict="MISMATCH: negation is unreliable",
+                    taxonomy="negation/polarity/condition",
+                )
+                result["source_evidence"][0]["text"] = "not"
+                result["target_evidence"][0]["text"] = "不"
+                return [result]
+            return [_semantic_group_response(item)]
+
+    primary = Primary()
+    issues, verified_ids, verified_hashes, traces = (
+        api_translate._run_targeted_semantic_verification(
+            {"translation": {"semantic_qa_batch_size": 4}},
+            type("Translator", (), {"primary": primary})(),
+            blocks,
+            "简体中文",
+            set(texts),
+            prior_report,
+            [[1, 2], [3, 4]],
+            strict_quality_gate=True,
+        )
+    )
+
+    assert primary.group_calls == [[1, 2], [3, 4], [1, 2], [3, 4]]
+    assert [(issue.block_id, issue.type) for issue in issues] == [
+        (1, "semantic_mismatch"),
+        (2, "semantic_mismatch"),
+    ]
+    assert verified_ids == {3, 4}
+    assert verified_hashes == {
+        block.index: api_translate._semantic_block_content_hash(block)
+        for block in blocks
+        if block.index in {3, 4}
+    }
+    assert all(trace["coverage_complete"] is True for trace in traces)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected_stage"),
+    [
+        (
+            lambda result: result.update({
+                "group_ids": [397, 396],
+            }),
+            "group_binding_mismatch",
+        ),
+        (
+            lambda result: result.update({
+                "group_content_hash": "sha256:" + ("0" * 64),
+            }),
+            "group_binding_mismatch",
+        ),
+        (
+            lambda result: result["source_evidence"].pop(),
+            "group_evidence_coverage",
+        ),
+        (
+            lambda result: result["target_evidence"].append(
+                dict(result["target_evidence"][0])
+            ),
+            "group_evidence_coverage",
+        ),
+        (
+            lambda result: result["source_evidence"].__setitem__(
+                0,
+                {"id": 999, "text": "outside the group"},
+            ),
+            "group_evidence_coverage",
+        ),
+        (
+            lambda result: result.update({
+                "source_evidence": list(reversed(result["source_evidence"])),
+            }),
+            "group_evidence_order",
+        ),
+    ],
+)
+def test_targeted_semantic_group_binding_and_anchored_evidence_fail_closed(
+    mutate,
+    expected_stage,
+):
+    """Group ids, hash, coverage, membership and order are mandatory."""
+    from app.api import translate as api_translate
+
+    blocks, prior_report = _semantic_group_396_397_fixture()
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            result = _semantic_group_response(items[0])
+            mutate(result)
+            return [result]
+
+    issues, verified_ids, verified_hashes, traces = (
+        api_translate._run_targeted_semantic_verification(
+            {"translation": {}},
+            type("Translator", (), {"primary": Primary()})(),
+            blocks,
+            "简体中文",
+            {396, 397},
+            prior_report,
+            [[396, 397]],
+            strict_quality_gate=True,
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [(issue.block_id, issue.type) for issue in issues] == [
+        (396, "semantic_qa_failed"),
+        (397, "semantic_qa_failed"),
+    ]
+    assert all(trace["stage_codes_by_block_id"] == {
+        "396": expected_stage,
+        "397": expected_stage,
+    } for trace in traces)
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
+@pytest.mark.parametrize(
+    (
+        "taxonomy",
+        "original",
+        "draft",
+        "source_focus",
+        "target_focus",
+    ),
+    [
+        (
+            "negation/polarity/condition",
+            "I did not call her.",
+            "我给她打了电话。",
+            "not",
+            "打了电话",
+        ),
+        (
+            "entity",
+            "Alice called Bob.",
+            "艾丽斯给汤姆打了电话。",
+            "Bob",
+            "汤姆",
+        ),
+        (
+            "quantity",
+            "Bring three boxes.",
+            "带来五个箱子。",
+            "three",
+            "五",
+        ),
+    ],
+)
+def test_targeted_semantic_group_non_ok_requires_focused_member_evidence(
+    taxonomy,
+    original,
+    draft,
+    source_focus,
+    target_focus,
+):
+    """A non-cross taxonomy needs one focused member; peers are full context."""
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    blocks = [
+        SubtitleBlock(
+            index=701,
+            start=timedelta(seconds=1),
+            end=timedelta(seconds=2),
+            text=original,
+            translation=draft,
+        ),
+        SubtitleBlock(
+            index=702,
+            start=timedelta(seconds=2),
+            end=timedelta(seconds=3),
+            text="The surrounding context remains.",
+            translation="周边上下文保持不变。",
+        ),
+    ]
+    prior_report = TranslationQaReport(
+        status="needs_review",
+        issues=[QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=701,
+            message="historical semantic defect",
+        )],
+    )
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            result = _semantic_group_response(
+                items[0],
+                verdict=f"MISMATCH: focused {taxonomy} defect",
+                taxonomy=taxonomy,
+            )
+            result["source_evidence"][0]["text"] = source_focus
+            result["target_evidence"][0]["text"] = target_focus
+            return [result]
+
+    issues, verified_ids, verified_hashes, traces = (
+        api_translate._run_targeted_semantic_verification(
+            {"translation": {}},
+            type("Translator", (), {"primary": Primary()})(),
+            blocks,
+            "简体中文",
+            {701, 702},
+            prior_report,
+            [[701, 702]],
+            strict_quality_gate=True,
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert {issue.block_id for issue in issues} == {701, 702}
+    assert all(issue.type == "semantic_mismatch" for issue in issues)
+    assert all(trace["stage_codes_by_block_id"] == {
+        "701": "valid_non_ok",
+        "702": "valid_non_ok",
+    } for trace in traces)
+
+
+def test_targeted_semantic_cross_block_non_ok_binds_focused_group_evidence():
+    """Cross-cue defects bind focused excerpts to different member ids."""
+    from app.api import translate as api_translate
+
+    blocks, prior_report = _semantic_group_396_397_fixture()
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            result = _semantic_group_response(
+                items[0],
+                verdict="MISMATCH: clause alignment moved across cues",
+                taxonomy="cross_block_alignment",
+            )
+            result["cross_block_evidence"] = [{
+                "source": {"id": 396, "text": "what happens"},
+                "target": {"id": 397, "text": "下场吗"},
+            }]
+            return [result]
+
+    issues, verified_ids, verified_hashes, traces = (
+        api_translate._run_targeted_semantic_verification(
+            {"translation": {}},
+            type("Translator", (), {"primary": Primary()})(),
+            blocks,
+            "简体中文",
+            {396, 397},
+            prior_report,
+            [[396, 397]],
+            strict_quality_gate=True,
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert {issue.block_id for issue in issues} == {396, 397}
+    assert all(issue.type == "semantic_mismatch" for issue in issues)
+    assert all(trace["stage_codes_by_block_id"] == {
+        "396": "valid_non_ok",
+        "397": "valid_non_ok",
+    } for trace in traces)
+
+
+@pytest.mark.parametrize(
+    "taxonomy",
+    [
+        "negation/polarity/condition",
+        "entity",
+        "quantity",
+        "cross_block_alignment",
+    ],
+)
+def test_targeted_semantic_group_non_ok_rejects_full_echo_as_taxonomy_evidence(
+    taxonomy,
+):
+    """Full member echoes are neutral context, never proof of a group defect."""
+    from app.api import translate as api_translate
+
+    blocks, prior_report = _semantic_group_396_397_fixture()
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            return [_semantic_group_response(
+                items[0],
+                verdict=f"MISMATCH: alleged {taxonomy} defect",
+                taxonomy=taxonomy,
+            )]
+
+    issues, verified_ids, verified_hashes, traces = (
+        api_translate._run_targeted_semantic_verification(
+            {"translation": {}},
+            type("Translator", (), {"primary": Primary()})(),
+            blocks,
+            "简体中文",
+            {396, 397},
+            prior_report,
+            [[396, 397]],
+            strict_quality_gate=True,
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [(issue.block_id, issue.type) for issue in issues] == [
+        (396, "semantic_qa_failed"),
+        (397, "semantic_qa_failed"),
+    ]
+    assert all(trace["stage_codes_by_block_id"] == {
+        "396": "evidence_taxonomy_conflict",
+        "397": "evidence_taxonomy_conflict",
+    } for trace in traces)
+
+
+def test_targeted_semantic_group_missing_member_structure_fails_whole_group():
+    """An unconstructable member prevents provider review of the whole group."""
+    from app.api import translate as api_translate
+
+    blocks, prior_report = _semantic_group_396_397_fixture()
+    blocks[1].translation = ""
+
+    class Primary:
+        calls = 0
+
+        def translate_batch(self, items, prompt):
+            self.calls += 1
+            return []
+
+    primary = Primary()
+    issues, verified_ids, verified_hashes, traces = (
+        api_translate._run_targeted_semantic_verification(
+            {"translation": {}},
+            type("Translator", (), {"primary": primary})(),
+            blocks,
+            "简体中文",
+            {396, 397},
+            prior_report,
+            [[396, 397]],
+            strict_quality_gate=True,
+        )
+    )
+
+    assert primary.calls == 0
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [(issue.block_id, issue.type) for issue in issues] == [
+        (396, "semantic_qa_failed"),
+        (397, "semantic_qa_failed"),
+    ]
+    assert all(trace["failed_block_ids"] == [396, 397] for trace in traces)
+
+
+def test_targeted_semantic_group_double_ok_resolves_ledger_by_member_current_hash():
+    """A bound group verdict resolves each old issue to its own current hash."""
+    from app.api import translate as api_translate
+
+    blocks, prior_report = _semantic_group_396_397_fixture()
+    ledger = {"outstanding": [], "resolved": []}
+    api_translate._update_and_overlay_semantic_issue_ledger(
+        prior_report,
+        blocks,
+        ledger,
+        {},
+        strict_quality_gate=True,
+    )
+    old_hashes = {
+        item["block_id"]: item["content_hash"]
+        for item in ledger["outstanding"]
+    }
+    blocks[0].translation = "你到现在还没明白，蠢到"
+    blocks[1].translation = "对这个世界心存希望的人会有什么下场？"
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            return [_semantic_group_response(items[0])]
+
+    issues, verified_ids, verified_hashes, _traces = (
+        api_translate._run_targeted_semantic_verification(
+            {"translation": {}},
+            type("Translator", (), {"primary": Primary()})(),
+            blocks,
+            "简体中文",
+            {396, 397},
+            prior_report,
+            [[396, 397]],
+            strict_quality_gate=True,
+        )
+    )
+    api_translate._resolve_semantic_issue_ledger(ledger, verified_hashes)
+
+    current_hashes = {
+        block.index: api_translate._semantic_block_content_hash(block)
+        for block in blocks
+    }
+    assert issues == []
+    assert verified_ids == {396, 397}
+    assert verified_hashes == current_hashes
+    assert {
+        item["block_id"]: item["resolved_by_content_hash"]
+        for item in ledger["resolved"]
+    } == current_hashes
+    assert {
+        item["block_id"]: item["content_hash"]
+        for item in ledger["resolved"]
+    } == old_hashes
 
 
 def test_targeted_semantic_retries_invalid_evidence_without_relaxing_two_ok():

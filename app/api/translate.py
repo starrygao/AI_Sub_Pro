@@ -3632,6 +3632,36 @@ def _targeted_semantic_prompt(target_language: str) -> str:
     ])
 
 
+def _targeted_semantic_group_prompt(target_language: str) -> str:
+    return "\n".join([
+        f"你是一位候选译文语义组专项复核员，目标语言是{target_language}。",
+        "每个输入代表一个不可拆分的跨字幕语义组；必须整体核对 group_members，"
+        "不得把逐 cue 的自然语序调整误判为遗漏。",
+        "必须检查组内遗漏、重复、否定/条件、实体、施受关系、人物/数量、"
+        "以及不可接受的顺序漂移；任一成员不可靠时整个组返回非 OK。",
+        "每个输入只能返回一个结果，id 必须保持输入 id；translation 必须与 verdict 完全相同。",
+        "结果必须原样回显 group_ids 和 group_content_hash，不得增删、重排或改写。",
+        "verdict 只能是 OK、MISMATCH: 原因、UNCERTAIN: 原因；taxonomy 只能使用"
+        " none、negation/polarity/condition、entity、agent_patient、"
+        "possession_person_number、quantity、cross_block_alignment。",
+        "source_evidence 与 target_evidence 必须是数组，按 group_ids 顺序为每个成员"
+        "各返回一次 {id,text}；禁止遗漏、重复、组外 id 或乱序。",
+        "每个 text 必须逐字引用其 id 对应的 original 或 draft；OK/none 时必须完整覆盖"
+        "每个成员。非 cross_block_alignment 的非 OK 结果必须至少有一个成员返回与 taxonomy "
+        "一致的聚焦证据，其余成员只能完整回显作为中性上下文。",
+        "cross_block_alignment 的非 OK 结果还必须包含 cross_block_evidence 数组；每项格式为"
+        ' {"source":{"id":1,"text":"..."},"target":{"id":2,"text":"..."}}，'
+        "source/target id 必须属于当前组且不同，text 必须是各自成员中的聚焦、非全文证据；"
+        "此时逐成员 source_evidence/target_evidence 只用于完整中性上下文。",
+        "任何结构、哈希、覆盖、证据或语义不确定性均不得猜测为 OK。",
+        "仅输出 JSON 数组，例如："
+        '[{"id":1,"translation":"OK","verdict":"OK","taxonomy":"none",'
+        '"group_ids":[1,2],"group_content_hash":"sha256:...",'
+        '"source_evidence":[{"id":1,"text":"..."},{"id":2,"text":"..."}],'
+        '"target_evidence":[{"id":1,"text":"..."},{"id":2,"text":"..."}]}]。',
+    ])
+
+
 def _targeted_semantic_items(
     blocks,
     candidate_ids: set[int],
@@ -3730,6 +3760,96 @@ def _targeted_semantic_items(
     return items
 
 
+def _targeted_semantic_group_content_hash(group_members: list[dict]) -> str:
+    payload = [
+        {
+            "id": member["id"],
+            "content_hash": member["candidate_content_hash"],
+        }
+        for member in group_members
+    ]
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _targeted_semantic_verification_units(
+    items: list[dict],
+    candidate_ids: set[int],
+    semantic_groups: list[list[int]],
+) -> tuple[list[dict], list[dict]]:
+    item_by_id = {item["id"]: item for item in items}
+    grouped_ids = set()
+    group_units = []
+    for raw_group_ids in semantic_groups:
+        if not isinstance(raw_group_ids, list) or len(raw_group_ids) < 2:
+            continue
+        group_ids = [
+            block_id
+            for block_id in raw_group_ids
+            if (
+                isinstance(block_id, int)
+                and not isinstance(block_id, bool)
+            )
+        ]
+        if (
+            len(group_ids) != len(raw_group_ids)
+            or len(set(group_ids)) != len(group_ids)
+            or not set(group_ids).issubset(candidate_ids)
+            or grouped_ids.intersection(group_ids)
+        ):
+            grouped_ids.update(
+                block_id
+                for block_id in group_ids
+                if block_id in candidate_ids
+            )
+            continue
+        grouped_ids.update(group_ids)
+        if any(block_id not in item_by_id for block_id in group_ids):
+            continue
+        group_members = [item_by_id[block_id] for block_id in group_ids]
+        group_context = []
+        context_ids = set(group_ids)
+        for member in group_members:
+            for context in member["bounded_context"]:
+                context_id = context.get("id")
+                if context_id in context_ids:
+                    continue
+                context_ids.add(context_id)
+                group_context.append(context)
+        group_units.append({
+            "id": group_ids[0],
+            "review_kind": "semantic_group",
+            "group_ids": group_ids,
+            "group_content_hash": _targeted_semantic_group_content_hash(
+                group_members
+            ),
+            "group_members": [
+                {
+                    "id": member["id"],
+                    "original": member["original"],
+                    "draft": member["draft"],
+                    "prior_issues": member["prior_issues"],
+                    "candidate_content_hash": (
+                        member["candidate_content_hash"]
+                    ),
+                }
+                for member in group_members
+            ],
+            "group_context": group_context,
+        })
+    singleton_items = [
+        item
+        for item in items
+        if item["id"] not in grouped_ids
+    ]
+    return singleton_items, group_units
+
+
 _TARGETED_SEMANTIC_CORRECTABLE_STAGES = frozenset({
     "invalid_schema",
     "transport_mismatch",
@@ -3737,6 +3857,9 @@ _TARGETED_SEMANTIC_CORRECTABLE_STAGES = frozenset({
     "evidence_incomplete",
     "evidence_taxonomy_conflict",
     "taxonomy_mismatch",
+    "group_binding_mismatch",
+    "group_evidence_coverage",
+    "group_evidence_order",
 })
 
 
@@ -3799,6 +3922,194 @@ def _targeted_semantic_result_stage(result, item: dict) -> str:
     return "explicit_ok" if explicit_ok else "valid_non_ok"
 
 
+def _targeted_semantic_group_evidence_by_id(
+    evidence,
+    group_ids: list[int],
+) -> tuple[str, dict[int, str]]:
+    if not isinstance(evidence, list) or len(evidence) != len(group_ids):
+        return "group_evidence_coverage", {}
+    evidence_ids = []
+    evidence_by_id = {}
+    for entry in evidence:
+        if not isinstance(entry, dict):
+            return "group_evidence_coverage", {}
+        block_id = entry.get("id")
+        text = entry.get("text")
+        if (
+            not isinstance(block_id, int)
+            or isinstance(block_id, bool)
+            or not isinstance(text, str)
+            or block_id in evidence_by_id
+        ):
+            return "group_evidence_coverage", {}
+        evidence_ids.append(block_id)
+        evidence_by_id[block_id] = text
+    if set(evidence_ids) != set(group_ids):
+        return "group_evidence_coverage", {}
+    if evidence_ids != group_ids:
+        return "group_evidence_order", {}
+    return "", evidence_by_id
+
+
+def _targeted_semantic_cross_block_evidence_is_valid(
+    evidence,
+    member_by_id: dict[int, dict],
+) -> bool:
+    if not isinstance(evidence, list) or not evidence:
+        return False
+    seen_pairs = set()
+    for entry in evidence:
+        if not isinstance(entry, dict):
+            return False
+        source = entry.get("source")
+        target = entry.get("target")
+        if not isinstance(source, dict) or not isinstance(target, dict):
+            return False
+        source_id = source.get("id")
+        target_id = target.get("id")
+        source_text = source.get("text")
+        target_text = target.get("text")
+        pair = (source_id, source_text, target_id, target_text)
+        if (
+            not isinstance(source_id, int)
+            or isinstance(source_id, bool)
+            or not isinstance(target_id, int)
+            or isinstance(target_id, bool)
+            or source_id == target_id
+            or source_id not in member_by_id
+            or target_id not in member_by_id
+            or not isinstance(source_text, str)
+            or not isinstance(target_text, str)
+            or pair in seen_pairs
+        ):
+            return False
+        source_match = _semantic_evidence_match(
+            source_text,
+            member_by_id[source_id]["original"],
+        )
+        target_match = _semantic_evidence_match(
+            target_text,
+            member_by_id[target_id]["draft"],
+        )
+        if (
+            source_match is None
+            or target_match is None
+            or source_match["exact"]
+            or target_match["exact"]
+            or not _semantic_evidence_is_standard_focused(source_match)
+            or not _semantic_evidence_is_standard_focused(target_match)
+        ):
+            return False
+        seen_pairs.add(pair)
+    return True
+
+
+def _targeted_semantic_group_result_stage(result, item: dict) -> str:
+    if not isinstance(result, dict):
+        return "invalid_schema"
+    verdict = result.get("verdict")
+    if not (
+        isinstance(verdict, str)
+        and _TARGETED_SEMANTIC_VERDICT_RE.fullmatch(verdict.strip())
+    ):
+        return "invalid_schema"
+    if (
+        not isinstance(result.get("translation"), str)
+        or result["translation"] != verdict
+    ):
+        return "transport_mismatch"
+    taxonomy = result.get("taxonomy")
+    if (
+        not isinstance(taxonomy, str)
+        or taxonomy not in _TARGETED_SEMANTIC_TAXONOMY
+    ):
+        return "invalid_schema"
+    explicit_ok = verdict.strip().lower() == "ok"
+    if (
+        (explicit_ok and taxonomy != "none")
+        or (
+            not explicit_ok
+            and taxonomy not in (_TARGETED_SEMANTIC_TAXONOMY - {"none"})
+        )
+    ):
+        return "taxonomy_mismatch"
+    group_ids = item["group_ids"]
+    result_group_ids = result.get("group_ids")
+    if (
+        not isinstance(result_group_ids, list)
+        or any(
+            not isinstance(block_id, int) or isinstance(block_id, bool)
+            for block_id in result_group_ids
+        )
+        or result_group_ids != group_ids
+        or result.get("group_content_hash") != item["group_content_hash"]
+    ):
+        return "group_binding_mismatch"
+    source_stage, source_by_id = _targeted_semantic_group_evidence_by_id(
+        result.get("source_evidence"),
+        group_ids,
+    )
+    if source_stage:
+        return source_stage
+    target_stage, target_by_id = _targeted_semantic_group_evidence_by_id(
+        result.get("target_evidence"),
+        group_ids,
+    )
+    if target_stage:
+        return target_stage
+    member_by_id = {
+        member["id"]: member
+        for member in item["group_members"]
+    }
+    focused_member_found = False
+    for block_id in group_ids:
+        member = member_by_id[block_id]
+        source_evidence = source_by_id[block_id]
+        target_evidence = target_by_id[block_id]
+        source_match = _semantic_evidence_match(
+            source_evidence,
+            member["original"],
+        )
+        target_match = _semantic_evidence_match(
+            target_evidence,
+            member["draft"],
+        )
+        if source_match is None or target_match is None:
+            return "evidence_not_anchored"
+        if explicit_ok and not (
+            source_match["exact"] and target_match["exact"]
+        ):
+            return "evidence_incomplete"
+        if explicit_ok:
+            continue
+        if taxonomy == "cross_block_alignment":
+            if not (source_match["exact"] and target_match["exact"]):
+                return "evidence_taxonomy_conflict"
+            continue
+        if source_match["exact"] and target_match["exact"]:
+            continue
+        if not _semantic_evidence_pair_is_valid(
+            source_evidence,
+            target_evidence,
+            member,
+            explicit_ok=explicit_ok,
+            taxonomy=taxonomy,
+        ):
+            return "evidence_taxonomy_conflict"
+        focused_member_found = True
+    if explicit_ok:
+        return "explicit_ok"
+    if taxonomy == "cross_block_alignment":
+        if not _targeted_semantic_cross_block_evidence_is_valid(
+            result.get("cross_block_evidence"),
+            member_by_id,
+        ):
+            return "evidence_taxonomy_conflict"
+    elif not focused_member_found:
+        return "evidence_taxonomy_conflict"
+    return "valid_non_ok"
+
+
 def _targeted_semantic_failure_issue(
     item: dict,
     stage: str,
@@ -3826,6 +4137,15 @@ def _targeted_semantic_failure_issue(
         "taxonomy_mismatch": (
             "targeted semantic QA taxonomy did not match the verdict"
         ),
+        "group_binding_mismatch": (
+            "targeted semantic QA group ids or content hash did not match"
+        ),
+        "group_evidence_coverage": (
+            "targeted semantic QA group evidence did not cover each member once"
+        ),
+        "group_evidence_order": (
+            "targeted semantic QA group evidence did not preserve member order"
+        ),
     }
     return QualityIssue(
         type="semantic_qa_failed",
@@ -3850,15 +4170,27 @@ def _run_targeted_semantic_verification(
 ) -> tuple[list, set[int], dict[int, str], list[dict]]:
     from app.engines.translation_qa import QualityIssue
 
-    items = _targeted_semantic_items(
+    member_items = _targeted_semantic_items(
         blocks,
         candidate_ids,
         prior_report,
         semantic_groups,
     )
-    item_by_id = {item["id"]: item for item in items}
+    item_by_id = {item["id"]: item for item in member_items}
+    singleton_items, group_items = _targeted_semantic_verification_units(
+        member_items,
+        candidate_ids,
+        semantic_groups,
+    )
     requested_ids = sorted(candidate_ids)
-    selected_ids = sorted(item_by_id)
+    selected_ids = sorted({
+        item["id"]
+        for item in singleton_items
+    } | {
+        block_id
+        for item in group_items
+        for block_id in item["group_ids"]
+    })
     structurally_missing_ids = sorted(set(requested_ids) - set(selected_ids))
     pass_count = 2 if strict_quality_gate else 1
     ok_passes_by_id = {block_id: 0 for block_id in requested_ids}
@@ -3866,7 +4198,19 @@ def _run_targeted_semantic_verification(
     traces = []
     primary = getattr(translator, "primary", None)
     batch_size = max(1, min(_semantic_qa_batch_size(cfg), 4))
-    prompt = _targeted_semantic_prompt(target_language)
+    singleton_prompt = _targeted_semantic_prompt(target_language)
+    group_prompt = _targeted_semantic_group_prompt(target_language)
+
+    def unit_member_ids(item: dict) -> list[int]:
+        group_ids = item.get("group_ids")
+        if item.get("review_kind") == "semantic_group":
+            return list(group_ids) if isinstance(group_ids, list) else []
+        return [item["id"]]
+
+    def result_stage(result, item: dict) -> str:
+        if item.get("review_kind") == "semantic_group":
+            return _targeted_semantic_group_result_stage(result, item)
+        return _targeted_semantic_result_stage(result, item)
 
     for pass_number in range(1, pass_count + 1):
         checked_ids = []
@@ -3884,134 +4228,193 @@ def _run_targeted_semantic_verification(
                 block_id=block_id,
                 message="targeted semantic QA could not construct a complete candidate item",
             )
-        for start in range(0, len(items), batch_size):
-            pending = items[start:start + batch_size]
-            for retry_number in range(3):
-                if not pending:
-                    break
-                retry_prompt = prompt
-                if retry_number:
-                    safe_feedback = ", ".join(
-                        f"id={item['id']}:{final_stage_by_id[str(item['id'])]}"
-                        for item in pending
-                    )
-                    retry_prompt = "\n".join([
-                        prompt,
-                        "上一响应未通过结构协议。只纠正下列 id，保持独立复核；"
-                        f"失败阶段：{safe_feedback}。",
-                        "若失败阶段为 evidence_incomplete，必须分别完整回显当前"
-                        " original 和 draft；保留全部行内容，可用 LF 或将合法换行"
-                        "规范为空格，不得只返回选段。",
-                    ])
-                batch_ids = [item["id"] for item in pending]
-                batch_trace = {
-                    "batch": len(batches) + 1,
-                    "attempted_block_ids": batch_ids,
-                    "correction_retry": retry_number > 0,
-                    "retry_number": retry_number,
-                }
-                batches.append(batch_trace)
-                provider_error = ""
-                if primary is None or not hasattr(primary, "translate_batch"):
-                    raw_results = []
-                    provider_error = "targeted semantic QA provider is unavailable"
-                else:
-                    try:
-                        raw_results = primary.translate_batch(
-                            pending,
-                            retry_prompt,
+        verification_sets = (
+            (singleton_items, singleton_prompt, batch_size),
+            (group_items, group_prompt, 1),
+        )
+        for verification_items, prompt, verification_batch_size in (
+            verification_sets
+        ):
+            for start in range(
+                0,
+                len(verification_items),
+                verification_batch_size,
+            ):
+                pending = verification_items[
+                    start:start + verification_batch_size
+                ]
+                for retry_number in range(3):
+                    if not pending:
+                        break
+                    retry_prompt = prompt
+                    if retry_number:
+                        safe_feedback = ", ".join(
+                            "ids="
+                            + "/".join(
+                                str(block_id)
+                                for block_id in unit_member_ids(item)
+                            )
+                            + ":"
+                            + final_stage_by_id[
+                                str(unit_member_ids(item)[0])
+                            ]
+                            for item in pending
                         )
-                    except Exception as exc:
+                        retry_prompt = "\n".join([
+                            prompt,
+                            "上一响应未通过结构协议。只纠正下列复核单元；"
+                            f"失败阶段：{safe_feedback}。",
+                            "若失败阶段为 evidence_incomplete，必须完整回显当前"
+                            " original/draft 或每个 group member；保留全部行内容，"
+                            "可用 LF 或将合法换行规范为空格，不得只返回选段。",
+                        ])
+                    batch_ids = [
+                        block_id
+                        for item in pending
+                        for block_id in unit_member_ids(item)
+                    ]
+                    batch_trace = {
+                        "batch": len(batches) + 1,
+                        "attempted_block_ids": batch_ids,
+                        "correction_retry": retry_number > 0,
+                        "retry_number": retry_number,
+                    }
+                    batches.append(batch_trace)
+                    provider_error = ""
+                    if (
+                        primary is None
+                        or not hasattr(primary, "translate_batch")
+                    ):
                         raw_results = []
                         provider_error = (
-                            "targeted semantic QA provider failed: "
-                            f"{_safe_error_message(exc)}"
+                            "targeted semantic QA provider is unavailable"
                         )
-                raw_list = raw_results if isinstance(raw_results, list) else []
-                expected_result_ids = [str(item["id"]) for item in pending]
-                returned_result_ids = [
-                    str(result.get("id", ""))
-                    for result in raw_list
-                    if isinstance(result, dict)
-                ]
-                exact_ids = (
-                    not provider_error
-                    and len(raw_list) == len(pending)
-                    and sorted(returned_result_ids)
-                    == sorted(expected_result_ids)
-                )
-                results_by_id = {}
-                if exact_ids:
-                    results_by_id = {
-                        str(item["id"]): [
-                            result
-                            for result in raw_list
-                            if (
-                                isinstance(result, dict)
-                                and str(result.get("id", ""))
-                                == str(item["id"])
+                    else:
+                        try:
+                            raw_results = primary.translate_batch(
+                                pending,
+                                retry_prompt,
                             )
-                        ]
-                        for item in pending
-                    }
-                else:
-                    batch_trace["error"] = (
-                        provider_error
-                        or "targeted semantic QA response IDs did not exactly "
-                        "match the requested IDs"
+                        except Exception as exc:
+                            raw_results = []
+                            provider_error = (
+                                "targeted semantic QA provider failed: "
+                                f"{_safe_error_message(exc)}"
+                            )
+                    raw_list = (
+                        raw_results
+                        if isinstance(raw_results, list)
+                        else []
                     )
+                    expected_result_ids = [
+                        str(item["id"])
+                        for item in pending
+                    ]
+                    returned_result_ids = [
+                        str(result.get("id", ""))
+                        for result in raw_list
+                        if isinstance(result, dict)
+                    ]
+                    exact_ids = (
+                        not provider_error
+                        and len(raw_list) == len(pending)
+                        and sorted(returned_result_ids)
+                        == sorted(expected_result_ids)
+                    )
+                    results_by_id = {}
+                    if exact_ids:
+                        results_by_id = {
+                            str(item["id"]): [
+                                result
+                                for result in raw_list
+                                if (
+                                    isinstance(result, dict)
+                                    and str(result.get("id", ""))
+                                    == str(item["id"])
+                                )
+                            ]
+                            for item in pending
+                        }
+                    else:
+                        batch_trace["error"] = (
+                            provider_error
+                            or "targeted semantic QA response IDs did not "
+                            "exactly match the requested IDs"
+                        )
 
-                next_pending = []
-                batch_stages = {}
+                    next_pending = []
+                    batch_stages = {}
+                    for item in pending:
+                        member_ids = unit_member_ids(item)
+                        matching = results_by_id.get(
+                            str(item["id"]),
+                            [],
+                        )
+                        if provider_error:
+                            stage = (
+                                "provider_unavailable"
+                                if primary is None
+                                or not hasattr(primary, "translate_batch")
+                                else "provider_error"
+                            )
+                        else:
+                            stage = (
+                                result_stage(matching[0], item)
+                                if len(matching) == 1
+                                else "invalid_schema"
+                            )
+                        for block_id in member_ids:
+                            final_stage_by_id[str(block_id)] = stage
+                            batch_stages[str(block_id)] = stage
+                        if stage in _TARGETED_SEMANTIC_CORRECTABLE_STAGES:
+                            next_pending.append(item)
+                            continue
+                        if stage in {
+                            "provider_unavailable",
+                            "provider_error",
+                        }:
+                            for block_id in member_ids:
+                                failed_ids.append(block_id)
+                                pass_issues[block_id] = (
+                                    _targeted_semantic_failure_issue(
+                                        item_by_id[block_id],
+                                        stage,
+                                        strict_quality_gate=(
+                                            strict_quality_gate
+                                        ),
+                                    )
+                                )
+                            continue
+                        checked_ids.extend(member_ids)
+                        if stage == "explicit_ok":
+                            for block_id in member_ids:
+                                ok_passes_by_id[block_id] += 1
+                        else:
+                            for block_id in member_ids:
+                                pass_issues[block_id] = (
+                                    _semantic_issue_from_verdict(
+                                        item_by_id[block_id],
+                                        matching[0]["verdict"],
+                                        strict_quality_gate=(
+                                            strict_quality_gate
+                                        ),
+                                    )
+                                )
+                    batch_trace["stage_codes_by_block_id"] = (
+                        batch_stages
+                    )
+                    pending = next_pending
+
                 for item in pending:
-                    block_id = item["id"]
-                    matching = results_by_id.get(str(block_id), [])
-                    if provider_error:
-                        stage = (
-                            "provider_unavailable"
-                            if primary is None
-                            or not hasattr(primary, "translate_batch")
-                            else "provider_error"
-                        )
-                    else:
-                        stage = (
-                            _targeted_semantic_result_stage(matching[0], item)
-                            if len(matching) == 1
-                            else "invalid_schema"
-                        )
-                    final_stage_by_id[str(block_id)] = stage
-                    batch_stages[str(block_id)] = stage
-                    if stage in _TARGETED_SEMANTIC_CORRECTABLE_STAGES:
-                        next_pending.append(item)
-                        continue
-                    if stage in {"provider_unavailable", "provider_error"}:
+                    for block_id in unit_member_ids(item):
                         failed_ids.append(block_id)
-                        pass_issues[block_id] = _targeted_semantic_failure_issue(
-                            item,
-                            stage,
-                            strict_quality_gate=strict_quality_gate,
+                        pass_issues[block_id] = (
+                            _targeted_semantic_failure_issue(
+                                item_by_id[block_id],
+                                final_stage_by_id[str(block_id)],
+                                strict_quality_gate=strict_quality_gate,
+                            )
                         )
-                        continue
-                    checked_ids.append(block_id)
-                    if stage == "explicit_ok":
-                        ok_passes_by_id[block_id] += 1
-                    else:
-                        pass_issues[block_id] = _semantic_issue_from_verdict(
-                            item,
-                            matching[0]["verdict"],
-                            strict_quality_gate=strict_quality_gate,
-                        )
-                batch_trace["stage_codes_by_block_id"] = batch_stages
-                pending = next_pending
-
-            for item in pending:
-                block_id = item["id"]
-                failed_ids.append(block_id)
-                pass_issues[block_id] = _targeted_semantic_failure_issue(
-                    item,
-                    final_stage_by_id[str(block_id)],
-                    strict_quality_gate=strict_quality_gate,
-                )
         issue_by_id.update(pass_issues)
         traces.append({
             "enabled": True,
@@ -4123,6 +4526,7 @@ _AUTO_REPAIR_GUARDED_FUNCTIONAL_ISSUE_TYPES = frozenset({
     "scientific_term_inconsistent",
     "proper_name_inconsistent",
     "speaker_line_structure_mismatch",
+    "translation_meta_contamination",
     "context_term_missing",
 })
 _AUTO_REPAIR_ISSUE_SEVERITY_RANK = {
