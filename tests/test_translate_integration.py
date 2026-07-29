@@ -2040,6 +2040,118 @@ def test_thread_start_failure_blocks_edit_after_snapshot_until_rollback(
         reset_cancel(pid)
 
 
+def test_thread_start_failure_blocks_project_patch_until_rollback(
+    tmp_path,
+    monkeypatch,
+):
+    """Catches launch rollback overwriting a PATCH made after its snapshot."""
+    import threading
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.engines.scheduler import reset_cancel
+
+    pid = "startfail-patch-serialization"
+    api_translate, _, project_path = (
+        _seed_current_certified_burn_project(
+            tmp_path,
+            monkeypatch,
+            pid=pid,
+        )
+    )
+    monkeypatch.setattr(api_translate, "active_tasks", {})
+    monkeypatch.setattr(
+        api_translate,
+        "require_translation_ready",
+        lambda: None,
+    )
+    snapshot_taken = threading.Event()
+    release_launch = threading.Event()
+    registered = {}
+    real_snapshot = api_translate._snapshot_task_launch_state
+    real_register = api_translate.try_register_task
+    real_thread_start = threading.Thread.start
+
+    def capture_registration(*args, **kwargs):
+        task = real_register(*args, **kwargs)
+        registered["task"] = task
+        return task
+
+    def pause_after_snapshot(task_pid):
+        snapshot = real_snapshot(task_pid)
+        snapshot_taken.set()
+        if not release_launch.wait(timeout=5):
+            raise RuntimeError("test timed out after launch snapshot")
+        return snapshot
+
+    def fail_registered_start(thread):
+        if thread is registered.get("task"):
+            raise RuntimeError("injected thread start failure")
+        return real_thread_start(thread)
+
+    monkeypatch.setattr(
+        api_translate,
+        "try_register_task",
+        capture_registration,
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_snapshot_task_launch_state",
+        pause_after_snapshot,
+    )
+    monkeypatch.setattr(
+        threading.Thread,
+        "start",
+        fail_registered_start,
+    )
+    launch_errors = []
+
+    def launch():
+        try:
+            api_translate.start_translate(
+                pid=pid,
+                req=api_translate.TranslateRequest(
+                    target_language="简体中文"
+                ),
+            )
+        except Exception as exc:
+            launch_errors.append(exc)
+
+    launcher = threading.Thread(target=launch)
+    launcher.start()
+    assert snapshot_taken.wait(timeout=5)
+    blocked_patch = TestClient(app).patch(
+        f"/api/projects/{pid}",
+        json={"manual_terms": "tank=储罐"},
+    )
+    try:
+        assert blocked_patch.status_code == 409
+    finally:
+        release_launch.set()
+        launcher.join(timeout=5)
+
+    try:
+        assert not launcher.is_alive()
+        assert len(launch_errors) == 1
+        assert "thread start failure" in str(launch_errors[0])
+        assert api_translate.is_task_registered(pid) is False
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        assert project.get("manual_terms", "") == ""
+
+        retry_patch = TestClient(app).patch(
+            f"/api/projects/{pid}",
+            json={"manual_terms": "tank=储罐"},
+        )
+        assert retry_patch.status_code == 200
+        assert json.loads(
+            project_path.read_text(encoding="utf-8")
+        )["manual_terms"] == "tank=储罐"
+    finally:
+        api_translate.unregister_task(pid)
+        reset_cancel(pid)
+
+
 def test_saved_edit_can_be_recertified_with_hash_bound_delivery(
     tmp_path,
     monkeypatch,

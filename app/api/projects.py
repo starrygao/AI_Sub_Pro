@@ -1623,14 +1623,31 @@ def patch_project(req: PatchProjectReq, pid: str = PathParam(pattern=PID_PATTERN
             elif k in _CLEARABLE_FIELDS:
                 project[k] = None
 
-    try:
-        return mutate_project(pid, _apply, normalize=_apply_safe_defaults)
-    except FileNotFoundError:
-        raise HTTPException(404, "Project not found")
-    except json.JSONDecodeError:
-        raise HTTPException(400, "Project file is invalid")
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    with translation_delivery_lock(pid, blocking=False) as acquired:
+        if not acquired:
+            raise HTTPException(
+                409,
+                "Project state update is temporarily unavailable",
+            )
+        from app.api.translate import is_task_launch_pending
+
+        if is_task_launch_pending(pid):
+            raise HTTPException(
+                409,
+                "Project task launch is still being committed",
+            )
+        try:
+            return mutate_project(
+                pid,
+                _apply,
+                normalize=_apply_safe_defaults,
+            )
+        except FileNotFoundError:
+            raise HTTPException(404, "Project not found")
+        except json.JSONDecodeError:
+            raise HTTPException(400, "Project file is invalid")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
 
 @router.delete("/{pid}")

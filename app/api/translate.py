@@ -341,6 +341,11 @@ def is_task_registered(pid: str) -> bool:
         return pid in active_tasks
 
 
+def is_task_launch_pending(pid: str) -> bool:
+    """Return whether task startup may still need snapshot rollback."""
+    return bool(_registered_task_launch_stage(pid))
+
+
 def _emit_progress(pid: str, stage: str, local_pct: int, msg: str) -> None:
     """Route progress through scheduler (locked + persisted + stage-mapped)."""
     _scheduler_update_progress(pid, stage=stage, local_pct=local_pct, msg=msg)
