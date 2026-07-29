@@ -487,3 +487,146 @@ def test_reset_of_old_generation_cannot_clear_new_generation_cancel(
     finally:
         translate.unregister_task(pid, task=new_worker)
         reset_cancel(pid)
+
+
+@pytest.mark.parametrize(
+    "terminal_kind",
+    [
+        "translation_failed",
+        "translation_incomplete",
+        "burn_completed",
+        "burn_unavailable",
+        "burn_failed",
+    ],
+)
+def test_cancel_wins_generation_bound_terminal_commit(
+    tmp_project_dir,
+    terminal_kind,
+):
+    """Catches a late failure terminal write overwriting an acknowledged cancel."""
+    from app.engines.scheduler import request_cancel, reset_cancel
+    from app.engines.workflow_state import load_workflow_state, start_stage
+    from app.utils.project_store import atomic_write_json
+
+    pid = f"cancel-terminal-{terminal_kind}"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir()
+    atomic_write_json(pdir / "project.json", {
+        "id": pid,
+        "name": "Terminal race",
+        "video_path": str(pdir / "video.mp4"),
+        "status": "processing",
+        "pipeline_stage": (
+            "translate"
+            if terminal_kind.startswith("translation_")
+            else "burn"
+        ),
+        "audio_tracks": [],
+        "subtitle_tracks": [],
+    })
+    stage = (
+        "translate"
+        if terminal_kind.startswith("translation_")
+        else "burn"
+    )
+    start_stage(pid, stage)
+    worker = threading.Thread(target=lambda: None)
+    translate.try_register_task(
+        pid,
+        lambda: worker,
+        reset_cancellation=True,
+        launch_stage=stage,
+    )
+    generation = translate._registered_task_snapshot(pid)[1]
+    request_cancel(pid, generation=generation)
+
+    try:
+        if terminal_kind == "translation_failed":
+            terminal = translate._mark_translation_quality_failed(
+                pid,
+                "quality rejected",
+                quality_policy="strict",
+                quality_run_id="run",
+                quality_content_hash="sha256:content",
+                quality_source_generation_hash="sha256:source",
+                quality_configuration_hash="sha256:configuration",
+                expected_task_generation=generation,
+            )
+        elif terminal_kind == "translation_incomplete":
+            terminal = translate._mark_translation_incomplete(
+                pid,
+                "translation incomplete",
+                expected_task_generation=generation,
+            )
+        elif terminal_kind == "burn_completed":
+            terminal = translate._mark_burn_completed(
+                pid,
+                str(pdir / "output.mp4"),
+                "burn completed",
+                expected_task_generation=generation,
+            )
+        elif terminal_kind == "burn_unavailable":
+            terminal = translate._mark_burn_unavailable(
+                pid,
+                "delivery unavailable",
+                expected_task_generation=generation,
+            )
+        else:
+            terminal = translate._mark_burn_failed(
+                pid,
+                "burn failed",
+                expected_task_generation=generation,
+            )
+
+        project = json.loads(
+            (pdir / "project.json").read_text(encoding="utf-8")
+        )
+        assert terminal.cancel_won is True
+        assert terminal.fields["status"] == "cancelled"
+        assert project["status"] == "cancelled"
+        assert project["pipeline_stage"] is None
+        assert project["error"] is None
+        assert load_workflow_state(pid)["stages"][stage]["status"] == "cancelled"
+    finally:
+        translate.unregister_task(pid, task=worker)
+        reset_cancel(pid)
+
+
+def test_stale_generation_cannot_commit_terminal_failure(tmp_project_dir):
+    """Catches an old worker overwriting state owned by a replacement task."""
+    from app.utils.project_store import atomic_write_json
+
+    pid = "stale-terminal-generation"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir()
+    atomic_write_json(pdir / "project.json", {
+        "id": pid,
+        "name": "Replacement",
+        "video_path": str(pdir / "video.mp4"),
+        "status": "processing",
+        "pipeline_stage": "burn",
+        "audio_tracks": [],
+        "subtitle_tracks": [],
+    })
+    worker = threading.Thread(target=lambda: None)
+    translate.try_register_task(
+        pid,
+        lambda: worker,
+        reset_cancellation=True,
+        launch_stage="burn",
+    )
+
+    try:
+        with pytest.raises(translate.StaleTaskGeneration):
+            translate._mark_burn_failed(
+                pid,
+                "old worker failed",
+                expected_task_generation="replaced-generation",
+            )
+        project = json.loads(
+            (pdir / "project.json").read_text(encoding="utf-8")
+        )
+        assert project["status"] == "processing"
+        assert project["pipeline_stage"] == "burn"
+    finally:
+        translate.unregister_task(pid, task=worker)

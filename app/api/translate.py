@@ -238,6 +238,11 @@ def _rollback_failed_task_launch(
             if active_tasks.get(pid) is not task:
                 return
             generation = _task_generations.get(pid, "")
+            launch_stage = _task_launch_stages.get(pid, "") or "asr"
+            cancel_won = is_cancelled(
+                pid,
+                generation=generation,
+            )
             for path, content in snapshot.files.items():
                 for attempt in range(2):
                     try:
@@ -255,6 +260,32 @@ def _rollback_failed_task_launch(
                 _restore_progress_state(pid, snapshot.progress)
             except Exception as exc:
                 rollback_errors.append(exc)
+            if cancel_won:
+                try:
+                    cancelled_fields = _cancelled_project_fields(
+                        pid,
+                        launch_stage,
+                    )
+                    mutate_project(
+                        pid,
+                        lambda project: project.update(
+                            cancelled_fields
+                        ),
+                        normalize=_apply_safe_defaults,
+                    )
+                    _best_effort_cancel_workflow(pid, launch_stage)
+                    message = cancelled_fields.get(
+                        "progress_msg",
+                        "已取消",
+                    )
+                    _emit_progress(
+                        pid,
+                        launch_stage,
+                        0,
+                        message if isinstance(message, str) else "已取消",
+                    )
+                except Exception as exc:
+                    rollback_errors.append(exc)
             reset_cancel(pid, generation=generation)
             reset_cancel(pid, generation="")
             unregister_task(pid, task=task)
@@ -909,6 +940,79 @@ def _mark_project_cancelled(
                     message if isinstance(message, str) else "已取消",
                 )
             return fields
+
+
+@dataclass(frozen=True)
+class _TerminalCommitResult:
+    fields: dict
+    cancel_won: bool
+
+
+def _commit_generation_bound_terminal(
+    pid: str,
+    stage: str,
+    fields: dict,
+    *,
+    expected_task_generation: Optional[str] = None,
+    workflow_terminal: str = "",
+    workflow_detail: str = "",
+) -> _TerminalCommitResult:
+    """Commit one terminal state while cancellation and generation are stable."""
+    generation = (
+        expected_task_generation
+        if expected_task_generation is not None
+        else (_current_task_generation() or None)
+    )
+    with translation_delivery_lock(pid) as acquired:
+        if not acquired:
+            raise RuntimeError("translation delivery lock acquisition failed")
+        with _tasks_lock:
+            if (
+                generation is not None
+                and _task_generations.get(pid) != generation
+            ):
+                raise StaleTaskGeneration(pid)
+            committed_fields = dict(fields)
+            terminal = workflow_terminal
+            cancel_won = (
+                generation is not None
+                and is_cancelled(pid, generation=generation)
+            )
+            if cancel_won:
+                committed_fields = _cancelled_project_fields(pid, stage)
+                terminal = "cancelled"
+            mutate_project(
+                pid,
+                lambda project: project.update(committed_fields),
+                normalize=_apply_safe_defaults,
+            )
+            if terminal == "cancelled":
+                cancel_workflow(pid, stage)
+            elif terminal == "failed":
+                fail_stage(
+                    pid,
+                    stage,
+                    workflow_detail or committed_fields.get("error") or "failed",
+                )
+            elif terminal == "succeeded":
+                finish_stage(
+                    pid,
+                    stage,
+                    output_artifact=workflow_detail,
+                    resume_eligible=True,
+                )
+            return _TerminalCommitResult(
+                fields=dict(committed_fields),
+                cancel_won=cancel_won,
+            )
+
+
+def _raise_if_terminal_cancelled(
+    pid: str,
+    terminal: _TerminalCommitResult,
+) -> None:
+    if terminal.cancel_won:
+        raise TaskCancelled(f"cancelled by user pid={pid}")
 
 
 def _resolve_audio_track(project: dict, requested: Optional[int]) -> int:
@@ -4206,33 +4310,62 @@ def _mark_translation_quality_failed(
     quality_content_hash: str,
     quality_source_generation_hash: str = "",
     quality_configuration_hash: str = "",
-) -> None:
+    expected_task_generation: Optional[str] = None,
+) -> _TerminalCommitResult:
     detail = message.strip() or "翻译质量未达标，已停止交付。"
-    _best_effort_fail_stage(pid, "translate", detail)
-    mutate_project(
+    fields = {
+        "status": "error",
+        "error": detail,
+        "progress": 100,
+        "progress_msg": detail,
+        "translation_quality_status": "needs_review" if requires_human_review else "failed",
+        "translation_quality_message": detail,
+        "translation_quality_policy": quality_policy,
+        "translation_quality_run_id": quality_run_id,
+        "translation_quality_content_hash": quality_content_hash,
+        "translation_quality_source_generation_hash": (
+            quality_source_generation_hash
+        ),
+        "translation_quality_configuration_hash": (
+            quality_configuration_hash
+        ),
+        "pipeline_stage": None,
+        **_translation_artifact_fields(pid),
+    }
+    committed = _commit_generation_bound_terminal(
         pid,
-        lambda p: p.update({
+        "translate",
+        fields,
+        expected_task_generation=expected_task_generation,
+        workflow_terminal="failed",
+        workflow_detail=detail,
+    )
+    if not committed.cancel_won:
+        _scheduler_complete_progress(pid, detail)
+    return committed
+
+
+def _mark_translation_incomplete(
+    pid: str,
+    reason: str,
+    *,
+    expected_task_generation: Optional[str] = None,
+) -> _TerminalCommitResult:
+    detail = reason.strip() or "翻译结果不完整"
+    return _commit_generation_bound_terminal(
+        pid,
+        "translate",
+        {
             "status": "error",
             "error": detail,
-            "progress": 100,
-            "progress_msg": detail,
-            "translation_quality_status": "needs_review" if requires_human_review else "failed",
-            "translation_quality_message": detail,
-            "translation_quality_policy": quality_policy,
-            "translation_quality_run_id": quality_run_id,
-            "translation_quality_content_hash": quality_content_hash,
-            "translation_quality_source_generation_hash": (
-                quality_source_generation_hash
-            ),
-            "translation_quality_configuration_hash": (
-                quality_configuration_hash
-            ),
             "pipeline_stage": None,
+            "progress_msg": f"错误: {detail[:100]}",
             **_translation_artifact_fields(pid),
-        }),
-        normalize=_apply_safe_defaults,
+        },
+        expected_task_generation=expected_task_generation,
+        workflow_terminal="failed",
+        workflow_detail=detail,
     )
-    _scheduler_complete_progress(pid, detail)
 
 
 def _apply_nonempty_repair_results(
@@ -5554,7 +5687,7 @@ def _run_translate_pipeline(
                 raise RuntimeError(incomplete_msg)
 
             if not quality_passed:
-                _mark_translation_quality_failed(
+                terminal = _mark_translation_quality_failed(
                     pid,
                     quality_message,
                     requires_human_review=quality_decision.requires_human_review,
@@ -5565,7 +5698,14 @@ def _run_translate_pipeline(
                         source_generation_hash
                     ),
                     quality_configuration_hash=configuration_hash,
+                    expected_task_generation=(
+                        _current_task_generation() or None
+                    ),
                 )
+                if terminal.cancel_won:
+                    raise TaskCancelled(
+                        f"cancelled by user pid={pid}"
+                    )
                 return
 
             done_msg = f"翻译完成: {translated_count} 条"
@@ -5649,17 +5789,26 @@ def _run_translate_pipeline(
         _emit_progress(pid, "translate", 0, "已取消")
     except Exception as e:
         log.exception("Translation pipeline failed for %s", pid)
-        _best_effort_mark_exception(pid, "translate", e)
         error_msg = _safe_error_message(e)
         try:
-            mutate_project(pid, lambda p: p.update({"status": "error",
-                                                     "error": error_msg,
-                                                     "pipeline_stage": None,
-                                                     "progress_msg": f"错误: {_safe_error_message(e, 100)}"}),
-                           normalize=_apply_safe_defaults)
+            terminal = _mark_translation_incomplete(
+                pid,
+                error_msg,
+                expected_task_generation=(
+                    _current_task_generation() or None
+                ),
+            )
         except Exception:
-            pass
-        _emit_progress(pid, "translate", 0, f"错误: {_safe_error_message(e, 100)}")
+            terminal = {}
+        if terminal and terminal.cancel_won:
+            _emit_progress(pid, "translate", 0, "已取消")
+        else:
+            _emit_progress(
+                pid,
+                "translate",
+                0,
+                f"错误: {_safe_error_message(e, 100)}",
+            )
     finally:
         if owns_registration:
             unregister_task(pid)
@@ -5788,37 +5937,69 @@ def _mark_burn_completed(
     message: str,
     *,
     transaction_id: str = "",
-) -> None:
+    expected_task_generation: Optional[str] = None,
+) -> _TerminalCommitResult:
     artifact_fields = _translation_artifact_fields(pid)
-    mutate_project(pid, lambda p: p.update({"status": "completed",
-                                             "output_video": output_video,
-                                             "burn_output_transaction_id": (
-                                                 transaction_id or None
-                                             ),
-                                             "error": None,
-                                             "progress": 100,
-                                             "progress_msg": message,
-                                             "pipeline_stage": None,
-                                             **artifact_fields}),
-                   normalize=_apply_safe_defaults)
+    fields = {
+        "status": "completed",
+        "output_video": output_video,
+        "burn_output_transaction_id": transaction_id or None,
+        "error": None,
+        "progress": 100,
+        "progress_msg": message,
+        "pipeline_stage": None,
+        **artifact_fields,
+    }
+    return _commit_generation_bound_terminal(
+        pid,
+        "burn",
+        fields,
+        expected_task_generation=expected_task_generation,
+    )
 
 
-def _mark_burn_unavailable(pid: str, reason: str = "无字幕文件可烧录") -> None:
-    mutate_project(pid, lambda p: p.update({"status": "translated",
-                                             "error": f"字幕烧录失败: {reason}",
-                                             "progress": 100,
-                                             "progress_msg": "翻译完成，但字幕烧录失败",
-                                             "pipeline_stage": None}),
-                   normalize=_apply_safe_defaults)
+def _mark_burn_unavailable(
+    pid: str,
+    reason: str = "无字幕文件可烧录",
+    *,
+    expected_task_generation: Optional[str] = None,
+) -> _TerminalCommitResult:
+    return _commit_generation_bound_terminal(
+        pid,
+        "burn",
+        {
+            "status": "translated",
+            "error": f"字幕烧录失败: {reason}",
+            "progress": 100,
+            "progress_msg": "翻译完成，但字幕烧录失败",
+            "pipeline_stage": None,
+        },
+        expected_task_generation=expected_task_generation,
+        workflow_terminal="failed",
+        workflow_detail=reason,
+    )
 
 
-def _mark_burn_failed(pid: str, reason: str) -> None:
-    mutate_project(pid, lambda p: p.update({"status": "translated",
-                                             "error": reason,
-                                             "progress": 100,
-                                             "progress_msg": "翻译完成，但字幕烧录失败",
-                                             "pipeline_stage": None}),
-                   normalize=_apply_safe_defaults)
+def _mark_burn_failed(
+    pid: str,
+    reason: str,
+    *,
+    expected_task_generation: Optional[str] = None,
+) -> _TerminalCommitResult:
+    return _commit_generation_bound_terminal(
+        pid,
+        "burn",
+        {
+            "status": "translated",
+            "error": reason,
+            "progress": 100,
+            "progress_msg": "翻译完成，但字幕烧录失败",
+            "pipeline_stage": None,
+        },
+        expected_task_generation=expected_task_generation,
+        workflow_terminal="failed",
+        workflow_detail=reason,
+    )
 
 
 @dataclass(frozen=True)
@@ -6078,12 +6259,19 @@ def _commit_successful_burn(
                 "promoted",
             )
             project_commit_attempted = True
-            _mark_burn_completed(
+            terminal = _mark_burn_completed(
                 pid,
                 str(final_path),
                 message,
                 transaction_id=manifest["transaction_id"],
+                expected_task_generation=(
+                    _current_task_generation() or None
+                ),
             )
+            if terminal.cancel_won:
+                raise TaskCancelled(
+                    f"cancelled by user pid={pid}"
+                )
             project_commit_succeeded = True
         except Exception as exc:
             if project_commit_succeeded:
@@ -6172,7 +6360,6 @@ def _recover_pending_burn_locked(pid: str, pdir: Path) -> str:
     elif recovery == BURN_RECOVERY_REVERTED:
         reason = "上次字幕烧录中断，已安全回滚"
         _mark_burn_failed(pid, reason)
-        _best_effort_fail_stage(pid, "burn", reason)
     return recovery
 
 
@@ -6439,14 +6626,26 @@ def _run_burn_pipeline(pid: str):
             )
             if burn_result.status == "unavailable":
                 reason = burn_result.reason
-                _mark_burn_unavailable(pid, reason)
-                _best_effort_fail_stage(pid, "burn", reason)
+                terminal = _mark_burn_unavailable(
+                    pid,
+                    reason,
+                    expected_task_generation=(
+                        _current_task_generation() or None
+                    ),
+                )
+                _raise_if_terminal_cancelled(pid, terminal)
                 _scheduler_complete_progress(pid, "翻译完成 (无字幕文件可烧录)")
                 return
             if burn_result.status == "invalid_output":
                 reason = burn_result.reason
-                _mark_burn_failed(pid, reason)
-                _best_effort_fail_stage(pid, "burn", reason)
+                terminal = _mark_burn_failed(
+                    pid,
+                    reason,
+                    expected_task_generation=(
+                        _current_task_generation() or None
+                    ),
+                )
+                _raise_if_terminal_cancelled(pid, terminal)
                 _scheduler_complete_progress(pid, "翻译完成，但字幕烧录失败")
                 return
             if burn_result.status == "success":
@@ -6464,8 +6663,14 @@ def _run_burn_pipeline(pid: str):
             else:
                 # Burning failed but translation succeeded - still usable
                 reason = burn_result.reason
-                _mark_burn_failed(pid, reason)
-                _best_effort_fail_stage(pid, "burn", reason)
+                terminal = _mark_burn_failed(
+                    pid,
+                    reason,
+                    expected_task_generation=(
+                        _current_task_generation() or None
+                    ),
+                )
+                _raise_if_terminal_cancelled(pid, terminal)
                 _scheduler_complete_progress(pid, "翻译完成，但字幕烧录失败")
     except TaskCancelled as e:
         log.info("Burn pipeline cancelled for %s", pid)
@@ -6483,7 +6688,27 @@ def _run_burn_pipeline(pid: str):
             message = "已取消"
         _emit_progress(pid, "burn", 0, message)
     except Exception as e:
-        _best_effort_mark_exception(pid, "burn", e)
+        log.exception("Burn pipeline failed for %s", pid)
+        error_msg = _safe_error_message(e, 120)
+        try:
+            terminal = _mark_burn_failed(
+                pid,
+                f"字幕烧录异常: {error_msg}",
+                expected_task_generation=(
+                    _current_task_generation() or None
+                ),
+            )
+        except Exception:
+            terminal = {}
+        if terminal and terminal.cancel_won:
+            _emit_progress(pid, "burn", 0, "已取消")
+            return
+        _emit_progress(
+            pid,
+            "burn",
+            0,
+            f"错误: {_safe_error_message(e, 100)}",
+        )
         raise
 
 
@@ -6938,14 +7163,26 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                 )
                 if burn_result.status == "unavailable":
                     reason = burn_result.reason
-                    _mark_burn_unavailable(pid, reason)
-                    _best_effort_fail_stage(pid, "burn", reason)
+                    terminal = _mark_burn_unavailable(
+                        pid,
+                        reason,
+                        expected_task_generation=(
+                            _current_task_generation() or None
+                        ),
+                    )
+                    _raise_if_terminal_cancelled(pid, terminal)
                     _emit_progress(pid, "burn", 0, "字幕烧录失败 (无字幕文件)")
                     return
                 if burn_result.status == "invalid_output":
                     reason = burn_result.reason
-                    _mark_burn_failed(pid, reason)
-                    _best_effort_fail_stage(pid, "burn", reason)
+                    terminal = _mark_burn_failed(
+                        pid,
+                        reason,
+                        expected_task_generation=(
+                            _current_task_generation() or None
+                        ),
+                    )
+                    _raise_if_terminal_cancelled(pid, terminal)
                     _emit_progress(pid, "burn", 0, "字幕烧录失败")
                     return
                 if burn_result.status == "success":
@@ -6965,8 +7202,14 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                     # _run_burn_pipeline so the UI sees a real failure state
                     # instead of stale 'translated' with no error note.
                     reason = burn_result.reason
-                    _mark_burn_failed(pid, reason)
-                    _best_effort_fail_stage(pid, "burn", reason)
+                    terminal = _mark_burn_failed(
+                        pid,
+                        reason,
+                        expected_task_generation=(
+                            _current_task_generation() or None
+                        ),
+                    )
+                    _raise_if_terminal_cancelled(pid, terminal)
                     _emit_progress(pid, "burn", 0, "字幕烧录失败")
         except TaskCancelled as e:
             log.info("Standalone burn cancelled for %s", pid)
@@ -6984,17 +7227,26 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                 message = "已取消"
             _emit_progress(pid, "burn", 0, message)
         except Exception as e:
-            _best_effort_mark_exception(pid, "burn", e)
             error_msg = _safe_error_message(e, 120)
             try:
-                mutate_project(pid, lambda p: p.update({"status": "translated",
-                                                         "error": f"字幕烧录异常: {error_msg}",
-                                                         "pipeline_stage": None,
-                                                         "progress_msg": f"错误: {_safe_error_message(e, 100)}"}),
-                               normalize=_apply_safe_defaults)
+                terminal = _mark_burn_failed(
+                    pid,
+                    f"字幕烧录异常: {error_msg}",
+                    expected_task_generation=(
+                        _current_task_generation() or None
+                    ),
+                )
             except Exception:
-                pass
-            _emit_progress(pid, "burn", 0, f"错误: {_safe_error_message(e, 100)}")
+                terminal = {}
+            if terminal and terminal.cancel_won:
+                _emit_progress(pid, "burn", 0, "已取消")
+            else:
+                _emit_progress(
+                    pid,
+                    "burn",
+                    0,
+                    f"错误: {_safe_error_message(e, 100)}",
+                )
         finally:
             unregister_task(pid)
 

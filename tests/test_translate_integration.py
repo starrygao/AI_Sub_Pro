@@ -1769,6 +1769,65 @@ def test_cancel_during_registered_launch_window_cancels_new_task(
             api_translate.active_tasks.pop(pid, None)
 
 
+def test_cancel_ack_survives_registered_thread_start_failure(
+    tmp_path,
+    monkeypatch,
+):
+    """Catches launch rollback resurrecting the pre-cancel project state."""
+    from app.api import projects as projects_api
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "cancel-ack-start-failure"
+    pdir = tmp_path / pid
+    pdir.mkdir()
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "Cancel launch",
+        "video_path": str(pdir / "video.mp4"),
+        "status": "asr_done",
+        "source_type": "subtitle",
+        "target_language": "简体中文",
+        "audio_tracks": [],
+        "subtitle_tracks": [],
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(projects_api, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate, "require_translation_ready", lambda: None)
+
+    cancel_response = {}
+
+    def cancel_then_fail(task_pid, task):
+        cancel_response.update(api_translate.cancel_task(pid=task_pid))
+        raise RuntimeError("injected thread start failure after cancel ack")
+
+    monkeypatch.setattr(
+        api_translate,
+        "_start_registered_task",
+        cancel_then_fail,
+    )
+
+    with pytest.raises(RuntimeError, match="after cancel ack"):
+        api_translate.start_translate(
+            pid=pid,
+            req=api_translate.TranslateRequest(target_language="简体中文"),
+        )
+
+    project = json.loads(
+        (pdir / "project.json").read_text(encoding="utf-8")
+    )
+    assert cancel_response["status"] == "cancelled"
+    assert project["status"] == "cancelled"
+    assert project["pipeline_stage"] is None
+    assert project["error"] is None
+    assert api_translate.is_task_registered(pid) is False
+
+
 @pytest.mark.parametrize(
     ("start_kind", "old_status"),
     [
