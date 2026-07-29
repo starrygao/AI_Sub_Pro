@@ -2519,6 +2519,11 @@ _TARGETED_SEMANTIC_NEGATION_TOKENS = frozenset({
     "لن",
     "ليس",
 })
+_TARGETED_SEMANTIC_SINGLE_CHAR_NEGATION_TOKENS = frozenset(
+    token
+    for token in _TARGETED_SEMANTIC_NEGATION_TOKENS
+    if len(token) == 1
+)
 _TARGETED_SEMANTIC_UNCASED_NUMERAL_TOKENS = frozenset(
     "零〇一二三四五六七八九十百千万亿兆两"
     "壹贰貳叁參肆伍陆陸柒捌玖拾佰仟萬億"
@@ -2535,7 +2540,7 @@ class _SemanticTextExcerpt:
     raw_numeric: bool
 
 
-def _semantic_raw_character_kind(character: str) -> str:
+def _semantic_expanded_character_kind(character: str) -> str:
     category_group = unicodedata.category(character)[0]
     if category_group == "N":
         return "numeric"
@@ -2547,6 +2552,8 @@ def _semantic_raw_character_kind(character: str) -> str:
         )
     if category_group == "M":
         return "mark"
+    if category_group == "S":
+        return "symbol"
     return ""
 
 
@@ -2558,9 +2565,10 @@ def _semantic_text_excerpt_records(
     excerpts = []
     current = []
     current_kind = ""
+    current_raw_numeric = False
 
     def flush_current():
-        nonlocal current, current_kind
+        nonlocal current, current_kind, current_raw_numeric
         if not current:
             return
         normalized = unicodedata.normalize(
@@ -2573,28 +2581,42 @@ def _semantic_text_excerpt_records(
         normalized_text = "".join(
             character
             for character in normalized
-            if unicodedata.category(character)[0] in {"L", "M", "N"}
+            if unicodedata.category(character)[0] in {"L", "M", "N", "S"}
         )
         if normalized_text:
             excerpts.append(_SemanticTextExcerpt(
                 text=normalized_text,
-                raw_numeric=current_kind == "numeric",
+                raw_numeric=current_raw_numeric,
             ))
         current = []
         current_kind = ""
+        current_raw_numeric = False
 
-    for character in value:
-        character_kind = _semantic_raw_character_kind(character)
-        if character_kind == "mark" and current:
+    for raw_character in value:
+        raw_numeric = unicodedata.category(raw_character)[0] == "N"
+        expanded = unicodedata.normalize(
+            "NFKC",
+            unicodedata.normalize(
+                "NFKC",
+                raw_character,
+            ).casefold(),
+        )
+        for character in expanded:
+            character_kind = _semantic_expanded_character_kind(character)
+            if character_kind == "mark" and current:
+                current.append(character)
+                current_raw_numeric = (
+                    current_raw_numeric or raw_numeric
+                )
+                continue
+            if not character_kind:
+                flush_current()
+                continue
+            if current_kind and character_kind != current_kind:
+                flush_current()
+            current_kind = character_kind
+            current_raw_numeric = current_raw_numeric or raw_numeric
             current.append(character)
-            continue
-        if not character_kind:
-            flush_current()
-            continue
-        if current_kind and character_kind != current_kind:
-            flush_current()
-        current_kind = character_kind
-        current.append(character)
     flush_current()
     return tuple(excerpts)
 
@@ -2754,20 +2776,27 @@ def _semantic_evidence_is_standard_focused(match: dict) -> bool:
     )
 
 
-def _semantic_excerpt_strong_taxonomy_signal(
+def _semantic_excerpt_strong_taxonomy_signals(
     excerpt: _SemanticTextExcerpt,
-) -> str:
-    if excerpt.raw_numeric or all(
+) -> tuple[str, ...]:
+    signals = []
+    if excerpt.raw_numeric or any(
         unicodedata.category(character)[0] == "N"
         for character in excerpt.text
-    ) or all(
+    ) or any(
         character in _TARGETED_SEMANTIC_UNCASED_NUMERAL_TOKENS
         for character in excerpt.text
     ):
-        return "quantity"
-    if excerpt.text in _TARGETED_SEMANTIC_NEGATION_TOKENS:
-        return "negation/polarity/condition"
-    return ""
+        signals.append("quantity")
+    if (
+        excerpt.text in _TARGETED_SEMANTIC_NEGATION_TOKENS
+        or any(
+            character in _TARGETED_SEMANTIC_SINGLE_CHAR_NEGATION_TOKENS
+            for character in excerpt.text
+        )
+    ):
+        signals.append("negation/polarity/condition")
+    return tuple(signals)
 
 
 def _semantic_evidence_strong_taxonomy_signals(
@@ -2775,9 +2804,9 @@ def _semantic_evidence_strong_taxonomy_signals(
 ) -> tuple[str, ...]:
     signals = []
     for excerpt in match["excerpt_records"]:
-        signal = _semantic_excerpt_strong_taxonomy_signal(excerpt)
-        if signal:
-            signals.append(signal)
+        signals.extend(
+            _semantic_excerpt_strong_taxonomy_signals(excerpt)
+        )
     return tuple(signals)
 
 
@@ -2791,7 +2820,7 @@ def _semantic_evidence_is_single_uncased_entity_candidate(
     if (
         _semantic_excerpt_length(excerpt.text) == 1
         and not _semantic_excerpt_uses_token_boundaries(excerpt.text)
-        and not _semantic_excerpt_strong_taxonomy_signal(excerpt)
+        and not _semantic_excerpt_strong_taxonomy_signals(excerpt)
     ):
         return True
     return False
@@ -2876,6 +2905,7 @@ def _targeted_semantic_prompt(target_language: str) -> str:
         "target_evidence 必须分别逐字引用该 id 的 original 和 draft 真实片段，不得引用 "
         "bounded_context、其他 id 或占位文本。",
         "多处证据可用省略号或标点分隔且每段都必须真实出现；证据不得包含控制字符或不可见格式字符。"
+        "货币、单位、emoji、音乐符号和标记符号等语义符号不得省略；"
         "OK/none 的 source_evidence 和 target_evidence 必须分别完整覆盖 original 和 draft；"
         "MISMATCH/UNCERTAIN 的每个聚焦片段都必须与 taxonomy 一致，混合 taxonomy 信号必须拒绝。",
         "语义完全保真时 taxonomy 使用 none；任何信息不足、指代不明或证据不足必须返回 UNCERTAIN。",

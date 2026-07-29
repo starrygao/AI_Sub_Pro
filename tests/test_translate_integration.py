@@ -6235,6 +6235,239 @@ def test_targeted_semantic_combining_mark_evidence_survives_segmentation():
 
 @pytest.mark.parametrize(
     (
+        "source",
+        "draft",
+        "source_evidence",
+        "target_evidence",
+    ),
+    [
+        (
+            "Code Ⓐ is valid.",
+            "代码有效。",
+            "Code is valid",
+            "代码有效",
+        ),
+        (
+            "Weight: 5㎏.",
+            "重量：5。",
+            "Weight: 5",
+            "重量：5",
+        ),
+        (
+            "Play ♪ now.",
+            "现在播放 ♪。",
+            "Play now",
+            "现在播放",
+        ),
+        (
+            "<i>Hello</i>",
+            "<i>你好</i>",
+            "i Hello i",
+            "i 你好 i",
+        ),
+    ],
+)
+def test_targeted_semantic_double_ok_rejects_compatibility_symbol_omission(
+    source,
+    draft,
+    source_evidence,
+    target_evidence,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source=source,
+            draft=draft,
+            source_evidence=source_evidence,
+            target_evidence=target_evidence,
+            verdict="OK",
+            taxonomy="none",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert len(traces) == 2
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
+@pytest.mark.parametrize(
+    (
+        "source",
+        "draft",
+        "source_evidence",
+        "target_evidence",
+    ),
+    [
+        (
+            "Code Ⓐ is valid.",
+            "代码Ａ有效。",
+            "Code A is valid",
+            "代码A有效",
+        ),
+        (
+            "Weight: 5㎏.",
+            "重量：5kg。",
+            "Weight: 5 kg",
+            "重量：5㎏",
+        ),
+        (
+            "Call ℡ now.",
+            "立即拨打TEL。",
+            "Call TEL now",
+            "立即拨打℡",
+        ),
+    ],
+)
+def test_targeted_semantic_exact_ok_accepts_nfkc_equivalent_symbols(
+    source,
+    draft,
+    source_evidence,
+    target_evidence,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source=source,
+            draft=draft,
+            source_evidence=source_evidence,
+            target_evidence=target_evidence,
+            verdict="OK",
+            taxonomy="none",
+        )
+    )
+
+    assert issues == []
+    assert verified_ids == {502}
+    assert bool(verified_hashes) is True
+    assert all(trace["coverage_complete"] is True for trace in traces)
+
+
+@pytest.mark.parametrize(
+    "source_evidence",
+    [
+        "Pay 😀",
+        "Pay $",
+    ],
+)
+def test_targeted_semantic_double_ok_rejects_currency_or_emoji_omission(
+    source_evidence,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="Pay $ 😀.",
+            draft="支付 $ 😀。",
+            source_evidence=source_evidence,
+            target_evidence="支付 $ 😀",
+            verdict="OK",
+            taxonomy="none",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
+def test_targeted_semantic_exact_ok_preserves_currency_and_emoji():
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="Pay $ 😀.",
+            draft="支付 $ 😀。",
+            source_evidence="Pay $ 😀",
+            target_evidence="支付 $ 😀",
+            verdict="OK",
+            taxonomy="none",
+        )
+    )
+
+    assert issues == []
+    assert verified_ids == {502}
+    assert bool(verified_hashes) is True
+    assert all(trace["coverage_complete"] is True for trace in traces)
+
+
+@pytest.mark.parametrize(
+    "verdict",
+    [
+        "MISMATCH: entity changed",
+        "UNCERTAIN: entity may have changed",
+    ],
+)
+def test_targeted_semantic_chinese_numeral_inside_record_rejects_entity(
+    verdict,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="Choose one item.",
+            draft="选择一项。",
+            source_evidence="one item",
+            target_evidence="一项",
+            verdict=verdict,
+            taxonomy="entity",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected_issue_type"),
+    [
+        ("MISMATCH: quantity changed", "semantic_mismatch"),
+        ("UNCERTAIN: quantity may have changed", "semantic_uncertain"),
+    ],
+)
+def test_targeted_semantic_chinese_numeral_inside_record_allows_quantity(
+    verdict,
+    expected_issue_type,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="Choose one item.",
+            draft="选择一项。",
+            source_evidence="one item",
+            target_evidence="一项",
+            verdict=verdict,
+            taxonomy="quantity",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == [expected_issue_type]
+    assert all(trace["coverage_complete"] is True for trace in traces)
+
+
+@pytest.mark.parametrize(
+    "taxonomy",
+    ["negation/polarity/condition", "quantity"],
+)
+def test_targeted_semantic_mixed_signals_inside_uncased_record_fail_schema(
+    taxonomy,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="Do not choose one item.",
+            draft="不选一项。",
+            source_evidence="not ... one item",
+            target_evidence="不选一项",
+            verdict="UNCERTAIN: mixed signals",
+            taxonomy=taxonomy,
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
+@pytest.mark.parametrize(
+    (
         "verdict",
         "taxonomy",
         "source_evidence",
