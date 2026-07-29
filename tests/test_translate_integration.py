@@ -2051,15 +2051,220 @@ def test_burn_snapshot_uses_bytes_from_same_validation_read(
     assert project["status"] == "completed"
 
 
+def _assert_no_burn_transaction_files(pdir):
+    assert list(pdir.glob(".burn-subtitle.*")) == []
+    assert list(pdir.glob(".original_subtitled.mp4.burn.*")) == []
+    assert list(pdir.glob(".original_subtitled.mp4.rollback.*")) == []
+
+
+@pytest.mark.parametrize("existing_output", [None, b"previous-burn"])
+@pytest.mark.parametrize("commit_applied", [False, True])
+def test_burn_project_commit_failure_rolls_back_promoted_video(
+    tmp_path,
+    monkeypatch,
+    existing_output,
+    commit_applied,
+):
+    pid = (
+        f"burncommitrollback-first-{commit_applied}"
+        if existing_output is None
+        else f"burncommitrollback-replace-{commit_applied}"
+    )
+    api_translate, pdir, project_path = (
+        _seed_current_certified_burn_project(
+            tmp_path,
+            monkeypatch,
+            pid=pid,
+        )
+    )
+    final_path = pdir / "original_subtitled.mp4"
+    if existing_output is not None:
+        final_path.write_bytes(existing_output)
+
+    def fake_burn(video, tracks, output, **kwargs):
+        Path(output).write_bytes(b"new-burn")
+        return True
+
+    real_mark_burn_completed = api_translate._mark_burn_completed
+
+    def fail_project_commit(*args, **kwargs):
+        if commit_applied:
+            real_mark_burn_completed(*args, **kwargs)
+        raise OSError("injected burn project commit failure")
+
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(
+        api_translate,
+        "_mark_burn_completed",
+        fail_project_commit,
+    )
+
+    with pytest.raises(OSError, match="burn project commit failure"):
+        api_translate._run_burn_pipeline(pid)
+
+    if existing_output is None:
+        assert not final_path.exists()
+    else:
+        assert final_path.read_bytes() == existing_output
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    assert project["status"] != "completed"
+    _assert_no_burn_transaction_files(pdir)
+
+
+@pytest.mark.parametrize("existing_output", [None, b"previous-burn"])
+def test_burn_promotion_failure_preserves_prior_video_and_cleans_transaction(
+    tmp_path,
+    monkeypatch,
+    existing_output,
+):
+    pid = (
+        "burnpromotionfailure-first"
+        if existing_output is None
+        else "burnpromotionfailure-replace"
+    )
+    api_translate, pdir, project_path = (
+        _seed_current_certified_burn_project(
+            tmp_path,
+            monkeypatch,
+            pid=pid,
+        )
+    )
+    final_path = pdir / "original_subtitled.mp4"
+    if existing_output is not None:
+        final_path.write_bytes(existing_output)
+    real_replace = api_translate.os.replace
+
+    def fail_burn_promotion(source, destination):
+        source_path = Path(source)
+        destination_path = Path(destination)
+        if (
+            source_path.name.startswith(
+                ".original_subtitled.mp4.burn."
+            )
+            and destination_path == final_path
+        ):
+            raise OSError("injected burn promotion failure")
+        return real_replace(source, destination)
+
+    def fake_burn(video, tracks, output, **kwargs):
+        Path(output).write_bytes(b"new-burn")
+        return True
+
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(api_translate.os, "replace", fail_burn_promotion)
+
+    with pytest.raises(OSError, match="burn promotion failure"):
+        api_translate._run_burn_pipeline(pid)
+
+    if existing_output is None:
+        assert not final_path.exists()
+    else:
+        assert final_path.read_bytes() == existing_output
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    assert project["status"] != "completed"
+    _assert_no_burn_transaction_files(pdir)
+
+
+def test_burn_recovery_snapshot_failure_leaves_prior_video_untouched(
+    tmp_path,
+    monkeypatch,
+):
+    pid = "burnrecoverysnapshotfailure"
+    api_translate, pdir, project_path = (
+        _seed_current_certified_burn_project(
+            tmp_path,
+            monkeypatch,
+            pid=pid,
+        )
+    )
+    final_path = pdir / "original_subtitled.mp4"
+    final_path.write_bytes(b"previous-burn")
+    real_replace = api_translate.os.replace
+
+    def fail_recovery_snapshot(source, destination):
+        source_path = Path(source)
+        destination_path = Path(destination)
+        if (
+            source_path == final_path
+            and destination_path.name.startswith(
+                ".original_subtitled.mp4.rollback."
+            )
+        ):
+            raise OSError("injected burn recovery snapshot failure")
+        return real_replace(source, destination)
+
+    def fake_burn(video, tracks, output, **kwargs):
+        Path(output).write_bytes(b"new-burn")
+        return True
+
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(
+        api_translate.os,
+        "replace",
+        fail_recovery_snapshot,
+    )
+
+    with pytest.raises(OSError, match="recovery snapshot failure"):
+        api_translate._run_burn_pipeline(pid)
+
+    assert final_path.read_bytes() == b"previous-burn"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    assert project["status"] != "completed"
+    _assert_no_burn_transaction_files(pdir)
+
+
+@pytest.mark.parametrize("existing_output", [None, b"previous-burn"])
+def test_successful_burn_commits_video_and_cleans_transaction_files(
+    tmp_path,
+    monkeypatch,
+    existing_output,
+):
+    pid = (
+        "burntransactionsuccess-first"
+        if existing_output is None
+        else "burntransactionsuccess-replace"
+    )
+    api_translate, pdir, project_path = (
+        _seed_current_certified_burn_project(
+            tmp_path,
+            monkeypatch,
+            pid=pid,
+        )
+    )
+    final_path = pdir / "original_subtitled.mp4"
+    if existing_output is not None:
+        final_path.write_bytes(existing_output)
+
+    def fake_burn(video, tracks, output, **kwargs):
+        Path(output).write_bytes(b"new-burn")
+        return True
+
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+
+    api_translate._run_burn_pipeline(pid)
+
+    assert final_path.read_bytes() == b"new-burn"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    assert project["status"] == "completed"
+    assert project["output_video"] == str(final_path)
+    _assert_no_burn_transaction_files(pdir)
+
+
+@pytest.mark.parametrize("existing_output", [None, b"previous-burn"])
 def test_cancel_during_burn_is_not_blocked_and_aborts_before_output_commit(
     tmp_path,
     monkeypatch,
+    existing_output,
 ):
     import threading
 
     from app.engines.scheduler import reset_cancel
 
-    pid = "cancelburnoutsidelock"
+    pid = (
+        "cancelburnoutsidelock-first"
+        if existing_output is None
+        else "cancelburnoutsidelock-replace"
+    )
     api_translate, pdir, _ = _seed_current_certified_burn_project(
         tmp_path,
         monkeypatch,
@@ -2067,6 +2272,9 @@ def test_cancel_during_burn_is_not_blocked_and_aborts_before_output_commit(
     )
     original_path = pdir / "bilingual.srt"
     certified_bytes = original_path.read_bytes()
+    final_path = pdir / "original_subtitled.mp4"
+    if existing_output is not None:
+        final_path.write_bytes(existing_output)
     burn_entered = threading.Event()
     release_burn = threading.Event()
     cancel_done = threading.Event()
@@ -2120,7 +2328,11 @@ def test_cancel_during_burn_is_not_blocked_and_aborts_before_output_commit(
             (pdir / "project.json").read_text(encoding="utf-8")
         )
         assert project["status"] == "translated"
-        assert not (pdir / "original_subtitled.mp4").exists()
+        if existing_output is None:
+            assert not final_path.exists()
+        else:
+            assert final_path.read_bytes() == existing_output
+        _assert_no_burn_transaction_files(pdir)
     finally:
         reset_cancel(pid)
 

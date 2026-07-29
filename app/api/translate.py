@@ -5601,6 +5601,58 @@ def _discard_burn_output_stage(result: _BurnDeliveryResult) -> None:
         )
 
 
+def _new_burn_output_backup(final_path: Path) -> Path:
+    with tempfile.NamedTemporaryFile(
+        "wb",
+        dir=final_path.parent,
+        prefix=f".{final_path.name}.rollback.",
+        suffix=".mp4",
+        delete=False,
+    ) as handle:
+        return Path(handle.name)
+
+
+def _rollback_burn_commit(
+    pid: str,
+    *,
+    final_path: Path,
+    backup_path: Optional[Path],
+    had_previous_output: bool,
+    previous_output_backed_up: bool,
+    prior_project: dict,
+    restore_project: bool,
+) -> list[Exception]:
+    errors = []
+    try:
+        if previous_output_backed_up:
+            if (
+                backup_path is None
+                or backup_path.is_symlink()
+                or not backup_path.is_file()
+            ):
+                raise RuntimeError("prior burn output recovery file is missing")
+            _unlink_delivery_path(final_path)
+            os.replace(backup_path, final_path)
+        elif not had_previous_output:
+            _unlink_delivery_path(final_path)
+    except Exception as exc:
+        errors.append(exc)
+
+    if restore_project:
+        try:
+            def restore_prior_project(project: dict) -> None:
+                project.clear()
+                project.update(prior_project)
+
+            mutate_project(
+                pid,
+                restore_prior_project,
+            )
+        except Exception as exc:
+            errors.append(exc)
+    return errors
+
+
 def _commit_successful_burn(
     pid: str,
     result: _BurnDeliveryResult,
@@ -5630,9 +5682,64 @@ def _commit_successful_burn(
             or not stage.is_file()
         ):
             raise RuntimeError("burn output commit path is invalid")
-        os.replace(stage, final_path)
-        _mark_burn_completed(pid, str(final_path), message)
-        return str(final_path)
+        prior_project = _load_project(pid)
+        had_previous_output = final_path.is_file()
+        backup_path = (
+            _new_burn_output_backup(final_path)
+            if had_previous_output
+            else None
+        )
+        previous_output_backed_up = False
+        project_commit_attempted = False
+        preserve_backup = False
+        try:
+            if backup_path is not None:
+                os.replace(final_path, backup_path)
+                previous_output_backed_up = True
+            os.replace(stage, final_path)
+            project_commit_attempted = True
+            _mark_burn_completed(pid, str(final_path), message)
+            if backup_path is not None:
+                _unlink_delivery_path(backup_path)
+            return str(final_path)
+        except Exception as exc:
+            rollback_errors = _rollback_burn_commit(
+                pid,
+                final_path=final_path,
+                backup_path=backup_path,
+                had_previous_output=had_previous_output,
+                previous_output_backed_up=previous_output_backed_up,
+                prior_project=prior_project,
+                restore_project=project_commit_attempted,
+            )
+            if rollback_errors:
+                preserve_backup = (
+                    previous_output_backed_up
+                    and backup_path is not None
+                    and _path_lexists(backup_path)
+                )
+                details = "; ".join(
+                    _safe_error_message(error)
+                    for error in rollback_errors
+                )
+                raise RuntimeError(
+                    f"burn output commit failed and rollback failed: {details}"
+                ) from exc
+            raise
+        finally:
+            if (
+                not preserve_backup
+                and backup_path is not None
+                and _path_lexists(backup_path)
+            ):
+                try:
+                    _unlink_delivery_path(backup_path)
+                except Exception as cleanup_exc:
+                    log.warning(
+                        "failed to clean burn output recovery file %s: %s",
+                        backup_path.name,
+                        cleanup_exc,
+                    )
 
 
 def _burn_validated_translation_delivery(
