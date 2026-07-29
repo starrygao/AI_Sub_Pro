@@ -5415,6 +5415,30 @@ def _build_bilingual_tracks(pid: str):
     return tracks
 
 
+def _build_bilingual_track_styles(
+    translated_path: Path,
+    source_path: Path,
+) -> list[SubtitleTrack]:
+    """Build trailer track styles without reading subtitle artifacts."""
+    zh_size, en_size = compute_font_sizes(1080)
+    return [
+        SubtitleTrack(
+            path=str(translated_path),
+            font_name=resolve_font("zh"),
+            font_size=zh_size,
+            outline_width=2.0,
+            margin_v=70,
+        ),
+        SubtitleTrack(
+            path=str(source_path),
+            font_name=resolve_font("en"),
+            font_size=en_size,
+            outline_width=1.5,
+            margin_v=30,
+        ),
+    ]
+
+
 def _build_upload_legacy_track(srt_path: str) -> "SubtitleTrack":
     """Preserve the pre-Phase-3 visual style for upload projects.
 
@@ -5507,13 +5531,18 @@ class _BurnDeliveryResult:
 def _snapshot_burn_tracks(
     pdir: Path,
     tracks: list[SubtitleTrack],
+    track_bytes: Optional[list[bytes]] = None,
 ) -> tuple[list[SubtitleTrack], list[Path]]:
+    if track_bytes is not None and len(track_bytes) != len(tracks):
+        raise RuntimeError("burn subtitle snapshot payload is incomplete")
     snapshots = []
     snapshot_tracks = []
     try:
         for index, track in enumerate(tracks):
             source = Path(track.path)
-            if source.is_symlink() or not source.is_file():
+            if track_bytes is None and (
+                source.is_symlink() or not source.is_file()
+            ):
                 raise RuntimeError(
                     "burn subtitle source is not a regular file"
                 )
@@ -5529,7 +5558,11 @@ def _snapshot_burn_tracks(
             ) as handle:
                 snapshot = Path(handle.name)
                 snapshots.append(snapshot)
-                handle.write(source.read_bytes())
+                handle.write(
+                    source.read_bytes()
+                    if track_bytes is None
+                    else track_bytes[index]
+                )
             os.chmod(snapshot, 0o400)
             snapshot_tracks.append(
                 replace(track, path=str(snapshot))
@@ -5627,17 +5660,41 @@ def _burn_validated_translation_delivery(
             )
 
         if project.get("source_type") == "trailer":
-            if not _first_safe_project_artifact(
-                pid,
-                ["translated.srt", "filtered.srt"],
-            )[0]:
-                return _BurnDeliveryResult(
-                    "unavailable",
-                    reason="无字幕文件可烧录",
+            translated_bytes = validation.delivery_artifact_bytes.get(
+                "translated.srt"
+            )
+            source_bytes = validation.source_artifact_bytes
+            if translated_bytes is not None and source_bytes is not None:
+                zh_path = _write_generated_project_artifact(
+                    pid,
+                    "zh.srt",
+                    translated_bytes,
+                    pdir,
                 )
-            tracks = _build_bilingual_tracks(pid)
+                en_path = _write_generated_project_artifact(
+                    pid,
+                    "en.srt",
+                    source_bytes,
+                    pdir,
+                )
+                tracks = _build_bilingual_track_styles(
+                    zh_path,
+                    en_path,
+                )
+                certified_track_bytes = [translated_bytes, source_bytes]
+            else:
+                if not _first_safe_project_artifact(
+                    pid,
+                    ["translated.srt", "filtered.srt"],
+                )[0]:
+                    return _BurnDeliveryResult(
+                        "unavailable",
+                        reason="无字幕文件可烧录",
+                    )
+                tracks = _build_bilingual_tracks(pid)
+                certified_track_bytes = None
         else:
-            _, srt_path = _first_safe_project_artifact(
+            artifact_name, srt_path = _first_safe_project_artifact(
                 pid,
                 ["bilingual.srt", "translated.srt"],
             )
@@ -5647,6 +5704,12 @@ def _burn_validated_translation_delivery(
                     reason="无字幕文件可烧录",
                 )
             tracks = [_build_upload_legacy_track(str(srt_path))]
+            certified_bytes = validation.delivery_artifact_bytes.get(
+                artifact_name
+            )
+            certified_track_bytes = (
+                [certified_bytes] if certified_bytes is not None else None
+            )
 
         video_path = project["video_path"]
         base_name = os.path.splitext(os.path.basename(video_path))[0]
@@ -5659,7 +5722,11 @@ def _burn_validated_translation_delivery(
                 "invalid_output",
                 reason="字幕烧录失败: 输出路径无效",
             )
-        tracks, snapshots = _snapshot_burn_tracks(pdir, tracks)
+        tracks, snapshots = _snapshot_burn_tracks(
+            pdir,
+            tracks,
+            certified_track_bytes,
+        )
         try:
             staged_output = _new_burn_output_stage(pdir, output_path)
         except Exception:

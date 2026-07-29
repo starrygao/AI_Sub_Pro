@@ -1,13 +1,13 @@
 """Authoritative validation for certified translation delivery artifacts."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import hashlib
 import json
 from pathlib import Path
 from typing import Optional
 
 from app.utils.subtitle_generation import (
-    subtitle_file_hash,
-    subtitle_source_generation_hash,
+    subtitle_source_generation_snapshot,
 )
 from app.utils.translation_delivery import translation_delivery_is_invalid
 from app.utils.translation_quality_gate import validate_quality_report
@@ -23,6 +23,9 @@ class TranslationDeliveryValidation:
     passed: bool
     message: str
     report: Optional[dict] = None
+    source_artifact_name: str = ""
+    source_artifact_bytes: Optional[bytes] = None
+    delivery_artifact_bytes: dict[str, bytes] = field(default_factory=dict)
 
 
 def project_expects_translation_certification(
@@ -134,7 +137,11 @@ def validate_translation_delivery(
             "translation_quality_source_generation_hash"
         )
         report_source_hash = report.get("source_generation_hash")
-        current_source_hash = subtitle_source_generation_hash(project_path)
+        (
+            current_source_hash,
+            source_artifact_name,
+            source_artifact_bytes,
+        ) = subtitle_source_generation_snapshot(project_path)
         if (
             not isinstance(project_source_hash, str)
             or not project_source_hash.strip()
@@ -161,13 +168,24 @@ def validate_translation_delivery(
                 "Translation delivery artifact identity set is incomplete",
                 report,
             )
+        delivery_artifact_bytes = {}
         for artifact_name in _DELIVERY_ARTIFACTS:
             expected_hash = artifact_hashes.get(artifact_name)
+            artifact_path = project_path / artifact_name
+            artifact_bytes = (
+                artifact_path.read_bytes()
+                if artifact_path.is_file() and not artifact_path.is_symlink()
+                else None
+            )
+            current_hash = (
+                f"sha256:{hashlib.sha256(artifact_bytes).hexdigest()}"
+                if artifact_bytes is not None
+                else ""
+            )
             if (
                 not isinstance(expected_hash, str)
                 or not expected_hash.strip()
-                or subtitle_file_hash(project_path / artifact_name)
-                != expected_hash
+                or current_hash != expected_hash
             ):
                 return TranslationDeliveryValidation(
                     True,
@@ -176,6 +194,18 @@ def validate_translation_delivery(
                     "Translation delivery artifact identity does not match certification",
                     report,
                 )
+            delivery_artifact_bytes[artifact_name] = artifact_bytes
+
+        return TranslationDeliveryValidation(
+            True,
+            True,
+            decision.passed,
+            decision.message,
+            report,
+            source_artifact_name,
+            source_artifact_bytes,
+            delivery_artifact_bytes,
+        )
 
     return TranslationDeliveryValidation(
         True, True, decision.passed, decision.message, report

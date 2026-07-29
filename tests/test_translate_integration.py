@@ -1984,6 +1984,73 @@ def test_burn_reads_immutable_subtitle_snapshot_and_cleans_it_on_success(
     assert Path(project["output_video"]).read_bytes() == b"burned-from-snapshot"
 
 
+@pytest.mark.parametrize("source_type", ["upload", "trailer"])
+def test_burn_snapshot_uses_bytes_from_same_validation_read(
+    tmp_path,
+    monkeypatch,
+    source_type,
+):
+    pid = f"burnvalidationbytes-{source_type}"
+    api_translate, pdir, project_path = (
+        _seed_current_certified_burn_project(
+            tmp_path,
+            monkeypatch,
+            pid=pid,
+        )
+    )
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    project["source_type"] = source_type
+    project_path.write_text(json.dumps(project), encoding="utf-8")
+    certified = (
+        [(pdir / "bilingual.srt").read_bytes()]
+        if source_type == "upload"
+        else [
+            (pdir / "translated.srt").read_bytes(),
+            (pdir / "filtered.srt").read_bytes(),
+        ]
+    )
+    real_validate = api_translate.validate_translation_delivery
+
+    def tamper_after_validation(*args, **kwargs):
+        validation = real_validate(*args, **kwargs)
+        assert validation.valid
+        if source_type == "upload":
+            (pdir / "bilingual.srt").write_text(
+                "1\n00:00:00,000 --> 00:00:01,000\n验证后篡改双语字幕\n",
+                encoding="utf-8",
+            )
+        else:
+            (pdir / "translated.srt").write_text(
+                "1\n00:00:00,000 --> 00:00:01,000\n验证后篡改译文\n",
+                encoding="utf-8",
+            )
+            (pdir / "filtered.srt").write_text(
+                "1\n00:00:00,000 --> 00:00:01,000\nTampered after validation.\n",
+                encoding="utf-8",
+            )
+        return validation
+
+    consumed = []
+
+    def fake_burn(video, tracks, output, **kwargs):
+        consumed.extend(Path(track.path).read_bytes() for track in tracks)
+        Path(output).write_bytes(b"burned-certified-generation")
+        return True
+
+    monkeypatch.setattr(
+        api_translate,
+        "validate_translation_delivery",
+        tamper_after_validation,
+    )
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+
+    api_translate._run_burn_pipeline(pid)
+
+    assert consumed == certified
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    assert project["status"] == "completed"
+
+
 def test_cancel_during_burn_is_not_blocked_and_aborts_before_output_commit(
     tmp_path,
     monkeypatch,

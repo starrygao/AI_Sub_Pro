@@ -12,6 +12,14 @@ def subtitle_file_hash(path: Path) -> str:
 
 
 def subtitle_source_generation_hash(project_path: Path) -> str:
+    generation_hash, _, _ = subtitle_source_generation_snapshot(project_path)
+    return generation_hash
+
+
+def subtitle_source_generation_snapshot(
+    project_path: Path,
+) -> tuple[str, str, bytes]:
+    """Return the source identity and the exact source bytes used to compute it."""
     project_path = Path(project_path)
     source_path = next(
         (
@@ -23,8 +31,9 @@ def subtitle_source_generation_hash(project_path: Path) -> str:
         None,
     )
     if source_path is None:
-        return ""
-    payload = source_path.read_bytes()
+        return "", "", b""
+    source_bytes = source_path.read_bytes()
+    payload = source_bytes
     filter_path = project_path / "filter_state.json"
     if (
         source_path.name != "filtered.srt"
@@ -32,4 +41,8 @@ def subtitle_source_generation_hash(project_path: Path) -> str:
         and not filter_path.is_symlink()
     ):
         payload += b"\0filter_state.json\0" + filter_path.read_bytes()
-    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
+    return (
+        f"sha256:{hashlib.sha256(payload).hexdigest()}",
+        source_path.name,
+        source_bytes,
+    )
