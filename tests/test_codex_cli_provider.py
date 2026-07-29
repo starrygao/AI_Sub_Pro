@@ -194,6 +194,28 @@ def test_codex_cli_provider_parse_preserves_targeted_semantic_fields():
     }]
 
 
+def test_codex_cli_provider_real_parse_preserves_discourse_link_hashes():
+    from app.engines.providers.codex_cli import CodexCliProvider
+
+    link_hash = "sha256:" + ("b" * 64)
+    text = json.dumps([{
+        "id": 86,
+        "translation": "OK",
+        "verdict": "OK",
+        "taxonomy": "none",
+        "source_evidence": "My boy?",
+        "target_evidence": "我儿子？",
+        "discourse_link_hashes": [link_hash],
+    }], ensure_ascii=False)
+
+    parsed = CodexCliProvider._parse(
+        text,
+        [{"id": 86, "original": "My boy?", "draft": "我儿子？"}],
+    )
+
+    assert parsed[0]["discourse_link_hashes"] == [link_hash]
+
+
 def test_codex_cli_provider_parse_preserves_group_semantic_bindings():
     """Provider normalization must not strip group ids or the bound hash."""
     from app.engines.providers.codex_cli import CodexCliProvider

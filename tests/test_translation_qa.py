@@ -1147,6 +1147,130 @@ def test_repair_items_expand_cross_cue_semantic_continuations(
     )
 
 
+def test_repair_possessive_echo_keeps_antecedent_and_bridge_read_only():
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(
+            84,
+            "[Luis]\nWith your boy here as leverage?",
+            "有你儿子做人质？",
+        ),
+        _block(
+            85,
+            "Our plan just got a hell of a lot easier.",
+            "我们的计划容易多了。",
+        ),
+        _block(86, "My boy?", "我儿子？"),
+    ]
+    blocks[0].start = timedelta(seconds=0)
+    blocks[0].end = timedelta(seconds=1)
+    blocks[1].start = timedelta(seconds=2)
+    blocks[1].end = timedelta(seconds=3)
+    blocks[2].start = timedelta(seconds=4)
+    blocks[2].end = timedelta(seconds=5)
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=86,
+            message="possessive echo lost its antecedent",
+        ),
+    ]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == [86]
+    assert "semantic_group_ids" not in items[0]
+    link = items[0]["discourse_links"][0]
+    assert link["antecedent"] == {
+        "id": 84,
+        "original": "[Luis]\nWith your boy here as leverage?",
+        "draft": "有你儿子做人质？",
+    }
+    assert link["bridge_context"] == [{
+        "id": 85,
+        "original": "Our plan just got a hell of a lot easier.",
+        "draft": "我们的计划容易多了。",
+    }]
+    assert link["read_only_ids"] == [84, 85]
+    assert link["link_hash"].startswith("sha256:")
+
+
+def test_repair_possessive_echo_is_atomic_only_when_both_ends_are_candidates():
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(84, "With your boy here as leverage?", "拿你儿子做人质？"),
+        _block(85, "The plan is easier.", "计划更容易了。"),
+        _block(86, "My boy?", "我儿子？"),
+    ]
+    blocks[0].start = timedelta(seconds=0)
+    blocks[0].end = timedelta(seconds=1)
+    blocks[1].start = timedelta(seconds=2)
+    blocks[1].end = timedelta(seconds=3)
+    blocks[2].start = timedelta(seconds=4)
+    blocks[2].end = timedelta(seconds=5)
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=block_id,
+            message="possession mismatch",
+        )
+        for block_id in (84, 86)
+    ]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == [84, 86]
+    assert all(item["semantic_group_ids"] == [84, 86] for item in items)
+    assert all(
+        item["discourse_links"][0]["read_only_ids"] == [85]
+        for item in items
+    )
+    assert all(
+        85 not in item["semantic_group_ids"]
+        for item in items
+    )
+
+
+def test_repair_prompt_marks_discourse_link_context_as_read_only():
+    from app.engines.translation_qa import (
+        QualityIssue,
+        build_repair_items,
+        build_repair_prompt,
+    )
+
+    blocks = [
+        _block(84, "With your boy here as leverage?", "拿你儿子做人质？"),
+        _block(85, "The plan is easier.", "计划更容易了。"),
+        _block(86, "My boy?", "我儿子？"),
+    ]
+    blocks[0].start = timedelta(seconds=0)
+    blocks[0].end = timedelta(seconds=1)
+    blocks[1].start = timedelta(seconds=2)
+    blocks[1].end = timedelta(seconds=3)
+    blocks[2].start = timedelta(seconds=4)
+    blocks[2].end = timedelta(seconds=5)
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=86,
+            message="possession mismatch",
+        )
+    ]
+    items = build_repair_items(blocks, issues)
+
+    prompt = build_repair_prompt("简体中文", items, issues)
+
+    assert "discourse_links" in prompt
+    assert "link_hash" in prompt
+    assert "只读" in prompt
+    assert "不得输出或修改 read_only_ids" in prompt
+
+
 @pytest.mark.parametrize(
     ("first_source", "second_source", "gap_seconds"),
     [

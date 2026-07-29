@@ -2010,6 +2010,11 @@ def _semantic_seed_positions_in_window(
 
 
 def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dict]:
+    from app.engines.discourse_links import (
+        build_discourse_link_contexts,
+        index_discourse_link_contexts,
+    )
+
     failing_ids = {issue.block_id for issue in issues if isinstance(issue.block_id, int)}
     semantic_ids = {
         issue.block_id
@@ -2226,6 +2231,39 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
         getattr(active_blocks[position], "index", None)
         for position in semantic_repair_positions
     )
+    discourse_links = build_discourse_link_contexts(
+        timeline_blocks,
+        focus_ids=repair_ids,
+        mutable_ids=repair_ids,
+    )
+    discourse_links_by_endpoint = index_discourse_link_contexts(
+        discourse_links
+    )
+    for link in discourse_links:
+        endpoint_ids = [
+            link["antecedent"]["id"],
+            link["echo"]["id"],
+        ]
+        if not set(endpoint_ids).issubset(repair_ids):
+            continue
+        endpoint_positions = [
+            position
+            for position, candidate in enumerate(active_blocks)
+            if getattr(candidate, "index", None) in endpoint_ids
+        ]
+        if len(endpoint_positions) != 2:
+            continue
+        existing_groups = {
+            tuple(semantic_group_by_position[position])
+            for position in endpoint_positions
+            if position in semantic_group_by_position
+        }
+        if existing_groups and existing_groups != {tuple(endpoint_ids)}:
+            continue
+        semantic_repair_positions.update(endpoint_positions)
+        for position in endpoint_positions:
+            semantic_group_by_position[position] = endpoint_ids
+            semantic_seed_ids_by_position[position] = endpoint_ids
 
     def context_item(block) -> dict:
         return {
@@ -2265,6 +2303,9 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
                 for group_block in active_blocks
                 if getattr(group_block, "index", None) in group_id_set
             ]
+        item_discourse_links = discourse_links_by_endpoint.get(block_id, [])
+        if item_discourse_links:
+            item["discourse_links"] = item_discourse_links
         reading_issue = reading_speed_by_id.get(block_id)
         duration = _duration_seconds(block)
         if reading_issue is not None and duration > 0:
@@ -2365,7 +2406,13 @@ def build_repair_prompt(
         )
         parts.append(
             "preceding_context 和 following_context 只用于理解上下文，不得输出这些上下文 id；"
-            "semantic_group_ids 相同的相邻失败项要连贯修复，但每个 id 必须分别输出且保持不变。"
+            "semantic_group_ids 相同的关联失败项（可能非相邻）要连贯修复，"
+            "但每个 id 必须分别输出且保持不变。"
+        )
+    if any(item.get("discourse_links") for item in items):
+        parts.append(
+            "discourse_links 是带 link_hash 的局部只读消歧上下文，不是术语表；"
+            "不得输出或修改 read_only_ids，也不得把其中 noun 推广为全局固定译法。"
         )
     if "scientific_term_inconsistent" in issue_types:
         parts.append("科学名不一致时必须使用 Issue 中 expected 指定的译名，只改必要的术语部分。")

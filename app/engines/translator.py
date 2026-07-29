@@ -46,6 +46,12 @@ from app.engines.project_metadata import build_project_metadata_prompt_snippet
 from app.engines.subtitle_style_profiles import build_subtitle_style_prompt_snippet
 from app.engines.terminology_conflicts import collect_terminology_conflicts
 from app.engines.translation_qa import translation_candidate_contract_error
+from app.engines.discourse_links import (
+    build_discourse_link_contexts,
+    detect_possessive_echo_links,
+    index_discourse_link_contexts,
+    serialized_discourse_link_contexts_chars,
+)
 
 log = logging.getLogger(__name__)
 
@@ -569,6 +575,18 @@ class SubtitleTranslator:
             return False
         # Rough token estimate: ~2 chars per token for mixed text.
         est_tokens = sum(len(b.text) for b in active) // 2
+        active_ids = {block.index for block in active}
+        discourse_contexts = build_discourse_link_contexts(
+            blocks,
+            focus_ids=active_ids,
+            mutable_ids=active_ids,
+        )
+        # Each complete link is attached to two endpoint items and rendered
+        # once in the prompt. Count all three serialized copies.
+        est_tokens += (
+            serialized_discourse_link_contexts_chars(discourse_contexts)
+            * 3
+        ) // 2
         # Add a little overhead for the system prompt and JSON envelope.
         est_tokens += 2000
         window = _provider_context_window(self.primary)
@@ -594,7 +612,27 @@ class SubtitleTranslator:
         previous_accumulate = self._accumulate_quality_trace
         self._accumulate_quality_trace = True
         try:
-            items = [{"id": b.index, "original": b.text} for b in active]
+            mutable_ids = {block.index for block in active}
+            detected_discourse_links = detect_possessive_echo_links(blocks)
+            discourse_contexts = build_discourse_link_contexts(
+                blocks,
+                focus_ids=mutable_ids,
+                mutable_ids=mutable_ids,
+                links=detected_discourse_links,
+            )
+            discourse_contexts_by_endpoint = index_discourse_link_contexts(
+                discourse_contexts
+            )
+            items = []
+            for block in active:
+                item = {"id": block.index, "original": block.text}
+                item_discourse_links = discourse_contexts_by_endpoint.get(
+                    block.index,
+                    [],
+                )
+                if item_discourse_links:
+                    item["discourse_links"] = item_discourse_links
+                items.append(item)
             # Reuse the existing batch prompt builder with empty context windows —
             # in full-doc mode every block is visible in the single payload.
             system_prompt = self._build_prompt(target_lang, meta_info, kb_data, [], [], items=items)
@@ -727,6 +765,7 @@ class SubtitleTranslator:
         self.last_quality_trace = TranslationContextTrace()
         previous_accumulate = self._accumulate_quality_trace
         self._accumulate_quality_trace = True
+        detected_discourse_links = detect_possessive_echo_links(blocks)
 
         log.info(
             "Translating %d blocks (batch_size=%d, context=%d)",
@@ -758,9 +797,28 @@ class SubtitleTranslator:
 
                 # Build batch items
                 items = []
+                mutable_ids = {
+                    blocks[ci].index
+                    for ci in batch_indices
+                }
+                discourse_contexts = build_discourse_link_contexts(
+                    blocks,
+                    focus_ids=mutable_ids,
+                    mutable_ids=mutable_ids,
+                    links=detected_discourse_links,
+                )
+                discourse_contexts_by_endpoint = (
+                    index_discourse_link_contexts(discourse_contexts)
+                )
                 for ci in batch_indices:
                     b = blocks[ci]
-                    items.append({"id": b.index, "original": b.text})
+                    item = {"id": b.index, "original": b.text}
+                    item_discourse_links = (
+                        discourse_contexts_by_endpoint.get(b.index, [])
+                    )
+                    if item_discourse_links:
+                        item["discourse_links"] = item_discourse_links
+                    items.append(item)
 
                 # Build system prompt
                 system_prompt = self._build_prompt(
@@ -1186,6 +1244,46 @@ class SubtitleTranslator:
             parts.append("\n即将出现的下文(供参考):")
             for txt in context_after:
                 parts.append(f"  {txt}")
+
+        discourse_links = []
+        seen_link_hashes = set()
+        for item in items or []:
+            for link in item.get("discourse_links", []):
+                link_hash = link.get("link_hash")
+                if not isinstance(link_hash, str) or link_hash in seen_link_hashes:
+                    continue
+                seen_link_hashes.add(link_hash)
+                discourse_links.append(link)
+        if discourse_links:
+            parts.append(
+                "\n局部话语链接（只用于当前批次消歧，不是术语表，"
+                "不得创建全局译名或知识库命中）:"
+            )
+            for link in discourse_links:
+                antecedent = link["antecedent"]
+                echo = link["echo"]
+                parts.append(
+                    f"  {link['link_hash']} | "
+                    f"#{antecedent['id']} 原文: {antecedent['original']} | "
+                    f"当前译文: {antecedent['draft']}"
+                )
+                for bridge in link.get("bridge_context", []):
+                    parts.append(
+                        f"  只读 bridge #{bridge['id']}: "
+                        f"{bridge['original']} | 当前译文: {bridge['draft']}"
+                    )
+                parts.append(
+                    f"  echo #{echo['id']}: {echo['original']}；"
+                    f"与 #{antecedent['id']} 指向同一局部对象，"
+                    "只保持本处所有格关系，不要推广 noun 的全局译法。"
+                )
+                parts.append(
+                    "  只读 id: "
+                    + ", ".join(
+                        f"#{block_id}"
+                        for block_id in link.get("read_only_ids", [])
+                    )
+                )
 
         # Output rules
         parts.extend([

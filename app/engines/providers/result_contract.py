@@ -17,6 +17,7 @@ _STRUCTURED_RESULT_FIELDS = (
     "source_evidence",
     "target_evidence",
     "cross_block_evidence",
+    "discourse_link_hashes",
 )
 
 

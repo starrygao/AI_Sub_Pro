@@ -3611,6 +3611,8 @@ def _targeted_semantic_prompt(target_language: str) -> str:
         f"你是一位候选译文专项语义复核员，目标语言是{target_language}。",
         "候选译文专项语义复核必须独立判断，不得因为全片扫描曾返回 OK 而降低标准。",
         "逐项核对 original 与 draft，并结合 bounded_context、semantic_group_ids 和 prior_issues。",
+        "若输入包含 discourse_links，必须结合其只读 antecedent/bridge 核查局部指代，"
+        "并在结果中原样回显 discourse_link_hashes；它不是术语表，不得推广 noun 的全局译法。",
         "prior_issues 只描述历史译稿，并带有 historical_issue、prior_draft 和 "
         "prior_content_hash；不得把历史诊断直接套用到当前 draft。",
         "重点核查以下 taxonomy：negation/polarity/condition、entity、agent_patient、"
@@ -3641,6 +3643,8 @@ def _targeted_semantic_group_prompt(target_language: str) -> str:
         "以及不可接受的顺序漂移；任一成员不可靠时整个组返回非 OK。",
         "每个输入只能返回一个结果，id 必须保持输入 id；translation 必须与 verdict 完全相同。",
         "结果必须原样回显 group_ids 和 group_content_hash，不得增删、重排或改写。",
+        "若输入包含 discourse_link_hashes，结果也必须按原顺序原样回显，"
+        "并把 link 的 antecedent/bridge 作为只读局部证据。",
         "verdict 只能是 OK、MISMATCH: 原因、UNCERTAIN: 原因；taxonomy 只能使用"
         " none、negation/polarity/condition、entity、agent_patient、"
         "possession_person_number、quantity、cross_block_alignment。",
@@ -3669,10 +3673,15 @@ def _targeted_semantic_items(
     semantic_groups: list[list[int]],
 ) -> list[dict]:
     from app.engines.translation_qa import dialogue_only_qa_source_text
+    from app.engines.discourse_links import (
+        build_discourse_link_contexts,
+        index_discourse_link_contexts,
+    )
 
+    timeline_blocks = list(blocks or [])
     active_blocks = [
         block
-        for block in blocks or []
+        for block in timeline_blocks
         if (
             not getattr(block, "filtered", False)
             and isinstance(getattr(block, "index", None), int)
@@ -3714,6 +3723,14 @@ def _targeted_semantic_items(
         getattr(block, "index", None): block
         for block in active_blocks
     }
+    discourse_links = build_discourse_link_contexts(
+        timeline_blocks,
+        focus_ids=candidate_ids,
+        mutable_ids=candidate_ids,
+    )
+    discourse_links_by_endpoint = index_discourse_link_contexts(
+        discourse_links
+    )
 
     def context_item(block) -> dict:
         return {
@@ -3756,6 +3773,9 @@ def _targeted_semantic_items(
                 for group_id in group_ids
                 if group_id in block_by_id
             ]
+        item_discourse_links = discourse_links_by_endpoint.get(block_id, [])
+        if item_discourse_links:
+            item["discourse_links"] = item_discourse_links
         items.append(item)
     return items
 
@@ -3783,9 +3803,34 @@ def _targeted_semantic_verification_units(
     semantic_groups: list[list[int]],
 ) -> tuple[list[dict], list[dict]]:
     item_by_id = {item["id"]: item for item in items}
+    effective_groups = list(semantic_groups)
+    linked_group_keys = {
+        (
+            link["antecedent"]["id"],
+            link["echo"]["id"],
+        )
+        for item in items
+        for link in item.get("discourse_links", [])
+        if {
+            link["antecedent"]["id"],
+            link["echo"]["id"],
+        }.issubset(candidate_ids)
+    }
+    explicitly_grouped_ids = {
+        block_id
+        for group in effective_groups
+        if isinstance(group, list)
+        for block_id in group
+        if isinstance(block_id, int) and not isinstance(block_id, bool)
+    }
+    for linked_group in sorted(linked_group_keys):
+        if explicitly_grouped_ids.intersection(linked_group):
+            continue
+        effective_groups.append(list(linked_group))
+        explicitly_grouped_ids.update(linked_group)
     grouped_ids = set()
     group_units = []
-    for raw_group_ids in semantic_groups:
+    for raw_group_ids in effective_groups:
         if not isinstance(raw_group_ids, list) or len(raw_group_ids) < 2:
             continue
         group_ids = [
@@ -3821,6 +3866,15 @@ def _targeted_semantic_verification_units(
                     continue
                 context_ids.add(context_id)
                 group_context.append(context)
+        group_discourse_links = []
+        discourse_link_hashes = set()
+        for member in group_members:
+            for link in member.get("discourse_links", []):
+                link_hash = link["link_hash"]
+                if link_hash in discourse_link_hashes:
+                    continue
+                discourse_link_hashes.add(link_hash)
+                group_discourse_links.append(link)
         group_units.append({
             "id": group_ids[0],
             "review_kind": "semantic_group",
@@ -3841,6 +3895,11 @@ def _targeted_semantic_verification_units(
                 for member in group_members
             ],
             "group_context": group_context,
+            "discourse_links": group_discourse_links,
+            "discourse_link_hashes": [
+                link["link_hash"]
+                for link in group_discourse_links
+            ],
         })
     singleton_items = [
         item
@@ -3860,6 +3919,7 @@ _TARGETED_SEMANTIC_CORRECTABLE_STAGES = frozenset({
     "group_binding_mismatch",
     "group_evidence_coverage",
     "group_evidence_order",
+    "link_binding_mismatch",
 })
 
 
@@ -3878,6 +3938,15 @@ def _targeted_semantic_result_stage(result, item: dict) -> str:
         or transport_translation != verdict
     ):
         return "transport_mismatch"
+    expected_link_hashes = [
+        link["link_hash"]
+        for link in item.get("discourse_links", [])
+    ]
+    if (
+        expected_link_hashes
+        and result.get("discourse_link_hashes") != expected_link_hashes
+    ):
+        return "link_binding_mismatch"
     taxonomy = result.get("taxonomy")
     source_evidence = result.get("source_evidence")
     target_evidence = result.get("target_evidence")
@@ -4045,6 +4114,12 @@ def _targeted_semantic_group_result_stage(result, item: dict) -> str:
         or result.get("group_content_hash") != item["group_content_hash"]
     ):
         return "group_binding_mismatch"
+    expected_link_hashes = item.get("discourse_link_hashes", [])
+    if (
+        expected_link_hashes
+        and result.get("discourse_link_hashes") != expected_link_hashes
+    ):
+        return "link_binding_mismatch"
     source_stage, source_by_id = _targeted_semantic_group_evidence_by_id(
         result.get("source_evidence"),
         group_ids,
@@ -4145,6 +4220,9 @@ def _targeted_semantic_failure_issue(
         ),
         "group_evidence_order": (
             "targeted semantic QA group evidence did not preserve member order"
+        ),
+        "link_binding_mismatch": (
+            "targeted semantic QA did not preserve the bounded discourse link"
         ),
     }
     return QualityIssue(
@@ -5147,21 +5225,42 @@ def _auto_repair_semantic_groups(items: list[dict]) -> list[list[int]]:
 
 def _repair_batch_positions(items: list[dict], max_blocks: int) -> list[list[int]]:
     units: list[list[int]] = []
-    position = 0
-    while position < len(items):
-        group_ids = items[position].get("semantic_group_ids")
-        if isinstance(group_ids, list) and len(group_ids) > 1:
-            end = position + 1
-            while (
-                end < len(items)
-                and items[end].get("semantic_group_ids") == group_ids
-            ):
-                end += 1
-            units.append(list(range(position, end)))
-            position = end
+    positions_by_id: dict[int, list[int]] = {}
+    for position, item in enumerate(items):
+        block_id = item.get("id")
+        if isinstance(block_id, int) and not isinstance(block_id, bool):
+            positions_by_id.setdefault(block_id, []).append(position)
+    consumed_positions = set()
+    for position, item in enumerate(items):
+        if position in consumed_positions:
             continue
+        group_ids = item.get("semantic_group_ids")
+        if isinstance(group_ids, list) and len(group_ids) > 1:
+            group_positions = []
+            valid_group = True
+            for block_id in group_ids:
+                matching_positions = positions_by_id.get(block_id, [])
+                if len(matching_positions) != 1:
+                    valid_group = False
+                    break
+                member_position = matching_positions[0]
+                if (
+                    items[member_position].get("semantic_group_ids")
+                    != group_ids
+                ):
+                    valid_group = False
+                    break
+                group_positions.append(member_position)
+            if (
+                valid_group
+                and len(set(group_positions)) == len(group_positions)
+                and not consumed_positions.intersection(group_positions)
+            ):
+                units.append(group_positions)
+                consumed_positions.update(group_positions)
+                continue
         units.append([position])
-        position += 1
+        consumed_positions.add(position)
 
     batches: list[list[int]] = []
     current: list[int] = []

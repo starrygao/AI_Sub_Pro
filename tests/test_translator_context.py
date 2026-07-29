@@ -227,6 +227,227 @@ def test_batched_translate_retries_empty_dialogue_translation(monkeypatch):
     assert [block.translation for block in blocks] == ["一", "二"]
 
 
+def test_batched_translation_keeps_bounded_discourse_antecedent_across_batches(
+    monkeypatch,
+):
+    from app.engines.translator import SubtitleTranslator
+    from app.utils.srt import SubtitleBlock
+
+    config = {
+        "translation": {
+            "primary_provider": "openai",
+            "primary_model": "gpt-4o",
+            "batch_size": 1,
+            "context_window": 1,
+            "polish_provider": "",
+            "missing_translation_retries": 0,
+            "use_translation_memory": False,
+            "use_phrase_library": False,
+        },
+        "api_keys": {"openai": "sk-test"},
+    }
+    calls = []
+    translated = {
+        84: "有你儿子做人质？",
+        85: "我们的计划容易多了。",
+        86: "我儿子？",
+        87: "那男孩跑向了车站。",
+    }
+
+    def fake_translate_batch(items, system_prompt, retries=3):
+        calls.append((list(items), system_prompt))
+        return [
+            {"id": item["id"], "translation": translated[item["id"]]}
+            for item in items
+        ]
+
+    translator = SubtitleTranslator(config)
+    monkeypatch.setattr(
+        translator.primary,
+        "translate_batch",
+        fake_translate_batch,
+    )
+    blocks = [
+        SubtitleBlock(
+            index=84,
+            start=timedelta(seconds=0),
+            end=timedelta(seconds=1),
+            text="[Luis]\nWith your boy here as leverage?",
+        ),
+        SubtitleBlock(
+            index=85,
+            start=timedelta(seconds=2),
+            end=timedelta(seconds=3),
+            text="Our plan just got a hell of a lot easier.",
+        ),
+        SubtitleBlock(
+            index=86,
+            start=timedelta(seconds=4),
+            end=timedelta(seconds=5),
+            text="My boy?",
+        ),
+        SubtitleBlock(
+            index=87,
+            start=timedelta(seconds=6),
+            end=timedelta(seconds=7),
+            text="That boy ran toward the station.",
+        ),
+    ]
+
+    translator.translate(blocks, target_lang="简体中文")
+
+    echo_items, echo_prompt = calls[2]
+    assert echo_items[0]["id"] == 86
+    assert len(echo_items[0]["discourse_links"]) == 1
+    assert "局部话语链接" in echo_prompt
+    assert "不是术语表" in echo_prompt
+    assert "#84" in echo_prompt
+    assert "With your boy here as leverage?" in echo_prompt
+    assert "有你儿子做人质？" in echo_prompt
+    assert "#85" in echo_prompt
+    assert "只读" in echo_prompt
+
+    unrelated_items, unrelated_prompt = calls[3]
+    assert unrelated_items[0]["id"] == 87
+    assert "discourse_links" not in unrelated_items[0]
+    assert "局部话语链接" not in unrelated_prompt
+    assert translator.last_quality_trace.kb_hits == []
+
+
+def test_full_document_translation_shares_the_same_local_discourse_link(
+    monkeypatch,
+):
+    from app.engines.translator import SubtitleTranslator
+    from app.utils.srt import SubtitleBlock
+
+    config = {
+        "translation": {
+            "primary_provider": "openai",
+            "primary_model": "gpt-4o",
+            "batch_size": 0,
+            "context_window": 1,
+            "polish_provider": "",
+            "missing_translation_retries": 0,
+            "use_translation_memory": False,
+            "use_phrase_library": False,
+        },
+        "api_keys": {"openai": "sk-test"},
+    }
+    captured = {}
+
+    def fake_translate_batch(items, system_prompt, retries=3):
+        captured["items"] = list(items)
+        captured["prompt"] = system_prompt
+        return [
+            {"id": item["id"], "translation": f"译文{item['id']}"}
+            for item in items
+        ]
+
+    class FakeFullDocumentProvider:
+        supports_full_document_mode = True
+        context_window_tokens = 100_000
+        full_document_max_items = None
+
+        def translate_batch(self, items, system_prompt, retries=3):
+            return fake_translate_batch(items, system_prompt, retries)
+
+    translator = SubtitleTranslator(config)
+    translator.primary = FakeFullDocumentProvider()
+    blocks = [
+        SubtitleBlock(
+            index=84,
+            start=timedelta(seconds=0),
+            end=timedelta(seconds=1),
+            text="With your boy here as leverage?",
+        ),
+        SubtitleBlock(
+            index=85,
+            start=timedelta(seconds=2),
+            end=timedelta(seconds=3),
+            text="The plan is easier.",
+        ),
+        SubtitleBlock(
+            index=86,
+            start=timedelta(seconds=4),
+            end=timedelta(seconds=5),
+            text="My boy?",
+        ),
+    ]
+
+    translator.translate(blocks, target_lang="简体中文")
+
+    item_by_id = {item["id"]: item for item in captured["items"]}
+    assert item_by_id[84]["discourse_links"][0]["read_only_ids"] == [85]
+    assert item_by_id[86]["discourse_links"][0]["read_only_ids"] == [85]
+    assert "discourse_links" not in item_by_id[85]
+    assert "局部话语链接" in captured["prompt"]
+
+
+def test_full_document_fit_estimate_accounts_for_discourse_link_payload():
+    from app.engines.translator import SubtitleTranslator
+    from app.utils.srt import SubtitleBlock
+
+    config = {
+        "translation": {
+            "primary_provider": "openai",
+            "primary_model": "gpt-4o",
+            "batch_size": 0,
+            "context_window": 1,
+            "polish_provider": "",
+        },
+        "api_keys": {"openai": "sk-test"},
+    }
+
+    class SizedProvider:
+        supports_full_document_mode = True
+        full_document_max_items = None
+        context_window_tokens = 4_000
+
+    translator = SubtitleTranslator(config)
+    translator.primary = SizedProvider()
+    linked = [
+        SubtitleBlock(
+            index=84,
+            start=timedelta(seconds=0),
+            end=timedelta(seconds=1),
+            text="With your boy here as leverage?",
+        ),
+        SubtitleBlock(
+            index=85,
+            start=timedelta(seconds=1),
+            end=timedelta(seconds=2),
+            text="The plan is easier.",
+        ),
+        SubtitleBlock(
+            index=86,
+            start=timedelta(seconds=2),
+            end=timedelta(seconds=3),
+            text="My boy?",
+        ),
+    ]
+    unlinked = [
+        SubtitleBlock(
+            index=block.index,
+            start=block.start,
+            end=block.end,
+            text=("No boy?" if block.index == 86 else block.text),
+        )
+        for block in linked
+    ]
+
+    distinguishing_window = None
+    for context_window_tokens in range(2_400, 4_000):
+        translator.primary.context_window_tokens = context_window_tokens
+        if (
+            translator._fits_full_doc(unlinked)
+            and not translator._fits_full_doc(linked)
+        ):
+            distinguishing_window = context_window_tokens
+            break
+
+    assert distinguishing_window is not None
+
+
 def test_batched_translate_retries_candidate_contract_contamination(monkeypatch):
     """A non-empty model meta-comment must not bypass the bounded retry path."""
     from app.engines.translator import SubtitleTranslator
