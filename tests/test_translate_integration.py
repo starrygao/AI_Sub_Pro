@@ -3954,29 +3954,71 @@ def test_auto_repair_keeps_semantic_group_atomic_and_refreshes_later_context():
     assert trace["semantic_groups"] == [[2, 3]]
 
 
-def test_semantic_repair_group_is_conservatively_bounded_by_batch_capacity():
-    from app.api.translate import (
-        _limit_semantic_repair_items,
-        _repair_batch_positions,
+def test_semantic_repair_fails_closed_when_atomic_group_exceeds_batch_capacity():
+    from app.api.translate import _auto_repair_quality_issues
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    blocks = [
+        SubtitleBlock(
+            index=block_id,
+            start=timedelta(seconds=block_id),
+            end=timedelta(seconds=block_id + 1),
+            text=source,
+            translation=f"旧译{block_id}",
+        )
+        for block_id, source in [
+            (10, "what we know"),
+            (11, "and what we saw"),
+            (12, "and what it means"),
+        ]
+    ]
+    report = TranslationQaReport(
+        status="needs_review",
+        issues=[
+            QualityIssue(
+                type="semantic_mismatch",
+                severity="error",
+                block_id=block_id,
+                message="semantic mismatch",
+            )
+            for block_id in [10, 12]
+        ],
+    )
+    provider_calls = []
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            provider_calls.append([item["id"] for item in items])
+            return [
+                {"id": item["id"], "translation": f"新译{item['id']}"}
+                for item in items
+            ]
+
+    trace = {}
+    outcome = _auto_repair_quality_issues(
+        {
+            "translation": {
+                "qa_auto_repair": True,
+                "qa_auto_repair_max_blocks": 2,
+            },
+        },
+        type("Translator", (), {"primary": Primary()})(),
+        blocks,
+        report,
+        "简体中文",
+        None,
+        repair_trace=trace,
     )
 
-    items = [
-        {
-            "id": block_id,
-            "semantic_group_ids": [10, 11, 12],
-            "semantic_seed_ids": [11],
-        }
-        for block_id in [10, 11, 12]
-    ]
-
-    limited = _limit_semantic_repair_items(items, max_blocks=2)
-    batches = _repair_batch_positions(limited, max_blocks=2)
-
-    assert [item["id"] for item in limited] == [10, 11]
-    assert all(item["semantic_group_ids"] == [10, 11] for item in limited)
-    assert all(item["semantic_seed_ids"] == [11] for item in limited)
-    assert batches == [[0, 1]]
-    assert all(len(batch) <= 2 for batch in batches)
+    assert outcome.completed is False
+    assert outcome.mutation_occurred is False
+    assert outcome.changes == []
+    assert provider_calls == []
+    assert trace["skipped_reason"] == "semantic_group_exceeds_batch_capacity"
+    assert trace["oversized_semantic_groups"] == [[10, 11, 12]]
+    assert trace["attempted_blocks"] == 0
+    assert trace["skipped_blocks"] == 3
 
 
 def test_translate_pipeline_records_improved_and_still_failing_ids(

@@ -417,6 +417,7 @@ def test_sound_verb_morphology_does_not_swallow_real_dialogue(source):
         "[gentle music\ncontinues faintly]",
         "[tense background music\ncontinues faintly]",
         "[distant ominous music\nplays softly]",
+        "[somber orchestral music\ncontinues softly]",
     ],
 )
 def test_multiline_bracketed_music_descriptions_remain_pure_sound(source):
@@ -477,6 +478,8 @@ def test_multiline_music_words_do_not_swallow_dialogue_or_lyrics(source):
         ("♪ Let it rain ♪", "♪ 就让雨落下 ♪"),
         ("♪ 你笑起来真好看 ♪", "♪ Your smile is beautiful ♪"),
         ("♪ 听见你的声音 ♪", "♪ I hear your voice ♪"),
+        ("♪ Music plays softly ♪", "♪ 音乐轻柔地播放 ♪"),
+        ("♪ Somber music fades ♪", "♪ 阴沉的音乐渐弱 ♪"),
     ],
 )
 def test_note_wrapped_language_lyrics_remain_translatable(source, draft):
@@ -1223,6 +1226,93 @@ def test_repair_items_cap_long_continuation_chains_at_three_cues():
     assert 112 in [item["id"] for item in items]
     assert all(len(item["semantic_group_ids"]) == 3 for item in items)
     assert len({tuple(item["semantic_group_ids"]) for item in items}) == 1
+
+
+def test_repair_items_partition_multiple_semantic_seeds_without_overlap():
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(
+            100 + offset,
+            "what we know" if offset == 0 else f"and fragment {offset}",
+            f"旧译{offset}",
+        )
+        for offset in range(5)
+    ]
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=block_id,
+            message="semantic mismatch",
+        )
+        for block_id in [100, 103]
+    ]
+
+    items = build_repair_items(blocks, issues)
+    item_by_id = {item["id"]: item for item in items}
+
+    assert item_by_id[100]["semantic_group_ids"] == [100, 101, 102]
+    assert item_by_id[101]["semantic_group_ids"] == [100, 101, 102]
+    assert item_by_id[102]["semantic_group_ids"] == [100, 101, 102]
+    assert item_by_id[103]["semantic_group_ids"] == [103, 104]
+    assert item_by_id[104]["semantic_group_ids"] == [103, 104]
+    groups = [
+        tuple(item["semantic_group_ids"])
+        for item in items
+        if "semantic_group_ids" in item
+    ]
+    assert set(groups) == {(100, 101, 102), (103, 104)}
+    assert item_by_id[100]["semantic_seed_ids"] == [100]
+    assert item_by_id[103]["semantic_seed_ids"] == [103]
+
+
+@pytest.mark.parametrize("invalid_time", [None, "not-a-timestamp"])
+def test_repair_items_require_parseable_timestamps_for_cross_cue_grouping(
+    invalid_time,
+):
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(140, "If you tell him", "如果你告诉他"),
+        _block(141, "we lose everything.", "我们会失去一切。"),
+    ]
+    blocks[0].end = invalid_time
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=140,
+            message="semantic mismatch",
+        ),
+    ]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == [140]
+    assert "semantic_group_ids" not in items[0]
+
+
+def test_repair_items_treat_compact_dash_as_new_speaker_boundary():
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(150, "I was going to...", "我本来打算……"),
+        _block(151, "-Leave now.", "快走。"),
+    ]
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=150,
+            message="semantic mismatch",
+        ),
+    ]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == [150]
+    assert "semantic_group_ids" not in items[0]
 
 
 def test_repair_items_support_conservative_uppercase_continuation():

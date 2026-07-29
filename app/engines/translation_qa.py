@@ -133,7 +133,7 @@ _SEMANTIC_ELLIPSIS_RE = re.compile(r"(?:\.{2,}|…+)[\"'”’)\]}】）]*\s*$")
 _SEMANTIC_TERMINAL_RE = re.compile(r"[.!?。！？][\"'”’)\]}】）]*\s*$")
 _LOWERCASE_CONTINUATION_RE = re.compile(r"^[\"'“‘(\[{]*[a-z]")
 _SINGLE_SPEAKER_START_RE = re.compile(
-    r"^\s*(?:[-‐‑‒–—―]\s+\S|[A-Z][A-Za-z0-9 .'\-]{0,47}[:：]\s*\S)"
+    r"^\s*(?:[-‐‑‒–—―]\s*\S|[A-Z][A-Za-z0-9 .'\-]{0,47}[:：]\s*\S)"
 )
 _BRACKETED_SPEAKER_START_RE = re.compile(
     r"^\s*(?:[-‐‑‒–—―]\s*)?\[[^\]\r\n]{1,48}\]\s*\S"
@@ -449,7 +449,7 @@ _SOUND_LABEL_EN_RE = re.compile(
 )
 _MUSIC_DESCRIPTION_STYLE = (
     r"(?:instrumental|upbeat|latin|tense|gentle|soft|somber|dramatic|"
-    r"ominous|distant|background|theme)"
+    r"ominous|distant|background|theme|orchestral)"
 )
 _MUSIC_DESCRIPTION_STATE = (
     r"(?:continues?|plays?|playing|swells?|fades?|fading|rises?|builds?)"
@@ -464,7 +464,8 @@ _MUSIC_DESCRIPTION_EN_PATTERN = (
     rf"(?:\s+{_MUSIC_DESCRIPTION_QUALIFIER})?"
 )
 _NOTE_WRAPPED_MUSIC_DESCRIPTION_EN_RE = re.compile(
-    rf"^{_MUSIC_DESCRIPTION_EN_PATTERN}$",
+    r"^(?:(?:instrumental|tense|gentle|background|theme)\s+)*"
+    r"music(?:\s+(?:continues?|playing))?$",
     re.IGNORECASE,
 )
 _NOTE_WRAPPED_MUSIC_DESCRIPTION_CJK_RE = re.compile(
@@ -1800,7 +1801,9 @@ def _cross_cue_semantic_continuation(previous, following) -> bool:
         return False
 
     gap_seconds = _subtitle_time_gap_seconds(previous, following)
-    if gap_seconds is not None and (gap_seconds < -0.5 or gap_seconds > 1.0):
+    if gap_seconds is None:
+        return False
+    if gap_seconds < -0.5 or gap_seconds > 1.0:
         return False
 
     previous_line = previous_source.rstrip().splitlines()[-1]
@@ -1867,42 +1870,52 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
     semantic_group_by_position: dict[int, list[int]] = {}
     semantic_seed_ids_by_position: dict[int, list[int]] = {}
     semantic_repair_positions = set(semantic_seed_positions)
-    visited_positions: set[int] = set()
-    for seed_position in sorted(semantic_seed_positions):
-        if seed_position in visited_positions:
-            continue
-        start = seed_position
-        while start > 0 and start - 1 in continuation_edges:
-            start -= 1
-        end = seed_position
-        while end in continuation_edges:
-            end += 1
-        group_start = max(
-            start,
-            min(seed_position - 1, end - _MAX_SEMANTIC_GROUP_CUES + 1),
-        )
-        group_end = min(
-            end,
-            group_start + _MAX_SEMANTIC_GROUP_CUES - 1,
-        )
-        component_positions = list(range(group_start, group_end + 1))
-        visited_positions.update(component_positions)
-        semantic_repair_positions.update(component_positions)
-        group_ids = [
-            block_id
-            for block_id in (
-                getattr(active_blocks[item_position], "index", None)
-                for item_position in component_positions
+    component_start = 0
+    while component_start < len(active_blocks):
+        component_end = component_start
+        while component_end in continuation_edges:
+            component_end += 1
+        component_seed_positions = {
+            position
+            for position in semantic_seed_positions
+            if component_start <= position <= component_end
+        }
+        for group_start in range(
+            component_start,
+            component_end + 1,
+            _MAX_SEMANTIC_GROUP_CUES,
+        ):
+            component_positions = list(range(
+                group_start,
+                min(
+                    component_end + 1,
+                    group_start + _MAX_SEMANTIC_GROUP_CUES,
+                ),
+            ))
+            group_seed_positions = (
+                component_seed_positions.intersection(component_positions)
             )
-            if isinstance(block_id, int) and not isinstance(block_id, bool)
-        ]
-        if len(group_ids) > 1:
+            if not group_seed_positions:
+                continue
+            semantic_repair_positions.update(component_positions)
+            group_ids = [
+                block_id
+                for block_id in (
+                    getattr(active_blocks[item_position], "index", None)
+                    for item_position in component_positions
+                )
+                if isinstance(block_id, int) and not isinstance(block_id, bool)
+            ]
+            if len(group_ids) <= 1:
+                continue
             group_seed_ids = [
-                block_id for block_id in group_ids if block_id in semantic_ids
+                getattr(active_blocks[item_position], "index", None)
+                for item_position in sorted(group_seed_positions)
             ]
             for item_position in component_positions:
                 semantic_group_by_position[item_position] = group_ids
                 semantic_seed_ids_by_position[item_position] = group_seed_ids
+        component_start = component_end + 1
 
     repair_ids = set(failing_ids)
     repair_ids.update(
