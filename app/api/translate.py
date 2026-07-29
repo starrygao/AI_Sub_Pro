@@ -1923,6 +1923,50 @@ def _update_and_overlay_semantic_issue_ledger(
     }
 
 
+def _remove_verified_semantic_issues(report, verified_ids: set[int]) -> None:
+    if not verified_ids:
+        return
+    report.issues = [
+        issue
+        for issue in (getattr(report, "issues", []) or [])
+        if not (
+            getattr(issue, "block_id", None) in verified_ids
+            and getattr(issue, "type", "") in _SEMANTIC_LEDGER_ISSUE_TYPES
+        )
+    ]
+    _refresh_quality_report_issue_summary(report)
+
+
+def _resolve_semantic_issue_ledger(
+    ledger: dict,
+    verified_hashes: dict[int, str],
+) -> None:
+    if not verified_hashes:
+        return
+    remaining = []
+    resolved = [
+        dict(item)
+        for item in ledger.get("resolved", [])
+        if isinstance(item, dict)
+    ]
+    for item in ledger.get("outstanding", []):
+        if not isinstance(item, dict):
+            continue
+        block_id = item.get("block_id")
+        verified_hash = verified_hashes.get(block_id)
+        if not verified_hash:
+            remaining.append(dict(item))
+            continue
+        resolution = dict(item)
+        resolution.update({
+            "resolution": "targeted_double_ok",
+            "resolved_by_content_hash": verified_hash,
+        })
+        resolved.append(resolution)
+    ledger["outstanding"] = remaining
+    ledger["resolved"] = resolved
+
+
 _SEMANTIC_QA_CONTEXT_MAX_CHARS = 4200
 _SEMANTIC_QA_CONTEXT_TERM_LIMIT = 80
 
@@ -2402,6 +2446,322 @@ def _run_quality_checks_with_semantics(
         report.issues.extend(semantic_issues)
         _refresh_quality_report_issue_summary(report)
     return report
+
+
+def _run_deterministic_quality_checks(
+    blocks,
+    target_language: str,
+    project_kb,
+    project: dict,
+    trace: dict,
+):
+    from app.engines.translation_qa import run_quality_checks
+
+    return run_quality_checks(
+        blocks,
+        project_kb=project_kb,
+        target_language=target_language,
+        meta_info=project,
+        trace=trace,
+    )
+
+
+_TARGETED_SEMANTIC_TAXONOMY = frozenset({
+    "none",
+    "negation/polarity/condition",
+    "entity",
+    "agent_patient",
+    "possession_person_number",
+    "quantity",
+    "cross_block_alignment",
+})
+
+
+def _targeted_semantic_prompt(target_language: str) -> str:
+    return "\n".join([
+        f"你是一位候选译文专项语义复核员，目标语言是{target_language}。",
+        "候选译文专项语义复核必须独立判断，不得因为全片扫描曾返回 OK 而降低标准。",
+        "逐项核对 original 与 draft，并结合 bounded_context、semantic_group_ids 和 prior_issues。",
+        "重点核查以下 taxonomy：negation/polarity/condition、entity、agent_patient、"
+        "possession_person_number、quantity、cross_block_alignment。",
+        "每个输入 id 必须且只能返回一次，不得漏项、合并或新增 id。",
+        "每项必须包含 verdict、taxonomy、source_evidence、target_evidence。",
+        "verdict 只能是 OK、MISMATCH: 原因、UNCERTAIN: 原因；证据必须引用原文和译文中的具体片段。",
+        "语义完全保真时 taxonomy 使用 none；任何信息不足、指代不明或证据不足必须返回 UNCERTAIN。",
+        "仅输出 JSON 数组，例如："
+        '[{"id":1,"verdict":"OK","taxonomy":"none",'
+        '"source_evidence":"our","target_evidence":"我们的"}]。',
+    ])
+
+
+def _targeted_semantic_items(
+    blocks,
+    candidate_ids: set[int],
+    prior_report,
+    semantic_groups: list[list[int]],
+) -> list[dict]:
+    from app.engines.translation_qa import dialogue_only_qa_source_text
+
+    active_blocks = [
+        block
+        for block in blocks or []
+        if (
+            not getattr(block, "filtered", False)
+            and isinstance(getattr(block, "index", None), int)
+            and not isinstance(getattr(block, "index", None), bool)
+        )
+    ]
+    position_by_id = {
+        getattr(block, "index", None): position
+        for position, block in enumerate(active_blocks)
+    }
+    prior_by_id: dict[int, list[dict]] = {}
+    for issue in (getattr(prior_report, "issues", []) or []):
+        block_id = getattr(issue, "block_id", None)
+        if block_id not in candidate_ids:
+            continue
+        prior_by_id.setdefault(block_id, []).append({
+            "type": getattr(issue, "type", ""),
+            "message": getattr(issue, "message", ""),
+            "expected": getattr(issue, "expected", ""),
+        })
+    group_by_id = {
+        block_id: list(group_ids)
+        for group_ids in semantic_groups
+        for block_id in group_ids
+    }
+
+    def context_item(block) -> dict:
+        return {
+            "id": getattr(block, "index", None),
+            "original": dialogue_only_qa_source_text(
+                getattr(block, "text", "")
+            ),
+            "draft": getattr(block, "translation", ""),
+        }
+
+    items = []
+    for block_id in sorted(candidate_ids):
+        position = position_by_id.get(block_id)
+        if position is None:
+            continue
+        block = active_blocks[position]
+        original = dialogue_only_qa_source_text(getattr(block, "text", ""))
+        translation = getattr(block, "translation", "")
+        if not original or not isinstance(translation, str) or not translation.strip():
+            continue
+        context_start = max(0, position - 2)
+        context_end = min(len(active_blocks), position + 3)
+        item = {
+            "id": block_id,
+            "original": original,
+            "draft": translation,
+            "bounded_context": [
+                context_item(active_blocks[context_position])
+                for context_position in range(context_start, context_end)
+                if context_position != position
+            ],
+            "prior_issues": prior_by_id.get(block_id, []),
+            "candidate_content_hash": _semantic_block_content_hash(block),
+        }
+        if block_id in group_by_id:
+            item["semantic_group_ids"] = group_by_id[block_id]
+        items.append(item)
+    return items
+
+
+def _run_targeted_semantic_verification(
+    cfg: dict,
+    translator,
+    blocks,
+    target_language: str,
+    candidate_ids: set[int],
+    prior_report,
+    semantic_groups: list[list[int]],
+    *,
+    strict_quality_gate: bool,
+) -> tuple[list, set[int], dict[int, str], list[dict]]:
+    from app.engines.translation_qa import QualityIssue
+
+    items = _targeted_semantic_items(
+        blocks,
+        candidate_ids,
+        prior_report,
+        semantic_groups,
+    )
+    item_by_id = {item["id"]: item for item in items}
+    requested_ids = sorted(candidate_ids)
+    selected_ids = sorted(item_by_id)
+    structurally_missing_ids = sorted(set(requested_ids) - set(selected_ids))
+    pass_count = 2 if strict_quality_gate else 1
+    ok_passes_by_id = {block_id: 0 for block_id in requested_ids}
+    issue_by_id = {}
+    traces = []
+    primary = getattr(translator, "primary", None)
+    batch_size = max(1, min(_semantic_qa_batch_size(cfg), 12))
+    prompt = _targeted_semantic_prompt(target_language)
+
+    for pass_number in range(1, pass_count + 1):
+        checked_ids = []
+        failed_ids = list(structurally_missing_ids)
+        pass_issues = {}
+        batches = []
+        for block_id in structurally_missing_ids:
+            pass_issues[block_id] = QualityIssue(
+                type="semantic_qa_failed",
+                severity="error" if strict_quality_gate else "warning",
+                block_id=block_id,
+                message="targeted semantic QA could not construct a complete candidate item",
+            )
+        for start in range(0, len(items), batch_size):
+            batch = items[start:start + batch_size]
+            batch_ids = [item["id"] for item in batch]
+            batch_trace = {
+                "batch": len(batches) + 1,
+                "attempted_block_ids": batch_ids,
+            }
+            batches.append(batch_trace)
+            if primary is None or not hasattr(primary, "translate_batch"):
+                raw_results = []
+                provider_error = "targeted semantic QA provider is unavailable"
+            else:
+                try:
+                    raw_results = primary.translate_batch(batch, prompt)
+                    provider_error = ""
+                except Exception as exc:
+                    raw_results = []
+                    provider_error = (
+                        f"targeted semantic QA provider failed: "
+                        f"{_safe_error_message(exc)}"
+                    )
+            if provider_error:
+                batch_trace["error"] = provider_error
+                for item in batch:
+                    failed_ids.append(item["id"])
+                    pass_issues[item["id"]] = QualityIssue(
+                        type="semantic_qa_failed",
+                        severity="error" if strict_quality_gate else "warning",
+                        block_id=item["id"],
+                        message=provider_error,
+                        source_text=item["original"],
+                        translation=item["draft"],
+                    )
+                continue
+
+            raw_list = raw_results if isinstance(raw_results, list) else []
+            results_by_id = {
+                str(item["id"]): [
+                    result
+                    for result in raw_list
+                    if (
+                        isinstance(result, dict)
+                        and str(result.get("id", "")) == str(item["id"])
+                    )
+                ]
+                for item in batch
+            }
+            for item in batch:
+                block_id = item["id"]
+                matching = results_by_id[str(block_id)]
+                if len(matching) != 1:
+                    failed_ids.append(block_id)
+                    pass_issues[block_id] = QualityIssue(
+                        type="semantic_qa_failed",
+                        severity="error" if strict_quality_gate else "warning",
+                        block_id=block_id,
+                        message=(
+                            "targeted semantic QA returned a missing or duplicate verdict"
+                        ),
+                        source_text=item["original"],
+                        translation=item["draft"],
+                    )
+                    continue
+                result = matching[0]
+                verdict = result.get("verdict", result.get("translation", ""))
+                taxonomy = result.get("taxonomy", "")
+                source_evidence = result.get("source_evidence", "")
+                target_evidence = result.get("target_evidence", "")
+                normalized_verdict = (
+                    verdict.strip().lower()
+                    if isinstance(verdict, str)
+                    else ""
+                )
+                explicit_ok = normalized_verdict == "ok"
+                structured = (
+                    isinstance(taxonomy, str)
+                    and taxonomy in _TARGETED_SEMANTIC_TAXONOMY
+                    and isinstance(source_evidence, str)
+                    and bool(source_evidence.strip())
+                    and isinstance(target_evidence, str)
+                    and bool(target_evidence.strip())
+                )
+                if not isinstance(verdict, str) or not verdict.strip():
+                    failed_ids.append(block_id)
+                    pass_issues[block_id] = QualityIssue(
+                        type="semantic_qa_failed",
+                        severity="error" if strict_quality_gate else "warning",
+                        block_id=block_id,
+                        message="targeted semantic QA returned no explicit verdict",
+                        source_text=item["original"],
+                        translation=item["draft"],
+                    )
+                    continue
+                checked_ids.append(block_id)
+                if explicit_ok and not structured:
+                    failed_ids.append(block_id)
+                    pass_issues[block_id] = QualityIssue(
+                        type="semantic_qa_failed",
+                        severity="error" if strict_quality_gate else "warning",
+                        block_id=block_id,
+                        message=(
+                            "targeted semantic QA OK lacked taxonomy or source/target evidence"
+                        ),
+                        source_text=item["original"],
+                        translation=item["draft"],
+                    )
+                    continue
+                issue = _semantic_issue_from_verdict(
+                    item,
+                    verdict,
+                    strict_quality_gate=strict_quality_gate,
+                )
+                if issue is None:
+                    ok_passes_by_id[block_id] += 1
+                else:
+                    pass_issues[block_id] = issue
+        issue_by_id.update(pass_issues)
+        traces.append({
+            "enabled": True,
+            "scope": "candidate_only",
+            "focused_pass": pass_number,
+            "requested_block_ids": requested_ids,
+            "checked_block_ids": sorted(set(checked_ids)),
+            "failed_block_ids": sorted(set(failed_ids)),
+            "coverage_complete": (
+                set(checked_ids) == set(requested_ids)
+                and not failed_ids
+            ),
+            "issue_count": len(pass_issues),
+            "batch_size": batch_size,
+            "batches": batches,
+            "pass_type": "targeted",
+        })
+
+    verified_ids = {
+        block_id
+        for block_id, ok_count in ok_passes_by_id.items()
+        if ok_count == pass_count and block_id not in issue_by_id
+    }
+    verified_hashes = {
+        block_id: item_by_id[block_id]["candidate_content_hash"]
+        for block_id in verified_ids
+    }
+    return (
+        [issue_by_id[block_id] for block_id in sorted(issue_by_id)],
+        verified_ids,
+        verified_hashes,
+        traces,
+    )
 
 
 def _quality_issue_counts(report) -> tuple[int, int, int]:
@@ -3313,23 +3673,41 @@ def _persist_translation_quality_report(
             else None
         )
 
-        def run_quality_pass(pass_type: str):
+        def run_quality_pass(
+            pass_type: str,
+            *,
+            include_semantics: bool,
+        ):
             history = trace.setdefault("semantic_qa_history", [])
             if not isinstance(history, list):
                 history = []
                 trace["semantic_qa_history"] = history
             prior_history_length = len(history)
-            current_report = _run_quality_checks_with_semantics(
-                cfg,
-                translator,
-                blocks,
-                target_language,
-                project_kb,
-                project,
-                trace,
-                progress_callback=progress_callback,
-                strict_quality_gate=strict_policy,
-            )
+            if include_semantics:
+                current_report = _run_quality_checks_with_semantics(
+                    cfg,
+                    translator,
+                    blocks,
+                    target_language,
+                    project_kb,
+                    project,
+                    trace,
+                    progress_callback=progress_callback,
+                    strict_quality_gate=strict_policy,
+                )
+            else:
+                current_report = _run_deterministic_quality_checks(
+                    blocks=blocks,
+                    target_language=target_language,
+                    project_kb=project_kb,
+                    project=project,
+                    trace=trace,
+                )
+                history.append({
+                    "enabled": False,
+                    "scope": "deterministic_candidate_guard",
+                    "pass_type": pass_type,
+                })
             for item in history[prior_history_length:]:
                 if isinstance(item, dict):
                     item["pass_type"] = pass_type
@@ -3365,7 +3743,7 @@ def _persist_translation_quality_report(
             repaired=repaired,
             phase="before_initial_qa",
         )
-        report = run_quality_pass("initial")
+        report = run_quality_pass("initial", include_semantics=True)
         repair_enabled = _qa_auto_repair_enabled(cfg)
         if repair_enabled and report.issues and remaining_repair_rounds > 0:
             previous_score = _quality_score(report)
@@ -3478,7 +3856,6 @@ def _persist_translation_quality_report(
                     repaired=round_normalizer_repairs,
                     phase="after_model_repair",
                 )
-                report = run_quality_pass("candidate")
                 proposed_translation_by_id = {
                     str(getattr(block, "index", "")): getattr(
                         block,
@@ -3500,6 +3877,68 @@ def _persist_translation_quality_report(
                 for group_ids in semantic_groups:
                     if proposed_id_set.intersection(group_ids):
                         guard_candidate_ids.update(group_ids)
+                report = run_quality_pass(
+                    "candidate",
+                    include_semantics=False,
+                )
+                targeted_required = _semantic_qa_enabled(
+                    cfg,
+                    strict_quality_gate=strict_policy,
+                )
+                if targeted_required:
+                    (
+                        targeted_issues,
+                        targeted_verified_ids,
+                        targeted_verified_hashes,
+                        targeted_traces,
+                    ) = _run_targeted_semantic_verification(
+                        cfg,
+                        translator,
+                        blocks,
+                        target_language,
+                        guard_candidate_ids,
+                        report_before_round,
+                        semantic_groups,
+                        strict_quality_gate=strict_policy,
+                    )
+                else:
+                    targeted_issues = []
+                    targeted_verified_ids = set()
+                    targeted_verified_hashes = {}
+                    targeted_traces = []
+                trace.setdefault("semantic_qa_history", []).extend(
+                    targeted_traces
+                )
+                round_trace["targeted_semantic_qa"] = {
+                    "requested_block_ids": sorted(guard_candidate_ids),
+                    "verified_block_ids": sorted(targeted_verified_ids),
+                    "issue_block_ids": sorted({
+                        issue.block_id
+                        for issue in targeted_issues
+                        if isinstance(getattr(issue, "block_id", None), int)
+                    }),
+                    "focused_passes": len(targeted_traces),
+                    "coverage_complete": bool(
+                        targeted_traces
+                        and all(
+                            item.get("coverage_complete") is True
+                            for item in targeted_traces
+                        )
+                    ),
+                }
+                if targeted_issues:
+                    report.issues.extend(targeted_issues)
+                _update_and_overlay_semantic_issue_ledger(
+                    report,
+                    blocks,
+                    semantic_ledger,
+                    trace,
+                    strict_quality_gate=strict_policy,
+                )
+                _remove_verified_semantic_issues(
+                    report,
+                    targeted_verified_ids,
+                )
                 regressions = _auto_repair_functional_regressions(
                     report_before_round,
                     report,
@@ -3562,7 +4001,10 @@ def _persist_translation_quality_report(
                             )
                         )
                     })
-                    report = run_quality_pass("rollback")
+                    report = run_quality_pass(
+                        "rollback",
+                        include_semantics=False,
+                    )
                 translation_after_round = {
                     str(getattr(block, "index", "")): getattr(
                         block,
@@ -3590,6 +4032,22 @@ def _persist_translation_quality_report(
                         )
                     )
                 ]
+                accepted_verified_hashes = {
+                    block_id: content_hash
+                    for block_id, content_hash in targeted_verified_hashes.items()
+                    if block_id not in rollback_latch_ids
+                }
+                _resolve_semantic_issue_ledger(
+                    semantic_ledger,
+                    accepted_verified_hashes,
+                )
+                _update_and_overlay_semantic_issue_ledger(
+                    report,
+                    blocks,
+                    semantic_ledger,
+                    trace,
+                    strict_quality_gate=strict_policy,
+                )
                 accepted_model_changes = [
                     {
                         "id": block_id,
@@ -3707,8 +4165,47 @@ def _persist_translation_quality_report(
             repaired=repaired,
             phase="before_certification",
         )
-        if final_normalizer_changes:
-            report = run_quality_pass("final")
+        report = run_quality_pass("final", include_semantics=True)
+        resolved_semantic_ids = {
+            item.get("block_id")
+            for item in semantic_ledger.get("resolved", [])
+            if (
+                isinstance(item, dict)
+                and isinstance(item.get("block_id"), int)
+                and not isinstance(item.get("block_id"), bool)
+            )
+        }
+        active_uncertain_ids = set(
+            trace.get("semantic_uncertain_observed_block_ids", [])
+            if isinstance(
+                trace.get("semantic_uncertain_observed_block_ids", []),
+                list,
+            )
+            else []
+        ) - resolved_semantic_ids
+        current_hash_by_id = {
+            getattr(block, "index", None): _semantic_block_content_hash(block)
+            for block in blocks or []
+            if (
+                isinstance(getattr(block, "index", None), int)
+                and not isinstance(getattr(block, "index", None), bool)
+            )
+        }
+        active_uncertain_ids.update(
+            item["block_id"]
+            for item in semantic_ledger.get("outstanding", [])
+            if (
+                isinstance(item, dict)
+                and item.get("type") == "semantic_uncertain"
+                and current_hash_by_id.get(item.get("block_id"))
+                == item.get("content_hash")
+            )
+        )
+        trace["semantic_uncertain_observed_block_ids"] = sorted({
+            block_id
+            for block_id in active_uncertain_ids
+            if isinstance(block_id, int) and not isinstance(block_id, bool)
+        })
         if repaired:
             report.repaired_blocks = repaired
         report.trace = trace
@@ -3790,6 +4287,11 @@ def _run_translate_pipeline(
             quality_run_state = {
                 "run_id": quality_run_id,
                 "semantic_uncertain_observed_block_ids": [],
+                "semantic_issue_ledger": {
+                    "outstanding": [],
+                    "resolved": [],
+                },
+                "semantic_qa_history": [],
                 "auto_repair_rounds": [],
                 "auto_repair_budget": {
                     "configured_rounds": _repair_round_limit(cfg),
