@@ -1136,6 +1136,123 @@ def test_repair_items_do_not_overgroup_independent_semantic_neighbors(
 
 
 @pytest.mark.parametrize(
+    "speaker_source",
+    [
+        "-[MARA] she stayed.",
+        "[MARA] she stayed.",
+    ],
+)
+def test_repair_items_do_not_cross_bracketed_speaker_boundaries(speaker_source):
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(70, "I heard...", "我听见了……"),
+        _block(71, speaker_source, "玛拉说她留下了。"),
+    ]
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=70,
+            message="semantic mismatch",
+        ),
+    ]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == [70]
+    assert "semantic_group_ids" not in items[0]
+
+
+@pytest.mark.parametrize("middle_kind", ["filtered", "sound"])
+def test_repair_items_require_adjacency_on_the_original_timeline(middle_kind):
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    middle = _block(81, "[DOOR SLAMS]", "")
+    if middle_kind == "filtered":
+        middle.filtered = True
+    blocks = [
+        _block(80, "If you tell him", "如果你告诉他"),
+        middle,
+        _block(82, "we lose everything.", "我们会失去一切。"),
+    ]
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=80,
+            message="semantic mismatch",
+        ),
+    ]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == [80]
+    assert "semantic_group_ids" not in items[0]
+
+
+def test_repair_items_cap_long_continuation_chains_at_three_cues():
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(
+            100 + offset,
+            "what we know" if offset == 0 else f"and fragment {offset}",
+            f"旧译{offset}",
+        )
+        for offset in range(25)
+    ]
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=112,
+            message="semantic mismatch",
+        ),
+    ]
+
+    items = build_repair_items(blocks, issues)
+
+    assert len(items) == 3
+    assert 112 in [item["id"] for item in items]
+    assert all(len(item["semantic_group_ids"]) == 3 for item in items)
+    assert len({tuple(item["semantic_group_ids"]) for item in items}) == 1
+
+
+def test_repair_items_support_conservative_uppercase_continuation():
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(130, "What I need to say is", "我需要说的是"),
+        _block(131, "I was wrong.", "我错了。"),
+        _block(132, "He left", "他离开了"),
+        _block(133, "She stayed.", "她留下了。"),
+    ]
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=130,
+            message="semantic mismatch",
+        ),
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=132,
+            message="semantic mismatch",
+        ),
+    ]
+
+    items = build_repair_items(blocks, issues)
+    item_by_id = {item["id"]: item for item in items}
+
+    assert item_by_id[130]["semantic_group_ids"] == [130, 131]
+    assert item_by_id[131]["semantic_group_ids"] == [130, 131]
+    assert "semantic_group_ids" not in item_by_id[132]
+    assert 133 not in item_by_id
+
+
+@pytest.mark.parametrize(
     "source",
     [
         "[POUNDING]",

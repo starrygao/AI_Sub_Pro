@@ -3795,7 +3795,7 @@ def test_auto_repair_keeps_semantic_group_atomic_and_refreshes_later_context():
         {
             "translation": {
                 "qa_auto_repair": True,
-                "qa_auto_repair_max_blocks": 1,
+                "qa_auto_repair_max_blocks": 2,
             },
         },
         translator,
@@ -3824,6 +3824,31 @@ def test_auto_repair_keeps_semantic_group_atomic_and_refreshes_later_context():
     assert [[item["id"] for item in call] for call in calls] == [[2, 3], [4]]
     assert trace["attempted_blocks"] == 3
     assert trace["semantic_groups"] == [[2, 3]]
+
+
+def test_semantic_repair_group_is_conservatively_bounded_by_batch_capacity():
+    from app.api.translate import (
+        _limit_semantic_repair_items,
+        _repair_batch_positions,
+    )
+
+    items = [
+        {
+            "id": block_id,
+            "semantic_group_ids": [10, 11, 12],
+            "semantic_seed_ids": [11],
+        }
+        for block_id in [10, 11, 12]
+    ]
+
+    limited = _limit_semantic_repair_items(items, max_blocks=2)
+    batches = _repair_batch_positions(limited, max_blocks=2)
+
+    assert [item["id"] for item in limited] == [10, 11]
+    assert all(item["semantic_group_ids"] == [10, 11] for item in limited)
+    assert all(item["semantic_seed_ids"] == [11] for item in limited)
+    assert batches == [[0, 1]]
+    assert all(len(batch) <= 2 for batch in batches)
 
 
 def test_translate_pipeline_records_improved_and_still_failing_ids(

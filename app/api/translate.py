@@ -3344,6 +3344,74 @@ def _repair_batch_positions(items: list[dict], max_blocks: int) -> list[list[int
     return batches
 
 
+def _limit_semantic_repair_items(
+    items: list[dict],
+    max_blocks: int,
+) -> list[dict]:
+    if max_blocks <= 0:
+        return []
+    limited: list[dict] = []
+    position = 0
+    while position < len(items):
+        raw_group = items[position].get("semantic_group_ids")
+        if not isinstance(raw_group, list) or len(raw_group) <= 1:
+            limited.append(dict(items[position]))
+            position += 1
+            continue
+        end = position + 1
+        while (
+            end < len(items)
+            and items[end].get("semantic_group_ids") == raw_group
+        ):
+            end += 1
+        unit = [dict(item) for item in items[position:end]]
+        if len(unit) > max_blocks:
+            seed_ids = [
+                block_id
+                for block_id in unit[0].get("semantic_seed_ids", [])
+                if isinstance(block_id, int) and not isinstance(block_id, bool)
+            ]
+            seed_position = next(
+                (
+                    unit_position
+                    for unit_position, item in enumerate(unit)
+                    if item.get("id") in seed_ids
+                ),
+                0,
+            )
+            window_start = max(
+                0,
+                min(
+                    seed_position - (max_blocks // 2),
+                    len(unit) - max_blocks,
+                ),
+            )
+            unit = unit[window_start:window_start + max_blocks]
+        selected_ids = [
+            item.get("id")
+            for item in unit
+            if (
+                isinstance(item.get("id"), int)
+                and not isinstance(item.get("id"), bool)
+            )
+        ]
+        selected_seed_ids = [
+            block_id
+            for block_id in unit[0].get("semantic_seed_ids", [])
+            if block_id in selected_ids
+        ] if unit else []
+        for item in unit:
+            if len(selected_ids) > 1:
+                item["semantic_group_ids"] = list(selected_ids)
+                item["semantic_seed_ids"] = list(selected_seed_ids)
+            else:
+                item.pop("semantic_group_ids", None)
+                item.pop("semantic_seed_ids", None)
+            limited.append(item)
+        position = end
+    return limited
+
+
 def _auto_repair_quality_issues(
     cfg: dict,
     translator,
@@ -3363,6 +3431,7 @@ def _auto_repair_quality_issues(
     attempted_blocks = 0
     nonempty_responses = 0
     mutation_occurred = False
+    candidate_block_count = 0
     initial_translation_by_id: dict[str, str] = {}
     blocks_by_id: dict[str, object] = {}
 
@@ -3404,7 +3473,7 @@ def _auto_repair_quality_issues(
                 "changed_unique_ids": len(changed_ids),
                 "skipped_blocks": max(
                     0,
-                    len(all_repair_items) - attempted_blocks,
+                    candidate_block_count - attempted_blocks,
                 ),
                 "applied_blocks": len(changed_ids),
                 "repair_completed": completed,
@@ -3422,6 +3491,7 @@ def _auto_repair_quality_issues(
 
         repair_issues = repairable_quality_issues(report.issues)
         all_repair_items = build_repair_items(blocks, repair_issues)
+        candidate_block_count = len(all_repair_items)
         blocks_by_id = {
             str(getattr(block, "index", "")): block
             for block in blocks or []
@@ -3433,7 +3503,7 @@ def _auto_repair_quality_issues(
         max_blocks = _repair_item_limit(cfg)
         if repair_trace is not None:
             repair_trace.update({
-                "candidate_blocks": len(all_repair_items),
+                "candidate_blocks": candidate_block_count,
                 "max_blocks": max_blocks,
                 "repair_attempts": 0,
                 "attempted_blocks": 0,
@@ -3441,14 +3511,20 @@ def _auto_repair_quality_issues(
                 "mutation_occurred": False,
                 "changed_unique_ids": 0,
                 "changed_block_ids": [],
-                "skipped_blocks": len(all_repair_items),
+                "skipped_blocks": candidate_block_count,
                 "batches": [],
             })
-        if not all_repair_items:
+        if not candidate_block_count:
             return finish_outcome(True)
         if max_blocks <= 0:
             if repair_trace is not None:
                 repair_trace["skipped_reason"] = "repair_disabled_by_zero_limit"
+            return finish_outcome(True)
+        all_repair_items = _limit_semantic_repair_items(
+            all_repair_items,
+            max_blocks,
+        )
+        if not all_repair_items:
             return finish_outcome(True)
         primary = getattr(translator, "primary", None)
         if primary is None or not hasattr(primary, "translate_batch"):
@@ -3458,7 +3534,10 @@ def _auto_repair_quality_issues(
 
         batch_traces = repair_trace.get("batches") if isinstance(repair_trace, dict) else None
         for positions in _repair_batch_positions(all_repair_items, max_blocks):
-            current_items = build_repair_items(blocks, repair_issues)
+            current_items = _limit_semantic_repair_items(
+                build_repair_items(blocks, repair_issues),
+                max_blocks,
+            )
             repair_items = [
                 current_items[position]
                 for position in positions

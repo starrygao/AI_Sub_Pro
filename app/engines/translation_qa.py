@@ -135,6 +135,17 @@ _LOWERCASE_CONTINUATION_RE = re.compile(r"^[\"'“‘(\[{]*[a-z]")
 _SINGLE_SPEAKER_START_RE = re.compile(
     r"^\s*(?:[-‐‑‒–—―]\s+\S|[A-Z][A-Za-z0-9 .'\-]{0,47}[:：]\s*\S)"
 )
+_BRACKETED_SPEAKER_START_RE = re.compile(
+    r"^\s*(?:[-‐‑‒–—―]\s*)?\[[^\]\r\n]{1,48}\]\s*\S"
+)
+_UPPERCASE_CONTINUATION_RE = re.compile(r"^[\"'“‘(\[{]*[A-Z]")
+_INCOMPLETE_TRAILING_WORD_RE = re.compile(
+    r"\b(?:is|are|was|were|be|been|being|to|of|for|with|that|if|when|"
+    r"because|and|or|but|what|who|which|whose|my|our|your|his|her|their|"
+    r"a|an|the)\s*$",
+    re.IGNORECASE,
+)
+_MAX_SEMANTIC_GROUP_CUES = 3
 _SCIENTIFIC_TARGET_SUFFIXES = (
     "兽",
     "獸",
@@ -1757,6 +1768,7 @@ def _subtitle_time_gap_seconds(previous, following) -> Optional[float]:
 def _starts_new_speaker_cue(source: str) -> bool:
     return bool(
         _SINGLE_SPEAKER_START_RE.match(source)
+        or _BRACKETED_SPEAKER_START_RE.match(source)
         or classify_speaker_lines(source) is not None
     )
 
@@ -1781,9 +1793,13 @@ def _cross_cue_semantic_continuation(previous, following) -> bool:
     following_line = following_source.lstrip().splitlines()[0]
     if _SEMANTIC_ELLIPSIS_RE.search(previous_line):
         return True
+    if _SEMANTIC_TERMINAL_RE.search(previous_line):
+        return False
+    if _LOWERCASE_CONTINUATION_RE.match(following_line):
+        return True
     return bool(
-        not _SEMANTIC_TERMINAL_RE.search(previous_line)
-        and _LOWERCASE_CONTINUATION_RE.match(following_line)
+        _UPPERCASE_CONTINUATION_RE.match(following_line)
+        and _INCOMPLETE_TRAILING_WORD_RE.search(previous_line)
     )
 
 
@@ -1806,9 +1822,16 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
         for issue in issues
         if issue.type == "reading_speed_too_fast" and isinstance(issue.block_id, int)
     }
-    active_blocks = [
-        block for block in (blocks or [])
+    timeline_blocks = list(blocks or [])
+    active_timeline = [
+        (timeline_position, block)
+        for timeline_position, block in enumerate(timeline_blocks)
         if not getattr(block, "filtered", False)
+    ]
+    active_blocks = [block for _timeline_position, block in active_timeline]
+    timeline_position_by_active_position = [
+        timeline_position
+        for timeline_position, _block in active_timeline
     ]
     semantic_seed_positions = {
         position
@@ -1818,12 +1841,17 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
     continuation_edges = {
         position
         for position in range(len(active_blocks) - 1)
-        if _cross_cue_semantic_continuation(
-            active_blocks[position],
-            active_blocks[position + 1],
+        if (
+            timeline_position_by_active_position[position + 1]
+            == timeline_position_by_active_position[position] + 1
+            and _cross_cue_semantic_continuation(
+                active_blocks[position],
+                active_blocks[position + 1],
+            )
         )
     }
     semantic_group_by_position: dict[int, list[int]] = {}
+    semantic_seed_ids_by_position: dict[int, list[int]] = {}
     semantic_repair_positions = set(semantic_seed_positions)
     visited_positions: set[int] = set()
     for seed_position in sorted(semantic_seed_positions):
@@ -1835,7 +1863,15 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
         end = seed_position
         while end in continuation_edges:
             end += 1
-        component_positions = list(range(start, end + 1))
+        group_start = max(
+            start,
+            min(seed_position - 1, end - _MAX_SEMANTIC_GROUP_CUES + 1),
+        )
+        group_end = min(
+            end,
+            group_start + _MAX_SEMANTIC_GROUP_CUES - 1,
+        )
+        component_positions = list(range(group_start, group_end + 1))
         visited_positions.update(component_positions)
         semantic_repair_positions.update(component_positions)
         group_ids = [
@@ -1847,8 +1883,12 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
             if isinstance(block_id, int) and not isinstance(block_id, bool)
         ]
         if len(group_ids) > 1:
+            group_seed_ids = [
+                block_id for block_id in group_ids if block_id in semantic_ids
+            ]
             for item_position in component_positions:
                 semantic_group_by_position[item_position] = group_ids
+                semantic_seed_ids_by_position[item_position] = group_seed_ids
 
     repair_ids = set(failing_ids)
     repair_ids.update(
@@ -1886,6 +1926,7 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
         }
         if position in semantic_group_by_position:
             item["semantic_group_ids"] = semantic_group_by_position[position]
+            item["semantic_seed_ids"] = semantic_seed_ids_by_position[position]
         reading_issue = reading_speed_by_id.get(block_id)
         duration = _duration_seconds(block)
         if reading_issue is not None and duration > 0:
