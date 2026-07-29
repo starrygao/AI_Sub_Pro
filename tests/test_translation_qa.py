@@ -1010,8 +1010,8 @@ def test_repair_items_include_bounded_context_and_group_adjacent_semantic_findin
 
     blocks = [
         _block(10, "He never came back.", "他再也没回来。"),
-        _block(11, "Not after what happened.", "那件事之后就没有。"),
-        _block(12, "You know why.", "你知道为什么。"),
+        _block(11, "Not after what happened", "那件事之后就没有"),
+        _block(12, "you know why.", "你知道为什么。"),
         _block(13, "I wish I did.", "我倒希望自己知道。"),
         _block(14, "Let's go.", "走吧。"),
     ]
@@ -1040,13 +1040,13 @@ def test_repair_items_include_bounded_context_and_group_adjacent_semantic_findin
     }]
     assert items[0]["following_context"] == [{
         "id": 12,
-        "original": "You know why.",
+        "original": "you know why.",
         "draft": "你知道为什么。",
     }]
     assert items[1]["preceding_context"] == [{
         "id": 11,
-        "original": "Not after what happened.",
-        "draft": "那件事之后就没有。",
+        "original": "Not after what happened",
+        "draft": "那件事之后就没有",
     }]
     assert items[1]["following_context"] == [{
         "id": 13,
@@ -1056,6 +1056,83 @@ def test_repair_items_include_bounded_context_and_group_adjacent_semantic_findin
     assert items[0]["semantic_group_ids"] == [11, 12]
     assert items[1]["semantic_group_ids"] == [11, 12]
     assert all(14 not in item["semantic_group_ids"] for item in items)
+
+
+@pytest.mark.parametrize(
+    ("first_id", "first_source", "second_source", "failing_id"),
+    [
+        (308, "I didn't say...", "that she was guilty.", 309),
+        (323, "If you tell him", "we lose everything.", 323),
+        (356, "They took what was", "ours.", 357),
+    ],
+)
+def test_repair_items_expand_cross_cue_semantic_continuations(
+    first_id,
+    first_source,
+    second_source,
+    failing_id,
+):
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(first_id, first_source, "旧译一"),
+        _block(first_id + 1, second_source, "旧译二"),
+    ]
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=failing_id,
+            message="negation or ownership scope crosses the cue boundary",
+        ),
+    ]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == [first_id, first_id + 1]
+    assert all(
+        item["semantic_group_ids"] == [first_id, first_id + 1]
+        for item in items
+    )
+
+
+@pytest.mark.parametrize(
+    ("first_source", "second_source", "gap_seconds"),
+    [
+        ("He left.", "she stayed.", 0),
+        ("I heard...", "[DOOR SLAMS]", 0),
+        ("I heard...", "MARA: she stayed.", 0),
+        ("I heard...", "- She stayed.", 0),
+        ("If you tell him", "we lose everything.", 2),
+    ],
+)
+def test_repair_items_do_not_overgroup_independent_semantic_neighbors(
+    first_source,
+    second_source,
+    gap_seconds,
+):
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(40, first_source, "旧译一"),
+        _block(41, second_source, "旧译二"),
+    ]
+    if gap_seconds:
+        blocks[1].start = blocks[0].end + timedelta(seconds=gap_seconds)
+        blocks[1].end = blocks[1].start + timedelta(seconds=1)
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=40,
+            message="semantic mismatch",
+        ),
+    ]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == [40]
+    assert "semantic_group_ids" not in items[0]
 
 
 @pytest.mark.parametrize(

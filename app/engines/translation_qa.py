@@ -129,6 +129,12 @@ _CJK_TEXT_RE = re.compile(r"[\u3400-\u9fff]+")
 _REPEATED_CJK_RE = re.compile(r"([\u4e00-\u9fff])(?:[，,、\s]*\1){2,}")
 _ASCII_PUNCT_RE = re.compile(r"[?!,;:]")
 _SENTENCE_END_PUNCT_RE = re.compile(r"[.!?。！？]\s*$")
+_SEMANTIC_ELLIPSIS_RE = re.compile(r"(?:\.{2,}|…+)[\"'”’)\]}】）]*\s*$")
+_SEMANTIC_TERMINAL_RE = re.compile(r"[.!?。！？][\"'”’)\]}】）]*\s*$")
+_LOWERCASE_CONTINUATION_RE = re.compile(r"^[\"'“‘(\[{]*[a-z]")
+_SINGLE_SPEAKER_START_RE = re.compile(
+    r"^\s*(?:[-‐‑‒–—―]\s+\S|[A-Z][A-Za-z0-9 .'\-]{0,47}[:：]\s*\S)"
+)
 _SCIENTIFIC_TARGET_SUFFIXES = (
     "兽",
     "獸",
@@ -1736,13 +1742,62 @@ def save_quality_report(
         Path(markdown_path).write_text(report.to_markdown(), encoding="utf-8")
 
 
+def _subtitle_time_gap_seconds(previous, following) -> Optional[float]:
+    previous_end = getattr(previous, "end", None)
+    following_start = getattr(following, "start", None)
+    if previous_end is None or following_start is None:
+        return None
+    try:
+        gap = following_start - previous_end
+        return float(gap.total_seconds()) if hasattr(gap, "total_seconds") else float(gap)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _starts_new_speaker_cue(source: str) -> bool:
+    return bool(
+        _SINGLE_SPEAKER_START_RE.match(source)
+        or classify_speaker_lines(source) is not None
+    )
+
+
+def _cross_cue_semantic_continuation(previous, following) -> bool:
+    previous_source = dialogue_only_qa_source_text(
+        _clean_text(getattr(previous, "text", ""))
+    )
+    following_source = dialogue_only_qa_source_text(
+        _clean_text(getattr(following, "text", ""))
+    )
+    if not previous_source or not following_source:
+        return False
+    if _starts_new_speaker_cue(following_source):
+        return False
+
+    gap_seconds = _subtitle_time_gap_seconds(previous, following)
+    if gap_seconds is not None and (gap_seconds < -0.5 or gap_seconds > 1.0):
+        return False
+
+    previous_line = previous_source.rstrip().splitlines()[-1]
+    following_line = following_source.lstrip().splitlines()[0]
+    if _SEMANTIC_ELLIPSIS_RE.search(previous_line):
+        return True
+    return bool(
+        not _SEMANTIC_TERMINAL_RE.search(previous_line)
+        and _LOWERCASE_CONTINUATION_RE.match(following_line)
+    )
+
+
 def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dict]:
     failing_ids = {issue.block_id for issue in issues if isinstance(issue.block_id, int)}
     semantic_ids = {
         issue.block_id
         for issue in issues
         if (
-            issue.type in {"semantic_mismatch", "semantic_uncertain"}
+            issue.type in {
+                "semantic_mismatch",
+                "semantic_uncertain",
+                "semantic_qa_failed",
+            }
             and isinstance(issue.block_id, int)
         )
     }
@@ -1755,27 +1810,51 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
         block for block in (blocks or [])
         if not getattr(block, "filtered", False)
     ]
+    semantic_seed_positions = {
+        position
+        for position, block in enumerate(active_blocks)
+        if getattr(block, "index", None) in semantic_ids
+    }
+    continuation_edges = {
+        position
+        for position in range(len(active_blocks) - 1)
+        if _cross_cue_semantic_continuation(
+            active_blocks[position],
+            active_blocks[position + 1],
+        )
+    }
     semantic_group_by_position: dict[int, list[int]] = {}
-    position = 0
-    while position < len(active_blocks):
-        block_id = getattr(active_blocks[position], "index", None)
-        if block_id not in semantic_ids:
-            position += 1
+    semantic_repair_positions = set(semantic_seed_positions)
+    visited_positions: set[int] = set()
+    for seed_position in sorted(semantic_seed_positions):
+        if seed_position in visited_positions:
             continue
-        end = position + 1
-        while (
-            end < len(active_blocks)
-            and getattr(active_blocks[end], "index", None) in semantic_ids
-        ):
+        start = seed_position
+        while start > 0 and start - 1 in continuation_edges:
+            start -= 1
+        end = seed_position
+        while end in continuation_edges:
             end += 1
-        group_ids = list(dict.fromkeys(
-            getattr(active_blocks[item_position], "index", None)
-            for item_position in range(position, end)
-            if isinstance(getattr(active_blocks[item_position], "index", None), int)
-        ))
-        for item_position in range(position, end):
-            semantic_group_by_position[item_position] = group_ids
-        position = end
+        component_positions = list(range(start, end + 1))
+        visited_positions.update(component_positions)
+        semantic_repair_positions.update(component_positions)
+        group_ids = [
+            block_id
+            for block_id in (
+                getattr(active_blocks[item_position], "index", None)
+                for item_position in component_positions
+            )
+            if isinstance(block_id, int) and not isinstance(block_id, bool)
+        ]
+        if len(group_ids) > 1:
+            for item_position in component_positions:
+                semantic_group_by_position[item_position] = group_ids
+
+    repair_ids = set(failing_ids)
+    repair_ids.update(
+        getattr(active_blocks[position], "index", None)
+        for position in semantic_repair_positions
+    )
 
     def context_item(block) -> dict:
         return {
@@ -1787,7 +1866,7 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
     items = []
     for position, block in enumerate(active_blocks):
         block_id = getattr(block, "index", None)
-        if block_id not in failing_ids:
+        if block_id not in repair_ids:
             continue
         translation = _clean_text(getattr(block, "translation", ""))
         item = {
