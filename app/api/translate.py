@@ -115,13 +115,22 @@ router = APIRouter(prefix="/api/projects", tags=["pipeline"])
 _TRANSLATION_QUALITY_RUN_STATE_FILENAME = (
     "translation_quality_run_state.json"
 )
-_TRANSLATION_QUALITY_RUN_STATE_SCHEMA_VERSION = 1
+_TRANSLATION_QUALITY_RUN_STATE_SCHEMA_VERSION = 2
 _TRANSLATION_QUALITY_RUN_STATE_MAX_BYTES = 16 * 1024 * 1024
 _TRANSLATION_QUALITY_RUN_STATE_MAX_STRING = 4096
 _TRANSLATION_QUALITY_RUN_STATE_MIN_HISTORY = 4096
 _TRANSLATION_QUALITY_RUN_STATE_MAX_ROUNDS = 16
 _TRANSLATION_QUALITY_RUN_STATE_MIN_LEDGER_ITEMS = 15000
 _TRANSLATION_QUALITY_RUN_STATE_MIN_SEEN = 50000
+_CERTIFICATION_RECOVERY_TRACE_RESULTS = frozenset({
+    "not_eligible",
+    "already_used",
+    "attempting",
+    "no_mutation",
+    "accepted",
+    "rolled_back",
+})
+_SHA256_CONTENT_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 # Active tasks tracker
 active_tasks: Dict[str, threading.Thread] = {}
@@ -2396,6 +2405,157 @@ def _quality_run_state_error(detail: str) -> RuntimeError:
     )
 
 
+def _new_certification_recovery_trace() -> dict:
+    return {
+        "used": False,
+        "result": "not_eligible",
+        "new_issue_block_ids": [],
+        "requested_block_ids": [],
+        "rediscovered_block_ids": [],
+        "group_companion_block_ids": [],
+        "accepted_block_ids": [],
+        "accepted_verified_content_hashes": [],
+    }
+
+
+def _is_valid_certification_recovery_result(
+    result,
+    *,
+    used: bool,
+) -> bool:
+    if type(result) is not str:
+        return False
+    if not used:
+        return result == "not_eligible"
+    return (
+        result in _CERTIFICATION_RECOVERY_TRACE_RESULTS
+        and result != "not_eligible"
+    )
+
+
+def _certification_recovery_trace_checkpoint(
+    trace,
+    *,
+    used: bool,
+) -> dict:
+    candidate = trace if isinstance(trace, dict) else {}
+    result = candidate.get("result")
+    if not _is_valid_certification_recovery_result(
+        result,
+        used=used,
+    ):
+        result = "already_used" if used else "not_eligible"
+    checkpoint = _new_certification_recovery_trace()
+    checkpoint.update({
+        "used": used,
+        "result": result,
+    })
+    for field in (
+        "new_issue_block_ids",
+        "requested_block_ids",
+        "rediscovered_block_ids",
+        "group_companion_block_ids",
+        "accepted_block_ids",
+    ):
+        values = candidate.get(field, [])
+        checkpoint[field] = sorted({
+            block_id
+            for block_id in values
+            if (
+                isinstance(values, list)
+                and isinstance(block_id, int)
+                and not isinstance(block_id, bool)
+                and block_id > 0
+            )
+        }) if isinstance(values, list) else []
+    if (
+        result == "accepted"
+        and (
+            not checkpoint["accepted_block_ids"]
+            or set(checkpoint["accepted_block_ids"]).intersection(
+                checkpoint["group_companion_block_ids"]
+            )
+        )
+    ):
+        result = "already_used"
+        checkpoint["result"] = result
+        checkpoint["accepted_block_ids"] = []
+    elif result != "accepted":
+        checkpoint["accepted_block_ids"] = []
+    raw_evidence = candidate.get(
+        "accepted_verified_content_hashes",
+        [],
+    )
+    normalized_evidence = _normalized_accepted_verified_content_hashes(
+        raw_evidence
+    )
+    evidence_scope_ids = set(
+        checkpoint["accepted_block_ids"]
+    ).union(checkpoint["group_companion_block_ids"])
+    if (
+        raw_evidence != normalized_evidence
+        or result != "accepted"
+        or not {
+            item["block_id"]
+            for item in normalized_evidence
+        }.issubset(evidence_scope_ids)
+    ):
+        normalized_evidence = []
+    checkpoint["accepted_verified_content_hashes"] = normalized_evidence
+    if not set(checkpoint["rediscovered_block_ids"]).issubset({
+        item["block_id"]
+        for item in normalized_evidence
+    }):
+        checkpoint["rediscovered_block_ids"] = []
+    return checkpoint
+
+
+def _normalized_accepted_verified_content_hashes(values) -> list[dict]:
+    if not isinstance(values, list):
+        return []
+    normalized_by_id = {}
+    for item in values:
+        if not isinstance(item, dict) or set(item) != {
+            "block_id",
+            "content_hash",
+        }:
+            continue
+        block_id = item.get("block_id")
+        content_hash = item.get("content_hash")
+        if (
+            type(block_id) is not int
+            or block_id <= 0
+            or type(content_hash) is not str
+            or _SHA256_CONTENT_HASH_RE.fullmatch(content_hash) is None
+            or block_id in normalized_by_id
+        ):
+            continue
+        normalized_by_id[block_id] = content_hash
+    return [
+        {
+            "block_id": block_id,
+            "content_hash": normalized_by_id[block_id],
+        }
+        for block_id in sorted(normalized_by_id)
+    ]
+
+
+def _is_valid_bounded_block_id_list(
+    values,
+    *,
+    block_count: int,
+) -> bool:
+    return (
+        isinstance(values, list)
+        and len(values) <= block_count
+        and all(
+            type(block_id) is int and block_id > 0
+            for block_id in values
+        )
+        and len(values) == len(set(values))
+    )
+
+
 def _validate_quality_run_state_json_value(
     value,
     *,
@@ -2467,6 +2627,7 @@ def _validate_translation_quality_run_state(
         "auto_repair_rounds",
         "auto_repair_budget",
         "certification_recovery_used",
+        "certification_recovery_trace",
         "seen_blocking_identities",
     }
     if not isinstance(state, dict) or set(state) != required_fields:
@@ -2474,7 +2635,7 @@ def _validate_translation_quality_run_state(
             "required top-level fields are missing or unknown"
         )
     if (
-        isinstance(state["schema_version"], bool)
+        type(state["schema_version"]) is not int
         or state["schema_version"]
         != _TRANSLATION_QUALITY_RUN_STATE_SCHEMA_VERSION
     ):
@@ -2518,6 +2679,89 @@ def _validate_translation_quality_run_state(
         raise _quality_run_state_error(
             "certification_recovery_used must be boolean"
         )
+    recovery_trace = state["certification_recovery_trace"]
+    required_recovery_trace_fields = set(
+        _new_certification_recovery_trace()
+    )
+    if (
+        not isinstance(recovery_trace, dict)
+        or set(recovery_trace) != required_recovery_trace_fields
+        or not isinstance(recovery_trace.get("used"), bool)
+        or recovery_trace["used"]
+        != state["certification_recovery_used"]
+        or not _is_valid_certification_recovery_result(
+            recovery_trace.get("result"),
+            used=recovery_trace.get("used", False),
+        )
+    ):
+        raise _quality_run_state_error(
+            "certification recovery trace is malformed"
+        )
+    for field in (
+        "new_issue_block_ids",
+        "requested_block_ids",
+        "rediscovered_block_ids",
+        "group_companion_block_ids",
+        "accepted_block_ids",
+    ):
+        values = recovery_trace.get(field)
+        if not _is_valid_bounded_block_id_list(
+            values,
+            block_count=block_count,
+        ):
+            raise _quality_run_state_error(
+                f"certification recovery trace {field} is malformed "
+                "or oversized"
+            )
+    accepted_block_ids = recovery_trace["accepted_block_ids"]
+    if (
+        (recovery_trace["result"] == "accepted")
+        != bool(accepted_block_ids)
+        or set(accepted_block_ids).intersection(
+            recovery_trace["group_companion_block_ids"]
+        )
+    ):
+        raise _quality_run_state_error(
+            "certification recovery trace accepted block ids are "
+            "inconsistent with result or group companions"
+        )
+    accepted_hash_evidence = recovery_trace.get(
+        "accepted_verified_content_hashes"
+    )
+    if (
+        not isinstance(accepted_hash_evidence, list)
+        or len(accepted_hash_evidence) > block_count
+        or accepted_hash_evidence
+        != _normalized_accepted_verified_content_hashes(
+            accepted_hash_evidence
+        )
+        or (
+            accepted_hash_evidence
+            and (
+                recovery_trace["result"] != "accepted"
+                or not {
+                    item["block_id"]
+                    for item in accepted_hash_evidence
+                    }.issubset(
+                        set(recovery_trace["accepted_block_ids"]).union(
+                            recovery_trace["group_companion_block_ids"]
+                        )
+                )
+            )
+        )
+    ):
+        raise _quality_run_state_error(
+            "certification recovery trace accepted verified content "
+            "hashes are malformed or oversized"
+        )
+    if not set(recovery_trace["rediscovered_block_ids"]).issubset({
+        item["block_id"]
+        for item in accepted_hash_evidence
+    }):
+        raise _quality_run_state_error(
+            "certification recovery trace rediscovered block ids lack "
+            "accepted verified hash evidence"
+        )
 
     observed = state["semantic_uncertain_observed_block_ids"]
     if (
@@ -2560,6 +2804,49 @@ def _validate_translation_quality_run_state(
         raise _quality_run_state_error(
             "auto repair rounds are malformed or oversized"
         )
+    for round_index, round_trace in enumerate(rounds):
+        for node_name, id_fields in (
+            ("targeted_semantic_qa", ("issue_block_ids",)),
+            (
+                "semantic_convergence_scan",
+                ("new_issue_block_ids", "issue_block_ids"),
+            ),
+        ):
+            if node_name not in round_trace:
+                continue
+            node = round_trace[node_name]
+            if not isinstance(node, dict):
+                raise _quality_run_state_error(
+                    f"auto repair round {round_index + 1} "
+                    f"{node_name} is malformed"
+                )
+            for field in id_fields:
+                if (
+                    field in node
+                    and not _is_valid_bounded_block_id_list(
+                        node[field],
+                        block_count=block_count,
+                    )
+                ):
+                    raise _quality_run_state_error(
+                        f"auto repair round {round_index + 1} "
+                        f"{node_name}.{field} is malformed or oversized"
+                    )
+        for field in (
+            "rediscovered_block_ids",
+            "group_companion_block_ids",
+        ):
+            if (
+                field in round_trace
+                and not _is_valid_bounded_block_id_list(
+                    round_trace[field],
+                    block_count=block_count,
+                )
+            ):
+                raise _quality_run_state_error(
+                    f"auto repair round {round_index + 1} "
+                    f"{field} is malformed or oversized"
+                )
 
     budget = state["auto_repair_budget"]
     if (
@@ -2839,6 +3126,9 @@ def _new_translation_quality_run_state(
             "remaining_rounds": round_limit,
         },
         "certification_recovery_used": False,
+        "certification_recovery_trace": (
+            _new_certification_recovery_trace()
+        ),
         "seen_blocking_identities": [],
     }
 
@@ -2895,6 +3185,45 @@ def _persist_translation_quality_run_state(
     )
 
 
+def _migrate_translation_quality_run_state(state) -> dict:
+    if (
+        not isinstance(state, dict)
+        or type(state.get("schema_version")) is not int
+        or state["schema_version"] != 1
+    ):
+        return state
+    v1_fields = {
+        "schema_version",
+        "block_count",
+        "run_id",
+        "source_generation_hash",
+        "configuration_hash",
+        "semantic_uncertain_observed_block_ids",
+        "semantic_issue_ledger",
+        "semantic_qa_history",
+        "auto_repair_rounds",
+        "auto_repair_budget",
+        "certification_recovery_used",
+        "seen_blocking_identities",
+    }
+    if set(state) != v1_fields:
+        return state
+    migrated = dict(state)
+    recovery_used = migrated.get("certification_recovery_used")
+    if not isinstance(recovery_used, bool):
+        return state
+    migrated["schema_version"] = (
+        _TRANSLATION_QUALITY_RUN_STATE_SCHEMA_VERSION
+    )
+    recovery_trace = _new_certification_recovery_trace()
+    recovery_trace.update({
+        "used": recovery_used,
+        "result": "already_used" if recovery_used else "not_eligible",
+    })
+    migrated["certification_recovery_trace"] = recovery_trace
+    return migrated
+
+
 def _hydrate_translation_quality_run_state(
     pdir: str | Path,
     *,
@@ -2924,7 +3253,8 @@ def _hydrate_translation_quality_run_state(
         )
         return state
 
-    validated = _validate_translation_quality_run_state(loaded)
+    migrated = _migrate_translation_quality_run_state(loaded)
+    validated = _validate_translation_quality_run_state(migrated)
     identity_matches = all(
         validated.get(field) == expected
         for field, expected in expected_identity.items()
@@ -5539,6 +5869,143 @@ def _quality_repair_statistics(report, repaired: list[dict]) -> dict:
     }
 
 
+def _repair_provenance_block_ids(values) -> list[int]:
+    if not isinstance(values, list):
+        return []
+    return sorted({
+        block_id
+        for block_id in values
+        if (
+            isinstance(block_id, int)
+            and not isinstance(block_id, bool)
+            and block_id > 0
+        )
+    })
+
+
+def _group_companion_block_ids(
+    guard_scope_ids,
+    seed_ids,
+) -> list[int]:
+    valid_guard_ids = {
+        block_id
+        for block_id in guard_scope_ids or []
+        if (
+            isinstance(block_id, int)
+            and not isinstance(block_id, bool)
+            and block_id > 0
+        )
+    }
+    valid_seed_ids = {
+        block_id
+        for block_id in seed_ids or []
+        if (
+            isinstance(block_id, int)
+            and not isinstance(block_id, bool)
+            and block_id > 0
+        )
+    }
+    return sorted(valid_guard_ids - valid_seed_ids)
+
+
+def _rediscovered_targeted_block_ids(
+    report,
+    blocks,
+    accepted_verified_hashes: dict[int, str],
+) -> list[int]:
+    current_hash_by_id = {
+        getattr(block, "index", None): _semantic_block_content_hash(block)
+        for block in blocks or []
+        if (
+            isinstance(getattr(block, "index", None), int)
+            and not isinstance(getattr(block, "index", None), bool)
+        )
+    }
+    return sorted({
+        block_id
+        for issue in (getattr(report, "issues", []) or [])
+        for block_id in [getattr(issue, "block_id", None)]
+        if (
+            isinstance(block_id, int)
+            and not isinstance(block_id, bool)
+            and block_id > 0
+            and accepted_verified_hashes.get(block_id)
+            == current_hash_by_id.get(block_id)
+        )
+    })
+
+
+def _repair_provenance_statistics(report) -> dict:
+    trace = getattr(report, "trace", {})
+    if not isinstance(trace, dict):
+        trace = {}
+    rounds = trace.get("auto_repair_rounds", [])
+    if not isinstance(rounds, list):
+        rounds = []
+    event_ids = {
+        "targeted_guard": [],
+        "convergence": [],
+        "rediscovered": [],
+        "recovery": [],
+        "group_companion": [],
+    }
+    for round_trace in rounds:
+        if not isinstance(round_trace, dict):
+            continue
+        targeted_trace = round_trace.get("targeted_semantic_qa", {})
+        if isinstance(targeted_trace, dict):
+            event_ids["targeted_guard"].extend(
+                _repair_provenance_block_ids(
+                    targeted_trace.get("issue_block_ids", [])
+                )
+            )
+        convergence_trace = round_trace.get(
+            "semantic_convergence_scan",
+            {},
+        )
+        if isinstance(convergence_trace, dict):
+            event_ids["convergence"].extend(
+                _repair_provenance_block_ids(
+                    convergence_trace.get("new_issue_block_ids", [])
+                )
+            )
+        event_ids["rediscovered"].extend(
+            _repair_provenance_block_ids(
+                round_trace.get("rediscovered_block_ids", [])
+            )
+        )
+        event_ids["group_companion"].extend(
+            _repair_provenance_block_ids(
+                round_trace.get("group_companion_block_ids", [])
+            )
+        )
+    recovery_trace = trace.get("certification_recovery", {})
+    if isinstance(recovery_trace, dict):
+        event_ids["recovery"].extend(
+            _repair_provenance_block_ids(
+                recovery_trace.get("requested_block_ids", [])
+            )
+        )
+        event_ids["rediscovered"].extend(
+            _repair_provenance_block_ids(
+                recovery_trace.get("rediscovered_block_ids", [])
+            )
+        )
+        event_ids["group_companion"].extend(
+            _repair_provenance_block_ids(
+                recovery_trace.get("group_companion_block_ids", [])
+            )
+        )
+    return {
+        provenance: {
+            "event_count": len(block_ids),
+            "unique_ids": len(set(block_ids)),
+            "block_ids": sorted(set(block_ids)),
+        }
+        for provenance, block_ids in event_ids.items()
+    }
+
+
 def _deterministic_normalization_statistics(report) -> dict:
     trace = getattr(report, "trace", {})
     runs = (
@@ -5581,6 +6048,7 @@ def _finalize_quality_conclusion(
     issue_count, error_count, warning_count = _quality_issue_counts(report)
     unresolved_count = len(getattr(report, "unresolved_blocks", []) or [])
     repair_stats = _quality_repair_statistics(report, repaired)
+    repair_provenance_stats = _repair_provenance_statistics(report)
     normalization_stats = _deterministic_normalization_statistics(report)
     repaired_count = repair_stats["changed_unique_ids"]
     repair_rounds = (
@@ -5714,6 +6182,7 @@ def _finalize_quality_conclusion(
         "blocking_warning_count": len(blocking_warnings),
         "repaired_blocks": repaired_count,
         "repair_stats": repair_stats,
+        "repair_provenance_stats": repair_provenance_stats,
         "deterministic_normalization_stats": normalization_stats,
         "unresolved_blocks": unresolved_count,
         "conclusion": conclusion,
@@ -6477,6 +6946,20 @@ def _persist_translation_quality_report(
             if matching_run_state
             else False
         )
+        recovery_trace = _certification_recovery_trace_checkpoint(
+            (
+                quality_run_state.get("certification_recovery_trace")
+                if matching_run_state
+                else None
+            ),
+            used=certification_recovery_used,
+        )
+        recovery_accepted_verified_hashes = {
+            item["block_id"]: item["content_hash"]
+            for item in recovery_trace[
+                "accepted_verified_content_hashes"
+            ]
+        }
 
         def run_quality_pass(
             pass_type: str,
@@ -6628,6 +7111,12 @@ def _persist_translation_quality_report(
                 "certification_recovery_used": (
                     certification_recovery_used
                 ),
+                "certification_recovery_trace": (
+                    _certification_recovery_trace_checkpoint(
+                        recovery_trace,
+                        used=certification_recovery_used,
+                    )
+                ),
                 "seen_blocking_identities": [
                     list(identity)
                     for identity in sorted(
@@ -6722,6 +7211,8 @@ def _persist_translation_quality_report(
                     "accepted_semantic_groups": [],
                     "rolled_back_semantic_groups": [],
                     "rollback_reasons": [],
+                    "rediscovered_block_ids": [],
+                    "group_companion_block_ids": [],
                 }
                 before_failing_ids = {
                     issue.block_id
@@ -6913,6 +7404,12 @@ def _persist_translation_quality_report(
                 for group_ids in semantic_groups:
                     if proposed_id_set.intersection(group_ids):
                         guard_candidate_ids.update(group_ids)
+                round_trace["group_companion_block_ids"] = (
+                    _group_companion_block_ids(
+                        guard_candidate_ids,
+                        proposed_id_set,
+                    )
+                )
                 report = run_quality_pass(
                     "candidate",
                     include_semantics=False,
@@ -7115,6 +7612,14 @@ def _persist_translation_quality_report(
                             convergence_failing_ids
                         ),
                     }
+                    round_trace["rediscovered_block_ids"] = (
+                        _rediscovered_targeted_block_ids(
+                            report,
+                            blocks,
+                            accepted_verified_hashes,
+                        )
+                    )
+                    persist_quality_run_state()
                 accepted_model_changes = [
                     {
                         "id": block_id,
@@ -7363,21 +7868,32 @@ def _persist_translation_quality_report(
             for issue in eligible_final_content_issues
             if issue.block_id in recovery_scope_ids
         ]
-        recovery_trace = {
-            "used": certification_recovery_used,
-            "result": (
-                "already_used"
-                if certification_recovery_used
-                else "not_eligible"
-            ),
-            "new_issue_block_ids": [],
-        }
+        if certification_recovery_used:
+            recovery_trace["used"] = True
+        else:
+            recovery_trace.clear()
+            recovery_trace.update(
+                _new_certification_recovery_trace()
+            )
         if (
             repair_enabled
             and new_final_issues
             and not certification_recovery_used
         ):
             certification_recovery_used = True
+            recovery_trace.update({
+                "used": True,
+                "result": "attempting",
+                "new_issue_block_ids": sorted({
+                    issue.block_id
+                    for issue in new_final_issues
+                    if (
+                        isinstance(getattr(issue, "block_id", None), int)
+                        and not isinstance(issue.block_id, bool)
+                    )
+                }),
+                "requested_block_ids": sorted(recovery_scope_ids),
+            })
             if matching_run_state:
                 # Consume the run-scoped allowance before any provider call.
                 # A crash, no-op, or rollback must not grant another attempt.
@@ -7392,18 +7908,6 @@ def _persist_translation_quality_report(
                         for issue in new_final_issues
                     )
                 persist_quality_run_state()
-            recovery_trace.update({
-                "used": True,
-                "result": "attempting",
-                "new_issue_block_ids": sorted({
-                    issue.block_id
-                    for issue in new_final_issues
-                    if (
-                        isinstance(getattr(issue, "block_id", None), int)
-                        and not isinstance(issue.block_id, bool)
-                    )
-                }),
-            })
             report_before_recovery = report
             recovery_report = replace(
                 report,
@@ -7432,6 +7936,7 @@ def _persist_translation_quality_report(
             recovery_trace["repair_completed"] = repair_outcome.completed
             if not repair_outcome.mutation_occurred:
                 recovery_trace["result"] = "no_mutation"
+                persist_quality_run_state()
             else:
                 model_candidate_ids = {
                     item.get("id")
@@ -7472,6 +7977,13 @@ def _persist_translation_quality_report(
                 for group_ids in semantic_groups:
                     if proposed_ids.intersection(group_ids):
                         guard_candidate_ids.update(group_ids)
+                recovery_trace["group_companion_block_ids"] = (
+                    _group_companion_block_ids(
+                        guard_candidate_ids,
+                        proposed_ids,
+                    )
+                )
+                persist_quality_run_state()
                 candidate_report = run_quality_pass(
                     "certification_candidate",
                     include_semantics=False,
@@ -7527,15 +8039,25 @@ def _persist_translation_quality_report(
                     candidate_report,
                     guard_candidate_ids,
                 )
-                rolled_back_set = set(regressions).intersection(proposed_ids)
-                for group_ids in semantic_groups:
+                direct_rejected_ids = set(regressions)
+                rolled_back_semantic_groups = [
+                    group_ids
+                    for group_ids in semantic_groups
                     if (
                         proposed_ids.intersection(group_ids)
-                        and set(group_ids).intersection(regressions)
-                    ):
-                        rolled_back_set.update(
-                            proposed_ids.intersection(group_ids)
-                        )
+                        and direct_rejected_ids.intersection(group_ids)
+                    )
+                ]
+                rolled_back_set = direct_rejected_ids.intersection(
+                    proposed_ids
+                )
+                for group_ids in rolled_back_semantic_groups:
+                    rolled_back_set.update(
+                        proposed_ids.intersection(group_ids)
+                    )
+                rollback_latch_ids = set(rolled_back_set)
+                for group_ids in rolled_back_semantic_groups:
+                    rollback_latch_ids.update(group_ids)
                 for block in blocks or []:
                     block_id = getattr(block, "index", None)
                     if block_id in rolled_back_set:
@@ -7548,8 +8070,11 @@ def _persist_translation_quality_report(
                     block_id: content_hash
                     for block_id, content_hash
                     in targeted_verified_hashes.items()
-                    if block_id not in rolled_back_set
+                    if block_id not in rollback_latch_ids
                 }
+                recovery_accepted_verified_hashes = dict(
+                    accepted_verified_hashes
+                )
                 _apply_verified_semantic_resolution(
                     candidate_report,
                     semantic_ledger,
@@ -7565,18 +8090,28 @@ def _persist_translation_quality_report(
                     ),
                 } for block_id in accepted_ids)
                 recovery_trace.update({
-                    "requested_block_ids": sorted(guard_candidate_ids),
                     "verified_block_ids": sorted(targeted_verified_ids),
                     "focused_passes": len(targeted_traces),
                     "semantic_groups": semantic_groups,
                     "accepted_block_ids": accepted_ids,
                     "rolled_back_block_ids": sorted(rolled_back_set),
+                    "accepted_verified_content_hashes": (
+                        _normalized_accepted_verified_content_hashes([
+                            {
+                                "block_id": block_id,
+                                "content_hash": content_hash,
+                            }
+                            for block_id, content_hash
+                            in recovery_accepted_verified_hashes.items()
+                        ])
+                    ),
                     "result": (
                         "accepted"
                         if accepted_ids
                         else "rolled_back"
                     ),
                 })
+                persist_quality_run_state()
             if not strict_policy:
                 report = run_quality_pass(
                     "certification_final",
@@ -7587,6 +8122,15 @@ def _persist_translation_quality_report(
                 "final",
                 include_semantics=True,
             )
+        if recovery_accepted_verified_hashes:
+            recovery_trace["rediscovered_block_ids"] = (
+                _rediscovered_targeted_block_ids(
+                    report,
+                    blocks,
+                    recovery_accepted_verified_hashes,
+                )
+            )
+            persist_quality_run_state()
         trace["certification_recovery"] = recovery_trace
         if strict_policy:
             seen_blocking_identities.update(

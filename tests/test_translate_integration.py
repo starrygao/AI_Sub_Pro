@@ -5917,7 +5917,7 @@ def test_translate_pipeline_retries_missing_created_after_quality_repair(tmp_pat
         lambda *args, **kwargs: "sha256:pipeline-config",
     )
     disk_state = {
-        "schema_version": 1,
+        "schema_version": 2,
         "block_count": 2,
         "run_id": "pipeline-disk-resume",
         "source_generation_hash": "sha256:pipeline-source",
@@ -5935,6 +5935,16 @@ def test_translate_pipeline_retries_missing_created_after_quality_repair(tmp_pat
             "remaining_rounds": 3,
         },
         "certification_recovery_used": True,
+        "certification_recovery_trace": {
+            "used": True,
+            "result": "already_used",
+            "new_issue_block_ids": [],
+            "requested_block_ids": [],
+            "rediscovered_block_ids": [],
+            "group_companion_block_ids": [],
+            "accepted_block_ids": [],
+            "accepted_verified_content_hashes": [],
+        },
         "seen_blocking_identities": [
             [9, "semantic_mismatch", "sha256:content", ""],
         ],
@@ -6964,8 +6974,163 @@ def test_quality_conclusion_separates_deterministic_normalization_from_model_rep
         "changed_unique_ids": 1,
         "changed_block_ids": [1],
     }
+    assert report.summary["repair_provenance_stats"] == {
+        "targeted_guard": {
+            "event_count": 0,
+            "unique_ids": 0,
+            "block_ids": [],
+        },
+        "convergence": {
+            "event_count": 0,
+            "unique_ids": 0,
+            "block_ids": [],
+        },
+        "rediscovered": {
+            "event_count": 0,
+            "unique_ids": 0,
+            "block_ids": [],
+        },
+        "recovery": {
+            "event_count": 0,
+            "unique_ids": 0,
+            "block_ids": [],
+        },
+        "group_companion": {
+            "event_count": 0,
+            "unique_ids": 0,
+            "block_ids": [],
+        },
+    }
     assert report.summary["quality_gate"]["auto_repaired_blocks"] == 0
     assert "复检通过" not in report.summary["conclusion"]
+
+
+def test_quality_conclusion_preserves_three_round_provenance_events_across_resume():
+    import json
+
+    from app.api.translate import _finalize_quality_conclusion
+    from app.engines.translation_qa import TranslationQaReport
+
+    persisted_trace = json.loads(json.dumps({
+        "auto_repair_rounds": [
+            {
+                "round": 1,
+                "targeted_semantic_qa": {
+                    "issue_block_ids": [86, 86],
+                },
+                "semantic_convergence_scan": {
+                    "new_issue_block_ids": [59, 86, 59],
+                },
+                "rediscovered_block_ids": [86, 86],
+                "group_companion_block_ids": [59, 61, 59],
+            },
+            {
+                "round": 2,
+                "targeted_semantic_qa": {
+                    "issue_block_ids": [86],
+                },
+                "semantic_convergence_scan": {
+                    "new_issue_block_ids": [59],
+                },
+                "rediscovered_block_ids": [86],
+                "group_companion_block_ids": [59, 61],
+            },
+        ],
+    }))
+    persisted_trace["auto_repair_rounds"].append({
+        "round": 3,
+        "targeted_semantic_qa": {
+            "issue_block_ids": [86],
+        },
+        "semantic_convergence_scan": {
+            "new_issue_block_ids": [59],
+        },
+        "rediscovered_block_ids": [86],
+        "group_companion_block_ids": [59, 61],
+    })
+    persisted_trace["certification_recovery"] = {
+        "requested_block_ids": [60, 86, 60],
+        "group_companion_block_ids": [59, 61, 59],
+    }
+    report = TranslationQaReport(
+        status="ok",
+        issues=[],
+        summary={},
+        trace=persisted_trace,
+    )
+
+    _finalize_quality_conclusion(report, [], True)
+
+    assert report.summary["repair_provenance_stats"] == {
+        "targeted_guard": {
+            "event_count": 3,
+            "unique_ids": 1,
+            "block_ids": [86],
+        },
+        "convergence": {
+            "event_count": 4,
+            "unique_ids": 2,
+            "block_ids": [59, 86],
+        },
+        "rediscovered": {
+            "event_count": 3,
+            "unique_ids": 1,
+            "block_ids": [86],
+        },
+        "recovery": {
+            "event_count": 2,
+            "unique_ids": 2,
+            "block_ids": [60, 86],
+        },
+        "group_companion": {
+            "event_count": 8,
+            "unique_ids": 2,
+            "block_ids": [59, 61],
+        },
+    }
+
+
+def test_repair_provenance_rediscovery_uses_current_block_hash_for_86_shape():
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=86,
+        start=timedelta(seconds=86),
+        end=timedelta(seconds=87),
+        text="-Go!\n-Now!",
+        translation="-走！\n-现在！",
+    )
+    report = TranslationQaReport(
+        status="needs_review",
+        issues=[QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=86,
+            message="second line was mistranslated",
+            source_text="-Now!",
+            translation="-现在！",
+        )],
+    )
+    accepted_hashes = {
+        86: api_translate._semantic_block_content_hash(block),
+    }
+
+    assert api_translate._rediscovered_targeted_block_ids(
+        report,
+        [block],
+        accepted_hashes,
+    ) == [86]
+
+
+def test_repair_provenance_group_companion_excludes_59_61_seed():
+    from app.api import translate as api_translate
+
+    assert api_translate._group_companion_block_ids(
+        {59, 60, 61},
+        {60},
+    ) == [59, 61]
 
 
 def test_auto_repair_keeps_semantic_group_atomic_and_refreshes_later_context():
@@ -8107,6 +8272,37 @@ def _run_auto_repair_group_guard_case(
     }
 
 
+def test_auto_repair_trace_records_59_61_as_group_companions_not_seed(
+    tmp_path,
+    monkeypatch,
+):
+    result = _run_auto_repair_group_guard_case(
+        tmp_path,
+        monkeypatch,
+        initial_translations={
+            59: "旧译59",
+            60: "旧译60",
+            61: "旧译61",
+        },
+        candidate_translations={60: "正确新译60"},
+        semantic_groups=[[59, 60, 61]],
+        issues_by_qa_call=[
+            [(60, "semantic_mismatch", "error")],
+            [],
+        ],
+    )
+
+    round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
+    assert round_trace["group_companion_block_ids"] == [59, 61]
+    assert result["report"]["summary"]["repair_provenance_stats"][
+        "group_companion"
+    ] == {
+        "event_count": 2,
+        "unique_ids": 2,
+        "block_ids": [59, 61],
+    }
+
+
 def test_auto_repair_rolls_back_entire_semantic_group_when_one_member_regresses(
     tmp_path,
     monkeypatch,
@@ -8134,6 +8330,13 @@ def test_auto_repair_rolls_back_entire_semantic_group_when_one_member_regresses(
     assert round_trace["rolled_back_block_ids"] == [1, 2]
     assert round_trace["accepted_semantic_groups"] == []
     assert round_trace["rolled_back_semantic_groups"] == [[1, 2]]
+    assert result["report"]["summary"]["repair_provenance_stats"][
+        "targeted_guard"
+    ] == {
+        "event_count": 1,
+        "unique_ids": 1,
+        "block_ids": [2],
+    }
     assert (
         result["report"]["trace"]["semantic_uncertain_observed_block_ids"]
         == []
@@ -12081,6 +12284,23 @@ def test_convergence_scan_gives_new_issue_identity_a_repair_round(
     assert rounds[1]["semantic_convergence_scan"][
         "new_issue_block_ids"
     ] == []
+    assert rounds[0]["rediscovered_block_ids"] == (
+        [1] if convergence_block_id == 1 else []
+    )
+    assert saved_reports[-1]["summary"]["repair_provenance_stats"][
+        "convergence"
+    ] == {
+        "event_count": 1,
+        "unique_ids": 1,
+        "block_ids": [convergence_block_id],
+    }
+    assert saved_reports[-1]["summary"]["repair_provenance_stats"][
+        "rediscovered"
+    ] == {
+        "event_count": 1 if convergence_block_id == 1 else 0,
+        "unique_ids": 1 if convergence_block_id == 1 else 0,
+        "block_ids": [1] if convergence_block_id == 1 else [],
+    }
     assert saved_reports[-1]["summary"]["quality_gate"]["passed"] is True
 
 
@@ -12422,6 +12642,7 @@ def test_semantic_issue_ledger_is_hash_bound_and_survives_later_false_negatives(
         ("new_identity_repaired", 1, 4),
         ("old_identity_not_retried", 0, 4),
         ("new_identity_noop_is_bounded", 1, 4),
+        ("accepted_same_hash_rediscovered", 1, 4),
     ],
 )
 def test_final_certification_recovery_is_new_identity_only_and_hard_bounded(
@@ -12617,9 +12838,167 @@ def test_final_certification_recovery_is_new_identity_only_and_hard_bounded(
         assert block.translation == original_translation
         assert recovery["result"] == "no_mutation"
         assert saved_reports[-1]["summary"]["quality_gate"]["passed"] is False
+    elif scenario == "accepted_same_hash_rediscovered":
+        assert targeted_calls == [{625}]
+        assert recovery["rediscovered_block_ids"] == [625]
+        assert saved_reports[-1]["summary"]["repair_provenance_stats"][
+            "rediscovered"
+        ] == {
+            "event_count": 1,
+            "unique_ids": 1,
+            "block_ids": [625],
+        }
     else:
         assert targeted_calls == []
         assert recovery["result"] == "not_eligible"
+
+
+def test_non_strict_certification_final_records_same_hash_rediscovery(
+    tmp_path,
+    monkeypatch,
+):
+    from copy import deepcopy
+
+    from app.api import translate as api_translate
+    from app.engines import knowledge, translation_qa
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=626,
+        start=timedelta(seconds=626),
+        end=timedelta(seconds=627),
+        text="I did not leave.",
+        translation="我离开了。",
+    )
+    quality_run_state = {
+        "run_id": "non-strict-recovery-run",
+        "semantic_uncertain_observed_block_ids": [],
+        "auto_repair_rounds": [],
+    }
+    full_scans = 0
+    repair_calls = 0
+    saved_reports = []
+
+    monkeypatch.setattr(
+        knowledge,
+        "_get_singleton",
+        lambda: type(
+            "Knowledge",
+            (),
+            {"select_for_project": lambda self, project: None},
+        )(),
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_run_deterministic_translation_normalizers",
+        lambda *args, **kwargs: [],
+    )
+
+    def issue():
+        return QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=626,
+            message="negation was dropped",
+            source_text=block.text,
+            translation=block.translation,
+        )
+
+    def fake_quality(*args, **kwargs):
+        nonlocal full_scans
+        full_scans += 1
+        issues = [] if full_scans == 1 else [issue()]
+        return TranslationQaReport(
+            status="needs_review" if issues else "ok",
+            issues=issues,
+            unresolved_blocks=[626] if issues else [],
+            summary={"by_type": {"semantic_mismatch": len(issues)}},
+            trace=args[6],
+        )
+
+    def fake_repair(*args, **kwargs):
+        nonlocal repair_calls
+        repair_calls += 1
+        block.translation = "我没有离开。"
+        return api_translate.AutoRepairOutcome(
+            [{"id": 626, "translation": block.translation}],
+            True,
+            True,
+        )
+
+    def fake_targeted(*args, **kwargs):
+        return (
+            [],
+            {626},
+            {626: api_translate._semantic_block_content_hash(block)},
+            [{"coverage_complete": True}],
+        )
+
+    monkeypatch.setattr(
+        api_translate,
+        "_run_quality_checks_with_semantics",
+        fake_quality,
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_run_deterministic_quality_checks",
+        lambda *, trace, **kwargs: TranslationQaReport(
+            status="ok",
+            issues=[],
+            unresolved_blocks=[],
+            summary={"by_type": {}},
+            trace=trace,
+        ),
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_auto_repair_quality_issues",
+        fake_repair,
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_run_targeted_semantic_verification",
+        fake_targeted,
+    )
+    monkeypatch.setattr(
+        translation_qa,
+        "save_quality_report",
+        lambda report, **kwargs: saved_reports.append(
+            deepcopy(report.to_dict())
+        ),
+    )
+
+    api_translate._persist_translation_quality_report(
+        pid="non-strict-recovery",
+        pdir=str(tmp_path),
+        project={},
+        blocks=[block],
+        target_language="简体中文",
+        translator=object(),
+        cfg={
+            "translation": {
+                "qa_auto_repair": True,
+                "qa_auto_repair_rounds": 0,
+                "semantic_qa": True,
+            },
+        },
+        quality_run_id="non-strict-recovery-run",
+        quality_run_state=quality_run_state,
+        strict_quality_gate=False,
+    )
+
+    assert full_scans == 3
+    assert repair_calls == 1
+    recovery = saved_reports[-1]["trace"]["certification_recovery"]
+    assert recovery["rediscovered_block_ids"] == [626]
+    assert saved_reports[-1]["summary"]["repair_provenance_stats"][
+        "rediscovered"
+    ] == {
+        "event_count": 1,
+        "unique_ids": 1,
+        "block_ids": [626],
+    }
 
 
 def test_final_certification_recovery_flag_survives_same_run_resume(
@@ -12727,16 +13106,33 @@ def test_final_certification_recovery_flag_survives_same_run_resume(
     assert quality_run_state["certification_recovery_used"] is True
     assert saved_reports[-1]["trace"]["certification_recovery"] == {
         "used": True,
-        "result": "already_used",
-        "new_issue_block_ids": [],
+        "result": "no_mutation",
+        "new_issue_block_ids": [84],
+        "requested_block_ids": [84],
+        "rediscovered_block_ids": [],
+        "group_companion_block_ids": [],
+        "accepted_block_ids": [],
+        "accepted_verified_content_hashes": [],
     }
 
 
-@pytest.mark.parametrize("companion_fails", [False, True])
+@pytest.mark.parametrize(
+    ("companion_fails", "change_only_seed", "late_group_expansion"),
+    [
+        (False, False, False),
+        (True, False, False),
+        (False, True, False),
+        (True, True, False),
+        (False, False, True),
+        (False, True, True),
+    ],
+)
 def test_final_certification_recovery_preserves_full_mixed_identity_group(
     tmp_path,
     monkeypatch,
     companion_fails,
+    change_only_seed,
+    late_group_expansion,
 ):
     from copy import deepcopy
 
@@ -12787,6 +13183,15 @@ def test_final_certification_recovery_preserves_full_mixed_identity_group(
         "_run_deterministic_translation_normalizers",
         lambda *args, **kwargs: [],
     )
+    if late_group_expansion:
+        monkeypatch.setattr(
+            translation_qa,
+            "build_repair_items",
+            lambda _blocks, _issues: [{
+                "id": 35,
+                "semantic_group_ids": [35],
+            }],
+        )
 
     def semantic_issue(block_id):
         block = block_by_id[block_id]
@@ -12811,6 +13216,8 @@ def test_final_certification_recovery_preserves_full_mixed_identity_group(
                 semantic_issue(35),
                 semantic_issue(37),
             ]
+        elif companion_fails and change_only_seed and scan_call == 4:
+            issues = [semantic_issue(33)]
         else:
             issues = []
         return TranslationQaReport(
@@ -12830,10 +13237,22 @@ def test_final_certification_recovery_preserves_full_mixed_identity_group(
         project_kb,
         repair_trace=None,
     ):
-        items = build_repair_items(blocks, report.issues)
+        items = (
+            [
+                {
+                    "id": block_id,
+                    "semantic_group_ids": [33, 34, 35, 36, 37],
+                }
+                for block_id in [33, 34, 35, 36, 37]
+            ]
+            if late_group_expansion
+            else build_repair_items(blocks, report.issues)
+        )
         repair_scope.append([item["id"] for item in items])
         changes = []
         for item in items:
+            if change_only_seed and item["id"] != 35:
+                continue
             block = block_by_id[item["id"]]
             block.translation = f"新译{block.index}"
             changes.append({
@@ -12915,7 +13334,65 @@ def test_final_certification_recovery_preserves_full_mixed_identity_group(
     assert targeted_scope == [{33, 34, 35, 36, 37}]
     recovery = saved_reports[-1]["trace"]["certification_recovery"]
     assert recovery["semantic_groups"] == [[33, 34, 35, 36, 37]]
-    if companion_fails:
+    assert recovery["requested_block_ids"] == (
+        [35] if late_group_expansion else [33, 34, 35, 36, 37]
+    )
+    assert recovery["group_companion_block_ids"] == (
+        [33, 34, 36, 37] if change_only_seed else []
+    )
+    assert saved_reports[-1]["summary"]["repair_provenance_stats"][
+        "recovery"
+    ] == {
+        "event_count": 1 if late_group_expansion else 5,
+        "unique_ids": 1 if late_group_expansion else 5,
+        "block_ids": [35] if late_group_expansion else [33, 34, 35, 36, 37],
+    }
+    if late_group_expansion and not change_only_seed:
+        durable_recovery = quality_run_state[
+            "certification_recovery_trace"
+        ]
+        assert durable_recovery["requested_block_ids"] == [35]
+        assert durable_recovery["accepted_block_ids"] == [
+            33, 34, 35, 36, 37,
+        ]
+        assert durable_recovery["group_companion_block_ids"] == []
+        assert [
+            item["block_id"]
+            for item in durable_recovery[
+                "accepted_verified_content_hashes"
+            ]
+        ] == [33, 34, 35, 36, 37]
+    if change_only_seed and companion_fails:
+        assert {
+            block.index: block.translation for block in blocks
+        } == original_by_id
+        assert recovery["accepted_block_ids"] == []
+        assert recovery["rolled_back_block_ids"] == [35]
+        assert recovery["accepted_verified_content_hashes"] == []
+        assert recovery["rediscovered_block_ids"] == []
+        assert saved_reports[-1]["summary"]["repair_provenance_stats"][
+            "rediscovered"
+        ] == {
+            "event_count": 0,
+            "unique_ids": 0,
+            "block_ids": [],
+        }
+    elif change_only_seed:
+        assert {
+            block.index: block.translation for block in blocks
+        } == {
+            **original_by_id,
+            35: "新译35",
+        }
+        assert recovery["accepted_block_ids"] == [35]
+        assert saved_reports[-1]["summary"]["repair_provenance_stats"][
+            "group_companion"
+        ] == {
+            "event_count": 4,
+            "unique_ids": 4,
+            "block_ids": [33, 34, 36, 37],
+        }
+    elif companion_fails:
         assert {
             block.index: block.translation for block in blocks
         } == original_by_id

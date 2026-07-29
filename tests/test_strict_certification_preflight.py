@@ -144,6 +144,605 @@ def test_quality_run_state_rejects_files_larger_than_16_mib(
     assert state_path.stat().st_size == (16 * 1024 * 1024) + 1
 
 
+def test_quality_run_state_initializes_durable_recovery_trace(
+    tmp_path,
+):
+    from app.api import translate as api_translate
+
+    state = _disk_state(api_translate, tmp_path)
+
+    assert state["certification_recovery_trace"] == {
+        "used": False,
+        "result": "not_eligible",
+        "new_issue_block_ids": [],
+        "requested_block_ids": [],
+        "rediscovered_block_ids": [],
+        "group_companion_block_ids": [],
+        "accepted_block_ids": [],
+        "accepted_verified_content_hashes": [],
+    }
+
+
+def test_quality_run_state_hydrates_durable_accepted_hash_evidence(
+    tmp_path,
+):
+    from app.api import translate as api_translate
+
+    content_hash = "sha256:" + ("a" * 64)
+    state = _disk_state(api_translate, tmp_path)
+    state["certification_recovery_used"] = True
+    state["certification_recovery_trace"].update({
+        "used": True,
+        "result": "accepted",
+        "requested_block_ids": [1],
+        "accepted_block_ids": [1],
+        "accepted_verified_content_hashes": [{
+            "block_id": 1,
+            "content_hash": content_hash,
+        }],
+    })
+    _write_disk_state(tmp_path, state)
+
+    hydrated = _disk_state(api_translate, tmp_path)
+
+    assert hydrated["certification_recovery_trace"][
+        "accepted_verified_content_hashes"
+    ] == [{
+        "block_id": 1,
+        "content_hash": content_hash,
+    }]
+
+
+def test_recovery_trace_checkpoint_preserves_accepted_hash_evidence():
+    from app.api import translate as api_translate
+
+    evidence = [{
+        "block_id": 7,
+        "content_hash": "sha256:" + ("b" * 64),
+    }]
+
+    checkpoint = api_translate._certification_recovery_trace_checkpoint(
+        {
+            "result": "accepted",
+            "requested_block_ids": [7],
+            "accepted_block_ids": [7],
+            "accepted_verified_content_hashes": evidence,
+        },
+        used=True,
+    )
+
+    assert checkpoint["accepted_verified_content_hashes"] == evidence
+    assert checkpoint["accepted_block_ids"] == [7]
+
+
+@pytest.mark.parametrize(
+    ("evidence", "block_count"),
+    [
+        ("not-a-list", 1),
+        ([{
+            "block_id": 1,
+            "content_hash": "sha256:" + ("a" * 64),
+            "translation": "must not be persisted",
+        }], 1),
+        ([{
+            "block_id": True,
+            "content_hash": "sha256:" + ("a" * 64),
+        }], 1),
+        ([{
+            "block_id": 1,
+            "content_hash": "sha256:" + ("g" * 64),
+        }], 1),
+        ([
+            {
+                "block_id": 1,
+                "content_hash": "sha256:" + ("a" * 64),
+            },
+            {
+                "block_id": 1,
+                "content_hash": "sha256:" + ("b" * 64),
+            },
+        ], 2),
+        ([
+            {
+                "block_id": 1,
+                "content_hash": "sha256:" + ("a" * 64),
+            },
+            {
+                "block_id": 2,
+                "content_hash": "sha256:" + ("b" * 64),
+            },
+        ], 1),
+    ],
+    ids=[
+        "not-list",
+        "unknown-field",
+        "bool-id",
+        "invalid-hash",
+        "duplicate-id",
+        "oversized",
+    ],
+)
+def test_quality_run_state_rejects_malformed_accepted_hash_evidence(
+    tmp_path,
+    evidence,
+    block_count,
+):
+    from app.api import translate as api_translate
+
+    state = _disk_state(api_translate, tmp_path, block_count=block_count)
+    state["certification_recovery_trace"][
+        "accepted_verified_content_hashes"
+    ] = evidence
+    _write_disk_state(tmp_path, state)
+
+    with pytest.raises(RuntimeError, match="accepted verified"):
+        _disk_state(api_translate, tmp_path, block_count=block_count)
+
+
+def test_recovery_trace_checkpoint_discards_malformed_hash_evidence():
+    from app.api import translate as api_translate
+
+    checkpoint = api_translate._certification_recovery_trace_checkpoint(
+        {
+            "result": "accepted",
+            "accepted_verified_content_hashes": [
+                {
+                    "block_id": 1,
+                    "content_hash": "sha256:" + ("a" * 64),
+                    "translation": "must not survive",
+                },
+                {
+                    "block_id": True,
+                    "content_hash": "sha256:" + ("b" * 64),
+                },
+            ],
+        },
+        used=True,
+    )
+
+    assert checkpoint["accepted_verified_content_hashes"] == []
+
+
+@pytest.mark.parametrize(
+    ("used", "result"),
+    [
+        (False, "not_eligible"),
+        (True, "already_used"),
+        (True, "attempting"),
+        (True, "no_mutation"),
+        (True, "rolled_back"),
+    ],
+)
+def test_quality_run_state_rejects_hash_evidence_for_nonaccepted_result(
+    tmp_path,
+    used,
+    result,
+):
+    from app.api import translate as api_translate
+
+    state = _disk_state(api_translate, tmp_path)
+    state["certification_recovery_used"] = used
+    state["certification_recovery_trace"].update({
+        "used": used,
+        "result": result,
+        "requested_block_ids": [1],
+        "accepted_verified_content_hashes": [{
+            "block_id": 1,
+            "content_hash": "sha256:" + ("a" * 64),
+        }],
+    })
+    _write_disk_state(tmp_path, state)
+
+    with pytest.raises(RuntimeError, match="accepted verified"):
+        _disk_state(api_translate, tmp_path)
+
+
+def test_quality_run_state_rejects_accepted_ids_for_rolled_back_result(
+    tmp_path,
+):
+    from app.api import translate as api_translate
+
+    state = _disk_state(api_translate, tmp_path)
+    state["certification_recovery_used"] = True
+    state["certification_recovery_trace"].update({
+        "used": True,
+        "result": "rolled_back",
+        "requested_block_ids": [1],
+        "accepted_block_ids": [1],
+    })
+    _write_disk_state(tmp_path, state)
+
+    with pytest.raises(RuntimeError, match="accepted block"):
+        _disk_state(api_translate, tmp_path)
+
+
+def test_recovery_trace_checkpoint_clears_accepted_ids_after_rollback():
+    from app.api import translate as api_translate
+
+    checkpoint = api_translate._certification_recovery_trace_checkpoint(
+        {
+            "result": "rolled_back",
+            "requested_block_ids": [1],
+            "accepted_block_ids": [1],
+        },
+        used=True,
+    )
+
+    assert checkpoint["accepted_block_ids"] == []
+
+
+@pytest.mark.parametrize(
+    "trace_update",
+    [
+        {
+            "accepted_block_ids": [],
+            "group_companion_block_ids": [2],
+            "accepted_verified_content_hashes": [{
+                "block_id": 2,
+                "content_hash": "sha256:" + ("a" * 64),
+            }],
+            "rediscovered_block_ids": [2],
+        },
+        {
+            "accepted_block_ids": [1],
+            "group_companion_block_ids": [1],
+            "accepted_verified_content_hashes": [{
+                "block_id": 1,
+                "content_hash": "sha256:" + ("b" * 64),
+            }],
+            "rediscovered_block_ids": [1],
+        },
+    ],
+    ids=["accepted-empty", "accepted-companion-overlap"],
+)
+def test_quality_run_state_rejects_invalid_accepted_block_relationships(
+    tmp_path,
+    trace_update,
+):
+    from app.api import translate as api_translate
+
+    state = _disk_state(api_translate, tmp_path, block_count=2)
+    state["certification_recovery_used"] = True
+    state["certification_recovery_trace"].update({
+        "used": True,
+        "result": "accepted",
+        "requested_block_ids": [1],
+        **trace_update,
+    })
+    _write_disk_state(tmp_path, state)
+
+    with pytest.raises(RuntimeError, match="accepted block"):
+        _disk_state(api_translate, tmp_path, block_count=2)
+
+
+@pytest.mark.parametrize(
+    "trace",
+    [
+        {
+            "result": "accepted",
+            "requested_block_ids": [1],
+            "accepted_block_ids": [],
+            "group_companion_block_ids": [2],
+            "accepted_verified_content_hashes": [{
+                "block_id": 2,
+                "content_hash": "sha256:" + ("a" * 64),
+            }],
+            "rediscovered_block_ids": [2],
+        },
+        {
+            "result": "accepted",
+            "requested_block_ids": [1],
+            "accepted_block_ids": [1],
+            "group_companion_block_ids": [1],
+            "accepted_verified_content_hashes": [{
+                "block_id": 1,
+                "content_hash": "sha256:" + ("b" * 64),
+            }],
+            "rediscovered_block_ids": [1],
+        },
+    ],
+    ids=["accepted-empty", "accepted-companion-overlap"],
+)
+def test_recovery_trace_checkpoint_downgrades_invalid_accepted_relation(
+    trace,
+):
+    from app.api import translate as api_translate
+
+    checkpoint = api_translate._certification_recovery_trace_checkpoint(
+        trace,
+        used=True,
+    )
+
+    assert checkpoint["result"] == "already_used"
+    assert checkpoint["accepted_block_ids"] == []
+    assert checkpoint["accepted_verified_content_hashes"] == []
+    assert checkpoint["rediscovered_block_ids"] == []
+    assert checkpoint["requested_block_ids"] == [1]
+    assert checkpoint["group_companion_block_ids"] == (
+        [2] if not trace["accepted_block_ids"] else [1]
+    )
+
+
+def test_quality_run_state_rejects_hash_evidence_outside_recovery_scope(
+    tmp_path,
+):
+    from app.api import translate as api_translate
+
+    state = _disk_state(api_translate, tmp_path, block_count=2)
+    state["certification_recovery_used"] = True
+    state["certification_recovery_trace"].update({
+        "used": True,
+        "result": "accepted",
+        "requested_block_ids": [1],
+        "accepted_block_ids": [1],
+        "accepted_verified_content_hashes": [{
+            "block_id": 2,
+            "content_hash": "sha256:" + ("a" * 64),
+        }],
+    })
+    _write_disk_state(tmp_path, state)
+
+    with pytest.raises(RuntimeError, match="accepted verified"):
+        _disk_state(api_translate, tmp_path, block_count=2)
+
+
+@pytest.mark.parametrize(
+    "trace",
+    [
+        {
+            "result": "rolled_back",
+            "requested_block_ids": [1],
+            "accepted_verified_content_hashes": [{
+                "block_id": 1,
+                "content_hash": "sha256:" + ("a" * 64),
+            }],
+        },
+        {
+            "result": "accepted",
+            "requested_block_ids": [1],
+            "accepted_verified_content_hashes": [{
+                "block_id": 2,
+                "content_hash": "sha256:" + ("b" * 64),
+            }],
+        },
+    ],
+    ids=["nonaccepted-result", "outside-scope"],
+)
+def test_recovery_trace_checkpoint_clears_relationally_invalid_evidence(
+    trace,
+):
+    from app.api import translate as api_translate
+
+    checkpoint = api_translate._certification_recovery_trace_checkpoint(
+        trace,
+        used=True,
+    )
+
+    assert checkpoint["accepted_verified_content_hashes"] == []
+
+
+def test_quality_run_state_rejects_rediscovery_without_hash_evidence(
+    tmp_path,
+):
+    from app.api import translate as api_translate
+
+    state = _disk_state(api_translate, tmp_path, block_count=2)
+    state["certification_recovery_used"] = True
+    state["certification_recovery_trace"].update({
+        "used": True,
+        "result": "accepted",
+        "requested_block_ids": [1, 2],
+        "accepted_block_ids": [1],
+        "rediscovered_block_ids": [2],
+        "accepted_verified_content_hashes": [{
+            "block_id": 1,
+            "content_hash": "sha256:" + ("a" * 64),
+        }],
+    })
+    _write_disk_state(tmp_path, state)
+
+    with pytest.raises(RuntimeError, match="rediscovered"):
+        _disk_state(api_translate, tmp_path, block_count=2)
+
+
+def test_recovery_trace_checkpoint_clears_unproven_rediscovery():
+    from app.api import translate as api_translate
+
+    checkpoint = api_translate._certification_recovery_trace_checkpoint(
+        {
+            "result": "accepted",
+            "requested_block_ids": [1, 2],
+            "accepted_block_ids": [1],
+            "rediscovered_block_ids": [2],
+            "accepted_verified_content_hashes": [{
+                "block_id": 1,
+                "content_hash": "sha256:" + ("a" * 64),
+            }],
+        },
+        used=True,
+    )
+
+    assert checkpoint["accepted_verified_content_hashes"] == [{
+        "block_id": 1,
+        "content_hash": "sha256:" + ("a" * 64),
+    }]
+    assert checkpoint["rediscovered_block_ids"] == []
+
+
+def test_quality_run_state_migrates_matching_v1_recovery_flag_to_v2_trace(
+    tmp_path,
+):
+    from app.api import translate as api_translate
+
+    state = _disk_state(api_translate, tmp_path)
+    state["schema_version"] = 1
+    state.pop("certification_recovery_trace")
+    state["certification_recovery_used"] = True
+    _write_disk_state(tmp_path, state)
+
+    migrated = _disk_state(api_translate, tmp_path)
+
+    assert migrated["schema_version"] == 2
+    assert migrated["certification_recovery_used"] is True
+    assert migrated["certification_recovery_trace"] == {
+        "used": True,
+        "result": "already_used",
+        "new_issue_block_ids": [],
+        "requested_block_ids": [],
+        "rediscovered_block_ids": [],
+        "group_companion_block_ids": [],
+        "accepted_block_ids": [],
+        "accepted_verified_content_hashes": [],
+    }
+
+
+@pytest.mark.parametrize("schema_version", [True, 1.0])
+def test_quality_run_state_rejects_non_integer_v1_schema_aliases(
+    tmp_path,
+    schema_version,
+):
+    from app.api import translate as api_translate
+
+    state = _disk_state(api_translate, tmp_path)
+    state["schema_version"] = schema_version
+    state.pop("certification_recovery_trace")
+    _write_disk_state(tmp_path, state)
+
+    with pytest.raises(RuntimeError, match="run state"):
+        _disk_state(api_translate, tmp_path)
+
+
+@pytest.mark.parametrize("stale", [False, True], ids=["matching", "stale"])
+def test_quality_run_state_rejects_float_v2_schema_alias(
+    tmp_path,
+    stale,
+):
+    from app.api import translate as api_translate
+
+    state = _disk_state(api_translate, tmp_path)
+    state["schema_version"] = 2.0
+    if stale:
+        state["run_id"] = "stale-schema-run"
+    _write_disk_state(tmp_path, state)
+
+    with pytest.raises(RuntimeError, match="schema version"):
+        _disk_state(api_translate, tmp_path)
+
+
+def test_quality_run_state_rejects_oversized_recovery_trace_ids(
+    tmp_path,
+):
+    from app.api import translate as api_translate
+
+    state = _disk_state(api_translate, tmp_path, block_count=1)
+    state["certification_recovery_trace"]["requested_block_ids"] = [1, 2]
+    _write_disk_state(tmp_path, state)
+
+    with pytest.raises(RuntimeError, match="recovery trace"):
+        _disk_state(api_translate, tmp_path, block_count=1)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda trace: trace.update({"result": []}),
+        lambda trace: trace.update({
+            "used": False,
+            "result": "already_used",
+        }),
+        lambda trace: trace.update({
+            "used": True,
+            "result": "not_eligible",
+        }),
+    ],
+    ids=[
+        "unhashable-result",
+        "unused-already-used",
+        "used-not-eligible",
+    ],
+)
+def test_quality_run_state_rejects_invalid_recovery_result_combinations(
+    tmp_path,
+    mutation,
+):
+    from app.api import translate as api_translate
+
+    state = _disk_state(api_translate, tmp_path)
+    mutation(state["certification_recovery_trace"])
+    state["certification_recovery_used"] = state[
+        "certification_recovery_trace"
+    ]["used"]
+    _write_disk_state(tmp_path, state)
+
+    with pytest.raises(RuntimeError, match="run state"):
+        _disk_state(api_translate, tmp_path)
+
+
+def test_recovery_trace_checkpoint_handles_unhashable_result_safely():
+    from app.api import translate as api_translate
+
+    checkpoint = api_translate._certification_recovery_trace_checkpoint(
+        {"result": []},
+        used=True,
+    )
+
+    assert checkpoint["result"] == "already_used"
+
+
+@pytest.mark.parametrize(
+    "round_provenance",
+    [
+        {
+            "targeted_semantic_qa": {
+                "issue_block_ids": "1",
+            },
+        },
+        {
+            "semantic_convergence_scan": {
+                "new_issue_block_ids": [0],
+            },
+        },
+        {
+            "semantic_convergence_scan": {
+                "issue_block_ids": [True],
+            },
+        },
+        {
+            "rediscovered_block_ids": [1, 1],
+        },
+        {
+            "group_companion_block_ids": [1, 2],
+        },
+    ],
+    ids=[
+        "targeted-not-list",
+        "convergence-nonpositive",
+        "convergence-bool",
+        "rediscovered-duplicate",
+        "companion-oversized",
+    ],
+)
+def test_quality_run_state_rejects_malformed_round_provenance_nodes(
+    tmp_path,
+    round_provenance,
+):
+    from app.api import translate as api_translate
+
+    state = _disk_state(api_translate, tmp_path, block_count=1)
+    state["auto_repair_rounds"] = [{
+        "round": 1,
+        **round_provenance,
+    }]
+    state["auto_repair_budget"].update({
+        "used_rounds": 1,
+        "remaining_rounds": 2,
+    })
+    _write_disk_state(tmp_path, state)
+
+    with pytest.raises(RuntimeError, match="run state"):
+        _disk_state(api_translate, tmp_path, block_count=1)
+
+
 def test_quality_run_state_sizes_exact_pretty_json_before_atomic_write(
     tmp_path,
 ):
@@ -187,7 +786,7 @@ def test_stale_in_memory_run_state_resets_through_complete_schema_before_pass(
 
     block = _block(1)
     stale_state = {
-        "schema_version": 1,
+        "schema_version": 2,
         "block_count": 1,
         "run_id": "old-run",
         "source_generation_hash": "sha256:source",
@@ -205,6 +804,16 @@ def test_stale_in_memory_run_state_resets_through_complete_schema_before_pass(
             "remaining_rounds": 3,
         },
         "certification_recovery_used": True,
+        "certification_recovery_trace": {
+            "used": True,
+            "result": "accepted",
+            "new_issue_block_ids": [1],
+            "requested_block_ids": [1],
+            "rediscovered_block_ids": [],
+            "group_companion_block_ids": [],
+            "accepted_block_ids": [],
+            "accepted_verified_content_hashes": [],
+        },
         "seen_blocking_identities": [],
     }
     saved_reports = []
@@ -234,7 +843,7 @@ def test_stale_in_memory_run_state_resets_through_complete_schema_before_pass(
         ).read_text(encoding="utf-8")
     )
     assert stale_state == persisted
-    assert persisted["schema_version"] == 1
+    assert persisted["schema_version"] == 2
     assert persisted["block_count"] == 1
     assert persisted["run_id"] == "new-run"
     assert persisted["source_generation_hash"] == "sha256:source"
@@ -289,6 +898,10 @@ def test_quality_run_state_resets_on_block_count_identity_mismatch(
         block_count=5001,
     )
     stale_state["certification_recovery_used"] = True
+    stale_state["certification_recovery_trace"].update({
+        "used": True,
+        "result": "already_used",
+    })
     stale_state["semantic_uncertain_observed_block_ids"] = list(
         range(1, 5002)
     )
@@ -335,11 +948,17 @@ def test_quality_run_state_rejects_invalid_block_count_fail_safe(
     [
         lambda state: state.pop("schema_version", None),
         lambda state: state.pop("certification_recovery_used", None),
+        lambda state: state.pop("certification_recovery_trace", None),
         lambda state: state.update({
             "certification_recovery_used": 1,
         }),
     ],
-    ids=["missing-schema", "missing-recovery-flag", "non-bool-recovery-flag"],
+    ids=[
+        "missing-schema",
+        "missing-recovery-flag",
+        "missing-recovery-trace",
+        "non-bool-recovery-flag",
+    ],
 )
 def test_matching_quality_run_state_rejects_missing_or_invalid_required_fields(
     tmp_path,
@@ -926,7 +1545,7 @@ def test_strict_certification_consumes_recovery_before_exception_and_resume(
 
     assert repair_calls == 1
     assert saved_reports[-1]["trace"]["certification_recovery"]["result"] == (
-        "already_used"
+        "attempting"
     )
 
 
@@ -1130,6 +1749,16 @@ def test_recovery_crash_resumes_from_atomic_disk_state_not_shared_memory(
             cfg={"translation": {"qa_auto_repair": True}},
         )
         assert disk_state["certification_recovery_used"] is True
+        assert disk_state["certification_recovery_trace"] == {
+            "used": True,
+            "result": "attempting",
+            "new_issue_block_ids": [1],
+            "requested_block_ids": [1],
+            "rediscovered_block_ids": [],
+            "group_companion_block_ids": [],
+            "accepted_block_ids": [],
+            "accepted_verified_content_hashes": [],
+        }
         raise RuntimeError("provider exploded")
 
     monkeypatch.setattr(
@@ -1167,6 +1796,16 @@ def test_recovery_crash_resumes_from_atomic_disk_state_not_shared_memory(
     )
     assert state_b is not state_a
     assert state_b["certification_recovery_used"] is True
+    assert state_b["certification_recovery_trace"] == {
+        "used": True,
+        "result": "attempting",
+        "new_issue_block_ids": [1],
+        "requested_block_ids": [1],
+        "rediscovered_block_ids": [],
+        "group_companion_block_ids": [],
+        "accepted_block_ids": [],
+        "accepted_verified_content_hashes": [],
+    }
     assert state_b["semantic_issue_ledger"]["outstanding"]
     assert state_b["seen_blocking_identities"]
     assert state_b["semantic_qa_history"]
@@ -1196,7 +1835,358 @@ def test_recovery_crash_resumes_from_atomic_disk_state_not_shared_memory(
     assert repair_calls == 1
     assert saved_reports[-1]["trace"]["certification_recovery"][
         "result"
-    ] == "already_used"
+    ] == "attempting"
+    assert saved_reports[-1]["summary"]["repair_provenance_stats"][
+        "recovery"
+    ] == {
+        "event_count": 1,
+        "unique_ids": 1,
+        "block_ids": [1],
+    }
+
+
+def test_recovery_accepted_checkpoint_resumes_final_rediscovery_from_disk(
+    tmp_path,
+    monkeypatch,
+):
+    from app.api import translate as api_translate
+    from app.engines import translation_qa
+
+    blocks = [_block(block_id) for block_id in (1, 2, 3)]
+    block_by_id = {block.index: block for block in blocks}
+    seed_block = block_by_id[2]
+    seed_block.text = "I did not leave."
+    seed_block.translation = "我离开了。"
+    saved_reports = []
+    phase = "first"
+    scan = 0
+    repair_calls = 0
+    accepted_hashes = {}
+    _setup_persist(monkeypatch, saved_reports)
+    monkeypatch.setattr(
+        translation_qa,
+        "build_repair_items",
+        lambda _blocks, _issues: [{
+            "id": 2,
+            "semantic_group_ids": [2],
+        }],
+    )
+
+    state_a = api_translate._hydrate_translation_quality_run_state(
+        tmp_path,
+        run_id="accepted-disk-resume",
+        source_generation_hash="sha256:source",
+        configuration_hash="sha256:config",
+        block_count=3,
+        cfg={"translation": {"qa_auto_repair": True}},
+    )
+    state_a["auto_repair_rounds"] = [
+        {"round": number}
+        for number in range(1, 4)
+    ]
+
+    def fake_quality(*args, **kwargs):
+        nonlocal scan
+        scan += 1
+        args[6].setdefault("semantic_qa_history", []).append({
+            "enabled": True,
+            "coverage_complete": True,
+        })
+        if phase == "first" and scan == 4:
+            raise RuntimeError("crash before strict final")
+        issues = (
+            [
+                _issue(
+                    seed_block
+                    if phase == "first"
+                    else block_by_id[1]
+                )
+            ]
+            if (
+                (phase == "first" and scan in {2, 3})
+                or (phase == "resume" and scan == 4)
+            )
+            else []
+        )
+        return _report(args[6], issues)
+
+    def fake_repair(*args, **kwargs):
+        nonlocal repair_calls
+        repair_calls += 1
+        changes = []
+        for block in blocks:
+            block.translation = f"accepted {block.index}"
+            changes.append({
+                "id": block.index,
+                "translation": block.translation,
+                "semantic_group_ids": [1, 2, 3],
+            })
+        return api_translate.AutoRepairOutcome(
+            changes,
+            True,
+            True,
+        )
+
+    def fake_targeted(*args, **kwargs):
+        accepted_hashes.update({
+            block.index: api_translate._semantic_block_content_hash(block)
+            for block in blocks
+        })
+        return (
+            [],
+            {1, 2, 3},
+            dict(accepted_hashes),
+            [{"coverage_complete": True}],
+        )
+
+    monkeypatch.setattr(
+        api_translate,
+        "_run_quality_checks_with_semantics",
+        fake_quality,
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_run_deterministic_quality_checks",
+        lambda *, trace, **kwargs: _report(trace, []),
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_auto_repair_quality_issues",
+        fake_repair,
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_run_targeted_semantic_verification",
+        fake_targeted,
+    )
+
+    call_kwargs = {
+        "pid": "accepted-disk-resume",
+        "pdir": str(tmp_path),
+        "project": {},
+        "blocks": blocks,
+        "target_language": "简体中文",
+        "translator": object(),
+        "cfg": {"translation": {"qa_auto_repair": True}},
+        "quality_run_id": "accepted-disk-resume",
+        "strict_quality_gate": True,
+    }
+    with pytest.raises(RuntimeError, match="translation QA report failed"):
+        api_translate._persist_translation_quality_report(
+            **call_kwargs,
+            quality_run_state=state_a,
+        )
+
+    checkpoint = api_translate._hydrate_translation_quality_run_state(
+        tmp_path,
+        run_id="accepted-disk-resume",
+        source_generation_hash="sha256:source",
+        configuration_hash="sha256:config",
+        block_count=3,
+        cfg={"translation": {"qa_auto_repair": True}},
+    )
+    checkpoint_trace = checkpoint["certification_recovery_trace"]
+    assert checkpoint_trace["result"] == "accepted"
+    assert checkpoint_trace["requested_block_ids"] == [2]
+    assert checkpoint_trace["accepted_block_ids"] == [1, 2, 3]
+    assert checkpoint_trace["group_companion_block_ids"] == []
+    assert checkpoint_trace["accepted_verified_content_hashes"] == [
+        {
+            "block_id": block_id,
+            "content_hash": accepted_hashes[block_id],
+        }
+        for block_id in (1, 2, 3)
+    ]
+
+    phase = "resume"
+    scan = 0
+    monkeypatch.setattr(
+        api_translate,
+        "_auto_repair_quality_issues",
+        lambda *args, **kwargs: pytest.fail(
+            "accepted recovery must not replay the provider"
+        ),
+    )
+    api_translate._persist_translation_quality_report(
+        **call_kwargs,
+        quality_run_state=checkpoint,
+    )
+
+    assert repair_calls == 1
+    recovery = saved_reports[-1]["trace"]["certification_recovery"]
+    assert recovery["rediscovered_block_ids"] == [1]
+    assert recovery["accepted_block_ids"] == [1, 2, 3]
+    assert recovery["accepted_verified_content_hashes"] == [
+        {
+            "block_id": block_id,
+            "content_hash": accepted_hashes[block_id],
+        }
+        for block_id in (1, 2, 3)
+    ]
+    assert saved_reports[-1]["summary"]["repair_provenance_stats"][
+        "rediscovered"
+    ] == {
+        "event_count": 1,
+        "unique_ids": 1,
+        "block_ids": [1],
+    }
+
+    final_state = api_translate._hydrate_translation_quality_run_state(
+        tmp_path,
+        run_id="accepted-disk-resume",
+        source_generation_hash="sha256:source",
+        configuration_hash="sha256:config",
+        block_count=3,
+        cfg={"translation": {"qa_auto_repair": True}},
+    )
+    assert final_state["certification_recovery_trace"][
+        "rediscovered_block_ids"
+    ] == [1]
+    assert final_state["certification_recovery_trace"][
+        "accepted_verified_content_hashes"
+    ] == [
+        {
+            "block_id": block_id,
+            "content_hash": accepted_hashes[block_id],
+        }
+        for block_id in (1, 2, 3)
+    ]
+
+
+def test_convergence_provenance_is_on_disk_before_post_scan_crash(
+    tmp_path,
+    monkeypatch,
+):
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import (
+        QualityIssue,
+        TranslationQaReport,
+    )
+
+    block = _block(1)
+    block.text = "I did not leave."
+    block.translation = "我离开了。"
+    state_a = api_translate._hydrate_translation_quality_run_state(
+        tmp_path,
+        run_id="convergence-disk-resume",
+        source_generation_hash="sha256:source",
+        configuration_hash="sha256:config",
+        block_count=1,
+        cfg={"translation": {"qa_auto_repair": True}},
+    )
+    full_scan = 0
+    score_calls = 0
+    _setup_persist(monkeypatch, [])
+    monkeypatch.setattr(
+        api_translate,
+        "_run_deterministic_translation_normalizers",
+        lambda *args, **kwargs: [],
+    )
+
+    def report(trace, issue_type):
+        issues = [] if not issue_type else [QualityIssue(
+            type=issue_type,
+            severity="error",
+            block_id=1,
+            message=issue_type,
+            source_text=block.text,
+            translation=block.translation,
+        )]
+        return TranslationQaReport(
+            status="needs_review" if issues else "ok",
+            issues=issues,
+            unresolved_blocks=[1] if issues else [],
+            summary={"by_type": {issue_type: len(issues)}},
+            trace=trace,
+        )
+
+    def fake_full_qa(*args, **kwargs):
+        nonlocal full_scan
+        full_scan += 1
+        return report(
+            args[6],
+            "missing_translation"
+            if full_scan == 1
+            else "semantic_mismatch",
+        )
+
+    def fake_repair(*args, **kwargs):
+        block.translation = "我没有离开。"
+        return api_translate.AutoRepairOutcome(
+            [{"id": 1, "translation": block.translation}],
+            True,
+            True,
+        )
+
+    def fake_targeted(*args, **kwargs):
+        content_hash = api_translate._semantic_block_content_hash(block)
+        return (
+            [],
+            {1},
+            {1: content_hash},
+            [{"coverage_complete": True}],
+        )
+
+    def crash_after_convergence(report):
+        nonlocal score_calls
+        score_calls += 1
+        if score_calls == 2:
+            raise RuntimeError("post-convergence crash")
+        return (1, 1, 1)
+
+    monkeypatch.setattr(
+        api_translate,
+        "_run_quality_checks_with_semantics",
+        fake_full_qa,
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_run_deterministic_quality_checks",
+        lambda *, trace, **kwargs: report(trace, ""),
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_auto_repair_quality_issues",
+        fake_repair,
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_run_targeted_semantic_verification",
+        fake_targeted,
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_quality_score",
+        crash_after_convergence,
+    )
+
+    with pytest.raises(RuntimeError, match="translation QA report failed"):
+        api_translate._persist_translation_quality_report(
+            pid="convergence-disk-resume",
+            pdir=str(tmp_path),
+            project={},
+            blocks=[block],
+            target_language="简体中文",
+            translator=object(),
+            cfg={"translation": {"qa_auto_repair": True}},
+            quality_run_id="convergence-disk-resume",
+            quality_run_state=state_a,
+            strict_quality_gate=True,
+        )
+
+    state_b = api_translate._hydrate_translation_quality_run_state(
+        tmp_path,
+        run_id="convergence-disk-resume",
+        source_generation_hash="sha256:source",
+        configuration_hash="sha256:config",
+        block_count=1,
+        cfg={"translation": {"qa_auto_repair": True}},
+    )
+    first_round = state_b["auto_repair_rounds"][0]
+    assert first_round["semantic_convergence_scan"][
+        "new_issue_block_ids"
+    ] == [1]
+    assert first_round["rediscovered_block_ids"] == [1]
 
 
 def test_standard_repair_round_is_consumed_on_disk_before_provider_call(
@@ -1322,6 +2312,10 @@ def test_disk_quality_state_resets_on_any_identity_mismatch(
         cfg={"translation": {"qa_auto_repair": True}},
     )
     stale_state["certification_recovery_used"] = True
+    stale_state["certification_recovery_trace"].update({
+        "used": True,
+        "result": "already_used",
+    })
     stale_state["semantic_uncertain_observed_block_ids"] = [9]
     api_translate._persist_translation_quality_run_state(
         tmp_path,
