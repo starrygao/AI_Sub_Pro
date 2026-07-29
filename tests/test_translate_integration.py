@@ -5761,6 +5761,207 @@ def test_targeted_semantic_evidence_accepts_short_punctuated_exact_excerpts():
     assert all(trace["coverage_complete"] is True for trace in traces)
 
 
+def _run_targeted_semantic_evidence_case(
+    *,
+    source,
+    draft,
+    source_evidence,
+    target_evidence,
+    verdict,
+    taxonomy,
+):
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=502,
+        start=timedelta(seconds=502),
+        end=timedelta(seconds=503),
+        text=source,
+        translation=draft,
+    )
+    prior_report = TranslationQaReport(
+        status="needs_review",
+        issues=[QualityIssue(
+            type="semantic_uncertain",
+            severity="warning",
+            block_id=502,
+            message="meaning needs confirmation",
+        )],
+    )
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            return [{
+                "id": 502,
+                "verdict": verdict,
+                "taxonomy": taxonomy,
+                "source_evidence": source_evidence,
+                "target_evidence": target_evidence,
+            }]
+
+    translator = type("Translator", (), {"primary": Primary()})()
+    return api_translate._run_targeted_semantic_verification(
+        {"translation": {}},
+        translator,
+        [block],
+        "简体中文",
+        {502},
+        prior_report,
+        [],
+        strict_quality_gate=True,
+    )
+
+
+def test_targeted_semantic_double_ok_rejects_narrow_generic_evidence():
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="This is not ours.",
+            draft="这是我的。",
+            source_evidence="is",
+            target_evidence="这是",
+            verdict="OK",
+            taxonomy="none",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert len(traces) == 2
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
+def test_targeted_semantic_latin_evidence_cannot_match_inside_a_token():
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="The lantern is lit.",
+            draft="灯笼亮着。",
+            source_evidence="he",
+            target_evidence="灯笼亮着",
+            verdict="OK",
+            taxonomy="none",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
+@pytest.mark.parametrize("inserted_control", ["\u0007", "\u200b"])
+def test_targeted_semantic_evidence_rejects_inserted_control_or_format(
+    inserted_control,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="This is ours.",
+            draft="这是我们的。",
+            source_evidence=f"Th{inserted_control}is is ours",
+            target_evidence="这是我们的",
+            verdict="OK",
+            taxonomy="none",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
+@pytest.mark.parametrize(
+    ("verdict", "taxonomy", "expected_issue_type", "expected_coverage"),
+    [
+        ("OK", "none", "semantic_qa_failed", False),
+        (
+            "MISMATCH: negation was omitted",
+            "negation/polarity/condition",
+            "semantic_mismatch",
+            True,
+        ),
+        (
+            "UNCERTAIN: negation may be weakened",
+            "negation/polarity/condition",
+            "semantic_uncertain",
+            True,
+        ),
+        (
+            "MISMATCH: entity changed",
+            "entity",
+            "semantic_qa_failed",
+            False,
+        ),
+    ],
+)
+def test_targeted_semantic_focused_negation_evidence_respects_verdict_policy(
+    verdict,
+    taxonomy,
+    expected_issue_type,
+    expected_coverage,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="Do not go.",
+            draft="不要走。",
+            source_evidence="not",
+            target_evidence="不",
+            verdict=verdict,
+            taxonomy=taxonomy,
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == [expected_issue_type]
+    assert all(
+        trace["coverage_complete"] is expected_coverage
+        for trace in traces
+    )
+
+
+@pytest.mark.parametrize(
+    ("verdict", "taxonomy", "expected_issue_type"),
+    [
+        ("OK", "none", None),
+        (
+            "MISMATCH: pronoun alignment changed",
+            "agent_patient",
+            "semantic_mismatch",
+        ),
+        (
+            "UNCERTAIN: pronoun alignment is ambiguous",
+            "agent_patient",
+            "semantic_uncertain",
+        ),
+    ],
+)
+def test_targeted_semantic_multifragment_evidence_anchors_each_excerpt(
+    verdict,
+    taxonomy,
+    expected_issue_type,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="She said she would return.",
+            draft="她说她会回来。",
+            source_evidence='"She" ... she',
+            target_evidence="“她”……她",
+            verdict=verdict,
+            taxonomy=taxonomy,
+        )
+    )
+
+    assert [issue.type for issue in issues] == (
+        [] if expected_issue_type is None else [expected_issue_type]
+    )
+    assert verified_ids == ({502} if expected_issue_type is None else set())
+    assert bool(verified_hashes) is (expected_issue_type is None)
+    assert all(trace["coverage_complete"] is True for trace in traces)
+
+
 @pytest.mark.parametrize(
     "provider_mode",
     [
@@ -5885,8 +6086,8 @@ def test_targeted_double_ok_resolves_502_uncertainty_for_new_content_hash():
                 "id": 502,
                 "verdict": "OK",
                 "taxonomy": "none",
-                "source_evidence": "She said she",
-                "target_evidence": "她说她",
+                "source_evidence": "She ... she",
+                "target_evidence": "她……她",
             }]
 
     translator = type("Translator", (), {"primary": Primary()})()
