@@ -1624,6 +1624,80 @@ def test_repair_items_do_not_join_independent_after_what_happened_clause():
     assert "semantic_group_ids" not in items[0]
 
 
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "he",
+        "she",
+        "they",
+        "you",
+        "we",
+        "I",
+        "it",
+        "Renata",
+        "Mary-Jane",
+        "John Doe",
+        "The Croat",
+    ],
+)
+def test_repair_items_join_bounded_after_what_subject_question(subject):
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(450, "forgive the Croat", "原谅克罗地亚人"),
+        _block(
+            451,
+            f"-after what {subject} did?\n-[Renata] No.",
+            "-在那些事之后？\n-[蕾娜塔] 不。",
+        ),
+    ]
+    issues = [QualityIssue(
+        type="semantic_mismatch",
+        severity="error",
+        block_id=451,
+        message="cross-cue subject question",
+    )]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == [450, 451]
+    assert all(item["semantic_group_ids"] == [450, 451] for item in items)
+
+
+@pytest.mark.parametrize(
+    "first_line",
+    [
+        "after what happened, stay here.",
+        "after what John Doe did, stay here?",
+        "after what John Doe did? Stay here.",
+        "after what A Very Long Name did?",
+        "after what lower case did?",
+    ],
+)
+def test_repair_items_reject_unbounded_after_what_title_case_lines(first_line):
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(450, "We should leave", "我们该走了"),
+        _block(
+            451,
+            f"-{first_line}\n-I'll go.",
+            "-待在这里。\n-我去。",
+        ),
+    ]
+    issues = [QualityIssue(
+        type="semantic_mismatch",
+        severity="error",
+        block_id=451,
+        message="independent speaker turn",
+    )]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == [451]
+    assert "semantic_group_ids" not in items[0]
+
+
 def test_repair_items_keep_dense_five_cue_semantic_component_atomic():
     """Three real semantic seeds in 33-37 keep the bounded five-cue clause whole."""
     from app.engines.translation_qa import QualityIssue, build_repair_items

@@ -150,7 +150,10 @@ _LOWERCASE_CONTINUATION_RE = re.compile(r"^[\"'“‘(\[{]*[a-z]")
 _DUAL_SPEAKER_CROSS_CUE_CONTINUATION_RE = re.compile(
     r"^[\"'“‘(\[{]*(?:"
     r"on\b|"
-    r"after\s+what\s+(?:he|she|they|you|we|i|it|[A-Z][A-Za-z'.-]*)"
+    r"after\s+what\s+(?:"
+    r"he|she|they|you|we|i|it|"
+    r"[A-Z][A-Za-z'.-]*(?:\s+[A-Z][A-Za-z'.-]*){0,2}"
+    r")"
     r"\s+did\?[\"'”’)\]}]*\s*$"
     r")"
 )
