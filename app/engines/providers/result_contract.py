@@ -5,6 +5,10 @@ from app.utils.errors import redact_error_message
 
 MISSING_ID_ERROR = "missing in model response"
 MISSING_TRANSLATION_ERROR = "missing translation in model response"
+INVALID_RESULT_SHAPE_ERROR = "invalid item in model response"
+DUPLICATE_RESULT_ID_ERROR = "duplicate id in model response"
+UNEXPECTED_RESULT_ID_ERROR = "unexpected id in model response"
+DUPLICATE_REQUEST_ID_ERROR = "duplicate id in translation request"
 _STRUCTURED_RESULT_FIELDS = (
     "verdict",
     "taxonomy",
@@ -22,7 +26,29 @@ def reconcile_translation_results(parsed_list: List[Dict], items: List[Dict]) ->
     semantic-review fields understood downstream, and surface malformed values
     as explicit per-block errors.
     """
-    by_id = {str(r.get("id")): r for r in parsed_list if isinstance(r, dict)}
+    def batch_error(message: str) -> List[Dict]:
+        return [
+            {"id": item.get("id"), "translation": "", "error": message}
+            for item in items
+        ]
+
+    requested_ids = [str(item.get("id")) for item in items]
+    if len(set(requested_ids)) != len(requested_ids):
+        return batch_error(DUPLICATE_REQUEST_ID_ERROR)
+    if any(
+        not isinstance(result, dict) or "id" not in result
+        for result in parsed_list
+    ):
+        return batch_error(INVALID_RESULT_SHAPE_ERROR)
+
+    returned_ids = [str(result.get("id")) for result in parsed_list]
+    if len(set(returned_ids)) != len(returned_ids):
+        return batch_error(DUPLICATE_RESULT_ID_ERROR)
+    requested_id_set = set(requested_ids)
+    if any(result_id not in requested_id_set for result_id in returned_ids):
+        return batch_error(UNEXPECTED_RESULT_ID_ERROR)
+
+    by_id = {str(result.get("id")): result for result in parsed_list}
     out: List[Dict] = []
     for it in items:
         item_id = it.get("id")

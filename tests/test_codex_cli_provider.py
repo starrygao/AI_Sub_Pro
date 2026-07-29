@@ -174,6 +174,40 @@ def test_codex_cli_provider_parse_rejects_targeted_result_without_translation():
     }]
 
 
+@pytest.mark.parametrize(
+    ("text", "error_fragment"),
+    [
+        (
+            '[{"id":1,"translation":"first"},'
+            '{"id":1,"translation":"second"}]',
+            "duplicate",
+        ),
+        (
+            '[{"id":1,"translation":"甲"},'
+            '{"id":999,"translation":"额外"}]',
+            "unexpected",
+        ),
+        (
+            '[{"id":1,"translation":"甲"},"not an object"]',
+            "invalid",
+        ),
+    ],
+)
+def test_codex_cli_provider_parse_fails_entire_batch_on_invalid_result_shape(
+    text,
+    error_fragment,
+):
+    from app.engines.providers.codex_cli import CodexCliProvider
+
+    items = [{"id": 1, "original": "a"}, {"id": 2, "original": "b"}]
+
+    out = CodexCliProvider._parse(text, items)
+
+    assert [item["id"] for item in out] == [1, 2]
+    assert all(item["translation"] == "" for item in out)
+    assert all(error_fragment in item["error"] for item in out)
+
+
 def test_codex_cli_provider_redacts_cli_error_secrets():
     from app.engines.providers.codex_cli import CodexCliProvider
 

@@ -3754,7 +3754,8 @@ def _run_targeted_semantic_verification(
                     )
                     continue
                 result = matching[0]
-                verdict = result.get("verdict", result.get("translation", ""))
+                verdict = result.get("verdict")
+                transport_translation = result.get("translation")
                 taxonomy = result.get("taxonomy", "")
                 source_evidence = result.get("source_evidence", "")
                 target_evidence = result.get("target_evidence", "")
@@ -3784,9 +3785,11 @@ def _run_targeted_semantic_verification(
                     )
                 )
                 translation_matches_verdict = (
-                    "translation" not in result
-                    or "verdict" not in result
-                    or result.get("translation") == result.get("verdict")
+                    "translation" in result
+                    and "verdict" in result
+                    and isinstance(transport_translation, str)
+                    and isinstance(verdict, str)
+                    and transport_translation == verdict
                 )
                 taxonomy_matches_verdict = (
                     taxonomy == "none"

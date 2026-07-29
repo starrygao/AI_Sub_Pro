@@ -1310,6 +1310,51 @@ def test_repair_items_partition_multiple_semantic_seeds_without_overlap():
     assert item_by_id[103]["semantic_seed_ids"] == [103]
 
 
+def test_repair_items_reserve_neighbor_capacity_for_later_boundary_seed():
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(
+            100 + offset,
+            "what we know" if offset == 0 else f"and fragment {offset}",
+            f"旧译{offset}",
+        )
+        for offset in range(4)
+    ]
+    seed_ids = {100, 103}
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=block_id,
+            message="semantic mismatch",
+        )
+        for block_id in sorted(seed_ids)
+    ]
+
+    first_items = build_repair_items(blocks, issues)
+    second_items = build_repair_items(blocks, issues)
+    item_by_id = {item["id"]: item for item in first_items}
+
+    assert first_items == second_items
+    assert item_by_id[100]["semantic_group_ids"] == [100, 101]
+    assert item_by_id[101]["semantic_group_ids"] == [100, 101]
+    assert item_by_id[102]["semantic_group_ids"] == [102, 103]
+    assert item_by_id[103]["semantic_group_ids"] == [102, 103]
+    groups = {
+        tuple(item["semantic_group_ids"])
+        for item in first_items
+        if "semantic_group_ids" in item
+    }
+    assert groups == {(100, 101), (102, 103)}
+    assert all(len(group) <= 3 for group in groups)
+    assert sum(len(group) for group in groups) == len(set().union(*map(set, groups)))
+    for seed_id in seed_ids:
+        group = item_by_id[seed_id]["semantic_group_ids"]
+        assert seed_id in group
+        assert any(abs(member_id - seed_id) == 1 for member_id in group)
+
+
 @pytest.mark.parametrize("invalid_time", [None, "not-a-timestamp"])
 def test_repair_items_require_parseable_timestamps_for_cross_cue_grouping(
     invalid_time,

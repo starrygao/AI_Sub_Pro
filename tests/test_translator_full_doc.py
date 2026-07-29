@@ -516,14 +516,14 @@ def test_full_doc_polish_ignores_malformed_primary_translation(monkeypatch):
     }
 
     t = SubtitleTranslator(cfg)
-    monkeypatch.setattr(
-        t.primary,
-        "translate_batch",
-        lambda items, system_prompt, retries=3: [
-            {"id": 1, "translation": {"text": "bad"}, "error": ""},
-            {"id": 2, "translation": "draft", "error": ""},
-        ],
-    )
+    def fake_primary(items, system_prompt, retries=3):
+        result_by_id = {
+            1: {"id": 1, "translation": {"text": "bad"}, "error": ""},
+            2: {"id": 2, "translation": "draft", "error": ""},
+        }
+        return [result_by_id[item["id"]] for item in items]
+
+    monkeypatch.setattr(t.primary, "translate_batch", fake_primary)
 
     def fake_polish(items, system_prompt, retries=3):
         assert items == [{"id": 2, "original": "b", "draft": "draft"}]

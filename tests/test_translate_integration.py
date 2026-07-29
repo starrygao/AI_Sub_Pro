@@ -8194,6 +8194,7 @@ def test_strict_candidate_requires_two_explicit_focused_semantic_oks(
                 )
                 results.append({
                     "id": item["id"],
+                    "translation": verdict,
                     "verdict": verdict,
                     "taxonomy": (
                         "none"
@@ -8428,6 +8429,7 @@ def test_targeted_semantic_verdicts_reject_evidence_from_another_block(
             return [
                 {
                     "id": 501,
+                    "translation": verdict,
                     "verdict": verdict,
                     "taxonomy": taxonomy,
                     "source_evidence": item_by_id[502]["original"],
@@ -8435,6 +8437,7 @@ def test_targeted_semantic_verdicts_reject_evidence_from_another_block(
                 },
                 {
                     "id": 502,
+                    "translation": verdict,
                     "verdict": verdict,
                     "taxonomy": taxonomy,
                     "source_evidence": item_by_id[501]["original"],
@@ -8493,6 +8496,7 @@ def test_targeted_semantic_evidence_accepts_short_punctuated_exact_excerpts():
         def translate_batch(self, items, prompt):
             return [{
                 "id": 502,
+                "translation": "OK",
                 "verdict": "OK",
                 "taxonomy": "none",
                 "source_evidence": '"No."',
@@ -8526,6 +8530,8 @@ def test_targeted_semantic_evidence_accepts_short_punctuated_exact_excerpts():
     "payload_override",
     [
         {"translation": "OK looks correct", "verdict": "OK looks correct"},
+        {"translation": 1, "verdict": 1},
+        {"verdict": 1},
         {"taxonomy": "unsupported"},
         {"source_evidence": "text from another cue"},
         {"translation": "MISMATCH: inconsistent transport field"},
@@ -8595,6 +8601,137 @@ def test_targeted_semantic_verification_rejects_malformed_codex_normalized_field
     assert all(trace["failed_block_ids"] == [502] for trace in traces)
 
 
+def test_targeted_semantic_verification_rejects_codex_result_without_verdict():
+    from app.api import translate as api_translate
+    from app.engines.providers.codex_cli import CodexCliProvider
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=502,
+        start=timedelta(seconds=502),
+        end=timedelta(seconds=503),
+        text="No.",
+        translation="不。",
+    )
+    prior_report = TranslationQaReport(
+        status="needs_review",
+        issues=[QualityIssue(
+            type="semantic_uncertain",
+            severity="warning",
+            block_id=502,
+            message="short reply needs confirmation",
+        )],
+    )
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            return CodexCliProvider._parse(
+                json.dumps([{
+                    "id": 502,
+                    "translation": "OK",
+                    "taxonomy": "none",
+                    "source_evidence": "No.",
+                    "target_evidence": "不。",
+                }], ensure_ascii=False),
+                items,
+            )
+
+    issues, verified_ids, verified_hashes, traces = (
+        api_translate._run_targeted_semantic_verification(
+            {"translation": {}},
+            type("Translator", (), {"primary": Primary()})(),
+            [block],
+            "简体中文",
+            {502},
+            prior_report,
+            [],
+            strict_quality_gate=True,
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert len(traces) == 2
+    assert all(trace["coverage_complete"] is False for trace in traces)
+    assert all(trace["failed_block_ids"] == [502] for trace in traces)
+
+
+@pytest.mark.parametrize("response_violation", ["duplicate", "extra"])
+def test_targeted_semantic_verification_rejects_codex_result_id_violations(
+    response_violation,
+):
+    from app.api import translate as api_translate
+    from app.engines.providers.codex_cli import CodexCliProvider
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=502,
+        start=timedelta(seconds=502),
+        end=timedelta(seconds=503),
+        text="No.",
+        translation="不。",
+    )
+    prior_report = TranslationQaReport(
+        status="needs_review",
+        issues=[QualityIssue(
+            type="semantic_uncertain",
+            severity="warning",
+            block_id=502,
+            message="short reply needs confirmation",
+        )],
+    )
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            valid = {
+                "id": 502,
+                "translation": "OK",
+                "verdict": "OK",
+                "taxonomy": "none",
+                "source_evidence": "No.",
+                "target_evidence": "不。",
+            }
+            invalid = (
+                dict(valid)
+                if response_violation == "duplicate"
+                else {
+                    "id": 999,
+                    "translation": "OK",
+                    "verdict": "OK",
+                    "taxonomy": "none",
+                    "source_evidence": "extra",
+                    "target_evidence": "额外",
+                }
+            )
+            return CodexCliProvider._parse(
+                json.dumps([valid, invalid], ensure_ascii=False),
+                items,
+            )
+
+    issues, verified_ids, verified_hashes, traces = (
+        api_translate._run_targeted_semantic_verification(
+            {"translation": {}},
+            type("Translator", (), {"primary": Primary()})(),
+            [block],
+            "简体中文",
+            {502},
+            prior_report,
+            [],
+            strict_quality_gate=True,
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert len(traces) == 2
+    assert all(trace["coverage_complete"] is False for trace in traces)
+    assert all(trace["failed_block_ids"] == [502] for trace in traces)
+
+
 def _run_targeted_semantic_evidence_case(
     *,
     source,
@@ -8629,6 +8766,7 @@ def _run_targeted_semantic_evidence_case(
         def translate_batch(self, items, prompt):
             return [{
                 "id": 502,
+                "translation": verdict,
                 "verdict": verdict,
                 "taxonomy": taxonomy,
                 "source_evidence": source_evidence,
@@ -9590,11 +9728,16 @@ def test_targeted_semantic_verification_fails_closed_on_unusable_coverage(
             if provider_mode == "missing":
                 return []
             if provider_mode == "ok_suffix":
-                return [{"id": 502, "verdict": "OK looks correct"}]
+                return [{
+                    "id": 502,
+                    "translation": "OK looks correct",
+                    "verdict": "OK looks correct",
+                }]
             if provider_mode == "extra_id":
                 return [
                     {
                         "id": 502,
+                        "translation": "OK",
                         "verdict": "OK",
                         "taxonomy": "none",
                         "source_evidence": "She",
@@ -9602,6 +9745,7 @@ def test_targeted_semantic_verification_fails_closed_on_unusable_coverage(
                     },
                     {
                         "id": 999,
+                        "translation": "OK",
                         "verdict": "OK",
                         "taxonomy": "none",
                         "source_evidence": "extra",
@@ -9609,8 +9753,17 @@ def test_targeted_semantic_verification_fails_closed_on_unusable_coverage(
                     },
                 ]
             if provider_mode == "unstructured_mismatch":
-                return [{"id": 502, "verdict": "MISMATCH: subject changed"}]
-            return [{"id": 502, "verdict": "OK", "taxonomy": "none"}]
+                return [{
+                    "id": 502,
+                    "translation": "MISMATCH: subject changed",
+                    "verdict": "MISMATCH: subject changed",
+                }]
+            return [{
+                "id": 502,
+                "translation": "OK",
+                "verdict": "OK",
+                "taxonomy": "none",
+            }]
 
     translator = type("Translator", (), {"primary": Primary()})()
     issues, verified_ids, verified_hashes, traces = (
@@ -9670,6 +9823,7 @@ def test_targeted_double_ok_resolves_502_uncertainty_for_new_content_hash():
         def translate_batch(self, items, prompt):
             return [{
                 "id": 502,
+                "translation": "OK",
                 "verdict": "OK",
                 "taxonomy": "none",
                 "source_evidence": "She ... said ... she ... would ... return",

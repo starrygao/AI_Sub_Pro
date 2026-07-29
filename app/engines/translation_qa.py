@@ -1888,37 +1888,82 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
             for position in semantic_seed_positions
             if component_start <= position <= component_end
         }
-        seed_clusters: list[list[int]] = []
-        for seed_position in sorted(component_seed_positions):
-            if (
-                not seed_clusters
-                or seed_position - seed_clusters[-1][0]
-                >= _MAX_SEMANTIC_GROUP_CUES
-            ):
-                seed_clusters.append([seed_position])
-            else:
-                seed_clusters[-1].append(seed_position)
-        previous_group_end = component_start - 1
-        for group_seed_positions in seed_clusters:
-            seed_start = group_seed_positions[0]
-            seed_end = group_seed_positions[-1]
-            seed_span = seed_end - seed_start + 1
-            left_context = (_MAX_SEMANTIC_GROUP_CUES - seed_span) // 2
-            latest_start = max(
-                component_start,
-                component_end - _MAX_SEMANTIC_GROUP_CUES + 1,
+        ordered_seed_positions = sorted(component_seed_positions)
+        partition_cache: dict[
+            tuple[int, int],
+            Optional[list[list[int]]],
+        ] = {}
+
+        def partition_seed_groups(
+            seed_offset: int,
+            first_available_position: int,
+        ) -> Optional[list[list[int]]]:
+            cache_key = (seed_offset, first_available_position)
+            if cache_key in partition_cache:
+                return partition_cache[cache_key]
+            if seed_offset >= len(ordered_seed_positions):
+                return []
+
+            seed_position = ordered_seed_positions[seed_offset]
+            candidates = []
+            max_group_size = min(
+                _MAX_SEMANTIC_GROUP_CUES,
+                component_end - component_start + 1,
             )
-            group_start = min(
-                max(component_start, seed_start - left_context),
-                latest_start,
+            for group_size in range(max_group_size, 1, -1):
+                earliest_start = max(
+                    component_start,
+                    first_available_position,
+                    seed_position - group_size + 1,
+                )
+                latest_start = min(
+                    seed_position,
+                    component_end - group_size + 1,
+                )
+                group_starts = sorted(
+                    range(earliest_start, latest_start + 1),
+                    key=lambda start: (
+                        abs(
+                            2 * seed_position
+                            - (2 * start + group_size - 1)
+                        ),
+                        start,
+                    ),
+                )
+                for group_start in group_starts:
+                    group_end = group_start + group_size - 1
+                    next_seed_offset = seed_offset
+                    while (
+                        next_seed_offset < len(ordered_seed_positions)
+                        and ordered_seed_positions[next_seed_offset] <= group_end
+                    ):
+                        next_seed_offset += 1
+                    suffix = partition_seed_groups(
+                        next_seed_offset,
+                        group_end + 1,
+                    )
+                    if suffix is None:
+                        continue
+                    candidates.append([
+                        list(range(group_start, group_end + 1)),
+                        *suffix,
+                    ])
+
+            partition = (
+                min(candidates, key=len)
+                if candidates
+                else None
             )
-            group_start = max(group_start, previous_group_end + 1)
-            group_end = min(
-                component_end,
-                group_start + _MAX_SEMANTIC_GROUP_CUES - 1,
-            )
-            component_positions = list(range(group_start, group_end + 1))
-            previous_group_end = group_end
+            partition_cache[cache_key] = partition
+            return partition
+
+        component_groups = partition_seed_groups(0, component_start) or []
+        for component_positions in component_groups:
+            group_seed_positions = [
+                position
+                for position in ordered_seed_positions
+                if position in component_positions
+            ]
             semantic_repair_positions.update(component_positions)
             group_ids = [
                 block_id
