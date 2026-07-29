@@ -2698,11 +2698,7 @@ def _semantic_evidence_is_standard_focused(match: dict) -> bool:
     )
 
 
-def _semantic_evidence_taxonomy_signal(match: dict) -> str:
-    excerpts = match["excerpts"]
-    if len(excerpts) != 1:
-        return ""
-    excerpt = excerpts[0]
+def _semantic_excerpt_strong_taxonomy_signal(excerpt: str) -> str:
     if all(
         unicodedata.category(character)[0] == "N"
         for character in excerpt
@@ -2713,12 +2709,34 @@ def _semantic_evidence_taxonomy_signal(match: dict) -> str:
         return "quantity"
     if excerpt in _TARGETED_SEMANTIC_NEGATION_TOKENS:
         return "negation/polarity/condition"
+    return ""
+
+
+def _semantic_evidence_strong_taxonomy_signals(
+    match: dict,
+) -> tuple[str, ...]:
+    signals = []
+    for excerpt in match["excerpts"]:
+        signal = _semantic_excerpt_strong_taxonomy_signal(excerpt)
+        if signal:
+            signals.append(signal)
+    return tuple(signals)
+
+
+def _semantic_evidence_is_single_uncased_entity_candidate(
+    match: dict,
+) -> bool:
+    excerpts = match["excerpts"]
+    if len(excerpts) != 1:
+        return False
+    excerpt = excerpts[0]
     if (
         _semantic_excerpt_length(excerpt) == 1
         and not _semantic_excerpt_uses_token_boundaries(excerpt)
+        and not _semantic_excerpt_strong_taxonomy_signal(excerpt)
     ):
-        return "entity"
-    return ""
+        return True
+    return False
 
 
 def _semantic_evidence_pair_is_valid(
@@ -2747,22 +2765,42 @@ def _semantic_evidence_pair_is_valid(
         )
     source_standard = _semantic_evidence_is_standard_focused(source_match)
     target_standard = _semantic_evidence_is_standard_focused(target_match)
+    source_signals = _semantic_evidence_strong_taxonomy_signals(
+        source_match
+    )
+    target_signals = _semantic_evidence_strong_taxonomy_signals(
+        target_match
+    )
+    strong_signals = source_signals + target_signals
+    if strong_signals and any(
+        signal != taxonomy
+        for signal in strong_signals
+    ):
+        return False
 
-    def focused_side_is_valid(match, standard):
-        signal = _semantic_evidence_taxonomy_signal(match)
-        if signal:
-            return taxonomy == signal
-        return standard
+    def focused_side_is_valid(match, standard, signals):
+        return (
+            standard
+            or bool(signals)
+            or (
+                taxonomy == "entity"
+                and _semantic_evidence_is_single_uncased_entity_candidate(
+                    match
+                )
+            )
+        )
 
     return (
         taxonomy in (_TARGETED_SEMANTIC_TAXONOMY - {"none"})
         and focused_side_is_valid(
             source_match,
             source_standard,
+            source_signals,
         )
         and focused_side_is_valid(
             target_match,
             target_standard,
+            target_signals,
         )
     )
 
@@ -2781,7 +2819,7 @@ def _targeted_semantic_prompt(target_language: str) -> str:
         "bounded_context、其他 id 或占位文本。",
         "多处证据可用省略号或标点分隔且每段都必须真实出现；证据不得包含控制字符或不可见格式字符。"
         "OK/none 的 source_evidence 和 target_evidence 必须分别完整覆盖 original 和 draft；"
-        "MISMATCH/UNCERTAIN 的聚焦短证据必须与 taxonomy 一致。",
+        "MISMATCH/UNCERTAIN 的每个聚焦片段都必须与 taxonomy 一致，混合 taxonomy 信号必须拒绝。",
         "语义完全保真时 taxonomy 使用 none；任何信息不足、指代不明或证据不足必须返回 UNCERTAIN。",
         "仅输出 JSON 数组，例如："
         '[{"id":1,"verdict":"OK","taxonomy":"none",'

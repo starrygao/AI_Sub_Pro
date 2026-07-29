@@ -5960,6 +5960,122 @@ def test_targeted_semantic_arbitrary_uncased_character_is_not_negation():
 
 
 @pytest.mark.parametrize(
+    ("verdict", "expected_issue_type"),
+    [
+        ("MISMATCH: entity changed", "semantic_qa_failed"),
+        ("UNCERTAIN: entity may have changed", "semantic_qa_failed"),
+    ],
+)
+def test_targeted_semantic_multifragment_strong_signal_cannot_be_diluted(
+    verdict,
+    expected_issue_type,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="Do not go.",
+            draft="不要走。",
+            source_evidence="not ... go",
+            target_evidence="不……走",
+            verdict=verdict,
+            taxonomy="entity",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == [expected_issue_type]
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected_issue_type"),
+    [
+        ("MISMATCH: negation changed", "semantic_mismatch"),
+        ("UNCERTAIN: negation may have changed", "semantic_uncertain"),
+    ],
+)
+def test_targeted_semantic_multifragment_strong_signal_allows_aligned_taxonomy(
+    verdict,
+    expected_issue_type,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="Do not go.",
+            draft="不要走。",
+            source_evidence="not ... go",
+            target_evidence="不……走",
+            verdict=verdict,
+            taxonomy="negation/polarity/condition",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == [expected_issue_type]
+    assert all(trace["coverage_complete"] is True for trace in traces)
+
+
+def test_targeted_semantic_repeated_strong_signal_cannot_be_diluted():
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="Do not not go.",
+            draft="不不走。",
+            source_evidence="not ... not ... go",
+            target_evidence="不……不……走",
+            verdict="MISMATCH: entity changed",
+            taxonomy="entity",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
+def test_targeted_semantic_multifragment_evidence_preserves_source_order():
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="Do not go.",
+            draft="不要走。",
+            source_evidence="go ... not",
+            target_evidence="走……不",
+            verdict="MISMATCH: negation changed",
+            taxonomy="negation/polarity/condition",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
+@pytest.mark.parametrize(
+    "taxonomy",
+    ["negation/polarity/condition", "quantity"],
+)
+def test_targeted_semantic_conflicting_multifragment_signals_fail_schema(
+    taxonomy,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="Do not take 2.",
+            draft="不要拿二个。",
+            source_evidence="not ... 2",
+            target_evidence="不……二",
+            verdict="UNCERTAIN: mixed semantic signals",
+            taxonomy=taxonomy,
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
+@pytest.mark.parametrize(
     (
         "source",
         "draft",
