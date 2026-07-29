@@ -1828,6 +1828,100 @@ def test_cancel_ack_survives_registered_thread_start_failure(
     assert api_translate.is_task_registered(pid) is False
 
 
+def test_full_pipeline_preserves_committed_burn_failure_after_late_cancel(
+    tmp_path,
+    monkeypatch,
+):
+    """Catches the full-pipeline wrapper overwriting burn's terminal commit."""
+    import threading
+
+    from app.api import translate as api_translate
+    from app.engines.scheduler import (
+        discard_cancel_generation,
+        request_cancel,
+        reset_cancel,
+    )
+    from app.engines.workflow_state import start_stage
+    from app.utils import project_store
+
+    pid = "full-burn-terminal-preserved"
+    pdir = tmp_path / pid
+    pdir.mkdir()
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "Full burn failure",
+        "video_path": str(pdir / "video.mp4"),
+        "status": "translated",
+        "translation_quality_status": "passed",
+        "pipeline_stage": None,
+        "audio_tracks": [],
+        "subtitle_tracks": [],
+    }), encoding="utf-8")
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(
+        api_translate,
+        "_run_asr_pipeline",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_run_translate_pipeline",
+        lambda *args, **kwargs: None,
+    )
+
+    worker = threading.current_thread()
+    prior_generation = getattr(
+        worker,
+        "_aisubpro_task_generation",
+        None,
+    )
+    api_translate.try_register_task(
+        pid,
+        lambda: worker,
+        reset_cancellation=True,
+        launch_stage="burn",
+    )
+    generation = api_translate._registered_task_snapshot(pid)[1]
+
+    def commit_failure_then_cancel(task_pid):
+        start_stage(task_pid, "burn")
+        api_translate._mark_burn_failed(
+            task_pid,
+            "encoder failed",
+            expected_task_generation=generation,
+        )
+        request_cancel(task_pid, generation=generation)
+        raise OSError("encoder failed")
+
+    monkeypatch.setattr(
+        api_translate,
+        "_run_burn_pipeline",
+        commit_failure_then_cancel,
+    )
+
+    try:
+        api_translate._run_full_pipeline(
+            pid,
+            0,
+            "auto",
+            "简体中文",
+        )
+        project = json.loads(
+            (pdir / "project.json").read_text(encoding="utf-8")
+        )
+        assert project["status"] == "translated"
+        assert project["error"] == "encoder failed"
+        assert project["pipeline_stage"] is None
+    finally:
+        reset_cancel(pid, generation=generation)
+        discard_cancel_generation(pid, generation)
+        if prior_generation is None:
+            delattr(worker, "_aisubpro_task_generation")
+        else:
+            worker._aisubpro_task_generation = prior_generation
+
+
 @pytest.mark.parametrize(
     ("start_kind", "old_status"),
     [

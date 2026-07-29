@@ -6712,6 +6712,24 @@ def _run_burn_pipeline(pid: str):
         raise
 
 
+def _burn_failure_terminal_is_committed(pid: str) -> bool:
+    try:
+        project = _load_project(pid)
+        state = load_workflow_state(pid)
+    except Exception:
+        return False
+    stages = state.get("stages") if isinstance(state, dict) else {}
+    burn = stages.get("burn") if isinstance(stages, dict) else None
+    return bool(
+        project.get("status") == "translated"
+        and project.get("pipeline_stage") is None
+        and isinstance(project.get("error"), str)
+        and project["error"].strip()
+        and isinstance(burn, dict)
+        and burn.get("status") == "failed"
+    )
+
+
 def _run_full_pipeline(pid: str, audio_track: int, language: str, target_language: str):
     """Run full pipeline: ASR + Filter + Translate + Burn subtitles."""
     try:
@@ -6756,6 +6774,13 @@ def _run_full_pipeline(pid: str, audio_track: int, language: str, target_languag
             message = "已取消"
         _emit_progress(pid, stage, 0, message)
     except Exception as e:
+        if _burn_failure_terminal_is_committed(pid):
+            log.warning(
+                "Full pipeline preserved committed burn failure for %s: %s",
+                pid,
+                _safe_error_message(e),
+            )
+            return
         log.exception("Full pipeline failed for %s", pid)
         error_msg = _safe_error_message(e)
         try:
