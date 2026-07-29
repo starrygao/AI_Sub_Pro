@@ -438,6 +438,12 @@ _NOTE_WRAPPED_MUSIC_DESCRIPTION_EN_RE = re.compile(
 _NOTE_WRAPPED_MUSIC_DESCRIPTION_CJK_RE = re.compile(
     r"^(?:(?:纯|背景|紧张|轻柔|主题)){0,3}音乐(?:继续|响起|播放|持续)?$"
 )
+_MULTILINE_BRACKETED_MUSIC_DESCRIPTION_EN_RE = re.compile(
+    r"^\s*(?:[-–—]\s*)?\[\s*"
+    r"(?:(?:upbeat|latin)\s+)*music"
+    r"(?:\s+continues?)?(?:\s+faintly)?\s*\]\s*$",
+    re.IGNORECASE,
+)
 _SAFE_UNBRACKETED_SOUND_LABELS = (
     "无可闻对话",
     "无可闻对白",
@@ -683,6 +689,15 @@ def _is_sound_description_line(source: str) -> bool:
 
 
 def _is_sound_description(source: str) -> bool:
+    multiline_probe = _HTML_TAG_RE.sub("", source or "")
+    multiline_probe = _ASS_OVERRIDE_RE.sub("", multiline_probe)
+    if (
+        len(multiline_probe.splitlines()) > 1
+        and _MULTILINE_BRACKETED_MUSIC_DESCRIPTION_EN_RE.fullmatch(
+            multiline_probe
+        )
+    ):
+        return True
     lines = [
         line
         for line in (source or "").splitlines()

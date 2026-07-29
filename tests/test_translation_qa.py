@@ -407,6 +407,61 @@ def test_sound_verb_morphology_does_not_swallow_real_dialogue(source):
 
 
 @pytest.mark.parametrize(
+    "source",
+    [
+        "[upbeat Latin music\ncontinues faintly]",
+        "[Latin music\ncontinues]",
+        "[upbeat music\ncontinues faintly]",
+        "[music\ncontinues faintly]",
+        "[upbeat Latin music continues\nfaintly]",
+    ],
+)
+def test_multiline_bracketed_music_descriptions_remain_pure_sound(source):
+    from app.engines.translation_qa import (
+        dialogue_only_qa_source_text,
+        is_sound_description_source,
+        run_quality_checks,
+    )
+
+    assert is_sound_description_source(source) is True
+    assert dialogue_only_qa_source_text(source) == ""
+
+    report = run_quality_checks(
+        [_block(667, source, "")],
+        target_language="简体中文",
+        max_chars=40,
+    )
+    assert report.summary["by_type"].get("missing_translation", 0) == 0
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "The upbeat Latin music\ncontinues faintly in the next room.",
+        "[upbeat Latin music]\nIt continues faintly, but we should leave.",
+        "[upbeat Latin music]\n♪ I can feel your heartbeat ♪",
+        "[upbeat Latin music\ncontinues faintly]\nMAYA: Can you hear it?",
+        "[upbeat Latin music\nMAYA: Can you hear it?]",
+        "[upbeat Latin music\nI dance with you]",
+    ],
+)
+def test_multiline_music_words_do_not_swallow_dialogue_or_lyrics(source):
+    from app.engines.translation_qa import (
+        is_sound_description_source,
+        run_quality_checks,
+    )
+
+    assert is_sound_description_source(source) is False
+
+    report = run_quality_checks(
+        [_block(668, source, "")],
+        target_language="简体中文",
+        max_chars=40,
+    )
+    assert report.summary["by_type"]["missing_translation"] == 1
+
+
+@pytest.mark.parametrize(
     ("source", "draft"),
     [
         ("♪ Never gonna give you up ♪", "♪ 永远不会放弃你 ♪"),
