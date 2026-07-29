@@ -2493,6 +2493,36 @@ _TARGETED_SEMANTIC_TAXONOMY = frozenset({
     "quantity",
     "cross_block_alignment",
 })
+_TARGETED_SEMANTIC_NEGATION_TOKENS = frozenset({
+    "not",
+    "no",
+    "never",
+    "neither",
+    "nor",
+    "without",
+    "不",
+    "没",
+    "無",
+    "无",
+    "未",
+    "否",
+    "非",
+    "勿",
+    "莫",
+    "別",
+    "别",
+    "안",
+    "못",
+    "없",
+    "لا",
+    "لم",
+    "لن",
+    "ليس",
+})
+_TARGETED_SEMANTIC_UNCASED_NUMERAL_TOKENS = frozenset(
+    "零〇一二三四五六七八九十百千万亿兆两"
+    "壹贰貳叁參肆伍陆陸柒捌玖拾佰仟萬億"
+)
 _TARGETED_SEMANTIC_VERDICT_RE = re.compile(
     r"^(?:OK|MISMATCH:\s*\S(?:.*\S)?|UNCERTAIN:\s*\S(?:.*\S)?)$",
     re.IGNORECASE,
@@ -2544,12 +2574,12 @@ def _semantic_excerpts_are_anchored(
     content_position = 0
     content_offset = 0
     for evidence_excerpt in evidence_excerpts:
-        requires_token_boundary = (
-            _semantic_excerpt_uses_token_boundaries(evidence_excerpt)
-            or all(
-                unicodedata.category(character)[0] == "N"
-                for character in evidence_excerpt
-            )
+        requires_token_boundary = _semantic_excerpt_uses_token_boundaries(
+            evidence_excerpt
+        )
+        numeric_excerpt = all(
+            unicodedata.category(character)[0] == "N"
+            for character in evidence_excerpt
         )
         found = False
         while content_position < len(content_excerpts):
@@ -2567,6 +2597,31 @@ def _semantic_excerpts_are_anchored(
                     evidence_excerpt,
                     content_offset,
                 )
+                while (
+                    numeric_excerpt
+                    and match_position >= 0
+                    and (
+                        (
+                            match_position > 0
+                            and unicodedata.category(
+                                content_excerpt[match_position - 1]
+                            )[0] == "N"
+                        )
+                        or (
+                            match_position + len(evidence_excerpt)
+                            < len(content_excerpt)
+                            and unicodedata.category(
+                                content_excerpt[
+                                    match_position + len(evidence_excerpt)
+                                ]
+                            )[0] == "N"
+                        )
+                    )
+                ):
+                    match_position = content_excerpt.find(
+                        evidence_excerpt,
+                        match_position + 1,
+                    )
                 if match_position >= 0:
                     content_offset = match_position + len(evidence_excerpt)
                     if content_offset == len(content_excerpt):
@@ -2614,28 +2669,11 @@ def _semantic_evidence_match(evidence: str, content: str):
         "content_excerpts": content_excerpts,
         "evidence_length": evidence_length,
         "content_length": content_length,
-        "exact": evidence_excerpts == content_excerpts,
+        "exact": (
+            "".join(evidence_excerpts)
+            == "".join(content_excerpts)
+        ),
     }
-
-
-def _semantic_evidence_is_broad(match: dict) -> bool:
-    excerpts = match["excerpts"]
-    multiple_meaningful_excerpts = (
-        len(excerpts) >= 2
-        and all(
-            _semantic_excerpt_length(excerpt) >= (
-                3
-                if _semantic_excerpt_uses_token_boundaries(excerpt)
-                else 1
-            )
-            for excerpt in excerpts
-        )
-    )
-    return (
-        match["exact"]
-        or match["evidence_length"] * 5 >= match["content_length"] * 3
-        or multiple_meaningful_excerpts
-    )
 
 
 def _semantic_evidence_is_standard_focused(match: dict) -> bool:
@@ -2660,18 +2698,26 @@ def _semantic_evidence_is_standard_focused(match: dict) -> bool:
     )
 
 
-def _semantic_evidence_single_signal(match: dict) -> str:
+def _semantic_evidence_taxonomy_signal(match: dict) -> str:
     excerpts = match["excerpts"]
-    if len(excerpts) != 1 or _semantic_excerpt_length(excerpts[0]) != 1:
+    if len(excerpts) != 1:
         return ""
     excerpt = excerpts[0]
     if all(
         unicodedata.category(character)[0] == "N"
         for character in excerpt
+    ) or all(
+        character in _TARGETED_SEMANTIC_UNCASED_NUMERAL_TOKENS
+        for character in excerpt
     ):
         return "quantity"
-    if not _semantic_excerpt_uses_token_boundaries(excerpt):
+    if excerpt in _TARGETED_SEMANTIC_NEGATION_TOKENS:
         return "negation/polarity/condition"
+    if (
+        _semantic_excerpt_length(excerpt) == 1
+        and not _semantic_excerpt_uses_token_boundaries(excerpt)
+    ):
+        return "entity"
     return ""
 
 
@@ -2696,33 +2742,27 @@ def _semantic_evidence_pair_is_valid(
     if explicit_ok:
         return (
             taxonomy == "none"
-            and _semantic_evidence_is_broad(source_match)
-            and _semantic_evidence_is_broad(target_match)
+            and source_match["exact"]
+            and target_match["exact"]
         )
     source_standard = _semantic_evidence_is_standard_focused(source_match)
     target_standard = _semantic_evidence_is_standard_focused(target_match)
 
-    def focused_side_is_valid(match, standard, counterpart_standard):
-        if standard:
-            return True
-        signal = _semantic_evidence_single_signal(match)
-        if signal == "quantity":
+    def focused_side_is_valid(match, standard):
+        signal = _semantic_evidence_taxonomy_signal(match)
+        if signal:
             return taxonomy == signal
-        if signal == "negation/polarity/condition":
-            return taxonomy == signal and counterpart_standard
-        return False
+        return standard
 
     return (
         taxonomy in (_TARGETED_SEMANTIC_TAXONOMY - {"none"})
         and focused_side_is_valid(
             source_match,
             source_standard,
-            target_standard,
         )
         and focused_side_is_valid(
             target_match,
             target_standard,
-            source_standard,
         )
     )
 
@@ -2740,12 +2780,12 @@ def _targeted_semantic_prompt(target_language: str) -> str:
         "target_evidence 必须分别逐字引用该 id 的 original 和 draft 真实片段，不得引用 "
         "bounded_context、其他 id 或占位文本。",
         "多处证据可用省略号或标点分隔且每段都必须真实出现；证据不得包含控制字符或不可见格式字符。"
-        "OK/none 对非短文本必须覆盖完整或高比例内容，或提供多个有意义片段；"
+        "OK/none 的 source_evidence 和 target_evidence 必须分别完整覆盖 original 和 draft；"
         "MISMATCH/UNCERTAIN 的聚焦短证据必须与 taxonomy 一致。",
         "语义完全保真时 taxonomy 使用 none；任何信息不足、指代不明或证据不足必须返回 UNCERTAIN。",
         "仅输出 JSON 数组，例如："
         '[{"id":1,"verdict":"OK","taxonomy":"none",'
-        '"source_evidence":"our","target_evidence":"我们的"}]。',
+        '"source_evidence":"No.","target_evidence":"不。"}]。',
     ])
 
 

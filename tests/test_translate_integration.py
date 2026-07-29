@@ -5833,6 +5833,25 @@ def test_targeted_semantic_double_ok_rejects_narrow_generic_evidence():
     assert all(trace["coverage_complete"] is False for trace in traces)
 
 
+def test_targeted_semantic_double_ok_rejects_selective_multifragment_evidence():
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="The promise is broken and forgotten.",
+            draft="这是错误的。",
+            source_evidence="the ... and",
+            target_evidence="这……的",
+            verdict="OK",
+            taxonomy="none",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert len(traces) == 2
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
 def test_targeted_semantic_latin_evidence_cannot_match_inside_a_token():
     issues, verified_ids, verified_hashes, traces = (
         _run_targeted_semantic_evidence_case(
@@ -5922,18 +5941,102 @@ def test_targeted_semantic_focused_negation_evidence_respects_verdict_policy(
     )
 
 
+def test_targeted_semantic_arbitrary_uncased_character_is_not_negation():
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="Do not go.",
+            draft="她要走。",
+            source_evidence="not",
+            target_evidence="她",
+            verdict="MISMATCH: negation was changed",
+            taxonomy="negation/polarity/condition",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
 @pytest.mark.parametrize(
-    ("verdict", "taxonomy", "expected_issue_type"),
+    (
+        "source",
+        "draft",
+        "source_evidence",
+        "target_evidence",
+        "taxonomy",
+    ),
     [
-        ("OK", "none", None),
+        ("Ada arrived.", "安到了。", "Ada", "安", "entity"),
+        (
+            "There are ٣ lanterns.",
+            "有٣盏灯。",
+            "٣",
+            "٣",
+            "quantity",
+        ),
+        (
+            "There are three lanterns.",
+            "有三盏灯。",
+            "three",
+            "三",
+            "quantity",
+        ),
+    ],
+)
+def test_targeted_semantic_taxonomy_signals_support_unicode_focused_evidence(
+    source,
+    draft,
+    source_evidence,
+    target_evidence,
+    taxonomy,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source=source,
+            draft=draft,
+            source_evidence=source_evidence,
+            target_evidence=target_evidence,
+            verdict="MISMATCH: focused semantic signal changed",
+            taxonomy=taxonomy,
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_mismatch"]
+    assert all(trace["coverage_complete"] is True for trace in traces)
+
+
+@pytest.mark.parametrize(
+    (
+        "verdict",
+        "taxonomy",
+        "source_evidence",
+        "target_evidence",
+        "expected_issue_type",
+    ),
+    [
+        (
+            "OK",
+            "none",
+            '"She" ... said ... she ... would ... return',
+            "她……说……她……会……回……来",
+            None,
+        ),
         (
             "MISMATCH: pronoun alignment changed",
             "agent_patient",
+            '"She" ... she',
+            "“她”……她",
             "semantic_mismatch",
         ),
         (
             "UNCERTAIN: pronoun alignment is ambiguous",
             "agent_patient",
+            '"She" ... she',
+            "“她”……她",
             "semantic_uncertain",
         ),
     ],
@@ -5941,14 +6044,16 @@ def test_targeted_semantic_focused_negation_evidence_respects_verdict_policy(
 def test_targeted_semantic_multifragment_evidence_anchors_each_excerpt(
     verdict,
     taxonomy,
+    source_evidence,
+    target_evidence,
     expected_issue_type,
 ):
     issues, verified_ids, verified_hashes, traces = (
         _run_targeted_semantic_evidence_case(
             source="She said she would return.",
             draft="她说她会回来。",
-            source_evidence='"She" ... she',
-            target_evidence="“她”……她",
+            source_evidence=source_evidence,
+            target_evidence=target_evidence,
             verdict=verdict,
             taxonomy=taxonomy,
         )
@@ -6086,8 +6191,8 @@ def test_targeted_double_ok_resolves_502_uncertainty_for_new_content_hash():
                 "id": 502,
                 "verdict": "OK",
                 "taxonomy": "none",
-                "source_evidence": "She ... she",
-                "target_evidence": "她……她",
+                "source_evidence": "She ... said ... she ... would ... return",
+                "target_evidence": "她……说……她……会……回……来",
             }]
 
     translator = type("Translator", (), {"primary": Primary()})()
