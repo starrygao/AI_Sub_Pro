@@ -1877,6 +1877,16 @@ def save_subtitles(data: SubtitleEdit, pid: str = PathParam(pattern=PID_PATTERN)
             pdir = _project_dir(pid)
             if translation_delivery_is_invalid(pdir):
                 raise HTTPException(409, "Translation delivery is in progress or invalid")
+            from app.api.translate import is_task_registered
+            if (
+                project.get("status") == "processing"
+                or bool(project.get("pipeline_stage"))
+                or is_task_registered(pid)
+            ):
+                raise HTTPException(
+                    409,
+                    "Project is processing; subtitle edits are disabled",
+                )
             return _save_subtitles_locked(data, pid, project, pdir)
 
 

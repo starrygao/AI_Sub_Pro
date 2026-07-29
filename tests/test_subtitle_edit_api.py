@@ -34,6 +34,66 @@ def test_save_subtitles_requires_existing_project(client):
     assert r.status_code == 404
 
 
+@pytest.mark.parametrize(
+    "busy_state",
+    ["processing", "pipeline_stage", "registered_task"],
+)
+def test_save_subtitles_rejects_busy_project_without_writing_files(
+    client,
+    tmp_project_dir,
+    busy_state,
+):
+    from app.api import translate as api_translate
+
+    pid = _seed_project(tmp_project_dir, f"subedit-{busy_state}")
+    pdir = tmp_project_dir / pid
+    project_path = pdir / "project.json"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    if busy_state == "processing":
+        project["status"] = "processing"
+    elif busy_state == "pipeline_stage":
+        project["pipeline_stage"] = "translate"
+    project_path.write_text(json.dumps(project), encoding="utf-8")
+    (pdir / "raw.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nOld source\n\n",
+        encoding="utf-8",
+    )
+    (pdir / "translated.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n旧译文\n\n",
+        encoding="utf-8",
+    )
+    before = {
+        path.name: path.read_bytes()
+        for path in pdir.iterdir()
+        if path.is_file()
+    }
+    if busy_state == "registered_task":
+        with api_translate._tasks_lock:
+            api_translate.active_tasks[pid] = object()
+    try:
+        response = client.put(f"/api/projects/{pid}/subtitles", json={
+            "blocks": [{
+                "index": 1,
+                "start": "00:00:00,000",
+                "end": "00:00:01,000",
+                "text": "Edited source",
+                "translation": "新译文",
+            }],
+        })
+    finally:
+        if busy_state == "registered_task":
+            api_translate.unregister_task(pid)
+
+    assert response.status_code == 409
+    assert "processing" in response.json()["detail"].lower()
+    after = {
+        path.name: path.read_bytes()
+        for path in pdir.iterdir()
+        if path.is_file()
+    }
+    assert after == before
+
+
 def test_save_subtitles_rejects_invalid_time(client, tmp_project_dir):
     pid = _seed_project(tmp_project_dir)
 

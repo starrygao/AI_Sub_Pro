@@ -47,6 +47,10 @@ from app.utils.translation_quality_gate import (
     TranslationQualityGateDecision,
     load_quality_report_decision,
 )
+from app.utils.subtitle_generation import (
+    subtitle_file_hash,
+    subtitle_source_generation_hash,
+)
 from app.engines.kb_trace import write_kb_usage_trace
 from app.engines.scheduler import (
     complete_progress as _scheduler_complete_progress,
@@ -966,6 +970,8 @@ def _persist_translated_srt_id_mapping(
     write_report,
     *,
     output_path: Optional[Path] = None,
+    source_generation_hash: str = "",
+    delivery_artifact_hashes: Optional[dict] = None,
 ) -> Path:
     report_path = _safe_project_artifact_path(pid, "translation_qa_report.json")
     try:
@@ -995,6 +1001,12 @@ def _persist_translated_srt_id_mapping(
             })
     destination = Path(output_path) if output_path is not None else report_path
     report["subtitle_id_mapping"] = {"translated_srt": mapping}
+    if source_generation_hash:
+        report["source_generation_hash"] = source_generation_hash
+    if delivery_artifact_hashes is not None:
+        report["delivery_artifact_hashes"] = dict(
+            delivery_artifact_hashes
+        )
     atomic_write_json(destination, report)
     return destination
 
@@ -1097,6 +1109,8 @@ def _verify_published_translation_artifacts(
     translated_path: Path,
     bilingual_path: Path,
     report_path: Path,
+    *,
+    expected_source_generation_hash: str = "",
 ) -> None:
     for path in (translated_path, bilingual_path, report_path):
         if path.is_symlink() or not path.is_file():
@@ -1110,6 +1124,24 @@ def _verify_published_translation_artifacts(
         ) from exc
     if not isinstance(mapping, list):
         raise RuntimeError("translation delivery verification failed: invalid subtitle id mapping")
+    if expected_source_generation_hash and (
+        report.get("source_generation_hash")
+        != expected_source_generation_hash
+    ):
+        raise RuntimeError(
+            "translation delivery verification failed: source generation identity"
+        )
+    artifact_hashes = report.get("delivery_artifact_hashes")
+    if expected_source_generation_hash and (
+        not isinstance(artifact_hashes, dict)
+        or artifact_hashes.get("translated.srt")
+        != subtitle_file_hash(translated_path)
+        or artifact_hashes.get("bilingual.srt")
+        != subtitle_file_hash(bilingual_path)
+    ):
+        raise RuntimeError(
+            "translation delivery verification failed: artifact identity"
+        )
 
 
 def _publish_translation_artifacts_locked(
@@ -1117,6 +1149,7 @@ def _publish_translation_artifacts_locked(
     blocks,
     *,
     write_bilingual,
+    expected_source_generation_hash: str = "",
 ):
     pdir = project_dir(pid)
     staged: list[Path] = []
@@ -1129,6 +1162,13 @@ def _publish_translation_artifacts_locked(
     sentinel: Optional[Path] = None
     finals_touched = False
     try:
+        if expected_source_generation_hash and (
+            subtitle_source_generation_hash(pdir)
+            != expected_source_generation_hash
+        ):
+            raise RuntimeError(
+                "subtitle source generation changed before publication"
+            )
         snapshots = _snapshot_delivery_artifacts(finals)
         sentinel = mark_translation_delivery_invalid(pdir)
 
@@ -1152,17 +1192,45 @@ def _publish_translation_artifacts_locked(
         if export_msg:
             raise RuntimeError(export_msg)
         write_bilingual(blocks, str(bilingual_stage))
+        delivery_artifact_hashes = {
+            "translated.srt": subtitle_file_hash(translated_stage),
+            "bilingual.srt": subtitle_file_hash(bilingual_stage),
+        }
         _persist_translated_srt_id_mapping(
             pid,
             write_report,
             output_path=report_stage,
+            source_generation_hash=expected_source_generation_hash,
+            delivery_artifact_hashes=delivery_artifact_hashes,
         )
 
+        if expected_source_generation_hash and (
+            subtitle_source_generation_hash(pdir)
+            != expected_source_generation_hash
+        ):
+            raise RuntimeError(
+                "subtitle source generation changed before publication"
+            )
         finals_touched = True
         os.replace(translated_stage, finals[0])
         os.replace(bilingual_stage, finals[1])
         os.replace(report_stage, finals[2])
-        _verify_published_translation_artifacts(*finals)
+        if expected_source_generation_hash:
+            _verify_published_translation_artifacts(
+                *finals,
+                expected_source_generation_hash=(
+                    expected_source_generation_hash
+                ),
+            )
+        else:
+            _verify_published_translation_artifacts(*finals)
+        if expected_source_generation_hash and (
+            subtitle_source_generation_hash(pdir)
+            != expected_source_generation_hash
+        ):
+            raise RuntimeError(
+                "subtitle source generation changed during publication"
+            )
         _unlink_delivery_path(sentinel)
         return write_report
     except Exception as publish_error:
@@ -1206,6 +1274,7 @@ def _publish_translation_artifacts(
     blocks,
     *,
     write_bilingual,
+    expected_source_generation_hash: str = "",
 ):
     with translation_delivery_lock(pid) as acquired:
         if not acquired:
@@ -1214,6 +1283,9 @@ def _publish_translation_artifacts(
             pid,
             blocks,
             write_bilingual=write_bilingual,
+            expected_source_generation_hash=(
+                expected_source_generation_hash
+            ),
         )
 
 
@@ -3694,6 +3766,7 @@ def _begin_translation_quality_run(pid: str, *, expected_policy: str) -> str:
             "translation_quality_message": "",
             "translation_quality_run_id": run_id,
             "translation_quality_content_hash": "",
+            "translation_quality_source_generation_hash": "",
         }),
         normalize=_apply_safe_defaults,
     )
@@ -3744,6 +3817,7 @@ def _mark_translation_quality_failed(
     quality_policy: str,
     quality_run_id: str,
     quality_content_hash: str,
+    quality_source_generation_hash: str = "",
 ) -> None:
     detail = message.strip() or "翻译质量未达标，已停止交付。"
     _best_effort_fail_stage(pid, "translate", detail)
@@ -3759,6 +3833,9 @@ def _mark_translation_quality_failed(
             "translation_quality_policy": quality_policy,
             "translation_quality_run_id": quality_run_id,
             "translation_quality_content_hash": quality_content_hash,
+            "translation_quality_source_generation_hash": (
+                quality_source_generation_hash
+            ),
             "pipeline_stage": None,
             **_translation_artifact_fields(pid),
         }),
@@ -4174,9 +4251,14 @@ def _persist_translation_quality_report(
             and quality_run_state.get("run_id") != quality_run_id
         ):
             reset_round_limit = _repair_round_limit(cfg)
+            source_generation_hash = quality_run_state.get(
+                "source_generation_hash",
+                "",
+            )
             quality_run_state.clear()
             quality_run_state.update({
                 "run_id": quality_run_id,
+                "source_generation_hash": source_generation_hash,
                 "semantic_uncertain_observed_block_ids": [],
                 "semantic_issue_ledger": {
                     "outstanding": [],
@@ -4810,6 +4892,13 @@ def _persist_translation_quality_report(
         )
         report.run_id = quality_run_id
         report.content_hash = quality_content_hash(blocks)
+        if matching_run_state:
+            source_generation_hash = quality_run_state.get(
+                "source_generation_hash",
+                "",
+            )
+            if isinstance(source_generation_hash, str):
+                report.source_generation_hash = source_generation_hash
 
         root = Path(pdir)
         save_quality_report(
@@ -4843,6 +4932,7 @@ def _run_translate_pipeline(
             project = _load_project(pid)
             pdir = str(PROJECTS_DIR / pid)
             cfg = Config.to_dict()
+            _check_cancel(pid)
             strict_policy = _strict_quality_policy(cfg, strict_quality_gate)
             quality_run_id = _begin_translation_quality_run(
                 pid,
@@ -4864,6 +4954,16 @@ def _run_translate_pipeline(
                 },
             }
             source_name, source_path = _find_subtitle_source(pid)
+            source_generation_hash = subtitle_source_generation_hash(
+                Path(pdir)
+            )
+            if not source_generation_hash:
+                raise RuntimeError(
+                    "subtitle source generation identity is unavailable"
+                )
+            quality_run_state["source_generation_hash"] = (
+                source_generation_hash
+            )
             _best_effort_start_stage(
                 pid,
                 "translate",
@@ -5046,6 +5146,9 @@ def _run_translate_pipeline(
                     quality_policy="strict" if strict_policy else "fast",
                     quality_run_id=quality_run_id,
                     quality_content_hash=quality_hash,
+                    quality_source_generation_hash=(
+                        source_generation_hash
+                    ),
                 )
                 return
 
@@ -5067,6 +5170,9 @@ def _run_translate_pipeline(
                         pid,
                         blocks,
                         write_bilingual=write_bilingual_srt,
+                        expected_source_generation_hash=(
+                            source_generation_hash
+                        ),
                     )
                 except Exception:
                     _write_partial_outputs()
@@ -5084,6 +5190,9 @@ def _run_translate_pipeline(
                         "translation_quality_message": quality_message,
                         "translation_quality_run_id": quality_run_id,
                         "translation_quality_content_hash": quality_hash,
+                        "translation_quality_source_generation_hash": (
+                            source_generation_hash
+                        ),
                         "pipeline_stage": None,
                         **_translation_artifact_fields(pid),
                     }),

@@ -1157,6 +1157,239 @@ def test_subtitle_put_cannot_enter_publish_to_certification_window(
     assert "未审校编辑覆盖" not in export_response.json()["content"]
 
 
+def _configure_source_generation_pipeline(
+    tmp_path,
+    monkeypatch,
+    *,
+    pid,
+    source_text="Hello.",
+    translated_text="流水线认证译文。",
+):
+    from app.api import projects as projects_api
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        f"1\n00:00:00,000 --> 00:00:01,000\n{source_text}\n\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(projects_api, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(
+        api_translate.Config,
+        "to_dict",
+        lambda: {"translation": {"quality_mode": "fast"}},
+    )
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            pass
+
+        def translate(
+            self,
+            blocks,
+            target_lang,
+            meta_info=None,
+            kb_data=None,
+            callback=None,
+        ):
+            blocks[0].translation = translated_text
+            return blocks
+
+        def get_kb_usage_trace(self):
+            return {"project": {}, "matches": []}
+
+    monkeypatch.setattr(
+        "app.engines.translator.SubtitleTranslator",
+        FakeTranslator,
+    )
+    return api_translate, pdir
+
+
+def test_subtitle_put_is_rejected_after_qa_before_publish_lock(
+    tmp_path,
+    monkeypatch,
+):
+    import threading
+
+    from app.main import app
+
+    pid = "qapublishbusyedit"
+    api_translate, pdir = _configure_source_generation_pipeline(
+        tmp_path,
+        monkeypatch,
+        pid=pid,
+    )
+    qa_complete = threading.Event()
+    release_publish = threading.Event()
+    real_decision = api_translate._translation_quality_gate_decision
+
+    def pause_after_qa(*args, **kwargs):
+        decision = real_decision(*args, **kwargs)
+        qa_complete.set()
+        if not release_publish.wait(timeout=5):
+            raise RuntimeError("test timed out waiting to publish")
+        return decision
+
+    monkeypatch.setattr(
+        api_translate,
+        "_translation_quality_gate_decision",
+        pause_after_qa,
+    )
+    pipeline_thread = threading.Thread(
+        target=api_translate._run_translate_pipeline,
+        args=(pid, "简体中文"),
+        kwargs={"burn_follows": False},
+    )
+    pipeline_thread.start()
+    try:
+        assert qa_complete.wait(timeout=5)
+        source_before = (pdir / "filtered.srt").read_bytes()
+        put_response = TestClient(app).put(
+            f"/api/projects/{pid}/subtitles",
+            json={"blocks": [{
+                "index": 1,
+                "start": "00:00:00,000",
+                "end": "00:00:01,000",
+                "text": "Concurrent edit.",
+                "translation": "并发覆盖。",
+            }]},
+        )
+        assert put_response.status_code == 409
+        assert (pdir / "filtered.srt").read_bytes() == source_before
+        assert not (pdir / "translated.srt").exists()
+    finally:
+        release_publish.set()
+        pipeline_thread.join(timeout=5)
+
+    assert not pipeline_thread.is_alive()
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["translation_quality_status"] == "passed"
+    assert "流水线认证译文" in (
+        pdir / "translated.srt"
+    ).read_text(encoding="utf-8")
+
+
+def test_publish_rejects_source_generation_changed_after_qa(
+    tmp_path,
+    monkeypatch,
+):
+    import threading
+
+    pid = "sourcegenerationrace"
+    api_translate, pdir = _configure_source_generation_pipeline(
+        tmp_path,
+        monkeypatch,
+        pid=pid,
+    )
+    qa_complete = threading.Event()
+    release_publish = threading.Event()
+    real_decision = api_translate._translation_quality_gate_decision
+
+    def pause_after_qa(*args, **kwargs):
+        decision = real_decision(*args, **kwargs)
+        qa_complete.set()
+        if not release_publish.wait(timeout=5):
+            raise RuntimeError("test timed out waiting to publish")
+        return decision
+
+    monkeypatch.setattr(
+        api_translate,
+        "_translation_quality_gate_decision",
+        pause_after_qa,
+    )
+    pipeline_thread = threading.Thread(
+        target=api_translate._run_translate_pipeline,
+        args=(pid, "简体中文"),
+        kwargs={"burn_follows": False},
+    )
+    pipeline_thread.start()
+    try:
+        assert qa_complete.wait(timeout=5)
+        (pdir / "filtered.srt").write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\nChanged after QA.\n\n",
+            encoding="utf-8",
+        )
+    finally:
+        release_publish.set()
+        pipeline_thread.join(timeout=5)
+
+    assert not pipeline_thread.is_alive()
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["status"] == "error"
+    assert project.get("translation_quality_status") != "passed"
+    assert not (pdir / "translated.srt").exists()
+    assert not (pdir / "bilingual.srt").exists()
+
+
+def test_saved_edit_can_be_recertified_with_hash_bound_delivery(
+    tmp_path,
+    monkeypatch,
+):
+    import hashlib
+
+    from app.main import app
+
+    pid = "editedsourcegeneration"
+    api_translate, pdir = _configure_source_generation_pipeline(
+        tmp_path,
+        monkeypatch,
+        pid=pid,
+        source_text="Old source.",
+        translated_text="重新认证译文。",
+    )
+    edit_response = TestClient(app).put(
+        f"/api/projects/{pid}/subtitles",
+        json={"blocks": [{
+            "index": 1,
+            "start": "00:00:00,000",
+            "end": "00:00:01,000",
+            "text": "Edited source.",
+            "translation": "用户编辑译文。",
+        }]},
+    )
+    assert edit_response.status_code == 200
+
+    api_translate._run_translate_pipeline(
+        pid,
+        "简体中文",
+        burn_follows=False,
+    )
+
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    report = json.loads(
+        (pdir / "translation_qa_report.json").read_text(encoding="utf-8")
+    )
+    source_hash = project["translation_quality_source_generation_hash"]
+    assert source_hash.startswith("sha256:")
+    assert report["source_generation_hash"] == source_hash
+    artifact_hashes = report["delivery_artifact_hashes"]
+    for name in ("translated.srt", "bilingual.srt"):
+        expected = (
+            "sha256:"
+            + hashlib.sha256((pdir / name).read_bytes()).hexdigest()
+        )
+        assert artifact_hashes[name] == expected
+    export = TestClient(app).post(
+        f"/api/projects/{pid}/export?format=translated"
+    )
+    assert export.status_code == 200
+    assert "重新认证译文" in export.json()["content"]
+
+
 def test_publish_first_promotion_failure_leaves_delivery_invalid(
     tmp_path,
     monkeypatch,

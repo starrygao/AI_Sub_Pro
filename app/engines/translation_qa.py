@@ -47,6 +47,8 @@ class TranslationQaReport:
     status: str
     run_id: str = ""
     content_hash: str = ""
+    source_generation_hash: str = ""
+    delivery_artifact_hashes: dict = field(default_factory=dict)
     issues: list[QualityIssue] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
     repaired_blocks: list[dict] = field(default_factory=list)
@@ -58,6 +60,10 @@ class TranslationQaReport:
             "status": self.status,
             "run_id": self.run_id,
             "content_hash": self.content_hash,
+            "source_generation_hash": self.source_generation_hash,
+            "delivery_artifact_hashes": dict(
+                self.delivery_artifact_hashes
+            ),
             "issues": [issue.to_dict() for issue in self.issues],
             "summary": dict(self.summary),
             "repaired_blocks": list(self.repaired_blocks),
