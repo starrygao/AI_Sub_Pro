@@ -43,13 +43,8 @@ from app.utils.translation_delivery import (
     translation_delivery_lock,
     translation_delivery_is_invalid,
 )
-from app.utils.subtitle_generation import (
-    subtitle_file_hash,
-    subtitle_source_generation_hash,
-)
-from app.utils.translation_quality_gate import (
-    load_quality_report_decision,
-    validate_quality_report,
+from app.utils.translation_certification import (
+    validate_translation_delivery,
 )
 from app.utils.media import get_tracks, get_duration, get_media_info, is_text_subtitle_codec
 from app.utils.srt import (
@@ -1730,12 +1725,20 @@ def get_subtitles(pid: str = PathParam(pattern=PID_PATTERN)):
     # Load translations from translated.srt if it exists
     # Match by timestamp since indices may differ between files
     trans_path = pdir / "translated.srt"
-    if not translation_delivery_is_invalid(pdir) and trans_path.exists():
-        try:
-            trans_blocks = parse_srt_file(str(trans_path))
-        except Exception as e:
-            log.warning("Could not parse translated subtitles for %s: %s", pid, e)
-            trans_blocks = []
+    trans_blocks = []
+    with translation_delivery_lock(pid, blocking=False) as acquired:
+        if acquired:
+            validation = validate_translation_delivery(project, pdir)
+            if validation.valid and trans_path.exists():
+                try:
+                    trans_blocks = parse_srt_file(str(trans_path))
+                except Exception as e:
+                    log.warning(
+                        "Could not parse translated subtitles for %s: %s",
+                        pid,
+                        e,
+                    )
+    if trans_blocks:
         trans_by_time = {}
         for tb in trans_blocks:
             key = _subtitle_time_ms(tb.start)
@@ -1784,57 +1787,14 @@ def get_quality_report(pid: str = PathParam(pattern=PID_PATTERN)):
         path = pdir / "translation_qa_report.json"
         if not path.exists():
             return {"status": "missing", "issues": [], "summary": {"issue_count": 0}}
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return _invalid_quality_report_payload(
-                "翻译质量检查报告无效，已停止交付。",
-                project,
-            )
-        if not isinstance(data, dict):
-            return _invalid_quality_report_payload(
-                "翻译质量检查报告无效，已停止交付。",
-                project,
-            )
-
-        policy = project.get("translation_quality_policy")
-        quality_status = project.get("translation_quality_status")
-        run_id = project.get("translation_quality_run_id")
-        content_hash = project.get("translation_quality_content_hash")
-        if (
-            policy not in {"fast", "strict"}
-            or quality_status not in {"passed", "failed", "needs_review"}
-            or not isinstance(run_id, str)
-            or not run_id.strip()
-            or not isinstance(content_hash, str)
-            or not content_hash.strip()
-        ):
-            return _invalid_quality_report_payload(
-                "翻译质量认证身份不完整或仍在生成，已停止交付。",
-                project,
-            )
-
-        decision = validate_quality_report(
-            data,
-            expected_run_id=run_id,
-            expected_content_hash=content_hash,
-            expected_policy=policy,
+        validation = validate_translation_delivery(
+            project,
+            pdir,
+            require_passed=False,
         )
-        if not decision.valid:
-            return _invalid_quality_report_payload(decision.message, project)
-
-        report_gate = data.get("summary", {}).get("quality_gate", {})
-        expected_project_status = {
-            "passed": "passed",
-            "failed": "failed",
-            "needs_review": "needs_review",
-        }.get(report_gate.get("verdict"))
-        if quality_status != expected_project_status:
-            return _invalid_quality_report_payload(
-                "翻译质量认证状态与报告不匹配，已停止交付。",
-                project,
-            )
-        return data
+        if not validation.valid or validation.report is None:
+            return _invalid_quality_report_payload(validation.message, project)
+        return validation.report
 
 
 def _invalid_quality_report_payload(message: str, project: dict) -> dict:
@@ -2130,93 +2090,12 @@ def export_srt(
                 "Translation delivery is in progress or invalid",
             )
         project = _load_project(pid)
-        if translation_delivery_is_invalid(pdir):
-            raise HTTPException(409, "Translation delivery is incomplete")
-
-        report_path = pdir / "translation_qa_report.json"
-        quality_status = project.get("translation_quality_status")
-        quality_policy = project.get("translation_quality_policy")
-        persisted_policy = quality_policy if quality_policy in {"fast", "strict"} else ""
-        project_run_id = project.get("translation_quality_run_id")
-        project_content_hash = project.get("translation_quality_content_hash")
-        project_source_hash = project.get(
-            "translation_quality_source_generation_hash"
-        )
-        expects_certification = (
-            persisted_policy == "strict"
-            or report_path.is_file()
-            or isinstance(quality_status, str) and bool(quality_status.strip())
-            or isinstance(project_run_id, str) and bool(project_run_id.strip())
-            or isinstance(project_content_hash, str) and bool(project_content_hash.strip())
-        )
-        if expects_certification:
-            if (
-                persisted_policy not in {"fast", "strict"}
-                or quality_status != "passed"
-                or not isinstance(project_run_id, str)
-                or not project_run_id.strip()
-                or not isinstance(project_content_hash, str)
-                or not project_content_hash.strip()
-            ):
-                raise HTTPException(
-                    409,
-                    "Translation quality certification is incomplete or not exportable",
-                )
-            decision = load_quality_report_decision(
-                report_path,
-                expected_run_id=project_run_id,
-                expected_content_hash=project_content_hash,
-                expected_policy=persisted_policy,
+        validation = validate_translation_delivery(project, pdir)
+        if not validation.valid:
+            raise HTTPException(
+                409,
+                f"Translation quality gate rejected export: {validation.message}",
             )
-            if not decision.valid or not decision.passed:
-                raise HTTPException(
-                    409,
-                    f"Translation quality gate rejected export: {decision.message}",
-                )
-            try:
-                report = json.loads(report_path.read_text(encoding="utf-8"))
-            except Exception as exc:
-                raise HTTPException(
-                    409,
-                    f"Translation quality identity is unreadable: {exc}",
-                ) from exc
-            report_source_hash = report.get("source_generation_hash")
-            if project_source_hash or report_source_hash:
-                current_source_hash = subtitle_source_generation_hash(pdir)
-                if (
-                    not isinstance(project_source_hash, str)
-                    or not project_source_hash
-                    or report_source_hash != project_source_hash
-                    or current_source_hash != report_source_hash
-                ):
-                    raise HTTPException(
-                        409,
-                        "Translation source generation identity does not match certification",
-                    )
-            artifact_name = (
-                "bilingual.srt"
-                if format == "bilingual"
-                else "translated.srt"
-            )
-            report_artifact_hashes = report.get(
-                "delivery_artifact_hashes"
-            )
-            if report_artifact_hashes is not None:
-                expected_artifact_hash = (
-                    report_artifact_hashes.get(artifact_name)
-                    if isinstance(report_artifact_hashes, dict)
-                    else ""
-                )
-                if (
-                    not isinstance(expected_artifact_hash, str)
-                    or not expected_artifact_hash
-                    or subtitle_file_hash(pdir / artifact_name)
-                    != expected_artifact_hash
-                ):
-                    raise HTTPException(
-                        409,
-                        "Translation delivery artifact identity does not match certification",
-                    )
 
         if format == "bilingual":
             if (pdir / "bilingual.srt").is_file():

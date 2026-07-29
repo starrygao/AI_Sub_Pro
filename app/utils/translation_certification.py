@@ -1,0 +1,179 @@
+"""Authoritative validation for certified translation delivery artifacts."""
+
+from dataclasses import dataclass
+import json
+from pathlib import Path
+from typing import Optional
+
+from app.utils.subtitle_generation import (
+    subtitle_file_hash,
+    subtitle_source_generation_hash,
+)
+from app.utils.translation_delivery import translation_delivery_is_invalid
+from app.utils.translation_quality_gate import validate_quality_report
+
+
+_DELIVERY_ARTIFACTS = ("translated.srt", "bilingual.srt")
+
+
+@dataclass(frozen=True)
+class TranslationDeliveryValidation:
+    expects_certification: bool
+    valid: bool
+    passed: bool
+    message: str
+    report: Optional[dict] = None
+
+
+def project_expects_translation_certification(
+    project: dict,
+    project_path: Path,
+) -> bool:
+    report_path = Path(project_path) / "translation_qa_report.json"
+    policy = project.get("translation_quality_policy")
+    status = project.get("translation_quality_status")
+    run_id = project.get("translation_quality_run_id")
+    content_hash = project.get("translation_quality_content_hash")
+    return (
+        policy == "strict"
+        or report_path.is_file()
+        or isinstance(status, str) and bool(status.strip())
+        or isinstance(run_id, str) and bool(run_id.strip())
+        or isinstance(content_hash, str) and bool(content_hash.strip())
+    )
+
+
+def validate_translation_delivery(
+    project: dict,
+    project_path: Path,
+    *,
+    require_passed: bool = True,
+) -> TranslationDeliveryValidation:
+    """Validate one persisted QA certificate and its complete delivery set.
+
+    Callers must hold the project's translation-delivery lock while using the
+    result and consuming any certified artifacts.
+    """
+    project_path = Path(project_path)
+    expects = project_expects_translation_certification(project, project_path)
+    if translation_delivery_is_invalid(project_path):
+        return TranslationDeliveryValidation(
+            expects, False, False, "Translation delivery is incomplete"
+        )
+    if not expects:
+        return TranslationDeliveryValidation(False, True, False, "")
+
+    policy = project.get("translation_quality_policy")
+    quality_status = project.get("translation_quality_status")
+    run_id = project.get("translation_quality_run_id")
+    content_hash = project.get("translation_quality_content_hash")
+    if (
+        policy not in {"fast", "strict"}
+        or quality_status not in {"passed", "failed", "needs_review"}
+        or not isinstance(run_id, str)
+        or not run_id.strip()
+        or not isinstance(content_hash, str)
+        or not content_hash.strip()
+    ):
+        return TranslationDeliveryValidation(
+            True,
+            False,
+            False,
+            "Translation quality certification identity is incomplete",
+        )
+
+    report_path = project_path / "translation_qa_report.json"
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception:
+        return TranslationDeliveryValidation(
+            True,
+            False,
+            False,
+            "Translation quality certification identity is unreadable",
+        )
+    decision = validate_quality_report(
+        report,
+        expected_run_id=run_id,
+        expected_content_hash=content_hash,
+        expected_policy=policy,
+    )
+    if not decision.valid:
+        return TranslationDeliveryValidation(
+            True, False, False, decision.message, report
+        )
+
+    report_verdict = report.get("summary", {}).get("quality_gate", {}).get("verdict")
+    expected_status = {
+        "passed": "passed",
+        "failed": "failed",
+        "needs_review": "needs_review",
+    }.get(report_verdict)
+    if quality_status != expected_status:
+        return TranslationDeliveryValidation(
+            True,
+            False,
+            False,
+            "Translation quality certification status does not match its report",
+            report,
+        )
+    if require_passed and not decision.passed:
+        return TranslationDeliveryValidation(
+            True,
+            False,
+            False,
+            f"Translation quality gate rejected delivery: {decision.message}",
+            report,
+        )
+
+    if decision.passed:
+        project_source_hash = project.get(
+            "translation_quality_source_generation_hash"
+        )
+        report_source_hash = report.get("source_generation_hash")
+        current_source_hash = subtitle_source_generation_hash(project_path)
+        if (
+            not isinstance(project_source_hash, str)
+            or not project_source_hash.strip()
+            or not isinstance(report_source_hash, str)
+            or not report_source_hash.strip()
+            or not current_source_hash
+            or report_source_hash != project_source_hash
+            or current_source_hash != report_source_hash
+        ):
+            return TranslationDeliveryValidation(
+                True,
+                False,
+                False,
+                "Translation source generation identity does not match certification",
+                report,
+            )
+
+        artifact_hashes = report.get("delivery_artifact_hashes")
+        if not isinstance(artifact_hashes, dict):
+            return TranslationDeliveryValidation(
+                True,
+                False,
+                False,
+                "Translation delivery artifact identity set is incomplete",
+                report,
+            )
+        for artifact_name in _DELIVERY_ARTIFACTS:
+            expected_hash = artifact_hashes.get(artifact_name)
+            if (
+                not isinstance(expected_hash, str)
+                or not expected_hash.strip()
+                or subtitle_file_hash(project_path / artifact_name)
+                != expected_hash
+            ):
+                return TranslationDeliveryValidation(
+                    True,
+                    False,
+                    False,
+                    "Translation delivery artifact identity does not match certification",
+                    report,
+                )
+
+    return TranslationDeliveryValidation(
+        True, True, decision.passed, decision.message, report
+    )

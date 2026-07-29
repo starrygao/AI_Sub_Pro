@@ -51,6 +51,7 @@ from app.utils.subtitle_generation import (
     subtitle_file_hash,
     subtitle_source_generation_hash,
 )
+from app.utils.translation_certification import validate_translation_delivery
 from app.engines.kb_trace import write_kb_usage_trace
 from app.engines.scheduler import (
     complete_progress as _scheduler_complete_progress,
@@ -5356,6 +5357,82 @@ def _mark_burn_failed(pid: str, reason: str) -> None:
                    normalize=_apply_safe_defaults)
 
 
+@dataclass(frozen=True)
+class _BurnDeliveryResult:
+    status: str
+    output_video: str = ""
+    reason: str = ""
+
+
+def _burn_validated_translation_delivery(
+    pid: str,
+    *,
+    callback,
+) -> _BurnDeliveryResult:
+    """Validate and consume one immutable translation delivery under its lock."""
+    pdir = PROJECTS_DIR / pid
+    with translation_delivery_lock(pid) as acquired:
+        if not acquired:
+            return _BurnDeliveryResult(
+                "unavailable",
+                reason="翻译交付正在生成，字幕文件暂不可用",
+            )
+        project = _load_project(pid)
+        validation = validate_translation_delivery(project, pdir)
+        if not validation.valid:
+            return _BurnDeliveryResult(
+                "unavailable",
+                reason=validation.message,
+            )
+
+        if project.get("source_type") == "trailer":
+            if not _first_safe_project_artifact(
+                pid,
+                ["translated.srt", "filtered.srt"],
+            )[0]:
+                return _BurnDeliveryResult(
+                    "unavailable",
+                    reason="无字幕文件可烧录",
+                )
+            tracks = _build_bilingual_tracks(pid)
+        else:
+            _, srt_path = _first_safe_project_artifact(
+                pid,
+                ["bilingual.srt", "translated.srt"],
+            )
+            if srt_path is None:
+                return _BurnDeliveryResult(
+                    "unavailable",
+                    reason="无字幕文件可烧录",
+                )
+            tracks = [_build_upload_legacy_track(str(srt_path))]
+
+        video_path = project["video_path"]
+        base_name = os.path.splitext(os.path.basename(video_path))[0]
+        output_path = _safe_generated_project_output_path(
+            pid,
+            f"{base_name}_subtitled.mp4",
+        )
+        if output_path is None:
+            return _BurnDeliveryResult(
+                "invalid_output",
+                reason="字幕烧录失败: 输出路径无效",
+            )
+        _check_cancel(pid)
+        output_video = str(output_path)
+        success = burn_subtitles(
+            video_path,
+            tracks,
+            output_video,
+            callback=callback,
+        )
+        return _BurnDeliveryResult(
+            "success" if success else "failed",
+            output_video=output_video,
+            reason="" if success else "字幕烧录失败，但翻译已完成",
+        )
+
+
 def _run_burn_pipeline(pid: str):
     """Burn subtitles into video.
 
@@ -5377,47 +5454,24 @@ def _run_burn_pipeline(pid: str):
             _emit_progress(pid, "burn", 0, "正在烧录字幕到视频...")
             _check_cancel(pid)
 
-            if translation_delivery_is_invalid(Path(pdir)):
-                reason = "翻译交付未完成，字幕文件暂不可用"
+            burn_result = _burn_validated_translation_delivery(
+                pid,
+                callback=lambda msg: _emit_progress(pid, "burn", 50, msg),
+            )
+            if burn_result.status == "unavailable":
+                reason = burn_result.reason
                 _mark_burn_unavailable(pid, reason)
                 _best_effort_fail_stage(pid, "burn", reason)
-                _scheduler_complete_progress(pid, "字幕烧录失败 (翻译交付未完成)")
+                _scheduler_complete_progress(pid, "翻译完成 (无字幕文件可烧录)")
                 return
-
-            if project.get("source_type") == "trailer":
-                # Trailer: bilingual (zh big on top, en small below).
-                if not _first_safe_project_artifact(pid, ["translated.srt", "filtered.srt"])[0]:
-                    reason = "无字幕文件可烧录"
-                    _mark_burn_unavailable(pid, reason)
-                    _best_effort_fail_stage(pid, "burn", reason)
-                    _scheduler_complete_progress(pid, "翻译完成 (无字幕文件可烧录)")
-                    return
-                tracks = _build_bilingual_tracks(pid)
-            else:
-                # Upload: single-track legacy style. Prefer bilingual.srt if present.
-                _, srt_path = _first_safe_project_artifact(pid, ["bilingual.srt", "translated.srt"])
-                if srt_path is None:
-                    reason = "无字幕文件可烧录"
-                    _mark_burn_unavailable(pid, reason)
-                    _best_effort_fail_stage(pid, "burn", reason)
-                    _scheduler_complete_progress(pid, "翻译完成 (无字幕文件可烧录)")
-                    return
-                tracks = [_build_upload_legacy_track(str(srt_path))]
-
-            base_name = os.path.splitext(os.path.basename(video_path))[0]
-            output_path = _safe_generated_project_output_path(pid, f"{base_name}_subtitled.mp4")
-            if output_path is None:
-                reason = "字幕烧录失败: 输出路径无效"
+            if burn_result.status == "invalid_output":
+                reason = burn_result.reason
                 _mark_burn_failed(pid, reason)
                 _best_effort_fail_stage(pid, "burn", reason)
                 _scheduler_complete_progress(pid, "翻译完成，但字幕烧录失败")
                 return
-            output_video = str(output_path)
-            success = burn_subtitles(
-                video_path, tracks, output_video,
-                callback=lambda msg: _emit_progress(pid, "burn", 50, msg),
-            )
-            if success:
+            if burn_result.status == "success":
+                output_video = burn_result.output_video
                 _mark_burn_completed(pid, output_video, "全部完成! 字幕已烧录到视频")
                 _best_effort_finish_stage(
                     pid,
@@ -5430,7 +5484,7 @@ def _run_burn_pipeline(pid: str):
                 cleanup_intermediate(pdir)
             else:
                 # Burning failed but translation succeeded - still usable
-                reason = "字幕烧录失败，但翻译已完成"
+                reason = burn_result.reason
                 _mark_burn_failed(pid, reason)
                 _best_effort_fail_stage(pid, "burn", reason)
                 _scheduler_complete_progress(pid, "翻译完成，但字幕烧录失败")
@@ -5809,45 +5863,29 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                 _emit_progress(pid, "burn", 0, "正在烧录字幕到视频...")
                 _check_cancel(pid)
 
-                if translation_delivery_is_invalid(Path(pdir)):
-                    reason = "翻译交付未完成，字幕文件暂不可用"
+                burn_result = _burn_validated_translation_delivery(
+                    pid,
+                    callback=lambda msg: _emit_progress(
+                        pid,
+                        "burn",
+                        50,
+                        msg,
+                    ),
+                )
+                if burn_result.status == "unavailable":
+                    reason = burn_result.reason
                     _mark_burn_unavailable(pid, reason)
                     _best_effort_fail_stage(pid, "burn", reason)
-                    _emit_progress(pid, "burn", 0, "字幕烧录失败 (翻译交付未完成)")
+                    _emit_progress(pid, "burn", 0, "字幕烧录失败 (无字幕文件)")
                     return
-
-                if project.get("source_type") == "trailer":
-                    if not _first_safe_project_artifact(pid, ["translated.srt", "filtered.srt"])[0]:
-                        reason = "无字幕文件可烧录"
-                        _mark_burn_unavailable(pid)
-                        _best_effort_fail_stage(pid, "burn", reason)
-                        _emit_progress(pid, "burn", 0, "字幕烧录失败 (无字幕文件)")
-                        return
-                    tracks = _build_bilingual_tracks(pid)
-                else:
-                    _, srt_path = _first_safe_project_artifact(pid, ["bilingual.srt", "translated.srt"])
-                    if srt_path is None:
-                        reason = "无字幕文件可烧录"
-                        _mark_burn_unavailable(pid)
-                        _best_effort_fail_stage(pid, "burn", reason)
-                        _emit_progress(pid, "burn", 0, "字幕烧录失败 (无字幕文件)")
-                        return
-                    tracks = [_build_upload_legacy_track(str(srt_path))]
-
-                base_name = os.path.splitext(os.path.basename(video_path))[0]
-                output_path = _safe_generated_project_output_path(pid, f"{base_name}_subtitled.mp4")
-                if output_path is None:
-                    reason = "字幕烧录失败: 输出路径无效"
+                if burn_result.status == "invalid_output":
+                    reason = burn_result.reason
                     _mark_burn_failed(pid, reason)
                     _best_effort_fail_stage(pid, "burn", reason)
                     _emit_progress(pid, "burn", 0, "字幕烧录失败")
                     return
-                output_video = str(output_path)
-                success = burn_subtitles(
-                    video_path, tracks, output_video,
-                    callback=lambda msg: _emit_progress(pid, "burn", 50, msg),
-                )
-                if success:
+                if burn_result.status == "success":
+                    output_video = burn_result.output_video
                     _mark_burn_completed(pid, output_video, "字幕烧录完成!")
                     _best_effort_finish_stage(
                         pid,
@@ -5862,7 +5900,7 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                     # Burn failed but translation is still valid — mirror
                     # _run_burn_pipeline so the UI sees a real failure state
                     # instead of stale 'translated' with no error note.
-                    reason = "字幕烧录失败，但翻译已完成"
+                    reason = burn_result.reason
                     _mark_burn_failed(pid, reason)
                     _best_effort_fail_stage(pid, "burn", reason)
                     _emit_progress(pid, "burn", 0, "字幕烧录失败")

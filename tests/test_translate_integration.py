@@ -1390,6 +1390,125 @@ def test_saved_edit_can_be_recertified_with_hash_bound_delivery(
     assert "重新认证译文" in export.json()["content"]
 
 
+def _run_certified_burn_consumer(
+    tmp_path,
+    monkeypatch,
+    *,
+    pid,
+    consumer,
+    identity_fault,
+):
+    api_translate, pdir = _configure_source_generation_pipeline(
+        tmp_path,
+        monkeypatch,
+        pid=pid,
+        source_text="Certified source.",
+        translated_text="认证译文。",
+    )
+    video_path = pdir / "original.mp4"
+    video_path.write_bytes(b"video")
+    project_path = pdir / "project.json"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    project["video_path"] = str(video_path)
+    project["source_type"] = "upload"
+    project_path.write_text(json.dumps(project), encoding="utf-8")
+    api_translate._run_translate_pipeline(
+        pid,
+        "简体中文",
+        burn_follows=False,
+    )
+
+    report_path = pdir / "translation_qa_report.json"
+    if identity_fault == "legacy":
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project.pop("translation_quality_source_generation_hash")
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report.pop("source_generation_hash")
+        report.pop("delivery_artifact_hashes")
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+    elif identity_fault == "missing_artifact_hashes":
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report.pop("delivery_artifact_hashes")
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+    elif identity_fault == "source":
+        (pdir / "filtered.srt").write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\nTampered source.\n\n",
+            encoding="utf-8",
+        )
+    elif identity_fault in {"translated.srt", "bilingual.srt"}:
+        (pdir / identity_fault).write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\n篡改交付文件\n",
+            encoding="utf-8",
+        )
+
+    calls = []
+
+    def fake_burn(video, tracks, output, **kwargs):
+        calls.append((video, tracks, output))
+        Path(output).write_bytes(b"burned")
+        return True
+
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+    if consumer == "pipeline":
+        api_translate._run_burn_pipeline(pid)
+    else:
+        monkeypatch.setattr(api_translate, "active_tasks", {})
+        result = api_translate.start_burn(pid=pid)
+        assert result["status"] == "started"
+        with api_translate._tasks_lock:
+            thread = api_translate.active_tasks.get(pid)
+        if thread is not None:
+            thread.join(timeout=5)
+            assert not thread.is_alive()
+    return calls
+
+
+@pytest.mark.parametrize("consumer", ["pipeline", "standalone"])
+@pytest.mark.parametrize(
+    "identity_fault",
+    [
+        "legacy",
+        "missing_artifact_hashes",
+        "source",
+        "translated.srt",
+        "bilingual.srt",
+    ],
+)
+def test_certified_burn_consumers_reject_incomplete_or_tampered_delivery(
+    tmp_path,
+    monkeypatch,
+    consumer,
+    identity_fault,
+):
+    calls = _run_certified_burn_consumer(
+        tmp_path,
+        monkeypatch,
+        pid=f"burn-{consumer}-{identity_fault.replace('.', '-')}",
+        consumer=consumer,
+        identity_fault=identity_fault,
+    )
+
+    assert calls == []
+
+
+@pytest.mark.parametrize("consumer", ["pipeline", "standalone"])
+def test_certified_burn_consumers_accept_complete_current_delivery(
+    tmp_path,
+    monkeypatch,
+    consumer,
+):
+    calls = _run_certified_burn_consumer(
+        tmp_path,
+        monkeypatch,
+        pid=f"burn-current-{consumer}",
+        consumer=consumer,
+        identity_fault="",
+    )
+
+    assert len(calls) == 1
+
+
 def test_publish_first_promotion_failure_leaves_delivery_invalid(
     tmp_path,
     monkeypatch,

@@ -159,8 +159,18 @@ def _sha256_identity(content: bytes) -> str:
     return f"sha256:{hashlib.sha256(content).hexdigest()}"
 
 
-def _seed_hash_bound_strict_certification(tmp_project_dir, pid):
-    _seed_strict_certification(tmp_project_dir, pid, "passed")
+def _seed_hash_bound_strict_certification(
+    tmp_project_dir,
+    pid,
+    *,
+    warning=False,
+):
+    _seed_strict_certification(
+        tmp_project_dir,
+        pid,
+        "passed",
+        warning=warning,
+    )
     pdir = tmp_project_dir / pid
     raw_content = (
         b"1\n00:00:00,000 --> 00:00:01,000\nHello\n"
@@ -414,10 +424,9 @@ def test_export_allows_valid_strict_warning_certification_without_server_ack(
     client,
     tmp_project_dir,
 ):
-    pid = _seed_strict_certification(
+    pid = _seed_hash_bound_strict_certification(
         tmp_project_dir,
         "strict-warning",
-        "passed",
         warning=True,
     )
 
@@ -830,6 +839,122 @@ def test_export_rejects_source_generation_that_changed_after_certification(
 
     assert response.status_code == 409
     assert "source" in response.json()["detail"].lower()
+
+
+def test_export_rejects_legacy_passed_certificate_without_delivery_identities(
+    client,
+    tmp_project_dir,
+):
+    pid = _seed_strict_certification(
+        tmp_project_dir,
+        "strict-legacy-passed-identity",
+        "passed",
+    )
+
+    response = client.post(
+        f"/api/projects/{pid}/export?format=translated"
+    )
+
+    assert response.status_code == 409
+    assert "identity" in response.json()["detail"].lower()
+
+
+@pytest.mark.parametrize(
+    "missing_identity",
+    ["all_artifact_hashes", "bilingual_hash"],
+)
+def test_export_rejects_certificate_with_incomplete_delivery_identities(
+    client,
+    tmp_project_dir,
+    missing_identity,
+):
+    pid = _seed_hash_bound_strict_certification(
+        tmp_project_dir,
+        f"strict-incomplete-{missing_identity}",
+    )
+    pdir = tmp_project_dir / pid
+    report_path = pdir / "translation_qa_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if missing_identity == "all_artifact_hashes":
+        report.pop("delivery_artifact_hashes")
+    else:
+        report["delivery_artifact_hashes"].pop("bilingual.srt")
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    if missing_identity == "all_artifact_hashes":
+        (pdir / "translated.srt").write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\n未经认证的译文\n",
+            encoding="utf-8",
+        )
+
+    response = client.post(
+        f"/api/projects/{pid}/export?format=translated"
+    )
+
+    assert response.status_code == 409
+    assert "identity" in response.json()["detail"].lower()
+
+
+@pytest.mark.parametrize(
+    ("format_name", "tampered_sibling"),
+    [
+        ("translated", "bilingual.srt"),
+        ("bilingual", "translated.srt"),
+    ],
+)
+def test_export_validates_complete_delivery_set_not_only_selected_artifact(
+    client,
+    tmp_project_dir,
+    format_name,
+    tampered_sibling,
+):
+    pid = _seed_hash_bound_strict_certification(
+        tmp_project_dir,
+        f"strict-complete-set-{format_name}",
+    )
+    pdir = tmp_project_dir / pid
+    (pdir / tampered_sibling).write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n篡改的旁路交付文件\n",
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        f"/api/projects/{pid}/export?format={format_name}"
+    )
+
+    assert response.status_code == 409
+    assert "identity" in response.json()["detail"].lower()
+
+
+def test_tampered_certified_delivery_is_invalid_for_report_and_subtitle_reader(
+    client,
+    tmp_project_dir,
+):
+    pid = _seed_hash_bound_strict_certification(
+        tmp_project_dir,
+        "strict-reader-delivery-identity",
+    )
+    pdir = tmp_project_dir / pid
+
+    valid_report = client.get(f"/api/projects/{pid}/quality-report")
+    valid_subtitles = client.get(f"/api/projects/{pid}/subtitles")
+    assert valid_report.status_code == 200
+    assert valid_report.json()["status"] == "ok"
+    assert valid_subtitles.status_code == 200
+    assert valid_subtitles.json()["blocks"][0]["translation"] == "你好"
+
+    (pdir / "translated.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n篡改的译文\n",
+        encoding="utf-8",
+    )
+
+    invalid_report = client.get(f"/api/projects/{pid}/quality-report")
+    invalid_subtitles = client.get(f"/api/projects/{pid}/subtitles")
+
+    assert invalid_report.status_code == 200
+    assert invalid_report.json()["status"] == "invalid"
+    assert invalid_report.json()["summary"]["quality_gate"]["passed"] is False
+    assert invalid_subtitles.status_code == 200
+    assert invalid_subtitles.json()["blocks"][0]["translation"] == ""
 
 
 def test_export_cannot_race_strict_subtitle_edit_before_certification_is_stale(
