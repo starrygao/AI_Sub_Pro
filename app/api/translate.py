@@ -11,6 +11,7 @@ import math
 import re
 import tempfile
 import threading
+import unicodedata
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -2498,6 +2499,39 @@ _TARGETED_SEMANTIC_VERDICT_RE = re.compile(
 )
 
 
+def _semantic_evidence_key(value: str) -> str:
+    if not isinstance(value, str):
+        return ""
+    characters = []
+    for character in unicodedata.normalize("NFKC", value):
+        category_group = unicodedata.category(character)[0]
+        if category_group in {"L", "N"}:
+            characters.append(character.casefold())
+        elif category_group == "M" and characters:
+            characters.append(character)
+    return "".join(characters)
+
+
+def _semantic_evidence_is_anchored(evidence: str, content: str) -> bool:
+    evidence_key = _semantic_evidence_key(evidence)
+    content_key = _semantic_evidence_key(content)
+    if not evidence_key or not content_key:
+        return False
+    evidence_length = sum(
+        unicodedata.category(character)[0] in {"L", "N"}
+        for character in evidence_key
+    )
+    content_length = sum(
+        unicodedata.category(character)[0] in {"L", "N"}
+        for character in content_key
+    )
+    minimum_length = min(2, content_length)
+    return (
+        evidence_length >= minimum_length
+        and evidence_key in content_key
+    )
+
+
 def _targeted_semantic_prompt(target_language: str) -> str:
     return "\n".join([
         f"你是一位候选译文专项语义复核员，目标语言是{target_language}。",
@@ -2507,7 +2541,9 @@ def _targeted_semantic_prompt(target_language: str) -> str:
         "possession_person_number、quantity、cross_block_alignment。",
         "每个输入 id 必须且只能返回一次，不得漏项、合并或新增 id。",
         "每项必须包含 verdict、taxonomy、source_evidence、target_evidence。",
-        "verdict 只能是 OK、MISMATCH: 原因、UNCERTAIN: 原因；证据必须引用原文和译文中的具体片段。",
+        "verdict 只能是 OK、MISMATCH: 原因、UNCERTAIN: 原因；source_evidence 和 "
+        "target_evidence 必须分别逐字引用该 id 的 original 和 draft 真实片段，不得引用 "
+        "bounded_context、其他 id 或占位文本。",
         "语义完全保真时 taxonomy 使用 none；任何信息不足、指代不明或证据不足必须返回 UNCERTAIN。",
         "仅输出 JSON 数组，例如："
         '[{"id":1,"verdict":"OK","taxonomy":"none",'
@@ -2737,9 +2773,15 @@ def _run_targeted_semantic_verification(
                     isinstance(taxonomy, str)
                     and taxonomy in _TARGETED_SEMANTIC_TAXONOMY
                     and isinstance(source_evidence, str)
-                    and bool(source_evidence.strip())
+                    and _semantic_evidence_is_anchored(
+                        source_evidence,
+                        item["original"],
+                    )
                     and isinstance(target_evidence, str)
-                    and bool(target_evidence.strip())
+                    and _semantic_evidence_is_anchored(
+                        target_evidence,
+                        item["draft"],
+                    )
                 )
                 exact_verdict = bool(
                     isinstance(verdict, str)
@@ -2776,7 +2818,7 @@ def _run_targeted_semantic_verification(
                         block_id=block_id,
                         message=(
                             "targeted semantic QA verdict lacked matching taxonomy "
-                            "or source/target evidence"
+                            "or item-anchored source/target evidence"
                         ),
                         source_text=item["original"],
                         translation=item["draft"],

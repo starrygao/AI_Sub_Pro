@@ -5361,20 +5361,29 @@ def test_rejected_auto_repair_uncertainty_does_not_latch(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("focused_verdicts", "expected_translation", "expected_resolved"),
+    (
+        "focused_verdicts",
+        "focused_evidence",
+        "expected_translation",
+        "expected_resolved",
+    ),
     [
         (
             ["OK", "MISMATCH: possession person/number changed our to my"],
+            None,
             "这是我们的。",
             0,
         ),
-        (["OK", "OK"], "这是我的。", 1),
+        (["OK", "OK"], None, "这是我的。", 1),
+        (["OK", "OK"], ("x", "x"), "这是我们的。", 0),
+        (["OK", "OK"], ("\u200b", "\u200b"), "这是我们的。", 0),
     ],
 )
 def test_strict_candidate_requires_two_explicit_focused_semantic_oks(
     tmp_path,
     monkeypatch,
     focused_verdicts,
+    focused_evidence,
     expected_translation,
     expected_resolved,
 ):
@@ -5415,8 +5424,14 @@ def test_strict_candidate_requires_two_explicit_focused_semantic_oks(
                 "prompt": prompt,
             })
             verdict = focused_verdicts[len(focused_calls) - 1]
-            return [
-                {
+            results = []
+            for item in items:
+                source_evidence, target_evidence = (
+                    focused_evidence
+                    if focused_evidence is not None
+                    else (item["original"], item["draft"])
+                )
+                results.append({
                     "id": item["id"],
                     "verdict": verdict,
                     "taxonomy": (
@@ -5424,13 +5439,10 @@ def test_strict_candidate_requires_two_explicit_focused_semantic_oks(
                         if verdict == "OK"
                         else "possession_person_number"
                     ),
-                    "source_evidence": "ours",
-                    "target_evidence": (
-                        "我们的" if block_by_id[item["id"]].translation.endswith("我们的。") else "我的"
-                    ),
-                }
-                for item in items
-            ]
+                    "source_evidence": source_evidence,
+                    "target_evidence": target_evidence,
+                })
+            return results
 
     translator = type("Translator", (), {"primary": Primary()})()
     monkeypatch.setattr(
@@ -5583,8 +5595,16 @@ def test_strict_candidate_requires_two_explicit_focused_semantic_oks(
         if item["pass_type"] == "targeted"
     ]
     assert len(targeted) == 2
-    assert all(item["coverage_complete"] is True for item in targeted)
-    assert all(item["checked_block_ids"] == [355, 356] for item in targeted)
+    assert all(
+        item["coverage_complete"] is (focused_evidence is None)
+        for item in targeted
+    )
+    assert all(
+        item["checked_block_ids"] == (
+            [355, 356] if focused_evidence is None else []
+        )
+        for item in targeted
+    )
     assert len(report["trace"]["semantic_issue_ledger"]["resolved"]) == expected_resolved
     assert report["trace"]["auto_repair_budget"]["used_rounds"] == 1
     if expected_resolved:
@@ -5594,6 +5614,151 @@ def test_strict_candidate_requires_two_explicit_focused_semantic_oks(
         assert repaired == []
         assert report["trace"]["auto_repair_rounds"][0]["rolled_back_block_ids"] == [356]
         assert report["summary"]["quality_gate"]["passed"] is False
+
+
+@pytest.mark.parametrize(
+    ("verdict", "taxonomy"),
+    [
+        ("OK", "none"),
+        ("MISMATCH: subject changed", "agent_patient"),
+        ("UNCERTAIN: subject may have changed", "agent_patient"),
+    ],
+)
+def test_targeted_semantic_verdicts_reject_evidence_from_another_block(
+    verdict,
+    taxonomy,
+):
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    blocks = [
+        SubtitleBlock(
+            index=501,
+            start=timedelta(seconds=501),
+            end=timedelta(seconds=502),
+            text="The lighthouse is still visible.",
+            translation="灯塔仍然清晰可见。",
+        ),
+        SubtitleBlock(
+            index=502,
+            start=timedelta(seconds=502),
+            end=timedelta(seconds=503),
+            text="The harbor has disappeared.",
+            translation="港口已经消失。",
+        ),
+    ]
+    prior_report = TranslationQaReport(
+        status="needs_review",
+        issues=[
+            QualityIssue(
+                type="semantic_uncertain",
+                severity="warning",
+                block_id=block.index,
+                message="meaning needs confirmation",
+            )
+            for block in blocks
+        ],
+    )
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            item_by_id = {item["id"]: item for item in items}
+            return [
+                {
+                    "id": 501,
+                    "verdict": verdict,
+                    "taxonomy": taxonomy,
+                    "source_evidence": item_by_id[502]["original"],
+                    "target_evidence": item_by_id[502]["draft"],
+                },
+                {
+                    "id": 502,
+                    "verdict": verdict,
+                    "taxonomy": taxonomy,
+                    "source_evidence": item_by_id[501]["original"],
+                    "target_evidence": item_by_id[501]["draft"],
+                },
+            ]
+
+    translator = type("Translator", (), {"primary": Primary()})()
+    issues, verified_ids, verified_hashes, traces = (
+        api_translate._run_targeted_semantic_verification(
+            {"translation": {"semantic_qa_batch_size": 4}},
+            translator,
+            blocks,
+            "简体中文",
+            {501, 502},
+            prior_report,
+            [],
+            strict_quality_gate=True,
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == [
+        "semantic_qa_failed",
+        "semantic_qa_failed",
+    ]
+    assert len(traces) == 2
+    assert all(trace["coverage_complete"] is False for trace in traces)
+    assert all(trace["failed_block_ids"] == [501, 502] for trace in traces)
+
+
+def test_targeted_semantic_evidence_accepts_short_punctuated_exact_excerpts():
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=502,
+        start=timedelta(seconds=502),
+        end=timedelta(seconds=503),
+        text="No.",
+        translation="不。",
+    )
+    prior_report = TranslationQaReport(
+        status="needs_review",
+        issues=[QualityIssue(
+            type="semantic_uncertain",
+            severity="warning",
+            block_id=502,
+            message="short reply needs confirmation",
+        )],
+    )
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            return [{
+                "id": 502,
+                "verdict": "OK",
+                "taxonomy": "none",
+                "source_evidence": '"No."',
+                "target_evidence": "“不。”",
+            }]
+
+    translator = type("Translator", (), {"primary": Primary()})()
+    issues, verified_ids, verified_hashes, traces = (
+        api_translate._run_targeted_semantic_verification(
+            {"translation": {}},
+            translator,
+            [block],
+            "简体中文",
+            {502},
+            prior_report,
+            [],
+            strict_quality_gate=True,
+        )
+    )
+
+    assert issues == []
+    assert verified_ids == {502}
+    assert verified_hashes == {
+        502: api_translate._semantic_block_content_hash(block),
+    }
+    assert len(traces) == 2
+    assert all(trace["coverage_complete"] is True for trace in traces)
 
 
 @pytest.mark.parametrize(
@@ -5720,8 +5885,8 @@ def test_targeted_double_ok_resolves_502_uncertainty_for_new_content_hash():
                 "id": 502,
                 "verdict": "OK",
                 "taxonomy": "none",
-                "source_evidence": "She ... she",
-                "target_evidence": "她……她",
+                "source_evidence": "She said she",
+                "target_evidence": "她说她",
             }]
 
     translator = type("Translator", (), {"primary": Primary()})()
