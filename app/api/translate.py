@@ -2859,6 +2859,15 @@ def _semantic_evidence_ambiguous_taxonomy_hints(
     return tuple(hints)
 
 
+def _semantic_evidence_has_conflicting_ambiguous_hints(
+    match: dict,
+) -> bool:
+    return any(
+        len(set(_semantic_excerpt_ambiguous_taxonomy_hints(excerpt))) > 1
+        for excerpt in match["excerpt_records"]
+    )
+
+
 def _semantic_evidence_is_single_uncased_entity_candidate(
     match: dict,
 ) -> bool:
@@ -2911,6 +2920,11 @@ def _semantic_evidence_pair_is_valid(
     if strong_signals and any(
         signal != taxonomy
         for signal in strong_signals
+    ):
+        return False
+    if (
+        _semantic_evidence_has_conflicting_ambiguous_hints(source_match)
+        or _semantic_evidence_has_conflicting_ambiguous_hints(target_match)
     ):
         return False
     ambiguous_signals = (

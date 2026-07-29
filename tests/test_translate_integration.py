@@ -6540,6 +6540,41 @@ def test_targeted_semantic_embedded_cjk_signal_requires_other_side_corroboration
 
 
 @pytest.mark.parametrize(
+    ("source", "source_evidence", "taxonomy"),
+    [
+        ("Choose one item.", "one", "quantity"),
+        (
+            "Do not choose an item.",
+            "not",
+            "negation/polarity/condition",
+        ),
+    ],
+)
+@pytest.mark.parametrize("verdict_prefix", ["MISMATCH", "UNCERTAIN"])
+def test_targeted_semantic_corroboration_cannot_hide_conflicting_cjk_hints(
+    source,
+    source_evidence,
+    taxonomy,
+    verdict_prefix,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source=source,
+            draft="不选一项。",
+            source_evidence=source_evidence,
+            target_evidence="不选一项",
+            verdict=f"{verdict_prefix}: semantic signal changed",
+            taxonomy=taxonomy,
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
+@pytest.mark.parametrize(
     ("source", "draft", "source_evidence", "target_evidence"),
     [
         ("Choose one item.", "选择一项。", "one", "一项"),
