@@ -1,4 +1,5 @@
 from unittest.mock import patch
+import hashlib
 import json
 from datetime import timedelta
 from pathlib import Path
@@ -1421,8 +1422,8 @@ def test_cancel_inside_publish_aborts_before_promotion_without_deadlock(
             raise RuntimeError("test timed out waiting before promotion")
         return result
 
-    def signal_cancel(task_pid):
-        real_request_cancel(task_pid)
+    def signal_cancel(task_pid, **kwargs):
+        real_request_cancel(task_pid, **kwargs)
         cancel_requested.set()
 
     monkeypatch.setattr(
@@ -1479,7 +1480,11 @@ def test_cancel_after_translation_commit_is_a_noop_before_unregister(
 ):
     import threading
 
-    from app.engines.scheduler import is_cancelled, reset_cancel
+    from app.engines.scheduler import (
+        is_cancelled,
+        progress_store,
+        reset_cancel,
+    )
     from app.main import app
 
     pid = "cancelaftertranslationcommit"
@@ -1569,7 +1574,11 @@ def test_cancel_during_registered_launch_window_cancels_new_task(
     import threading
 
     from app.api import projects as projects_api
-    from app.engines.scheduler import is_cancelled, reset_cancel
+    from app.engines.scheduler import (
+        is_cancelled,
+        progress_store,
+        reset_cancel,
+    )
     from app.utils import project_store
 
     pid = f"cancellaunch-{launch_window}-{start_kind}"
@@ -1758,6 +1767,277 @@ def test_cancel_during_registered_launch_window_cancels_new_task(
         reset_cancel(pid)
         with api_translate._tasks_lock:
             api_translate.active_tasks.pop(pid, None)
+
+
+@pytest.mark.parametrize(
+    ("start_kind", "old_status"),
+    [
+        ("translate", "translated"),
+        ("asr", "asr_done"),
+        ("full", "completed"),
+        ("transcribe_translate", "asr_done"),
+        ("burn", "translated"),
+    ],
+)
+def test_thread_start_failure_restores_launch_initialization_bytes_and_retries(
+    tmp_path,
+    monkeypatch,
+    start_kind,
+    old_status,
+):
+    import threading
+
+    from app.api import projects as projects_api
+    from app.engines.scheduler import (
+        is_cancelled,
+        progress_store,
+        reset_cancel,
+    )
+    from app.utils import project_store
+
+    pid = f"startfailrestore-{start_kind}"
+    if start_kind in {"translate", "burn"}:
+        api_translate, pdir, _ = _seed_current_certified_burn_project(
+            tmp_path,
+            monkeypatch,
+            pid=pid,
+        )
+    else:
+        from app.api import translate as api_translate
+
+        pdir = tmp_path / pid
+        pdir.mkdir()
+        video_path = pdir / "original.mp4"
+        video_path.write_bytes(b"video")
+        (pdir / "project.json").write_text(json.dumps({
+            "id": pid,
+            "name": "start failure terminal state",
+            "video_path": str(video_path),
+            "status": old_status,
+            "source_type": "upload",
+            "workflow_mode": "translate_burn",
+            "audio_tracks": [{"index": 0, "codec": "aac", "lang": "eng"}],
+            "subtitle_tracks": [],
+            "selected_audio_track": 0,
+            "target_language": "简体中文",
+            "original_language": "en",
+            "translation_quality_policy": "strict",
+            "translation_quality_status": "passed",
+            "translation_quality_run_id": "old-run",
+            "translation_quality_content_hash": "sha256:old",
+        }), encoding="utf-8")
+        (pdir / "translation_qa_report.json").write_bytes(b'{"old":"qa"}')
+        (pdir / "translation_qa_report.md").write_bytes(b"old qa markdown")
+        monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+        monkeypatch.setattr(projects_api, "PROJECTS_DIR", tmp_path)
+        monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+
+    monkeypatch.setattr(api_translate, "active_tasks", {})
+    monkeypatch.setattr(api_translate, "require_translation_ready", lambda: None)
+    (pdir / "workflow_state.json").write_bytes(b'{"version":1,"stages":{}}')
+    (pdir / "progress.json").write_bytes(
+        b'{"progress":100,"stage":"","message":"old"}'
+    )
+    progress_store[pid] = {
+        "progress": 91,
+        "stage": "",
+        "message": "old-memory",
+    }
+    before_progress_memory = dict(progress_store[pid])
+    log_dir = pdir / "workflow_logs"
+    log_dir.mkdir(exist_ok=True)
+    (log_dir / "translate.log").write_bytes(b"old log\n")
+    sentinel = pdir / ".translation_delivery_in_progress"
+
+    tracked_paths = [
+        pdir / "project.json",
+        pdir / "workflow_state.json",
+        pdir / "progress.json",
+        pdir / "translation_qa_report.json",
+        pdir / "translation_qa_report.md",
+        sentinel,
+        log_dir / "asr.log",
+        log_dir / "translate.log",
+        log_dir / "burn.log",
+    ]
+    before = {
+        path: path.read_bytes() if path.is_file() else None
+        for path in tracked_paths
+    }
+
+    if start_kind == "translate":
+        launch = lambda: api_translate.start_translate(
+            pid=pid,
+            req=api_translate.TranslateRequest(target_language="简体中文"),
+        )
+    elif start_kind == "asr":
+        launch = lambda: api_translate.start_asr(
+            pid=pid,
+            req=api_translate.ASRRequest(language="en"),
+        )
+    elif start_kind in {"full", "transcribe_translate"}:
+        request = api_translate.FullPipelineRequest(
+            language="en",
+            target_language="简体中文",
+            workflow_mode=(
+                "translate_only"
+                if start_kind == "transcribe_translate"
+                else "translate_burn"
+            ),
+        )
+        if start_kind == "transcribe_translate":
+            launch = lambda: api_translate.start_transcribe_translate(
+                pid=pid,
+                req=request,
+            )
+        else:
+            launch = lambda: api_translate.start_full(
+                pid=pid,
+                req=request,
+            )
+    else:
+        launch = lambda: api_translate.start_burn(pid=pid)
+
+    def fail_start(thread):
+        raise RuntimeError("injected registered thread start failure")
+
+    monkeypatch.setattr(threading.Thread, "start", fail_start)
+    with pytest.raises(RuntimeError, match="thread start failure"):
+        launch()
+
+    assert {
+        path: path.read_bytes() if path.is_file() else None
+        for path in tracked_paths
+    } == before
+    assert json.loads(
+        (pdir / "project.json").read_text(encoding="utf-8")
+    )["status"] == old_status
+    assert api_translate._registered_task_snapshot(pid) == (False, "", "")
+    assert is_cancelled(pid) is False
+    assert progress_store[pid] == before_progress_memory
+
+    monkeypatch.setattr(threading.Thread, "start", lambda thread: None)
+    retry_result = launch()
+    try:
+        assert retry_result["status"] == "started"
+        assert api_translate.is_task_registered(pid) is True
+    finally:
+        api_translate.unregister_task(pid)
+        reset_cancel(pid)
+
+
+def test_thread_start_failure_blocks_edit_after_snapshot_until_rollback(
+    tmp_path,
+    monkeypatch,
+):
+    import threading
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.engines.scheduler import reset_cancel
+
+    pid = "startfail-edit-serialization"
+    api_translate, pdir, _ = _seed_current_certified_burn_project(
+        tmp_path,
+        monkeypatch,
+        pid=pid,
+    )
+    monkeypatch.setattr(api_translate, "active_tasks", {})
+    monkeypatch.setattr(
+        api_translate,
+        "require_translation_ready",
+        lambda: None,
+    )
+    before = {
+        path.name: path.read_bytes()
+        for path in pdir.iterdir()
+        if path.is_file()
+    }
+    snapshot_taken = threading.Event()
+    release_launch = threading.Event()
+    registered = {}
+    real_snapshot = api_translate._snapshot_task_launch_state
+    real_register = api_translate.try_register_task
+    real_thread_start = threading.Thread.start
+
+    def capture_registration(*args, **kwargs):
+        task = real_register(*args, **kwargs)
+        registered["task"] = task
+        return task
+
+    def pause_after_snapshot(task_pid):
+        snapshot = real_snapshot(task_pid)
+        snapshot_taken.set()
+        if not release_launch.wait(timeout=5):
+            raise RuntimeError("test timed out after launch snapshot")
+        return snapshot
+
+    def fail_registered_start(thread):
+        if thread is registered.get("task"):
+            raise RuntimeError("injected thread start failure")
+        return real_thread_start(thread)
+
+    monkeypatch.setattr(
+        api_translate,
+        "try_register_task",
+        capture_registration,
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_snapshot_task_launch_state",
+        pause_after_snapshot,
+    )
+    monkeypatch.setattr(
+        threading.Thread,
+        "start",
+        fail_registered_start,
+    )
+    launch_errors = []
+
+    def launch():
+        try:
+            api_translate.start_translate(
+                pid=pid,
+                req=api_translate.TranslateRequest(
+                    target_language="简体中文"
+                ),
+            )
+        except Exception as exc:
+            launch_errors.append(exc)
+
+    launcher = threading.Thread(target=launch)
+    launcher.start()
+    assert snapshot_taken.wait(timeout=5)
+    edit = TestClient(app).put(
+        f"/api/projects/{pid}/subtitles",
+        json={"blocks": [{
+            "index": 1,
+            "start": "00:00:00,000",
+            "end": "00:00:01,000",
+            "text": "Concurrent edit",
+            "translation": "并发编辑",
+        }]},
+    )
+    try:
+        assert edit.status_code == 409
+    finally:
+        release_launch.set()
+        launcher.join(timeout=5)
+
+    try:
+        assert not launcher.is_alive()
+        assert len(launch_errors) == 1
+        assert "thread start failure" in str(launch_errors[0])
+        assert api_translate.is_task_registered(pid) is False
+        assert {
+            path.name: path.read_bytes()
+            for path in pdir.iterdir()
+            if path.is_file()
+        } == before
+    finally:
+        api_translate.unregister_task(pid)
+        reset_cancel(pid)
 
 
 def test_saved_edit_can_be_recertified_with_hash_bound_delivery(
@@ -2009,6 +2289,137 @@ def test_burn_reads_immutable_subtitle_snapshot_and_cleans_it_on_success(
     assert Path(project["output_video"]).read_bytes() == b"burned-from-snapshot"
 
 
+@pytest.mark.parametrize(
+    "patch_payload",
+    [
+        {"target_language": "繁體中文"},
+        {"manual_terms": "tank=储罐"},
+    ],
+)
+def test_burn_rejects_project_generation_patch_while_encoder_runs(
+    tmp_path,
+    monkeypatch,
+    patch_payload,
+):
+    """Catches committing certified burn bytes against a newer project generation."""
+    import threading
+
+    from app.api import projects as projects_api
+    from app.main import app
+
+    pid = "burngenerationbarrier-" + next(iter(patch_payload))
+    api_translate, pdir, project_path = (
+        _seed_current_certified_burn_project(
+            tmp_path,
+            monkeypatch,
+            pid=pid,
+        )
+    )
+    final_path = pdir / "original_subtitled.mp4"
+    final_path.write_bytes(b"prior-certified-burn")
+    encoder_entered = threading.Event()
+    release_encoder = threading.Event()
+    errors = []
+
+    def fake_burn(video, tracks, output, **kwargs):
+        encoder_entered.set()
+        if not release_encoder.wait(timeout=5):
+            raise RuntimeError("test timed out inside burn encoder")
+        Path(output).write_bytes(b"stale-generation-burn")
+        return True
+
+    def run_burn():
+        try:
+            api_translate._run_burn_pipeline(pid)
+        except Exception as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(projects_api, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+    worker = threading.Thread(target=run_burn)
+    worker.start()
+    try:
+        assert encoder_entered.wait(timeout=5)
+        response = TestClient(app).patch(
+            f"/api/projects/{pid}",
+            json=patch_payload,
+        )
+        assert response.status_code == 200
+    finally:
+        release_encoder.set()
+        worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert len(errors) == 1
+    assert "generation" in str(errors[0]).lower()
+    assert final_path.read_bytes() == b"prior-certified-burn"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    for field, expected in patch_payload.items():
+        assert project[field] == expected
+    assert project["status"] != "completed"
+    _assert_no_burn_transaction_files(pdir)
+
+
+def test_burn_cancel_after_generation_patch_aborts_unpromoted_transaction(
+    tmp_path,
+    monkeypatch,
+):
+    """Catches cancellation recovering with the newer, mismatched generation."""
+    import threading
+
+    from app.engines.scheduler import request_cancel, reset_cancel
+
+    pid = "burncancelgenerationpatch"
+    api_translate, pdir, project_path = (
+        _seed_current_certified_burn_project(
+            tmp_path,
+            monkeypatch,
+            pid=pid,
+        )
+    )
+    final_path = pdir / "original_subtitled.mp4"
+    final_path.write_bytes(b"prior-certified-burn")
+    encoder_entered = threading.Event()
+    release_encoder = threading.Event()
+    errors = []
+
+    def fake_burn(video, tracks, output, **kwargs):
+        encoder_entered.set()
+        if not release_encoder.wait(timeout=5):
+            raise RuntimeError("test timed out inside burn encoder")
+        Path(output).write_bytes(b"cancelled-stale-generation-burn")
+        return True
+
+    def run_burn():
+        try:
+            api_translate._run_burn_pipeline(pid)
+        except Exception as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+    worker = threading.Thread(target=run_burn)
+    worker.start()
+    try:
+        assert encoder_entered.wait(timeout=5)
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project["manual_terms"] = "tank=储罐"
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+        request_cancel(pid)
+    finally:
+        release_encoder.set()
+        worker.join(timeout=5)
+        reset_cancel(pid)
+
+    assert not worker.is_alive()
+    assert errors == []
+    assert final_path.read_bytes() == b"prior-certified-burn"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    assert project["manual_terms"] == "tank=储罐"
+    assert project["status"] == "translated"
+    assert project["error"] is None
+    _assert_no_burn_transaction_files(pdir)
+
+
 @pytest.mark.parametrize("source_type", ["upload", "trailer"])
 def test_burn_snapshot_uses_bytes_from_same_validation_read(
     tmp_path,
@@ -2205,7 +2616,7 @@ def test_burn_recovery_snapshot_failure_leaves_prior_video_untouched(
     )
     final_path = pdir / "original_subtitled.mp4"
     final_path.write_bytes(b"previous-burn")
-    def fail_recovery_snapshot(source, destination):
+    def fail_recovery_snapshot(source, destination, **kwargs):
         raise OSError("injected burn recovery snapshot failure")
 
     def fake_burn(video, tracks, output, **kwargs):
@@ -2243,7 +2654,7 @@ def test_burn_overwrite_keeps_final_visible_until_atomic_promotion(
     real_recovery_copy = api_translate.create_burn_recovery_copy
     observations = []
 
-    def observe_recovery_copy(source, destination):
+    def observe_recovery_copy(source, destination, **kwargs):
         manifest = json.loads(
             (pdir / ".burn-output-transaction.json").read_text(
                 encoding="utf-8"
@@ -2252,7 +2663,7 @@ def test_burn_overwrite_keeps_final_visible_until_atomic_promotion(
         observations.append(final_path.read_bytes())
         assert manifest["final_name"] == final_path.name
         assert manifest["backup_name"] == Path(destination).name
-        real_recovery_copy(source, destination)
+        real_recovery_copy(source, destination, **kwargs)
         observations.append(final_path.read_bytes())
 
     def fake_burn(video, tracks, output, **kwargs):
@@ -2353,6 +2764,434 @@ def test_successful_burn_commits_video_and_cleans_transaction_files(
     assert project["status"] == "completed"
     assert project["output_video"] == str(final_path)
     _assert_no_burn_transaction_files(pdir)
+
+
+def test_successful_burn_syncs_workflow_before_recovery_evidence_cleanup(
+    tmp_path,
+    monkeypatch,
+):
+    """Catches deleting the manifest in the same durability epoch as workflow."""
+    import os
+    import stat
+
+    from app.utils import burn_transaction, project_store
+
+    pid = "burndurablecommitorder"
+    api_translate, pdir, _ = _seed_current_certified_burn_project(
+        tmp_path,
+        monkeypatch,
+        pid=pid,
+    )
+    final_path = pdir / "original_subtitled.mp4"
+    final_path.write_bytes(b"prior-burn")
+    events = []
+    real_replace = os.replace
+    real_fsync = os.fsync
+    real_safe_unlink = burn_transaction._safe_unlink
+
+    def recording_replace(source, destination):
+        result = real_replace(source, destination)
+        events.append(("replace", Path(destination).name))
+        return result
+
+    def recording_fsync(descriptor):
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            events.append(("fsync_directory", pdir.name))
+        return real_fsync(descriptor)
+
+    def recording_unlink(path):
+        if os.path.lexists(path):
+            events.append(("unlink", Path(path).name))
+        return real_safe_unlink(path)
+
+    def fake_burn(video, tracks, output, **kwargs):
+        Path(output).write_bytes(b"new-burn")
+        return True
+
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(project_store.os, "replace", recording_replace)
+    monkeypatch.setattr(project_store.os, "fsync", recording_fsync)
+    monkeypatch.setattr(
+        burn_transaction,
+        "_safe_unlink",
+        recording_unlink,
+    )
+
+    api_translate._run_burn_pipeline(pid)
+
+    workflow_replace = max(
+        index
+        for index, event in enumerate(events)
+        if event == ("replace", "workflow_state.json")
+    )
+    manifest_unlink = events.index(
+        ("unlink", burn_transaction.BURN_TRANSACTION_MANIFEST)
+    )
+    backup_unlink = next(
+        index
+        for index, event in enumerate(events)
+        if event[0] == "unlink" and ".rollback." in event[1]
+    )
+    workflow_durable = next(
+        index
+        for index in range(workflow_replace + 1, len(events))
+        if events[index] == ("fsync_directory", pdir.name)
+    )
+    assert backup_unlink > workflow_durable
+    assert manifest_unlink > workflow_durable
+    assert (
+        "fsync_directory",
+        pdir.name,
+    ) in events[workflow_replace + 1:manifest_unlink]
+    assert (
+        "fsync_directory",
+        pdir.name,
+    ) in events[manifest_unlink + 1:]
+
+
+@pytest.mark.parametrize("sync_kind", ["file", "directory"])
+def test_workflow_fsync_failure_keeps_burn_evidence_for_restart(
+    tmp_path,
+    monkeypatch,
+    sync_kind,
+):
+    """Catches cleanup after workflow bytes or its rename failed to sync."""
+    import os
+    import stat
+
+    from app.engines import scheduler
+    from app.engines.workflow_state import load_workflow_state
+    from app.utils import burn_transaction, project_store
+
+    pid = "burnworkflowfsyncrestart"
+    api_translate, pdir, project_path = (
+        _seed_current_certified_burn_project(
+            tmp_path,
+            monkeypatch,
+            pid=pid,
+        )
+    )
+    final_path = pdir / "original_subtitled.mp4"
+    final_path.write_bytes(b"prior-burn")
+    manifest_path = pdir / burn_transaction.BURN_TRANSACTION_MANIFEST
+    real_fsync = os.fsync
+    injection = {"armed": False, "done": False}
+    real_finish_stage = api_translate.finish_stage
+
+    def arm_workflow_commit(*args, **kwargs):
+        injection["armed"] = True
+        return real_finish_stage(*args, **kwargs)
+
+    def fail_workflow_fsync(descriptor):
+        is_directory = stat.S_ISDIR(os.fstat(descriptor).st_mode)
+        if (
+            injection["armed"]
+            and not injection["done"]
+            and (
+                (sync_kind == "directory" and is_directory)
+                or (sync_kind == "file" and not is_directory)
+            )
+        ):
+            injection["done"] = True
+            injection["armed"] = False
+            raise OSError(
+                f"injected workflow {sync_kind} fsync failure"
+            )
+        return real_fsync(descriptor)
+
+    def fake_burn(video, tracks, output, **kwargs):
+        Path(output).write_bytes(b"new-burn")
+        return True
+
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(scheduler, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate, "finish_stage", arm_workflow_commit)
+    monkeypatch.setattr(
+        project_store.os,
+        "fsync",
+        fail_workflow_fsync,
+    )
+
+    api_translate._run_burn_pipeline(pid)
+
+    assert injection["done"] is True
+    assert final_path.read_bytes() == b"new-burn"
+    assert manifest_path.is_file()
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    assert project["status"] == "completed"
+
+    monkeypatch.setattr(project_store.os, "fsync", real_fsync)
+
+    assert scheduler.mark_interrupted_tasks_from_previous_session() == 0
+    assert final_path.read_bytes() == b"new-burn"
+    assert not manifest_path.exists()
+    assert (
+        load_workflow_state(pid)["stages"]["burn"]["status"]
+        == "succeeded"
+    )
+
+
+@pytest.mark.parametrize("sync_kind", ["file", "directory"])
+def test_project_commit_fsync_failure_rolls_back_and_restart_is_idempotent(
+    tmp_path,
+    monkeypatch,
+    sync_kind,
+):
+    """Catches deleting rollback evidence after an indurable project commit."""
+    import os
+    import stat
+
+    from app.engines import scheduler
+    from app.utils import project_store
+
+    pid = f"burnprojectfsync-{sync_kind}"
+    api_translate, pdir, project_path = (
+        _seed_current_certified_burn_project(
+            tmp_path,
+            monkeypatch,
+            pid=pid,
+        )
+    )
+    final_path = pdir / "original_subtitled.mp4"
+    final_path.write_bytes(b"prior-burn")
+    before_project = json.loads(
+        project_path.read_text(encoding="utf-8")
+    )
+    real_fsync = os.fsync
+    real_mark_burn_completed = api_translate._mark_burn_completed
+    injection = {"armed": False, "done": False}
+
+    def arm_project_commit(*args, **kwargs):
+        injection["armed"] = True
+        return real_mark_burn_completed(*args, **kwargs)
+
+    def fail_project_fsync(descriptor):
+        is_directory = stat.S_ISDIR(os.fstat(descriptor).st_mode)
+        if (
+            injection["armed"]
+            and not injection["done"]
+            and (
+                (sync_kind == "directory" and is_directory)
+                or (sync_kind == "file" and not is_directory)
+            )
+        ):
+            injection["done"] = True
+            injection["armed"] = False
+            raise OSError(
+                f"injected project {sync_kind} fsync failure"
+            )
+        return real_fsync(descriptor)
+
+    def fake_burn(video, tracks, output, **kwargs):
+        Path(output).write_bytes(b"new-burn")
+        return True
+
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(
+        api_translate,
+        "_mark_burn_completed",
+        arm_project_commit,
+    )
+    monkeypatch.setattr(project_store.os, "fsync", fail_project_fsync)
+
+    with pytest.raises(
+        OSError,
+        match=f"project {sync_kind} fsync failure",
+    ):
+        api_translate._run_burn_pipeline(pid)
+
+    assert injection["done"] is True
+    assert final_path.read_bytes() == b"prior-burn"
+    after_project = json.loads(project_path.read_text(encoding="utf-8"))
+    assert after_project["status"] != "completed"
+    for field in ("target_language", "manual_terms"):
+        assert after_project.get(field) == before_project.get(field)
+    _assert_no_burn_transaction_files(pdir)
+
+    monkeypatch.setattr(project_store.os, "fsync", real_fsync)
+    monkeypatch.setattr(scheduler, "PROJECTS_DIR", tmp_path)
+    scheduler.mark_interrupted_tasks_from_previous_session()
+    after_first_restart = {
+        path.name: path.read_bytes()
+        for path in pdir.iterdir()
+        if path.is_file()
+    }
+    scheduler.mark_interrupted_tasks_from_previous_session()
+    assert final_path.read_bytes() == b"prior-burn"
+    assert {
+        path.name: path.read_bytes()
+        for path in pdir.iterdir()
+        if path.is_file()
+    } == after_first_restart
+
+
+def test_burn_manifest_tracks_stage_and_snapshots_before_encoder_runs(
+    tmp_path,
+    monkeypatch,
+):
+    pid = "burnmanifestbeforeencoder"
+    api_translate, pdir, _ = _seed_current_certified_burn_project(
+        tmp_path,
+        monkeypatch,
+        pid=pid,
+    )
+    observed = {}
+
+    def fake_burn(video, tracks, output, **kwargs):
+        manifest = json.loads(
+            (pdir / ".burn-output-transaction.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        observed.update(manifest)
+        assert manifest["schema_version"] == 2
+        assert manifest["state"] == "burning"
+        assert Path(output).name == manifest["stage_name"]
+        assert {
+            Path(track.path).name for track in tracks
+        } == set(manifest["snapshot_names"])
+        assert all(Path(track.path).is_file() for track in tracks)
+        Path(output).write_bytes(b"new-burn")
+        return True
+
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+
+    api_translate._run_burn_pipeline(pid)
+
+    assert observed["transaction_id"] in observed["stage_name"]
+    assert all(
+        observed["transaction_id"] in name
+        for name in observed["snapshot_names"]
+    )
+    _assert_no_burn_transaction_files(pdir)
+
+
+def test_new_burn_recovers_pending_manifest_before_encoder(
+    tmp_path,
+    monkeypatch,
+):
+    from app.utils import burn_transaction
+
+    pid = "burnrecoverbeforeretry"
+    api_translate, pdir, project_path = (
+        _seed_current_certified_burn_project(
+            tmp_path,
+            monkeypatch,
+            pid=pid,
+        )
+    )
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    transaction_id = "f" * 32
+    final = pdir / "original_subtitled.mp4"
+    final.write_bytes(b"old-final")
+    stage = pdir / (
+        f".original_subtitled.mp4.burn.{transaction_id}.tmp.mp4"
+    )
+    stage.write_bytes(b"partial-new")
+    backup = pdir / (
+        f".original_subtitled.mp4.rollback.{transaction_id}.mp4"
+    )
+    manifest = burn_transaction.new_burn_transaction_manifest(
+        pid=pid,
+        project=project,
+        stage_path=stage,
+        final_path=final,
+        backup_path=backup,
+        had_previous_output=True,
+        transaction_id=transaction_id,
+        state="burning",
+    )
+    burn_transaction.persist_burn_transaction_manifest(pdir, manifest)
+    encoder_calls = []
+
+    def fake_burn(video, tracks, output, **kwargs):
+        retry_manifest = json.loads(
+            (
+                pdir / burn_transaction.BURN_TRANSACTION_MANIFEST
+            ).read_text(encoding="utf-8")
+        )
+        assert retry_manifest["transaction_id"] != transaction_id
+        assert final.read_bytes() == b"old-final"
+        assert not stage.exists()
+        encoder_calls.append(output)
+        Path(output).write_bytes(b"retry-new")
+        return True
+
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+
+    api_translate._run_burn_pipeline(pid)
+
+    assert len(encoder_calls) == 1
+    assert final.read_bytes() == b"retry-new"
+    _assert_no_burn_transaction_files(pdir)
+
+
+def test_new_burn_refuses_unrecoverable_pending_manifest_before_encoder(
+    tmp_path,
+    monkeypatch,
+):
+    from app.utils import burn_transaction
+
+    pid = "burnblockpendingretry"
+    api_translate, pdir, project_path = (
+        _seed_current_certified_burn_project(
+            tmp_path,
+            monkeypatch,
+            pid=pid,
+        )
+    )
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    transaction_id = "1" * 32
+    final = pdir / "original_subtitled.mp4"
+    final.write_bytes(b"promoted-new")
+    stage = pdir / (
+        f".original_subtitled.mp4.burn.{transaction_id}.tmp.mp4"
+    )
+    stage.write_bytes(b"promoted-new")
+    backup = pdir / (
+        f".original_subtitled.mp4.rollback.{transaction_id}.mp4"
+    )
+    backup.write_bytes(b"PARTIAL")
+    manifest = burn_transaction.new_burn_transaction_manifest(
+        pid=pid,
+        project=project,
+        stage_path=stage,
+        final_path=pdir / "placeholder_subtitled.mp4",
+        backup_path=None,
+        had_previous_output=False,
+        transaction_id=transaction_id,
+        state="staged",
+    )
+    manifest.update({
+        "stage_name": stage.name,
+        "final_name": final.name,
+        "backup_name": backup.name,
+        "had_previous_output": True,
+        "previous_output_size": len(b"old-final"),
+        "previous_output_hash": (
+            "sha256:" + hashlib.sha256(b"old-final").hexdigest()
+        ),
+    })
+    burn_transaction.persist_burn_transaction_manifest(pdir, manifest)
+    encoder_calls = []
+    monkeypatch.setattr(
+        api_translate,
+        "burn_subtitles",
+        lambda *args, **kwargs: encoder_calls.append(args) or True,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="pending burn transaction",
+    ):
+        api_translate._run_burn_pipeline(pid)
+
+    assert encoder_calls == []
+    assert final.read_bytes() == b"promoted-new"
+    assert backup.read_bytes() == b"PARTIAL"
+    assert (
+        pdir / burn_transaction.BURN_TRANSACTION_MANIFEST
+    ).is_file()
 
 
 @pytest.mark.parametrize("existing_output", [None, b"previous-burn"])

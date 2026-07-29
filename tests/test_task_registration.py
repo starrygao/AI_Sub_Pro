@@ -303,3 +303,187 @@ def test_stale_cancel_request_cannot_cancel_new_task_generation(
     finally:
         translate.unregister_task(pid)
         reset_cancel(pid)
+
+
+def test_cancel_snapshot_cannot_signal_replacement_task_generation(
+    tmp_project_dir,
+    monkeypatch,
+):
+    from app.engines.scheduler import is_cancelled, reset_cancel
+    from app.utils.project_store import atomic_write_json
+
+    pid = "cancel-generation-aba"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir()
+
+    def write_processing_project():
+        atomic_write_json(pdir / "project.json", {
+            "id": pid,
+            "name": "Generation ABA",
+            "video_path": str(tmp_project_dir / "video.mp4"),
+            "status": "processing",
+            "pipeline_stage": "translate",
+            "audio_tracks": [],
+            "subtitle_tracks": [],
+        })
+
+    write_processing_project()
+    monkeypatch.setattr(translate, "active_tasks", {})
+    old_worker = threading.Thread(target=lambda: None)
+    translate.try_register_task(
+        pid,
+        lambda: old_worker,
+        reset_cancellation=True,
+        launch_stage="translate",
+    )
+
+    request_entered = threading.Event()
+    release_request = threading.Event()
+    mark_entered = threading.Event()
+    release_mark = threading.Event()
+    replacement_done = threading.Event()
+    real_request_cancel = translate.request_cancel
+    real_mark_cancelled = translate._mark_project_cancelled
+
+    def pause_before_cancel_signal(task_pid, **kwargs):
+        request_entered.set()
+        if not release_request.wait(timeout=5):
+            raise RuntimeError("test timed out before cancel signal")
+        real_request_cancel(task_pid, **kwargs)
+
+    def pause_before_cancel_commit(*args, **kwargs):
+        mark_entered.set()
+        if not release_mark.wait(timeout=5):
+            raise RuntimeError("test timed out before cancel commit")
+        return real_mark_cancelled(*args, **kwargs)
+
+    monkeypatch.setattr(
+        translate,
+        "request_cancel",
+        pause_before_cancel_signal,
+    )
+    monkeypatch.setattr(
+        translate,
+        "_mark_project_cancelled",
+        pause_before_cancel_commit,
+    )
+    cancel_result = {}
+    new_worker = threading.Thread(target=lambda: None)
+
+    def cancel_old_generation():
+        cancel_result.update(translate.cancel_task(pid=pid))
+
+    def replace_generation():
+        translate.unregister_task(pid, task=old_worker)
+        write_processing_project()
+        translate.try_register_task(
+            pid,
+            lambda: new_worker,
+            reset_cancellation=True,
+            launch_stage="translate",
+        )
+        replacement_done.set()
+
+    canceller = threading.Thread(target=cancel_old_generation)
+    replacement = threading.Thread(target=replace_generation)
+    canceller.start()
+    assert request_entered.wait(timeout=5)
+    replacement.start()
+    try:
+        replacement_done.wait(timeout=0.2)
+        release_request.set()
+        assert mark_entered.wait(timeout=5)
+        assert replacement_done.wait(timeout=5)
+    finally:
+        release_mark.set()
+        canceller.join(timeout=5)
+        replacement.join(timeout=5)
+
+    try:
+        assert not canceller.is_alive()
+        assert not replacement.is_alive()
+        assert cancel_result["status"] == "no_task"
+        assert translate.active_tasks[pid] is new_worker
+        assert is_cancelled(pid) is False
+        translate._check_cancel(pid)
+    finally:
+        translate.unregister_task(pid, task=new_worker)
+        reset_cancel(pid)
+
+
+def test_cancel_event_is_scoped_to_registered_task_generation(monkeypatch):
+    from app.engines.scheduler import (
+        is_cancelled,
+        request_cancel,
+        reset_cancel,
+    )
+
+    pid = "cancel-event-generation-scope"
+    monkeypatch.setattr(translate, "active_tasks", {})
+    old_worker = threading.Thread(target=lambda: None)
+    translate.try_register_task(
+        pid,
+        lambda: old_worker,
+        reset_cancellation=True,
+        launch_stage="translate",
+    )
+    old_generation = translate._registered_task_snapshot(pid)[1]
+    translate.unregister_task(pid, task=old_worker)
+
+    new_worker = threading.Thread(target=lambda: translate._check_cancel(pid))
+    translate.try_register_task(
+        pid,
+        lambda: new_worker,
+        reset_cancellation=True,
+        launch_stage="translate",
+    )
+    new_generation = translate._registered_task_snapshot(pid)[1]
+
+    try:
+        request_cancel(pid, generation=old_generation)
+
+        assert is_cancelled(pid, generation=old_generation) is True
+        assert is_cancelled(pid, generation=new_generation) is False
+        new_worker.start()
+        new_worker.join(timeout=5)
+        assert not new_worker.is_alive()
+    finally:
+        translate.unregister_task(pid, task=new_worker)
+        reset_cancel(pid)
+
+
+def test_reset_of_old_generation_cannot_clear_new_generation_cancel(
+    monkeypatch,
+):
+    from app.engines.scheduler import (
+        is_cancelled,
+        request_cancel,
+        reset_cancel,
+    )
+
+    pid = "cancel-event-generation-reset"
+    monkeypatch.setattr(translate, "active_tasks", {})
+    old_worker = threading.Thread(target=lambda: None)
+    translate.try_register_task(
+        pid,
+        lambda: old_worker,
+        reset_cancellation=True,
+    )
+    old_generation = translate._registered_task_snapshot(pid)[1]
+    translate.unregister_task(pid, task=old_worker)
+    new_worker = threading.Thread(target=lambda: None)
+    translate.try_register_task(
+        pid,
+        lambda: new_worker,
+        reset_cancellation=True,
+    )
+    new_generation = translate._registered_task_snapshot(pid)[1]
+
+    try:
+        request_cancel(pid, generation=new_generation)
+        reset_cancel(pid, generation=old_generation)
+
+        assert is_cancelled(pid, generation=new_generation) is True
+    finally:
+        translate.unregister_task(pid, task=new_worker)
+        reset_cancel(pid)

@@ -1,5 +1,6 @@
 import json
 import hashlib
+import os
 import threading
 
 import pytest
@@ -364,13 +365,19 @@ def _seed_crashed_burn_transaction(
     existing_output,
     crash_point,
 ):
+    from app.utils.burn_transaction import burn_project_generation_hash
+
     pdir = root / pid
     pdir.mkdir()
-    final_path = pdir / "movie_subtitled.mp4"
-    stage_path = pdir / ".movie_subtitled.mp4.burn.crash.tmp.mp4"
-    backup_path = pdir / ".movie_subtitled.mp4.rollback.crash.mp4"
-    manifest_path = pdir / ".burn-output-transaction.json"
     transaction_id = "a" * 32
+    final_path = pdir / "movie_subtitled.mp4"
+    stage_path = pdir / (
+        f".movie_subtitled.mp4.burn.{transaction_id}.tmp.mp4"
+    )
+    backup_path = pdir / (
+        f".movie_subtitled.mp4.rollback.{transaction_id}.mp4"
+    )
+    manifest_path = pdir / ".burn-output-transaction.json"
     project = {
         "id": pid,
         "name": "crashed burn",
@@ -383,28 +390,46 @@ def _seed_crashed_burn_transaction(
         json.dumps(project),
         encoding="utf-8",
     )
+    (pdir / "workflow_state.json").write_text(json.dumps({
+        "version": 1,
+        "stages": {
+            "burn": {
+                "status": "running",
+                "input_artifact": str(pdir / "movie.mp4"),
+            },
+        },
+    }), encoding="utf-8")
     stage_path.write_bytes(b"new-burn")
     if existing_output:
         final_path.write_bytes(b"prior-burn")
+    state = {
+        "manifest": "staged",
+        "backup": "backed_up",
+        "promoted": "promoted",
+        "project_committed": "project_committed",
+        "cleanup_pending": "project_committed",
+    }[crash_point]
     manifest_path.write_text(json.dumps({
-        "schema_version": 1,
+        "schema_version": 2,
         "transaction_id": transaction_id,
         "project_id": pid,
-        "project_generation_hash": (
-            "sha256:"
-            + hashlib.sha256(
-                json.dumps(
-                    project,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8")
-            ).hexdigest()
-        ),
+        "project_generation_hash": burn_project_generation_hash(project),
+        "state": state,
         "stage_name": stage_path.name,
         "final_name": final_path.name,
         "backup_name": backup_path.name if existing_output else "",
+        "snapshot_names": [],
         "had_previous_output": existing_output,
+        "previous_output_size": len(b"prior-burn") if existing_output else 0,
+        "previous_output_hash": (
+            "sha256:" + hashlib.sha256(b"prior-burn").hexdigest()
+            if existing_output
+            else ""
+        ),
+        "staged_output_size": len(b"new-burn"),
+        "staged_output_hash": (
+            "sha256:" + hashlib.sha256(b"new-burn").hexdigest()
+        ),
     }), encoding="utf-8")
 
     if crash_point != "manifest" and existing_output:
@@ -448,6 +473,7 @@ def test_startup_recovers_crashed_burn_transaction_idempotently(
     from app.engines.scheduler import (
         mark_interrupted_tasks_from_previous_session,
     )
+    from app.engines.workflow_state import load_workflow_state
 
     pid = f"burncrash-{existing_output}-{crash_point}"
     pdir, final_path, stage_path, backup_path, manifest_path = (
@@ -465,6 +491,14 @@ def test_startup_recovers_crashed_burn_transaction_idempotently(
     if committed:
         assert first_count == 0
         assert final_path.read_bytes() == b"new-burn"
+        project = json.loads(
+            (pdir / "project.json").read_text(encoding="utf-8")
+        )
+        assert project["status"] == "completed"
+        assert (
+            load_workflow_state(pid)["stages"]["burn"]["status"]
+            == "succeeded"
+        )
     else:
         assert first_count == 1
         if existing_output:
@@ -494,27 +528,47 @@ def test_startup_recovers_crashed_burn_transaction_idempotently(
         ("{not-json", "malformed"),
         (
             json.dumps({
-                "schema_version": 1,
+                "schema_version": 2,
                 "transaction_id": "b" * 32,
                 "project_id": "unsafe-burn-manifest",
                 "project_generation_hash": "sha256:" + "c" * 64,
+                "state": "staged",
                 "stage_name": "../../outside.mp4",
                 "final_name": "movie_subtitled.mp4",
                 "backup_name": "",
+                "snapshot_names": [],
                 "had_previous_output": False,
+                "previous_output_size": 0,
+                "previous_output_hash": "",
+                "staged_output_size": len(b"stage"),
+                "staged_output_hash": (
+                    "sha256:" + hashlib.sha256(b"stage").hexdigest()
+                ),
             }),
             "escape",
         ),
         (
             json.dumps({
-                "schema_version": 1,
+                "schema_version": 2,
                 "transaction_id": "b" * 32,
                 "project_id": "unsafe-burn-manifest",
                 "project_generation_hash": "sha256:" + "c" * 64,
-                "stage_name": ".movie_subtitled.mp4.burn.crash.tmp.mp4",
+                "state": "staged",
+                "stage_name": (
+                    ".movie_subtitled.mp4.burn."
+                    + "b" * 32
+                    + ".tmp.mp4"
+                ),
                 "final_name": "movie_subtitled.mp4",
                 "backup_name": "",
+                "snapshot_names": [],
                 "had_previous_output": False,
+                "previous_output_size": 0,
+                "previous_output_hash": "",
+                "staged_output_size": len(b"stage"),
+                "staged_output_hash": (
+                    "sha256:" + hashlib.sha256(b"stage").hexdigest()
+                ),
             }),
             "symlink",
         ),
@@ -534,7 +588,11 @@ def test_startup_burn_recovery_rejects_unsafe_manifest_without_deleting(
     pdir.mkdir()
     outside_path = tmp_project_dir / "outside.mp4"
     outside_path.write_bytes(b"outside")
-    stage_path = pdir / ".movie_subtitled.mp4.burn.crash.tmp.mp4"
+    stage_path = pdir / (
+        ".movie_subtitled.mp4.burn."
+        + "b" * 32
+        + ".tmp.mp4"
+    )
     if unsafe_kind == "symlink":
         stage_path.symlink_to(outside_path)
     else:
@@ -557,6 +615,223 @@ def test_startup_burn_recovery_rejects_unsafe_manifest_without_deleting(
     assert final_path.read_bytes() == b"final"
     assert manifest_path.read_text(encoding="utf-8") == manifest_content
     assert stage_path.is_symlink() if unsafe_kind == "symlink" else stage_path.exists()
+
+
+def test_startup_burn_recovery_rejects_truncated_backup_without_overwrite(
+    tmp_project_dir,
+):
+    from app.engines.scheduler import (
+        mark_interrupted_tasks_from_previous_session,
+    )
+
+    pdir, final_path, stage_path, backup_path, manifest_path = (
+        _seed_crashed_burn_transaction(
+            tmp_project_dir,
+            pid="burncrash-truncated-backup",
+            existing_output=True,
+            crash_point="promoted",
+        )
+    )
+    backup_path.write_bytes(b"PARTIAL")
+
+    assert mark_interrupted_tasks_from_previous_session() == 1
+
+    assert final_path.read_bytes() == b"new-burn"
+    assert backup_path.read_bytes() == b"PARTIAL"
+    assert manifest_path.is_file()
+    assert not stage_path.exists()
+
+
+def test_startup_committed_burn_keeps_manifest_until_workflow_sync_retries(
+    tmp_project_dir,
+    monkeypatch,
+):
+    from app.engines import scheduler
+    from app.engines.workflow_state import load_workflow_state
+
+    pid = "burncrash-workflow-retry"
+    pdir, final_path, _, _, manifest_path = (
+        _seed_crashed_burn_transaction(
+            tmp_project_dir,
+            pid=pid,
+            existing_output=True,
+            crash_point="project_committed",
+        )
+    )
+    real_finish_stage = scheduler.finish_stage
+    attempts = {"count": 0}
+
+    def fail_once(*args, **kwargs):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise OSError("injected workflow sync failure")
+        return real_finish_stage(*args, **kwargs)
+
+    monkeypatch.setattr(scheduler, "finish_stage", fail_once)
+
+    assert scheduler.mark_interrupted_tasks_from_previous_session() == 0
+    assert final_path.read_bytes() == b"new-burn"
+    assert manifest_path.is_file()
+    assert load_workflow_state(pid)["stages"]["burn"]["status"] == "running"
+
+    assert scheduler.mark_interrupted_tasks_from_previous_session() == 0
+    assert final_path.read_bytes() == b"new-burn"
+    assert not manifest_path.exists()
+    assert load_workflow_state(pid)["stages"]["burn"]["status"] == "succeeded"
+
+
+def test_startup_orphan_cleanup_skips_registered_active_worker(
+    tmp_project_dir,
+    monkeypatch,
+):
+    import threading
+
+    from app.api import translate
+    from app.engines.scheduler import (
+        mark_interrupted_tasks_from_previous_session,
+        reset_cancel,
+    )
+
+    pid = "burn-orphan-active-worker"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir()
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "active burn",
+        "status": "processing",
+        "pipeline_stage": "burn",
+        "video_path": str(pdir / "movie.mp4"),
+    }), encoding="utf-8")
+    transaction_id = "2" * 32
+    orphan = pdir / (
+        f".movie_subtitled.mp4.burn.{transaction_id}.tmp.mp4"
+    )
+    orphan.write_bytes(b"active-stage")
+    monkeypatch.setattr(translate, "active_tasks", {})
+    worker = threading.Thread(target=lambda: None)
+    translate.try_register_task(
+        pid,
+        lambda: worker,
+        reset_cancellation=True,
+        launch_stage="burn",
+    )
+
+    try:
+        assert mark_interrupted_tasks_from_previous_session() == 0
+        assert orphan.read_bytes() == b"active-stage"
+        project = json.loads(
+            (pdir / "project.json").read_text(encoding="utf-8")
+        )
+        assert project["status"] == "processing"
+    finally:
+        translate.unregister_task(pid, task=worker)
+        reset_cancel(pid)
+
+    assert mark_interrupted_tasks_from_previous_session() == 1
+    assert not orphan.exists()
+
+
+def test_burn_recovery_copy_partial_fallback_is_private_and_removed(
+    tmp_path,
+    monkeypatch,
+):
+    from app.utils import burn_transaction
+
+    final_path = tmp_path / "movie_subtitled.mp4"
+    backup_path = tmp_path / ".movie_subtitled.mp4.rollback.copy.mp4"
+    final_path.write_bytes(b"prior-burn")
+    expected_hash = (
+        "sha256:" + hashlib.sha256(b"prior-burn").hexdigest()
+    )
+    monkeypatch.setattr(
+        burn_transaction.os,
+        "link",
+        lambda *args: (_ for _ in ()).throw(OSError("no hardlink")),
+    )
+
+    def fail_after_partial(source, target):
+        target.write(b"PARTIAL")
+        raise OSError("injected partial copy failure")
+
+    monkeypatch.setattr(
+        burn_transaction.shutil,
+        "copyfileobj",
+        fail_after_partial,
+    )
+    old_umask = os.umask(0)
+    try:
+        with pytest.raises(OSError, match="partial copy failure"):
+            burn_transaction.create_burn_recovery_copy(
+                final_path,
+                backup_path,
+                expected_size=len(b"prior-burn"),
+                expected_hash=expected_hash,
+            )
+    finally:
+        os.umask(old_umask)
+
+    assert final_path.read_bytes() == b"prior-burn"
+    assert not backup_path.exists()
+    assert list(tmp_path.glob(".*.copy.*.tmp")) == []
+
+
+def test_burn_recovery_copy_and_manifest_are_private_and_independent(
+    tmp_path,
+    monkeypatch,
+):
+    from app.utils import burn_transaction
+
+    transaction_id = "e" * 32
+    final_path = tmp_path / "movie_subtitled.mp4"
+    stage_path = tmp_path / (
+        f".movie_subtitled.mp4.burn.{transaction_id}.tmp.mp4"
+    )
+    backup_path = tmp_path / (
+        f".movie_subtitled.mp4.rollback.{transaction_id}.mp4"
+    )
+    final_path.write_bytes(b"prior-burn")
+    stage_path.write_bytes(b"new-burn")
+    final_path.chmod(0o644)
+    expected_hash = (
+        "sha256:" + hashlib.sha256(b"prior-burn").hexdigest()
+    )
+    manifest = burn_transaction.new_burn_transaction_manifest(
+        pid=tmp_path.name,
+        project={"id": tmp_path.name, "status": "processing"},
+        stage_path=stage_path,
+        final_path=final_path,
+        backup_path=backup_path,
+        had_previous_output=True,
+        transaction_id=transaction_id,
+    )
+    old_umask = os.umask(0)
+    try:
+        burn_transaction.persist_burn_transaction_manifest(
+            tmp_path,
+            manifest,
+        )
+        hardlink_calls = []
+        monkeypatch.setattr(
+            burn_transaction.os,
+            "link",
+            lambda *args: hardlink_calls.append(args),
+        )
+        burn_transaction.create_burn_recovery_copy(
+            final_path,
+            backup_path,
+            expected_size=len(b"prior-burn"),
+            expected_hash=expected_hash,
+        )
+    finally:
+        os.umask(old_umask)
+
+    assert backup_path.read_bytes() == b"prior-burn"
+    assert backup_path.stat().st_mode & 0o777 == 0o600
+    assert (
+        tmp_path / burn_transaction.BURN_TRANSACTION_MANIFEST
+    ).stat().st_mode & 0o777 == 0o600
+    assert hardlink_calls == []
+    assert not os.path.samefile(final_path, backup_path)
 
 
 def test_mark_interrupted_tasks_from_previous_session_skips_orphan_progress_dir(tmp_project_dir):

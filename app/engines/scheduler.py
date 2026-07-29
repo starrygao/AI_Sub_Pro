@@ -12,6 +12,8 @@ from config.json (loaded at FastAPI startup) take effect, not just DEFAULT_CONFI
 import json
 import logging
 import math
+import os
+import tempfile
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -20,7 +22,12 @@ from typing import Dict, Iterator, Optional
 
 from app import config as cfg
 from app.config import PROJECTS_DIR
-from app.engines.workflow_state import append_stage_log, fail_stage, load_workflow_state
+from app.engines.workflow_state import (
+    append_stage_log,
+    fail_stage,
+    finish_stage,
+    load_workflow_state,
+)
 from app.utils.project_store import (
     atomic_write_json,
     load_project,
@@ -28,7 +35,15 @@ from app.utils.project_store import (
     project_dir,
     validate_pid,
 )
-from app.utils.burn_transaction import recover_burn_output_transaction
+from app.utils.burn_transaction import (
+    BURN_RECOVERY_BLOCKED,
+    BURN_RECOVERY_COMMITTED,
+    BURN_RECOVERY_NONE,
+    BURN_RECOVERY_REVERTED,
+    cleanup_orphaned_burn_artifacts,
+    finalize_committed_burn_transaction,
+    recover_burn_output_transaction,
+)
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +104,64 @@ _RUNNING_STAGE_PRIORITY = ("burn", "translate", "asr", "download")
 _INTERRUPTED_TASK_MESSAGE = "任务因应用重启中断，请点击恢复流程或重试失败阶段。"
 
 
+def _read_progress_file_bytes(pid: str) -> Optional[bytes]:
+    path = project_dir(pid) / "progress.json"
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise RuntimeError("progress path is unsafe")
+    return path.read_bytes() if path.is_file() else None
+
+
+def _restore_progress_file_bytes(
+    pid: str,
+    content: Optional[bytes],
+) -> None:
+    path = project_dir(pid) / "progress.json"
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise RuntimeError("progress path is unsafe")
+    if content is None:
+        if path.exists():
+            path.unlink()
+        return
+    handle = tempfile.NamedTemporaryFile(
+        "wb",
+        dir=path.parent,
+        prefix=".rollback-progress.",
+        suffix=".tmp",
+        delete=False,
+    )
+    temp_path = Path(handle.name)
+    try:
+        with handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+
+def snapshot_progress_state(pid: str) -> dict:
+    with _progress_lock:
+        payload = progress_store.get(pid)
+        return {
+            "memory": (
+                dict(payload) if isinstance(payload, dict) else None
+            ),
+            "file": _read_progress_file_bytes(pid),
+        }
+
+
+def restore_progress_state(pid: str, state: dict) -> None:
+    with _progress_lock:
+        _restore_progress_file_bytes(pid, state.get("file"))
+        payload = state.get("memory")
+        if payload is None:
+            progress_store.pop(pid, None)
+        else:
+            progress_store[pid] = dict(payload)
+
+
 def _map_global(stage: str, local_pct: int) -> int:
     lo, hi = _STAGE_RANGES.get(stage, (0, 100))
     local = _normalize_number(local_pct, default=0, minimum=0, maximum=100)
@@ -119,11 +192,13 @@ def update_progress(pid: str, stage: str, local_pct: int, msg: str) -> None:
     }
     with _progress_lock:
         progress_store[pid] = payload
-    # Persist outside lock; readers in other workers poll this file.
-    try:
-        atomic_write_json(project_dir(pid) / "progress.json", payload)
-    except Exception as e:
-        log.warning("persist progress failed pid=%s: %s", pid, e)
+        try:
+            atomic_write_json(
+                project_dir(pid) / "progress.json",
+                payload,
+            )
+        except Exception as e:
+            log.warning("persist progress failed pid=%s: %s", pid, e)
     if payload["stage"] and payload["message"]:
         try:
             append_stage_log(pid, payload["stage"], payload["message"])
@@ -147,10 +222,17 @@ def complete_progress(pid: str, msg: str) -> None:
     }
     with _progress_lock:
         progress_store[pid] = payload
-    try:
-        atomic_write_json(project_dir(pid) / "progress.json", payload)
-    except Exception as e:
-        log.warning("persist terminal progress failed pid=%s: %s", pid, e)
+        try:
+            atomic_write_json(
+                project_dir(pid) / "progress.json",
+                payload,
+            )
+        except Exception as e:
+            log.warning(
+                "persist terminal progress failed pid=%s: %s",
+                pid,
+                e,
+            )
 
 
 def _normalize_progress_payload(data: dict) -> dict:
@@ -299,9 +381,43 @@ def mark_interrupted_tasks_from_previous_session() -> int:
             continue
         try:
             pid = validate_pid(pdir.name)
+            try:
+                from app.api.translate import is_task_registered
+
+                active_worker = is_task_registered(pid)
+            except Exception:
+                active_worker = False
+            if active_worker:
+                continue
             project = load_project(pid)
-            if recover_burn_output_transaction(pdir, project):
+            burn_recovery = recover_burn_output_transaction(pdir, project)
+            if burn_recovery != BURN_RECOVERY_NONE:
                 project = load_project(pid)
+            if burn_recovery == BURN_RECOVERY_COMMITTED:
+                finish_stage(
+                    pid,
+                    "burn",
+                    output_artifact=project.get("output_video", ""),
+                    resume_eligible=True,
+                )
+                if not finalize_committed_burn_transaction(pdir, project):
+                    raise RuntimeError(
+                        "committed burn cleanup could not be finalized"
+                    )
+                continue
+            if burn_recovery == BURN_RECOVERY_REVERTED:
+                _mark_interrupted_task(pid, "burn")
+                cleanup_orphaned_burn_artifacts(
+                    pdir,
+                    active_worker=False,
+                )
+                count += 1
+                continue
+            if burn_recovery == BURN_RECOVERY_NONE:
+                cleanup_orphaned_burn_artifacts(
+                    pdir,
+                    active_worker=False,
+                )
             workflow_stage = _running_stage_from_workflow_state(pid)
             project_stage = project.get("pipeline_stage")
             if project_stage not in _RECOVERABLE_RUNNING_STAGES:
@@ -320,27 +436,74 @@ def mark_interrupted_tasks_from_previous_session() -> int:
 
 
 # --- Cooperative cancellation ---
-_cancel_events: Dict[str, threading.Event] = {}
+#
+# Registered workers use an immutable task generation as their cancellation
+# scope. The empty scope remains for process-local jobs that are not managed
+# by the translation task registry.
+_cancel_events: Dict[tuple[str, str], threading.Event] = {}
 _cancel_lock = threading.Lock()
 
 
-def request_cancel(pid: str) -> None:
+def prepare_cancel_generation(
+    pid: str,
+    generation: str,
+    *,
+    reset_legacy: bool,
+) -> None:
+    if not isinstance(generation, str) or not generation:
+        raise ValueError("cancel generation must be non-empty")
     with _cancel_lock:
-        ev = _cancel_events.setdefault(pid, threading.Event())
+        legacy = _cancel_events.get((pid, ""))
+        inherit_cancel = bool(
+            not reset_legacy and legacy is not None and legacy.is_set()
+        )
+        for key in [key for key in _cancel_events if key[0] == pid]:
+            _cancel_events.pop(key, None)
+        event = threading.Event()
+        if inherit_cancel:
+            event.set()
+        _cancel_events[(pid, generation)] = event
+
+
+def discard_cancel_generation(pid: str, generation: str) -> None:
+    if not generation:
+        return
+    with _cancel_lock:
+        event = _cancel_events.get((pid, generation))
+        if event is None or not event.is_set():
+            _cancel_events.pop((pid, generation), None)
+
+
+def request_cancel(pid: str, *, generation: str = "") -> None:
+    with _cancel_lock:
+        ev = _cancel_events.setdefault(
+            (pid, generation),
+            threading.Event(),
+        )
         ev.set()
 
 
-def is_cancelled(pid: str) -> bool:
+def is_cancelled(pid: str, *, generation: Optional[str] = None) -> bool:
     with _cancel_lock:
-        ev = _cancel_events.get(pid)
-    return bool(ev and ev.is_set())
+        if generation is not None:
+            ev = _cancel_events.get((pid, generation))
+            return bool(ev and ev.is_set())
+        return any(
+            key_pid == pid and event.is_set()
+            for (key_pid, _), event in _cancel_events.items()
+        )
 
 
-def reset_cancel(pid: str) -> None:
+def reset_cancel(pid: str, *, generation: Optional[str] = None) -> None:
     with _cancel_lock:
-        ev = _cancel_events.get(pid)
-        if ev is not None:
-            ev.clear()
+        if generation is not None:
+            ev = _cancel_events.get((pid, generation))
+            if ev is not None:
+                ev.clear()
+            return
+        for (key_pid, _), event in _cancel_events.items():
+            if key_pid == pid:
+                event.clear()
 
 
 # Backward-compat aliases (some downstream imports may still reference these by name).

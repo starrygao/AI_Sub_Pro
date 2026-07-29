@@ -35,7 +35,13 @@ from app.api.projects import (
     _is_forced_or_commentary_subtitle,
     _pick_subtitle_track,
 )
-from app.utils.project_store import atomic_write_json, mutate_project, PID_PATTERN, project_dir
+from app.utils.project_store import (
+    PID_PATTERN,
+    atomic_write_json,
+    get_project_lock,
+    mutate_project,
+    project_dir,
+)
 from app.utils.translation_delivery import (
     TRANSLATION_DELIVERY_ARTIFACTS,
     hide_invalid_translation_artifact_fields,
@@ -53,13 +59,25 @@ from app.utils.subtitle_generation import (
 )
 from app.utils.translation_certification import validate_translation_delivery
 from app.utils.burn_transaction import (
+    BURN_RECOVERY_BLOCKED,
+    BURN_RECOVERY_COMMITTED,
+    BURN_RECOVERY_NONE,
+    BURN_RECOVERY_REVERTED,
     BURN_TRANSACTION_MANIFEST,
+    abort_unpromoted_burn_transaction,
+    burn_project_generation_hash,
     create_burn_recovery_copy,
+    finalize_committed_burn_transaction,
+    mark_burn_transaction_burning,
+    mark_burn_transaction_staged,
+    mark_burn_transaction_state,
     new_burn_transaction_manifest,
     persist_burn_transaction_manifest,
+    read_burn_transaction_manifest,
     recover_burn_output_transaction,
-    remove_burn_transaction_manifest,
     sync_burn_transaction_directory,
+    validate_burn_recovery_copy,
+    validated_burn_transaction,
 )
 from app.engines.kb_trace import write_kb_usage_trace
 from app.engines.scheduler import (
@@ -67,8 +85,12 @@ from app.engines.scheduler import (
     get_progress as _scheduler_get_progress,
     update_progress as _scheduler_update_progress,
     progress_store,  # re-export for compatibility with older internal imports
+    restore_progress_state as _restore_progress_state,
+    snapshot_progress_state as _snapshot_progress_state,
     slot,
+    discard_cancel_generation,
     is_cancelled,
+    prepare_cancel_generation,
     reset_cancel,
     request_cancel,
 )
@@ -139,10 +161,13 @@ def try_register_task(
     with _tasks_lock:
         if pid in active_tasks:
             raise TaskAlreadyRunning(pid)
-        if reset_cancellation:
-            reset_cancel(pid)
         t = factory()
         generation = uuid.uuid4().hex
+        prepare_cancel_generation(
+            pid,
+            generation,
+            reset_legacy=reset_cancellation,
+        )
         try:
             setattr(t, "_aisubpro_task_generation", generation)
         except Exception:
@@ -161,19 +186,110 @@ def _mark_task_launch_initialized(pid: str, task) -> None:
 
 
 def _start_registered_task(pid: str, task) -> None:
-    try:
-        task.start()
-    except Exception:
+    task.start()
+
+
+@dataclass(frozen=True)
+class _TaskLaunchStateSnapshot:
+    files: dict[Path, Optional[bytes]]
+    progress: dict
+
+
+def _task_launch_state_paths(pid: str) -> tuple[Path, ...]:
+    pdir = project_dir(pid)
+    return (
+        pdir / "project.json",
+        pdir / "workflow_state.json",
+        pdir / "translation_qa_report.json",
+        pdir / "translation_qa_report.md",
+        pdir / ".translation_delivery_in_progress",
+        pdir / "workflow_logs" / "asr.log",
+        pdir / "workflow_logs" / "translate.log",
+        pdir / "workflow_logs" / "burn.log",
+    )
+
+
+def _snapshot_task_launch_state(pid: str) -> _TaskLaunchStateSnapshot:
+    with translation_delivery_lock(pid) as acquired:
+        if not acquired:
+            raise RuntimeError("task launch snapshot lock acquisition failed")
+        files = _snapshot_delivery_artifacts(_task_launch_state_paths(pid))
+        progress = _snapshot_progress_state(pid)
+    return _TaskLaunchStateSnapshot(
+        files=files,
+        progress=progress,
+    )
+
+
+def _rollback_failed_task_launch(
+    pid: str,
+    task,
+    snapshot: _TaskLaunchStateSnapshot,
+) -> None:
+    rollback_errors = []
+    with translation_delivery_lock(pid) as acquired:
+        if not acquired:
+            raise RuntimeError("task launch rollback lock acquisition failed")
         with _tasks_lock:
-            if active_tasks.get(pid) is task:
-                unregister_task(pid, task=task)
-                reset_cancel(pid)
-        raise
+            if active_tasks.get(pid) is not task:
+                return
+            generation = _task_generations.get(pid, "")
+            for path, content in snapshot.files.items():
+                for attempt in range(2):
+                    try:
+                        _restore_delivery_artifact(path, content)
+                        break
+                    except Exception as exc:
+                        if attempt:
+                            rollback_errors.append(
+                                RuntimeError(
+                                    f"{path.name}: "
+                                    f"{_safe_error_message(exc)}"
+                                )
+                            )
+            try:
+                _restore_progress_state(pid, snapshot.progress)
+            except Exception as exc:
+                rollback_errors.append(exc)
+            reset_cancel(pid, generation=generation)
+            reset_cancel(pid, generation="")
+            unregister_task(pid, task=task)
+    if rollback_errors:
+        try:
+            mark_translation_delivery_invalid(project_dir(pid))
+        except Exception as exc:
+            rollback_errors.append(exc)
+        details = "; ".join(
+            _safe_error_message(error)
+            for error in rollback_errors
+        )
+        raise RuntimeError(
+            f"task launch rollback incomplete: {details}"
+        )
+
+
+def _unregister_failed_task_launch(pid: str, task) -> None:
+    with _tasks_lock:
+        if active_tasks.get(pid) is not task:
+            return
+        generation = _task_generations.get(pid, "")
+        reset_cancel(pid, generation=generation)
+        reset_cancel(pid, generation="")
+        unregister_task(pid, task=task)
 
 
 def _registered_task_launch_stage(pid: str) -> str:
     with _tasks_lock:
         return _task_launch_stages.get(pid, "")
+
+
+def _current_task_generation() -> str:
+    generation = getattr(
+        threading.current_thread(),
+        "_aisubpro_task_generation",
+        "",
+    )
+    return generation if isinstance(generation, str) else ""
 
 
 def _registered_task_snapshot(pid: str) -> tuple[bool, str, str]:
@@ -183,6 +299,18 @@ def _registered_task_snapshot(pid: str) -> tuple[bool, str, str]:
             _task_generations.get(pid, ""),
             _task_launch_stages.get(pid, ""),
         )
+
+
+def _request_registered_task_cancel(
+    pid: str,
+    *,
+    expected_generation: str,
+) -> bool:
+    with _tasks_lock:
+        if _task_generations.get(pid, "") != expected_generation:
+            return False
+        request_cancel(pid, generation=expected_generation)
+        return True
 
 
 def unregister_task(pid: str, *, task=None) -> None:
@@ -201,9 +329,11 @@ def unregister_task(pid: str, *, task=None) -> None:
             and _task_generations.get(pid) != caller_generation
         ):
             return
+        generation = _task_generations.get(pid, "")
         active_tasks.pop(pid, None)
         _task_launch_stages.pop(pid, None)
         _task_generations.pop(pid, None)
+        discard_cancel_generation(pid, generation)
 
 
 def is_task_registered(pid: str) -> bool:
@@ -218,7 +348,8 @@ def _emit_progress(pid: str, stage: str, local_pct: int, msg: str) -> None:
 
 def _check_cancel(pid: str) -> None:
     """Raise if the user requested cancellation for this pid."""
-    if is_cancelled(pid):
+    generation = _current_task_generation()
+    if is_cancelled(pid, generation=generation):
         raise TaskCancelled(f"cancelled by user pid={pid}")
 
 
@@ -651,7 +782,11 @@ def _best_effort_cancel_workflow(pid: str, stage: str) -> None:
 
 
 def _best_effort_mark_exception(pid: str, stage: str, exc: BaseException) -> None:
-    if is_cancelled(pid) or _is_task_cancelled(exc):
+    generation = _current_task_generation()
+    if (
+        is_cancelled(pid, generation=generation)
+        or _is_task_cancelled(exc)
+    ):
         _best_effort_cancel_workflow(pid, stage)
     else:
         _best_effort_fail_stage(pid, stage, exc)
@@ -722,6 +857,7 @@ def _mark_project_cancelled(
     stage: str,
     *,
     expected_task_generation: Optional[str] = None,
+    commit_workflow_state: bool = False,
 ) -> Optional[dict]:
     with translation_delivery_lock(pid) as acquired:
         if not acquired:
@@ -739,7 +875,14 @@ def _mark_project_cancelled(
                 project,
                 stage,
             ):
-                reset_cancel(pid)
+                reset_cancel(
+                    pid,
+                    generation=(
+                        expected_task_generation
+                        if expected_task_generation is not None
+                        else _current_task_generation()
+                    ),
+                )
                 return None
             fields = _cancelled_project_fields(pid, stage)
             mutate_project(
@@ -747,6 +890,15 @@ def _mark_project_cancelled(
                 lambda p: p.update(fields),
                 normalize=_apply_safe_defaults,
             )
+            if commit_workflow_state:
+                _best_effort_cancel_workflow(pid, stage)
+                message = fields.get("progress_msg")
+                _emit_progress(
+                    pid,
+                    stage,
+                    0,
+                    message if isinstance(message, str) else "已取消",
+                )
             return fields
 
 
@@ -1015,7 +1167,13 @@ def _run_asr_pipeline(pid: str, audio_track: int, language: str, owns_registrati
         log.info("ASR pipeline cancelled for %s", pid)
         _best_effort_mark_exception(pid, "asr", e)
         try:
-            _mark_project_cancelled(pid, "asr")
+            _mark_project_cancelled(
+                pid,
+                "asr",
+                expected_task_generation=(
+                    _current_task_generation() or None
+                ),
+            )
         except Exception:
             pass
         _emit_progress(pid, "asr", 0, "已取消")
@@ -5379,7 +5537,13 @@ def _run_translate_pipeline(
         log.info("Translation pipeline cancelled for %s", pid)
         _best_effort_mark_exception(pid, "translate", e)
         try:
-            _mark_project_cancelled(pid, "translate")
+            _mark_project_cancelled(
+                pid,
+                "translate",
+                expected_task_generation=(
+                    _current_task_generation() or None
+                ),
+            )
         except Exception:
             pass
         _emit_progress(pid, "translate", 0, "已取消")
@@ -5562,6 +5726,7 @@ class _BurnDeliveryResult:
     status: str
     output_video: str = ""
     staged_output: str = ""
+    transaction_id: str = ""
     reason: str = ""
 
 
@@ -5569,9 +5734,13 @@ def _snapshot_burn_tracks(
     pdir: Path,
     tracks: list[SubtitleTrack],
     track_bytes: Optional[list[bytes]] = None,
+    *,
+    snapshot_paths: Optional[list[Path]] = None,
 ) -> tuple[list[SubtitleTrack], list[Path]]:
     if track_bytes is not None and len(track_bytes) != len(tracks):
         raise RuntimeError("burn subtitle snapshot payload is incomplete")
+    if snapshot_paths is not None and len(snapshot_paths) != len(tracks):
+        raise RuntimeError("burn subtitle snapshot paths are incomplete")
     snapshots = []
     snapshot_tracks = []
     try:
@@ -5586,20 +5755,40 @@ def _snapshot_burn_tracks(
             suffix = source.suffix.lower()
             if suffix not in {".srt", ".ass", ".ssa", ".vtt"}:
                 suffix = ".srt"
-            with tempfile.NamedTemporaryFile(
-                "wb",
-                dir=pdir,
-                prefix=f".burn-subtitle.{index}.",
-                suffix=suffix,
-                delete=False,
-            ) as handle:
-                snapshot = Path(handle.name)
-                snapshots.append(snapshot)
-                handle.write(
-                    source.read_bytes()
-                    if track_bytes is None
-                    else track_bytes[index]
+            if snapshot_paths is None:
+                with tempfile.NamedTemporaryFile(
+                    "wb",
+                    dir=pdir,
+                    prefix=f".burn-subtitle.{index}.",
+                    suffix=suffix,
+                    delete=False,
+                ) as handle:
+                    snapshot = Path(handle.name)
+                    snapshots.append(snapshot)
+                    handle.write(
+                        source.read_bytes()
+                        if track_bytes is None
+                        else track_bytes[index]
+                    )
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            else:
+                snapshot = Path(snapshot_paths[index])
+                descriptor = os.open(
+                    snapshot,
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                    0o600,
                 )
+                os.fchmod(descriptor, 0o600)
+                snapshots.append(snapshot)
+                with os.fdopen(descriptor, "wb") as handle:
+                    handle.write(
+                        source.read_bytes()
+                        if track_bytes is None
+                        else track_bytes[index]
+                    )
+                    handle.flush()
+                    os.fsync(handle.fileno())
             os.chmod(snapshot, 0o400)
             snapshot_tracks.append(
                 replace(track, path=str(snapshot))
@@ -5614,20 +5803,31 @@ def _snapshot_burn_tracks(
         raise
 
 
-def _new_burn_output_stage(pdir: Path, final_path: Path) -> Path:
-    with tempfile.NamedTemporaryFile(
-        dir=pdir,
-        prefix=f".{final_path.name}.burn.",
-        suffix=".tmp.mp4",
-        delete=False,
-    ) as handle:
-        return Path(handle.name)
+def _new_burn_output_stage(
+    pdir: Path,
+    final_path: Path,
+    transaction_id: str,
+) -> Path:
+    stage = pdir / (
+        f".{final_path.name}.burn.{transaction_id}.tmp.mp4"
+    )
+    descriptor = os.open(
+        stage,
+        os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+        0o600,
+    )
+    os.fchmod(descriptor, 0o600)
+    os.close(descriptor)
+    sync_burn_transaction_directory(pdir)
+    return stage
 
 
 def _discard_burn_output_stage(result: _BurnDeliveryResult) -> None:
     if not result.staged_output:
         return
     stage = Path(result.staged_output)
+    if _path_lexists(stage.parent / BURN_TRANSACTION_MANIFEST):
+        return
     try:
         _unlink_delivery_path(stage)
     except Exception as exc:
@@ -5638,14 +5838,16 @@ def _discard_burn_output_stage(result: _BurnDeliveryResult) -> None:
         )
 
 
-def _new_burn_output_backup(final_path: Path) -> Path:
-    for _ in range(10):
-        backup_path = final_path.parent / (
-            f".{final_path.name}.rollback.{uuid.uuid4().hex}.mp4"
-        )
-        if not _path_lexists(backup_path):
-            return backup_path
-    raise RuntimeError("burn output recovery path allocation failed")
+def _new_burn_output_backup(
+    final_path: Path,
+    transaction_id: str,
+) -> Path:
+    backup_path = final_path.parent / (
+        f".{final_path.name}.rollback.{transaction_id}.mp4"
+    )
+    if _path_lexists(backup_path):
+        raise RuntimeError("burn output recovery path already exists")
+    return backup_path
 
 
 def _commit_successful_burn(
@@ -5662,10 +5864,30 @@ def _commit_successful_burn(
     """
     stage = Path(result.staged_output)
     final_path = Path(result.output_video)
-    with translation_delivery_lock(pid) as acquired:
+    with (
+        translation_delivery_lock(pid) as acquired,
+        get_project_lock(pid),
+    ):
         if not acquired:
             raise RuntimeError("translation delivery lock acquisition failed")
-        _check_cancel(pid)
+        try:
+            _check_cancel(pid)
+        except TaskCancelled:
+            if abort_unpromoted_burn_transaction(
+                final_path.parent,
+                result.transaction_id,
+            ):
+                raise
+            recovery = recover_burn_output_transaction(
+                final_path.parent,
+                _load_project(pid),
+            )
+            if recovery != BURN_RECOVERY_REVERTED:
+                raise RuntimeError(
+                    "cancelled burn transaction could not be recovered "
+                    f"safely: {recovery}"
+                )
+            raise
         safe_final = _safe_generated_project_output_path(
             pid,
             final_path.name,
@@ -5677,28 +5899,84 @@ def _commit_successful_burn(
             or not stage.is_file()
         ):
             raise RuntimeError("burn output commit path is invalid")
+        validated = validated_burn_transaction(final_path.parent)
+        if validated is None:
+            raise RuntimeError("burn output transaction is invalid")
+        manifest, manifest_stage, manifest_final, backup_path, _ = (
+            validated
+        )
+        if (
+            manifest["transaction_id"] != result.transaction_id
+            or manifest["state"] != "staged"
+            or manifest_stage != stage
+            or manifest_final != final_path
+            or not validate_burn_recovery_copy(
+                stage,
+                expected_size=manifest["staged_output_size"],
+                expected_hash=manifest["staged_output_hash"],
+            )
+        ):
+            raise RuntimeError("burn output transaction identity mismatch")
         prior_project = _load_project(pid)
-        had_previous_output = final_path.is_file()
-        backup_path = (
-            _new_burn_output_backup(final_path)
-            if had_previous_output
-            else None
-        )
-        manifest = new_burn_transaction_manifest(
-            pid=pid,
-            project=prior_project,
-            stage_path=stage,
-            final_path=final_path,
-            backup_path=backup_path,
-            had_previous_output=had_previous_output,
-        )
-        persist_burn_transaction_manifest(final_path.parent, manifest)
+        if (
+            burn_project_generation_hash(prior_project)
+            != manifest["project_generation_hash"]
+        ):
+            if not abort_unpromoted_burn_transaction(
+                final_path.parent,
+                manifest["transaction_id"],
+            ):
+                raise RuntimeError(
+                    "burn project generation changed during encoding "
+                    "and transaction rollback was blocked"
+                )
+            raise RuntimeError(
+                "burn project generation changed during encoding"
+            )
         project_commit_attempted = False
+        project_commit_succeeded = False
         try:
             if backup_path is not None:
-                create_burn_recovery_copy(final_path, backup_path)
-            os.replace(stage, final_path)
+                create_burn_recovery_copy(
+                    final_path,
+                    backup_path,
+                    expected_size=manifest["previous_output_size"],
+                    expected_hash=manifest["previous_output_hash"],
+                )
+                if not validate_burn_recovery_copy(
+                    backup_path,
+                    expected_size=manifest["previous_output_size"],
+                    expected_hash=manifest["previous_output_hash"],
+                ):
+                    raise RuntimeError(
+                        "burn recovery copy identity mismatch"
+                    )
+                mark_burn_transaction_state(
+                    final_path.parent,
+                    manifest["transaction_id"],
+                    "backed_up",
+                )
+            try:
+                os.replace(stage, final_path)
+            except OSError:
+                if not (
+                    not _path_lexists(stage)
+                    and validate_burn_recovery_copy(
+                        final_path,
+                        expected_size=manifest["staged_output_size"],
+                        expected_hash=manifest["staged_output_hash"],
+                    )
+                ):
+                    raise
+                # The rename took effect before the syscall reported failure.
+                # Continue into the normal rollback path below.
+                raise
             sync_burn_transaction_directory(final_path.parent)
+            mark_burn_transaction_state(
+                final_path.parent,
+                manifest["transaction_id"],
+                "promoted",
+            )
             project_commit_attempted = True
             _mark_burn_completed(
                 pid,
@@ -5706,12 +5984,21 @@ def _commit_successful_burn(
                 message,
                 transaction_id=manifest["transaction_id"],
             )
+            project_commit_succeeded = True
         except Exception as exc:
+            if project_commit_succeeded:
+                log.warning(
+                    "burn project committed; deferred transaction "
+                    "finalization pid=%s: %s",
+                    pid,
+                    exc,
+                )
+                return str(final_path)
             rollback_errors = []
-            if not recover_burn_output_transaction(
+            if recover_burn_output_transaction(
                 final_path.parent,
                 prior_project,
-            ):
+            ) != BURN_RECOVERY_REVERTED:
                 rollback_errors.append(
                     RuntimeError("burn output manifest recovery failed")
                 )
@@ -5735,19 +6022,58 @@ def _commit_successful_burn(
             raise
 
         try:
-            if backup_path is not None:
-                _unlink_delivery_path(backup_path)
-                sync_burn_transaction_directory(final_path.parent)
-            remove_burn_transaction_manifest(final_path.parent)
+            mark_burn_transaction_state(
+                final_path.parent,
+                manifest["transaction_id"],
+                "project_committed",
+            )
+            finish_stage(
+                pid,
+                "burn",
+                output_artifact=str(final_path),
+                resume_eligible=True,
+            )
+            if not finalize_committed_burn_transaction(
+                final_path.parent,
+                _load_project(pid),
+            ):
+                raise RuntimeError(
+                    "committed burn transaction cleanup was deferred"
+                )
         except Exception as cleanup_exc:
             log.warning(
-                "committed burn transaction cleanup deferred pid=%s "
+                "committed burn workflow/cleanup deferred pid=%s "
                 "manifest=%s: %s",
                 pid,
                 BURN_TRANSACTION_MANIFEST,
                 cleanup_exc,
             )
         return str(final_path)
+
+
+def _recover_pending_burn_locked(pid: str, pdir: Path) -> str:
+    project = _load_project(pid)
+    recovery = recover_burn_output_transaction(pdir, project)
+    if recovery == BURN_RECOVERY_BLOCKED:
+        raise RuntimeError(
+            "pending burn transaction cannot be recovered safely"
+        )
+    if recovery == BURN_RECOVERY_COMMITTED:
+        finish_stage(
+            pid,
+            "burn",
+            output_artifact=project.get("output_video", ""),
+            resume_eligible=True,
+        )
+        if not finalize_committed_burn_transaction(pdir, project):
+            raise RuntimeError(
+                "pending committed burn transaction cleanup failed"
+            )
+    elif recovery == BURN_RECOVERY_REVERTED:
+        reason = "上次字幕烧录中断，已安全回滚"
+        _mark_burn_failed(pid, reason)
+        _best_effort_fail_stage(pid, "burn", reason)
+    return recovery
 
 
 def _burn_validated_translation_delivery(
@@ -5760,12 +6086,16 @@ def _burn_validated_translation_delivery(
     snapshots: list[Path] = []
     staged_output: Optional[Path] = None
     keep_staged_output = False
+    transaction_closed = False
+    transaction_id = ""
+    transaction_project: Optional[dict] = None
     with translation_delivery_lock(pid) as acquired:
         if not acquired:
             return _BurnDeliveryResult(
                 "unavailable",
                 reason="翻译交付正在生成，字幕文件暂不可用",
             )
+        _recover_pending_burn_locked(pid, pdir)
         project = _load_project(pid)
         validation = validate_translation_delivery(project, pdir)
         if not validation.valid:
@@ -5837,19 +6167,63 @@ def _burn_validated_translation_delivery(
                 "invalid_output",
                 reason="字幕烧录失败: 输出路径无效",
             )
-        tracks, snapshots = _snapshot_burn_tracks(
-            pdir,
-            tracks,
-            certified_track_bytes,
+        transaction_id = uuid.uuid4().hex
+        transaction_project = dict(project)
+        snapshot_paths = []
+        for index, track in enumerate(tracks):
+            suffix = Path(track.path).suffix.lower().lstrip(".")
+            if suffix not in {"srt", "ass", "ssa", "vtt"}:
+                suffix = "srt"
+            snapshot_paths.append(
+                pdir / (
+                    f".burn-subtitle.{transaction_id}.{index}.{suffix}"
+                )
+            )
+        staged_output = pdir / (
+            f".{output_path.name}.burn.{transaction_id}.tmp.mp4"
         )
+        had_previous_output = output_path.is_file()
+        backup_path = (
+            _new_burn_output_backup(output_path, transaction_id)
+            if had_previous_output
+            else None
+        )
+        manifest = new_burn_transaction_manifest(
+            pid=pid,
+            project=project,
+            stage_path=staged_output,
+            final_path=output_path,
+            backup_path=backup_path,
+            had_previous_output=had_previous_output,
+            transaction_id=transaction_id,
+            snapshot_paths=snapshot_paths,
+            state="prepared",
+        )
+        persist_burn_transaction_manifest(pdir, manifest)
         try:
-            staged_output = _new_burn_output_stage(pdir, output_path)
+            tracks, snapshots = _snapshot_burn_tracks(
+                pdir,
+                tracks,
+                certified_track_bytes,
+                snapshot_paths=snapshot_paths,
+            )
+            staged_output = _new_burn_output_stage(
+                pdir,
+                output_path,
+                transaction_id,
+            )
+            mark_burn_transaction_burning(pdir, transaction_id)
         except Exception:
-            for snapshot in snapshots:
-                try:
-                    _unlink_delivery_path(snapshot)
-                except Exception:
-                    pass
+            recovery = recover_burn_output_transaction(
+                pdir,
+                transaction_project,
+            )
+            transaction_closed = recovery == BURN_RECOVERY_REVERTED
+            if not transaction_closed:
+                raise RuntimeError(
+                    "burn preparation failed and transaction recovery "
+                    f"was {recovery}"
+                )
             raise
 
     try:
@@ -5861,32 +6235,77 @@ def _burn_validated_translation_delivery(
             callback=callback,
         )
         if success:
+            with translation_delivery_lock(pid) as acquired:
+                if not acquired:
+                    raise RuntimeError(
+                        "burn staged-output lock acquisition failed"
+                    )
+                mark_burn_transaction_staged(
+                    pdir,
+                    transaction_id,
+                )
             keep_staged_output = True
+        else:
+            with translation_delivery_lock(pid) as acquired:
+                if not acquired:
+                    raise RuntimeError(
+                        "burn rollback lock acquisition failed"
+                    )
+                recovery = recover_burn_output_transaction(
+                    pdir,
+                    transaction_project or _load_project(pid),
+                )
+                transaction_closed = recovery == BURN_RECOVERY_REVERTED
+                if not transaction_closed:
+                    raise RuntimeError(
+                        "failed burn transaction could not be recovered "
+                        f"safely: {recovery}"
+                    )
         return _BurnDeliveryResult(
             "success" if success else "failed",
             output_video=str(output_path),
             staged_output=str(staged_output),
+            transaction_id=transaction_id,
             reason="" if success else "字幕烧录失败，但翻译已完成",
         )
+    except Exception as burn_error:
+        if not keep_staged_output and not transaction_closed:
+            with translation_delivery_lock(pid) as acquired:
+                if not acquired:
+                    raise RuntimeError(
+                        "burn exception rollback lock acquisition failed"
+                    ) from burn_error
+                recovery = recover_burn_output_transaction(
+                    pdir,
+                    transaction_project or _load_project(pid),
+                )
+            transaction_closed = recovery == BURN_RECOVERY_REVERTED
+            if not transaction_closed:
+                raise RuntimeError(
+                    "burn failed and pending burn transaction could not "
+                    f"be recovered safely: {recovery}"
+                ) from burn_error
+        raise
     finally:
-        for snapshot in snapshots:
-            try:
-                _unlink_delivery_path(snapshot)
-            except Exception as exc:
-                log.warning(
-                    "failed to clean burn subtitle snapshot %s: %s",
-                    snapshot.name,
-                    exc,
-                )
-        if staged_output is not None and not keep_staged_output:
-            try:
-                _unlink_delivery_path(staged_output)
-            except Exception as exc:
-                log.warning(
-                    "failed to clean staged burn output %s: %s",
-                    staged_output.name,
-                    exc,
-                )
+        if not _path_lexists(pdir / BURN_TRANSACTION_MANIFEST):
+            for snapshot in snapshots:
+                try:
+                    _unlink_delivery_path(snapshot)
+                except Exception as exc:
+                    log.warning(
+                        "failed to clean burn subtitle snapshot %s: %s",
+                        snapshot.name,
+                        exc,
+                    )
+            if staged_output is not None and not keep_staged_output:
+                try:
+                    _unlink_delivery_path(staged_output)
+                except Exception as exc:
+                    log.warning(
+                        "failed to clean staged burn output %s: %s",
+                        staged_output.name,
+                        exc,
+                    )
 
 
 def _run_burn_pipeline(pid: str):
@@ -5939,12 +6358,6 @@ def _run_burn_pipeline(pid: str):
                     )
                 finally:
                     _discard_burn_output_stage(burn_result)
-                _best_effort_finish_stage(
-                    pid,
-                    "burn",
-                    output_artifact=output_video,
-                    resume_eligible=True,
-                )
                 _scheduler_complete_progress(pid, "全部完成! 字幕已烧录到视频")
                 from app.engines.audio import cleanup_intermediate
                 cleanup_intermediate(pdir)
@@ -5958,7 +6371,13 @@ def _run_burn_pipeline(pid: str):
         log.info("Burn pipeline cancelled for %s", pid)
         _best_effort_mark_exception(pid, "burn", e)
         try:
-            fields = _mark_project_cancelled(pid, "burn")
+            fields = _mark_project_cancelled(
+                pid,
+                "burn",
+                expected_task_generation=(
+                    _current_task_generation() or None
+                ),
+            )
             message = fields.get("progress_msg") if isinstance(fields.get("progress_msg"), str) else "已取消"
         except Exception:
             message = "已取消"
@@ -6000,7 +6419,13 @@ def _run_full_pipeline(pid: str, audio_track: int, language: str, target_languag
         stage = _stage_for_cancelled_exception(pid, "asr")
         _best_effort_mark_exception(pid, stage, e)
         try:
-            fields = _mark_project_cancelled(pid, stage)
+            fields = _mark_project_cancelled(
+                pid,
+                stage,
+                expected_task_generation=(
+                    _current_task_generation() or None
+                ),
+            )
             message = fields.get("progress_msg") if isinstance(fields.get("progress_msg"), str) else "已取消"
         except Exception:
             message = "已取消"
@@ -6040,7 +6465,13 @@ def _run_asr_translate_pipeline(pid: str, audio_track: int, language: str, targe
         stage = _stage_for_cancelled_exception(pid, "asr")
         _best_effort_mark_exception(pid, stage, e)
         try:
-            fields = _mark_project_cancelled(pid, stage)
+            fields = _mark_project_cancelled(
+                pid,
+                stage,
+                expected_task_generation=(
+                    _current_task_generation() or None
+                ),
+            )
             message = fields.get("progress_msg") if isinstance(fields.get("progress_msg"), str) else "已取消"
         except Exception:
             message = "已取消"
@@ -6078,13 +6509,18 @@ def start_asr(pid: str = PathParam(pattern=PID_PATTERN), req: ASRRequest = ASRRe
             launch_stage="asr")
     except TaskAlreadyRunning:
         raise HTTPException(409, "Task already running for this project")
+    launch_snapshot = None
     try:
+        launch_snapshot = _snapshot_task_launch_state(pid)
         _persist_workflow_options(pid, audio_track=audio_track, language=language)
         _reset_workflow_for_action(pid, "asr")
+        _start_registered_task(pid, t)
     except Exception:
-        unregister_task(pid, task=t)
+        if launch_snapshot is None:
+            _unregister_failed_task_launch(pid, t)
+        else:
+            _rollback_failed_task_launch(pid, t, launch_snapshot)
         raise
-    _start_registered_task(pid, t)
     return {"status": "started", "message": "ASR pipeline started"}
 
 
@@ -6113,7 +6549,9 @@ def start_translate(pid: str = PathParam(pattern=PID_PATTERN), req: TranslateReq
             launch_stage="translate")
     except TaskAlreadyRunning:
         raise HTTPException(409, "Task already running for this project")
+    launch_snapshot = None
     try:
+        launch_snapshot = _snapshot_task_launch_state(pid)
         _persist_workflow_options(pid, target_language=target_lang)
         _reset_workflow_for_action(pid, "translate")
         _begin_translation_quality_run(
@@ -6123,10 +6561,13 @@ def start_translate(pid: str = PathParam(pattern=PID_PATTERN), req: TranslateReq
             ),
         )
         _mark_project_stage_queued(pid, "translate", "等待翻译资源...")
+        _start_registered_task(pid, t)
     except Exception:
-        unregister_task(pid, task=t)
+        if launch_snapshot is None:
+            _unregister_failed_task_launch(pid, t)
+        else:
+            _rollback_failed_task_launch(pid, t, launch_snapshot)
         raise
-    _start_registered_task(pid, t)
     return {"status": "started", "message": "Translation started"}
 
 
@@ -6178,7 +6619,9 @@ def start_full(pid: str = PathParam(pattern=PID_PATTERN), req: FullPipelineReque
             launch_stage="asr")
     except TaskAlreadyRunning:
         raise HTTPException(409, "Task already running for this project")
+    launch_snapshot = None
     try:
+        launch_snapshot = _snapshot_task_launch_state(pid)
         _persist_workflow_options(
             pid,
             audio_track=audio_track,
@@ -6188,10 +6631,13 @@ def start_full(pid: str = PathParam(pattern=PID_PATTERN), req: FullPipelineReque
         )
         _reset_workflow_for_action(pid, "full")
         _begin_translation_quality_run(pid, expected_policy="strict")
+        _start_registered_task(pid, t)
     except Exception:
-        unregister_task(pid, task=t)
+        if launch_snapshot is None:
+            _unregister_failed_task_launch(pid, t)
+        else:
+            _rollback_failed_task_launch(pid, t, launch_snapshot)
         raise
-    _start_registered_task(pid, t)
     return {"status": "started", "message": "Full pipeline started"}
 
 
@@ -6221,7 +6667,9 @@ def start_transcribe_translate(pid: str = PathParam(pattern=PID_PATTERN), req: F
             launch_stage="asr")
     except TaskAlreadyRunning:
         raise HTTPException(409, "Task already running for this project")
+    launch_snapshot = None
     try:
+        launch_snapshot = _snapshot_task_launch_state(pid)
         _persist_workflow_options(
             pid,
             audio_track=audio_track,
@@ -6236,10 +6684,13 @@ def start_transcribe_translate(pid: str = PathParam(pattern=PID_PATTERN), req: F
                 "strict" if _strict_quality_policy(cfg) else "fast"
             ),
         )
+        _start_registered_task(pid, t)
     except Exception:
-        unregister_task(pid, task=t)
+        if launch_snapshot is None:
+            _unregister_failed_task_launch(pid, t)
+        else:
+            _rollback_failed_task_launch(pid, t, launch_snapshot)
         raise
-    _start_registered_task(pid, t)
     return {
         "status": "started",
         "message": "Transcription and translation started",
@@ -6307,25 +6758,36 @@ def cancel_task(pid: str = PathParam(pattern=PID_PATTERN)):
         )
         # Signal worker threads via scheduler cancel events — they'll observe at
         # the next _check_cancel checkpoint and raise.
-        request_cancel(pid)
+        if task_registered:
+            if not _request_registered_task_cancel(
+                pid,
+                expected_generation=task_generation,
+            ):
+                return {"status": "no_task"}
+        else:
+            request_cancel(pid)
         fields = {"status": "cancelled", "progress_msg": "已取消"}
         try:
             committed_fields = _mark_project_cancelled(
                 pid,
                 stage,
                 expected_task_generation=task_generation,
+                commit_workflow_state=True,
             )
         except StaleTaskGeneration:
             return {"status": "no_task"}
         except Exception:
             committed_fields = fields
         if committed_fields is None:
-            reset_cancel(pid)
+            reset_cancel(
+                pid,
+                generation=(
+                    task_generation if task_registered else ""
+                ),
+            )
             return {"status": "no_task"}
         fields = committed_fields
-        _best_effort_cancel_workflow(pid, stage)
         message = fields.get("progress_msg") if isinstance(fields.get("progress_msg"), str) else "已取消"
-        _emit_progress(pid, stage, 0, message)
         return {
             "status": "cancelled",
             "project_status": fields.get("status", "cancelled"),
@@ -6337,11 +6799,19 @@ def cancel_task(pid: str = PathParam(pattern=PID_PATTERN)):
 @router.post("/{pid}/burn")
 def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
     """Burn subtitles into video (standalone)."""
+    if is_task_registered(pid):
+        raise HTTPException(409, "Task already running for this project")
+    with translation_delivery_lock(pid) as acquired:
+        if not acquired:
+            raise HTTPException(409, "Burn transaction is busy")
+        try:
+            _recover_pending_burn_locked(pid, PROJECTS_DIR / pid)
+        except RuntimeError as exc:
+            raise HTTPException(409, _safe_error_message(exc)) from exc
     project = _load_project(pid)
     _reject_busy_project(project)
     if not _project_supports_video_burn(project):
         raise HTTPException(400, "Project source does not support video burn")
-
     def _burn_task():
         try:
             with slot("burn", pid):
@@ -6387,12 +6857,6 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                         )
                     finally:
                         _discard_burn_output_stage(burn_result)
-                    _best_effort_finish_stage(
-                        pid,
-                        "burn",
-                        output_artifact=output_video,
-                        resume_eligible=True,
-                    )
                     _emit_progress(pid, "burn", 100, "字幕烧录完成!")
                     from app.engines.audio import cleanup_intermediate
                     cleanup_intermediate(pdir)
@@ -6408,7 +6872,13 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
             log.info("Standalone burn cancelled for %s", pid)
             _best_effort_mark_exception(pid, "burn", e)
             try:
-                fields = _mark_project_cancelled(pid, "burn")
+                fields = _mark_project_cancelled(
+                    pid,
+                    "burn",
+                    expected_task_generation=(
+                        _current_task_generation() or None
+                    ),
+                )
                 message = fields.get("progress_msg") if isinstance(fields.get("progress_msg"), str) else "已取消"
             except Exception:
                 message = "已取消"
@@ -6437,12 +6907,17 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
         )
     except TaskAlreadyRunning:
         raise HTTPException(409, "Task already running for this project")
+    launch_snapshot = None
     try:
+        launch_snapshot = _snapshot_task_launch_state(pid)
         _reset_workflow_for_action(pid, "burn")
+        _start_registered_task(pid, t)
     except Exception:
-        unregister_task(pid, task=t)
+        if launch_snapshot is None:
+            _unregister_failed_task_launch(pid, t)
+        else:
+            _rollback_failed_task_launch(pid, t, launch_snapshot)
         raise
-    _start_registered_task(pid, t)
     return {"status": "started", "message": "Burning subtitles into video"}
 
 
