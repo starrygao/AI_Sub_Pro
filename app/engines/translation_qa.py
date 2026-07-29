@@ -447,9 +447,24 @@ _SOUND_LABEL_EN_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_MUSIC_DESCRIPTION_STYLE = (
+    r"(?:instrumental|upbeat|latin|tense|gentle|soft|somber|dramatic|"
+    r"ominous|distant|background|theme)"
+)
+_MUSIC_DESCRIPTION_STATE = (
+    r"(?:continues?|plays?|playing|swells?|fades?|fading|rises?|builds?)"
+)
+_MUSIC_DESCRIPTION_QUALIFIER = (
+    r"(?:faintly|softly|quietly|loudly|distantly|"
+    r"in\s+(?:the\s+)?(?:background|distance))"
+)
+_MUSIC_DESCRIPTION_EN_PATTERN = (
+    rf"(?:(?:{_MUSIC_DESCRIPTION_STYLE})\s+)*music"
+    rf"(?:\s+{_MUSIC_DESCRIPTION_STATE})?"
+    rf"(?:\s+{_MUSIC_DESCRIPTION_QUALIFIER})?"
+)
 _NOTE_WRAPPED_MUSIC_DESCRIPTION_EN_RE = re.compile(
-    r"^(?:(?:instrumental|tense|gentle|background|theme)\s+)*"
-    r"music(?:\s+(?:continues?|playing))?$",
+    rf"^{_MUSIC_DESCRIPTION_EN_PATTERN}$",
     re.IGNORECASE,
 )
 _NOTE_WRAPPED_MUSIC_DESCRIPTION_CJK_RE = re.compile(
@@ -457,8 +472,7 @@ _NOTE_WRAPPED_MUSIC_DESCRIPTION_CJK_RE = re.compile(
 )
 _MULTILINE_BRACKETED_MUSIC_DESCRIPTION_EN_RE = re.compile(
     r"^\s*(?:[-–—]\s*)?\[\s*"
-    r"(?:(?:upbeat|latin)\s+)*music"
-    r"(?:\s+continues?)?(?:\s+faintly)?\s*\]\s*$",
+    rf"{_MUSIC_DESCRIPTION_EN_PATTERN}\s*\]\s*$",
     re.IGNORECASE,
 )
 _SAFE_UNBRACKETED_SOUND_LABELS = (

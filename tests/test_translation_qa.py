@@ -414,6 +414,9 @@ def test_sound_verb_morphology_does_not_swallow_real_dialogue(source):
         "[upbeat music\ncontinues faintly]",
         "[music\ncontinues faintly]",
         "[upbeat Latin music continues\nfaintly]",
+        "[gentle music\ncontinues faintly]",
+        "[tense background music\ncontinues faintly]",
+        "[distant ominous music\nplays softly]",
     ],
 )
 def test_multiline_bracketed_music_descriptions_remain_pure_sound(source):
@@ -443,6 +446,9 @@ def test_multiline_bracketed_music_descriptions_remain_pure_sound(source):
         "[upbeat Latin music\ncontinues faintly]\nMAYA: Can you hear it?",
         "[upbeat Latin music\nMAYA: Can you hear it?]",
         "[upbeat Latin music\nI dance with you]",
+        "[gentle music\ncontinues faintly because the radio is broken]",
+        "[tense background music\nI hate this song]",
+        "[distant ominous music\nwe should get out of here]",
     ],
 )
 def test_multiline_music_words_do_not_swallow_dialogue_or_lyrics(source):
