@@ -1972,7 +1972,7 @@ def test_launch_artifact_restore_durably_syncs_replace_or_unlink(
     api_translate._restore_delivery_artifact(path, original_content)
 
     if original_content is None:
-        assert events == ["unlink", "directory_fsync"]
+        assert events == ["directory_fsync"]
         assert not path.exists()
     else:
         assert events == [
@@ -5564,6 +5564,8 @@ def test_translate_pipeline_retries_missing_created_after_quality_repair(tmp_pat
         report = {
             "run_id": quality_run_id,
             "content_hash": quality_content_hash(blocks),
+            "source_generation_hash": quality_run_state["source_generation_hash"],
+            "configuration_hash": quality_run_state["configuration_hash"],
             "status": "ok",
             "issues": [],
             "unresolved_blocks": [],

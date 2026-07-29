@@ -11,6 +11,8 @@ from app.utils.subtitle_generation import (
 )
 from app.utils.translation_delivery import translation_delivery_is_invalid
 from app.utils.translation_quality_gate import validate_quality_report
+from app.utils.translation_configuration import translation_configuration_hash
+from app.config import Config
 
 
 _DELIVERY_ARTIFACTS = ("translated.srt", "bilingual.srt")
@@ -103,6 +105,10 @@ def validate_translation_delivery(
         expected_run_id=run_id,
         expected_content_hash=content_hash,
         expected_policy=policy,
+        expected_configuration_hash=project.get(
+            "translation_quality_configuration_hash",
+            "",
+        ),
     )
     if not decision.valid:
         return TranslationDeliveryValidation(
@@ -123,6 +129,57 @@ def validate_translation_delivery(
             "Translation quality certification status does not match its report",
             report,
         )
+    project_source_hash = project.get(
+        "translation_quality_source_generation_hash"
+    )
+    report_source_hash = report.get("source_generation_hash")
+    (
+        current_source_hash,
+        source_artifact_name,
+        source_artifact_bytes,
+    ) = subtitle_source_generation_snapshot(project_path)
+    if (
+        not isinstance(project_source_hash, str)
+        or not project_source_hash.strip()
+        or not isinstance(report_source_hash, str)
+        or not report_source_hash.strip()
+        or not current_source_hash
+        or report_source_hash != project_source_hash
+        or current_source_hash != report_source_hash
+    ):
+        return TranslationDeliveryValidation(
+            True,
+            False,
+            False,
+            "Translation source generation identity does not match certification",
+            report,
+        )
+
+    project_configuration_hash = project.get(
+        "translation_quality_configuration_hash"
+    )
+    report_configuration_hash = report.get("configuration_hash")
+    current_configuration_hash = translation_configuration_hash(
+        project,
+        config=Config.to_dict(),
+        project_path=project_path,
+    )
+    if (
+        not isinstance(project_configuration_hash, str)
+        or not project_configuration_hash.strip()
+        or not isinstance(report_configuration_hash, str)
+        or not report_configuration_hash.strip()
+        or report_configuration_hash != project_configuration_hash
+        or current_configuration_hash != report_configuration_hash
+    ):
+        return TranslationDeliveryValidation(
+            True,
+            False,
+            False,
+            "Translation configuration identity does not match certification",
+            report,
+        )
+
     if require_passed and not decision.passed:
         return TranslationDeliveryValidation(
             True,
@@ -133,31 +190,6 @@ def validate_translation_delivery(
         )
 
     if decision.passed:
-        project_source_hash = project.get(
-            "translation_quality_source_generation_hash"
-        )
-        report_source_hash = report.get("source_generation_hash")
-        (
-            current_source_hash,
-            source_artifact_name,
-            source_artifact_bytes,
-        ) = subtitle_source_generation_snapshot(project_path)
-        if (
-            not isinstance(project_source_hash, str)
-            or not project_source_hash.strip()
-            or not isinstance(report_source_hash, str)
-            or not report_source_hash.strip()
-            or not current_source_hash
-            or report_source_hash != project_source_hash
-            or current_source_hash != report_source_hash
-        ):
-            return TranslationDeliveryValidation(
-                True,
-                False,
-                False,
-                "Translation source generation identity does not match certification",
-                report,
-            )
 
         artifact_hashes = report.get("delivery_artifact_hashes")
         if not isinstance(artifact_hashes, dict):

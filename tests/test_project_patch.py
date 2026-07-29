@@ -66,6 +66,55 @@ def test_patch_prefer_embedded_subtitle_off(client):
     assert g.json()["prefer_embedded_subtitle"] is False
 
 
+def test_patch_translation_context_immediately_stales_certification(client):
+    """Catches UI retaining a passed certificate after manual terms changed."""
+    from app.api import projects
+
+    pid = _make_project(client)
+    project_path = projects.PROJECTS_DIR / pid / "project.json"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    project.update({
+        "translation_quality_policy": "strict",
+        "translation_quality_status": "passed",
+        "translation_quality_run_id": "run-old",
+        "translation_quality_content_hash": "sha256:old",
+        "translation_quality_source_generation_hash": "sha256:source",
+        "translation_quality_configuration_hash": "sha256:configuration",
+    })
+    project_path.write_text(json.dumps(project), encoding="utf-8")
+
+    response = client.patch(
+        f"/api/projects/{pid}",
+        json={"manual_terms": "tank=储罐"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["translation_quality_status"] == "stale"
+    assert body["translation_quality_content_hash"] == ""
+    assert body["translation_quality_source_generation_hash"] == ""
+    assert body["translation_quality_configuration_hash"] == ""
+
+
+def test_patch_translation_context_is_rejected_while_translation_active(client):
+    """Catches mutating translation semantics after a worker snapshot."""
+    from app.api import translate as api_translate
+
+    pid = _make_project(client)
+    with api_translate._tasks_lock:
+        api_translate.active_tasks[pid] = object()
+    try:
+        response = client.patch(
+            f"/api/projects/{pid}",
+            json={"target_language": "English"},
+        )
+    finally:
+        api_translate.unregister_task(pid)
+
+    assert response.status_code == 409
+    assert "translation" in response.json()["detail"].lower()
+
+
 def test_workflow_state_endpoint_returns_project_state(client):
     from app.engines.workflow_state import load_workflow_state, start_stage
 

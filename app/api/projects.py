@@ -130,6 +130,7 @@ _PROJECT_SAFE_DEFAULTS = {
     "metadata_source": "",
     "translated_srt": None,
     "bilingual_srt": None,
+    "translation_quality_configuration_hash": "",
 }
 
 
@@ -1500,6 +1501,20 @@ _CLEARABLE_FIELDS = {
     "metadata_source",
 }
 
+_TRANSLATION_CONTEXT_FIELDS = frozenset({
+    "target_language",
+    "manual_terms",
+    "content_type",
+    "academic_field",
+    "content_notes",
+    "metadata_source",
+    "name",
+    "show_title",
+    "tmdb_id",
+    "tmdb_type",
+    "original_language",
+})
+
 
 class PatchProjectReq(BaseModel):
     prefer_embedded_subtitle: Optional[bool] = None
@@ -1612,8 +1627,20 @@ def patch_project(req: PatchProjectReq, pid: str = PathParam(pattern=PID_PATTERN
     ):
         if isinstance(payload.get(field), str):
             payload[field] = payload[field].strip()
+    context_fields = (
+        set(payload)
+        | {
+            field
+            for field in (req.clear or [])
+            if isinstance(field, str)
+        }
+    ) & _TRANSLATION_CONTEXT_FIELDS
 
     def _apply(project):
+        before_context = {
+            field: project.get(field)
+            for field in context_fields
+        }
         _validate_project_patch(project, payload)
         for k, v in payload.items():
             if k in _PATCHABLE_FIELDS:
@@ -1625,6 +1652,23 @@ def patch_project(req: PatchProjectReq, pid: str = PathParam(pattern=PID_PATTERN
                 project[k] = ""
             elif k in _CLEARABLE_FIELDS:
                 project[k] = None
+        if context_fields and any(
+            project.get(field) != before_context[field]
+            for field in context_fields
+        ) and (
+            project.get("translation_quality_policy") in {"fast", "strict"}
+            or project.get("translation_quality_status")
+            or project.get("translation_quality_run_id")
+        ):
+            project.update({
+                "translation_quality_status": "stale",
+                "translation_quality_message": (
+                    "翻译配置已变更，需要重新运行翻译质量检查。"
+                ),
+                "translation_quality_content_hash": "",
+                "translation_quality_source_generation_hash": "",
+                "translation_quality_configuration_hash": "",
+            })
 
     with translation_delivery_lock(pid, blocking=False) as acquired:
         if not acquired:
@@ -1632,12 +1676,20 @@ def patch_project(req: PatchProjectReq, pid: str = PathParam(pattern=PID_PATTERN
                 409,
                 "Project state update is temporarily unavailable",
             )
-        from app.api.translate import is_task_launch_pending
+        from app.api.translate import (
+            is_task_launch_pending,
+            is_task_registered,
+        )
 
         if is_task_launch_pending(pid):
             raise HTTPException(
                 409,
                 "Project task launch is still being committed",
+            )
+        if context_fields and is_task_registered(pid):
+            raise HTTPException(
+                409,
+                "Translation context cannot change while a task is active",
             )
         try:
             return mutate_project(
@@ -1923,6 +1975,7 @@ def _stale_subtitle_edit_project(project: dict) -> dict:
         "translation_quality_message": "字幕已编辑，需要重新运行翻译质量检查。",
         "translation_quality_content_hash": "",
         "translation_quality_source_generation_hash": "",
+        "translation_quality_configuration_hash": "",
     })
     return updated
 
@@ -2094,6 +2147,7 @@ def _save_subtitles_locked(
         "translation_quality_message",
         "translation_quality_run_id",
         "translation_quality_content_hash",
+        "translation_quality_configuration_hash",
     ):
         response[field] = updated_project.get(field)
     return response

@@ -164,11 +164,12 @@ def _seed_hash_bound_strict_certification(
     pid,
     *,
     warning=False,
+    verdict="passed",
 ):
     _seed_strict_certification(
         tmp_project_dir,
         pid,
-        "passed",
+        verdict,
         warning=warning,
     )
     pdir = tmp_project_dir / pid
@@ -183,10 +184,22 @@ def _seed_hash_bound_strict_certification(
     (pdir / "bilingual.srt").write_bytes(bilingual_content)
 
     source_hash = _sha256_identity(raw_content)
+    project_path = pdir / "project.json"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    from app.config import Config
+    from app.utils.translation_configuration import (
+        translation_configuration_hash,
+    )
+    configuration_hash = translation_configuration_hash(
+        project,
+        config=Config.to_dict(),
+        project_path=pdir,
+    )
     report_path = pdir / "translation_qa_report.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
     report.update({
         "source_generation_hash": source_hash,
+        "configuration_hash": configuration_hash,
         "delivery_artifact_hashes": {
             "translated.srt": _sha256_identity(translated_content),
             "bilingual.srt": _sha256_identity(bilingual_content),
@@ -194,9 +207,8 @@ def _seed_hash_bound_strict_certification(
     })
     report_path.write_text(json.dumps(report), encoding="utf-8")
 
-    project_path = pdir / "project.json"
-    project = json.loads(project_path.read_text(encoding="utf-8"))
     project["translation_quality_source_generation_hash"] = source_hash
+    project["translation_quality_configuration_hash"] = configuration_hash
     project_path.write_text(json.dumps(project), encoding="utf-8")
     return pid
 
@@ -957,6 +969,62 @@ def test_tampered_certified_delivery_is_invalid_for_report_and_subtitle_reader(
     assert "identity" in invalid_subtitles.json()["detail"].lower()
 
 
+def test_certified_delivery_is_stale_after_translation_configuration_changes(
+    client,
+    tmp_project_dir,
+):
+    """Catches exporting output certified under different manual terms."""
+    pid = _seed_hash_bound_strict_certification(
+        tmp_project_dir,
+        "strict-reader-configuration-identity",
+    )
+    pdir = tmp_project_dir / pid
+
+    assert client.post(
+        f"/api/projects/{pid}/export?format=translated"
+    ).status_code == 200
+
+    project_path = pdir / "project.json"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    project["manual_terms"] = "Hello=您好"
+    project_path.write_text(json.dumps(project), encoding="utf-8")
+
+    response = client.post(
+        f"/api/projects/{pid}/export?format=translated"
+    )
+    assert response.status_code == 409
+    assert "configuration" in response.json()["detail"].lower()
+
+
+@pytest.mark.parametrize("verdict", ["failed", "needs_review"])
+def test_nonpassing_quality_report_is_stale_after_source_generation_changes(
+    client,
+    tmp_project_dir,
+    verdict,
+):
+    """Catches UI presenting an old failure report for a new ASR/source file."""
+    pid = _seed_hash_bound_strict_certification(
+        tmp_project_dir,
+        f"strict-stale-{verdict}-report",
+        verdict=verdict,
+    )
+    pdir = tmp_project_dir / pid
+
+    current = client.get(f"/api/projects/{pid}/quality-report")
+    assert current.status_code == 200
+    assert current.json()["status"] == verdict
+
+    (pdir / "raw.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nChanged ASR source\n",
+        encoding="utf-8",
+    )
+
+    stale = client.get(f"/api/projects/{pid}/quality-report")
+    assert stale.status_code == 200
+    assert stale.json()["status"] == "invalid"
+    assert "source generation" in stale.json()["validation_message"].lower()
+
+
 def test_export_cannot_race_strict_subtitle_edit_before_certification_is_stale(
     client,
     tmp_project_dir,
@@ -1111,10 +1179,10 @@ def test_quality_report_keeps_valid_nonpassing_strict_findings_visible(
     tmp_project_dir,
     verdict,
 ):
-    pid = _seed_strict_certification(
+    pid = _seed_hash_bound_strict_certification(
         tmp_project_dir,
         f"strict-visible-{verdict}",
-        verdict,
+        verdict=verdict,
     )
 
     response = client.get(f"/api/projects/{pid}/quality-report")

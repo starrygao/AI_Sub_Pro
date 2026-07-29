@@ -61,6 +61,7 @@ from app.utils.subtitle_generation import (
     subtitle_source_generation_hash,
 )
 from app.utils.translation_certification import validate_translation_delivery
+from app.utils.translation_configuration import translation_configuration_hash
 from app.utils.burn_transaction import (
     BURN_RECOVERY_BLOCKED,
     BURN_RECOVERY_COMMITTED,
@@ -1430,6 +1431,7 @@ def _verify_published_translation_artifacts(
     report_path: Path,
     *,
     expected_source_generation_hash: str = "",
+    expected_configuration_hash: str = "",
 ) -> None:
     for path in (translated_path, bilingual_path, report_path):
         if path.is_symlink() or not path.is_file():
@@ -1450,6 +1452,12 @@ def _verify_published_translation_artifacts(
         raise RuntimeError(
             "translation delivery verification failed: source generation identity"
         )
+    if expected_configuration_hash and (
+        report.get("configuration_hash") != expected_configuration_hash
+    ):
+        raise RuntimeError(
+            "translation delivery verification failed: configuration identity"
+        )
     artifact_hashes = report.get("delivery_artifact_hashes")
     if expected_source_generation_hash and (
         not isinstance(artifact_hashes, dict)
@@ -1469,6 +1477,7 @@ def _publish_translation_artifacts_locked(
     *,
     write_bilingual,
     expected_source_generation_hash: str = "",
+    expected_configuration_hash: str = "",
 ):
     pdir = project_dir(pid)
     staged: list[Path] = []
@@ -1488,6 +1497,17 @@ def _publish_translation_artifacts_locked(
         ):
             raise RuntimeError(
                 "subtitle source generation changed before publication"
+            )
+        if expected_configuration_hash and (
+            translation_configuration_hash(
+                _load_project(pid),
+                config=Config.to_dict(),
+                project_path=pdir,
+            )
+            != expected_configuration_hash
+        ):
+            raise RuntimeError(
+                "translation configuration changed before publication"
             )
         snapshots = _snapshot_delivery_artifacts(finals)
         sentinel = mark_translation_delivery_invalid(pdir)
@@ -1545,6 +1565,9 @@ def _publish_translation_artifacts_locked(
                 expected_source_generation_hash=(
                     expected_source_generation_hash
                 ),
+                expected_configuration_hash=(
+                    expected_configuration_hash
+                ),
             )
         else:
             _verify_published_translation_artifacts(*finals)
@@ -1554,6 +1577,17 @@ def _publish_translation_artifacts_locked(
         ):
             raise RuntimeError(
                 "subtitle source generation changed during publication"
+            )
+        if expected_configuration_hash and (
+            translation_configuration_hash(
+                _load_project(pid),
+                config=Config.to_dict(),
+                project_path=pdir,
+            )
+            != expected_configuration_hash
+        ):
+            raise RuntimeError(
+                "translation configuration changed during publication"
             )
         _check_cancel(pid)
         durable_unlink(sentinel)
@@ -1602,6 +1636,7 @@ def _publish_translation_artifacts(
     *,
     write_bilingual,
     expected_source_generation_hash: str = "",
+    expected_configuration_hash: str = "",
 ):
     with translation_delivery_lock(pid) as acquired:
         if not acquired:
@@ -1613,6 +1648,7 @@ def _publish_translation_artifacts(
             expected_source_generation_hash=(
                 expected_source_generation_hash
             ),
+            expected_configuration_hash=expected_configuration_hash,
         )
 
 
@@ -4113,6 +4149,7 @@ def _begin_translation_quality_run(pid: str, *, expected_policy: str) -> str:
             "translation_quality_run_id": run_id,
             "translation_quality_content_hash": "",
             "translation_quality_source_generation_hash": "",
+            "translation_quality_configuration_hash": "",
         }),
         normalize=_apply_safe_defaults,
     )
@@ -4129,6 +4166,7 @@ def _translation_quality_gate_decision(
     expected_run_id: str = "",
     expected_content_hash: str = "",
     expected_policy: str = "",
+    expected_configuration_hash: str = "",
 ) -> TranslationQualityGateDecision:
     report_path = _safe_project_artifact_path(pid, "translation_qa_report.json")
     return load_quality_report_decision(
@@ -4136,6 +4174,7 @@ def _translation_quality_gate_decision(
         expected_run_id=expected_run_id,
         expected_content_hash=expected_content_hash,
         expected_policy=expected_policy,
+        expected_configuration_hash=expected_configuration_hash,
     )
 
 
@@ -4145,12 +4184,14 @@ def _translation_quality_gate_status(
     expected_run_id: str = "",
     expected_content_hash: str = "",
     expected_policy: str = "",
+    expected_configuration_hash: str = "",
 ) -> tuple[bool, str]:
     decision = _translation_quality_gate_decision(
         pid,
         expected_run_id=expected_run_id,
         expected_content_hash=expected_content_hash,
         expected_policy=expected_policy,
+        expected_configuration_hash=expected_configuration_hash,
     )
     return decision.passed, decision.message
 
@@ -4164,6 +4205,7 @@ def _mark_translation_quality_failed(
     quality_run_id: str,
     quality_content_hash: str,
     quality_source_generation_hash: str = "",
+    quality_configuration_hash: str = "",
 ) -> None:
     detail = message.strip() or "翻译质量未达标，已停止交付。"
     _best_effort_fail_stage(pid, "translate", detail)
@@ -4181,6 +4223,9 @@ def _mark_translation_quality_failed(
             "translation_quality_content_hash": quality_content_hash,
             "translation_quality_source_generation_hash": (
                 quality_source_generation_hash
+            ),
+            "translation_quality_configuration_hash": (
+                quality_configuration_hash
             ),
             "pipeline_stage": None,
             **_translation_artifact_fields(pid),
@@ -4601,10 +4646,15 @@ def _persist_translation_quality_report(
                 "source_generation_hash",
                 "",
             )
+            configuration_hash = quality_run_state.get(
+                "configuration_hash",
+                "",
+            )
             quality_run_state.clear()
             quality_run_state.update({
                 "run_id": quality_run_id,
                 "source_generation_hash": source_generation_hash,
+                "configuration_hash": configuration_hash,
                 "semantic_uncertain_observed_block_ids": [],
                 "semantic_issue_ledger": {
                     "outstanding": [],
@@ -5245,6 +5295,12 @@ def _persist_translation_quality_report(
             )
             if isinstance(source_generation_hash, str):
                 report.source_generation_hash = source_generation_hash
+            configuration_hash = quality_run_state.get(
+                "configuration_hash",
+                "",
+            )
+            if isinstance(configuration_hash, str):
+                report.configuration_hash = configuration_hash
 
         root = Path(pdir)
         save_quality_report(
@@ -5290,6 +5346,7 @@ def _run_translate_pipeline(
             )
             quality_run_state = {
                 "run_id": quality_run_id,
+                "configuration_hash": "",
                 "semantic_uncertain_observed_block_ids": [],
                 "semantic_issue_ledger": {
                     "outstanding": [],
@@ -5332,6 +5389,12 @@ def _run_translate_pipeline(
                 raise RuntimeError("No subtitle file found. Run ASR first.")
 
             _ensure_kb_review_ready(pid, project, as_http=False, config=cfg)
+            configuration_hash = translation_configuration_hash(
+                project,
+                config=cfg,
+                project_path=Path(pdir),
+            )
+            quality_run_state["configuration_hash"] = configuration_hash
 
             # Restore filter state only for unfiltered timelines. filtered.srt
             # has already removed filtered rows and re-numbered entries, so
@@ -5460,6 +5523,7 @@ def _run_translate_pipeline(
                 expected_run_id=quality_run_id,
                 expected_content_hash=quality_hash,
                 expected_policy="strict" if strict_policy else "fast",
+                expected_configuration_hash=configuration_hash,
             )
             quality_passed = quality_decision.passed
             quality_message = quality_decision.message
@@ -5500,6 +5564,7 @@ def _run_translate_pipeline(
                     quality_source_generation_hash=(
                         source_generation_hash
                     ),
+                    quality_configuration_hash=configuration_hash,
                 )
                 return
 
@@ -5525,6 +5590,7 @@ def _run_translate_pipeline(
                         expected_source_generation_hash=(
                             source_generation_hash
                         ),
+                        expected_configuration_hash=configuration_hash,
                     )
                 except TaskCancelled:
                     raise
@@ -5549,6 +5615,9 @@ def _run_translate_pipeline(
                         "translation_quality_content_hash": quality_hash,
                         "translation_quality_source_generation_hash": (
                             source_generation_hash
+                        ),
+                        "translation_quality_configuration_hash": (
+                            configuration_hash
                         ),
                         "pipeline_stage": None,
                         **_translation_artifact_fields(pid),

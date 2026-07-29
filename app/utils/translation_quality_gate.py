@@ -91,6 +91,7 @@ def validate_quality_report(
     expected_run_id: str = "",
     expected_content_hash: str = "",
     expected_policy: str = "",
+    expected_configuration_hash: str = "",
 ) -> TranslationQualityGateDecision:
     if not isinstance(report, dict):
         return _invalid("翻译质量检查报告无效，已停止交付。")
@@ -104,6 +105,14 @@ def validate_quality_report(
         return _invalid("翻译质量检查报告缺少内容哈希，已停止交付。")
     if expected_content_hash and content_hash != expected_content_hash:
         return _invalid("翻译质量检查报告与当前字幕内容不匹配，已停止交付。")
+    configuration_hash = report.get("configuration_hash")
+    if expected_configuration_hash and (
+        not isinstance(configuration_hash, str)
+        or configuration_hash != expected_configuration_hash
+    ):
+        return _invalid(
+            "翻译质量检查报告与当前翻译配置不匹配，已停止交付。"
+        )
 
     issues = report.get("issues")
     summary = report.get("summary")
@@ -284,6 +293,7 @@ def load_quality_report_decision(
     expected_run_id: str = "",
     expected_content_hash: str = "",
     expected_policy: str = "",
+    expected_configuration_hash: str = "",
 ) -> TranslationQualityGateDecision:
     if report_path is None:
         return _invalid("翻译质量检查未生成报告，已停止交付。")
@@ -298,4 +308,5 @@ def load_quality_report_decision(
         expected_run_id=expected_run_id,
         expected_content_hash=expected_content_hash,
         expected_policy=expected_policy,
+        expected_configuration_hash=expected_configuration_hash,
     )
