@@ -4495,22 +4495,26 @@ def _run_translate_pipeline(
                         len(post_quality_missing_repaired),
                         pid,
                     )
-                _emit_progress(pid, "translate", 92, "正在复检翻译质量...")
-                repaired = _persist_translation_quality_report(
-                    pid,
-                    pdir,
-                    project,
-                    blocks,
-                    target_language,
-                    translator,
-                    cfg,
-                    progress_callback=lambda pct, msg: _emit_progress(pid, "translate", pct, msg),
-                    quality_run_id=quality_run_id,
-                    strict_quality_gate=strict_policy,
-                    quality_run_state=quality_run_state,
-                )
-                if repaired:
-                    log.info("translation QA repaired %d block(s) after post-QA retry for %s", len(repaired), pid)
+                    _emit_progress(pid, "translate", 92, "正在复检翻译质量...")
+                    repaired = _persist_translation_quality_report(
+                        pid,
+                        pdir,
+                        project,
+                        blocks,
+                        target_language,
+                        translator,
+                        cfg,
+                        progress_callback=lambda pct, msg: _emit_progress(pid, "translate", pct, msg),
+                        quality_run_id=quality_run_id,
+                        strict_quality_gate=strict_policy,
+                        quality_run_state=quality_run_state,
+                    )
+                    if repaired:
+                        log.info(
+                            "translation QA repaired %d block(s) after post-QA retry for %s",
+                            len(repaired),
+                            pid,
+                        )
 
             active_count, translated_count, failed_count = _translation_completion_counts(blocks)
             incomplete_msg = _incomplete_translation_message(blocks)

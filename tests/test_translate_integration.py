@@ -3141,6 +3141,134 @@ def test_translate_pipeline_retries_missing_created_after_quality_repair(tmp_pat
     assert any("全片补翻缺失" in msg for _, _, msg in progress_messages)
 
 
+def test_translate_pipeline_skips_recertification_when_post_quality_retry_is_noop(
+    tmp_path,
+    monkeypatch,
+):
+    from pathlib import Path
+
+    from app.api import translate as api_translate
+    from app.utils import project_store
+
+    pid = "transpostqanoop"
+    pdir = tmp_path / pid
+    pdir.mkdir(parents=True)
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "movie",
+        "video_path": "/fake/movie.mp4",
+        "status": "asr_done",
+        "target_language": "简体中文",
+        "original_language": "en",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n"
+        "2\n00:00:02,000 --> 00:00:03,000\nWorld\n\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(api_translate.Config, "to_dict", lambda: {
+        "translation": {
+            "missing_translation_retries": 1,
+            "missing_translation_retry_batch_size": 5,
+        },
+    })
+    persist_calls = []
+
+    def fake_persist(
+        pid,
+        pdir,
+        project,
+        blocks,
+        target_language,
+        translator,
+        cfg,
+        progress_callback=None,
+        **kwargs,
+    ):
+        from app.engines.translation_qa import quality_content_hash
+
+        persist_calls.append([block.translation for block in blocks])
+        blocks[1].translation = ""
+        report = {
+            "run_id": kwargs["quality_run_id"],
+            "content_hash": quality_content_hash(blocks),
+            "status": "ok",
+            "issues": [],
+            "unresolved_blocks": [],
+            "summary": {
+                "quality_gate": {
+                    "policy": "fast",
+                    "verdict": "passed",
+                    "passed": True,
+                    "delivery_mode": "unattended",
+                    "requires_human_review": False,
+                    "unresolved_blocks": 0,
+                    "next_action": "deliver",
+                },
+            },
+            "trace": {"semantic_qa": {"enabled": False}},
+        }
+        root = Path(pdir)
+        (root / "translation_qa_report.json").write_text(
+            json.dumps(report),
+            encoding="utf-8",
+        )
+        (root / "translation_qa_report.md").write_text(
+            "# Translation QA Report\n",
+            encoding="utf-8",
+        )
+        return []
+
+    monkeypatch.setattr(
+        api_translate,
+        "_persist_translation_quality_report",
+        fake_persist,
+    )
+
+    class FakePrimary:
+        def translate_batch(self, items, system_prompt):
+            assert [item["id"] for item in items] == [2]
+            assert "最终补翻要求" in system_prompt
+            return []
+
+    class FakeTranslator:
+        last_quality_trace = None
+
+        def __init__(self, cfg):
+            self.primary = FakePrimary()
+
+        def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
+            blocks[0].translation = "你好"
+            blocks[1].translation = "世界"
+            return blocks
+
+        def _build_prompt(self, target_lang, meta_info, kb_data, context_before, context_after, items=None):
+            return "retry prompt"
+
+        def get_kb_usage_trace(self):
+            return {"project": {}, "matches": []}
+
+    monkeypatch.setattr(
+        "app.engines.translator.SubtitleTranslator",
+        FakeTranslator,
+    )
+
+    api_translate._run_translate_pipeline(
+        pid,
+        "简体中文",
+        burn_follows=False,
+    )
+
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert len(persist_calls) == 1
+    assert project["status"] == "error"
+    assert "翻译未完成" in project["error"]
+    assert (pdir / "partial_translated.srt").exists()
+    assert not (pdir / "translated.srt").exists()
+
+
 def test_translate_pipeline_can_auto_repair_quality_issues(tmp_path, monkeypatch):
     from app.api import translate as api_translate
     from app.utils import project_store
