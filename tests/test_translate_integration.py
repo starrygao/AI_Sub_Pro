@@ -1473,6 +1473,78 @@ def test_cancel_inside_publish_aborts_before_promotion_without_deadlock(
         reset_cancel(pid)
 
 
+def test_cancel_after_translation_commit_is_a_noop_before_unregister(
+    tmp_path,
+    monkeypatch,
+):
+    import threading
+
+    from app.engines.scheduler import is_cancelled, reset_cancel
+    from app.main import app
+
+    pid = "cancelaftertranslationcommit"
+    api_translate, pdir = _configure_source_generation_pipeline(
+        tmp_path,
+        monkeypatch,
+        pid=pid,
+        translated_text="已经提交的认证译文。",
+    )
+    monkeypatch.setattr(api_translate, "active_tasks", {})
+    unregister_entered = threading.Event()
+    release_unregister = threading.Event()
+    real_unregister = api_translate.unregister_task
+
+    def pause_before_unregister(task_pid):
+        unregister_entered.set()
+        if not release_unregister.wait(timeout=5):
+            raise RuntimeError("test timed out before unregister")
+        real_unregister(task_pid)
+
+    monkeypatch.setattr(
+        api_translate,
+        "unregister_task",
+        pause_before_unregister,
+    )
+    worker = threading.Thread(
+        target=api_translate._run_translate_pipeline,
+        args=(pid, "简体中文"),
+        kwargs={"burn_follows": False},
+    )
+    with api_translate._tasks_lock:
+        api_translate.active_tasks[pid] = worker
+    worker.start()
+    try:
+        assert unregister_entered.wait(timeout=5)
+        committed = json.loads(
+            (pdir / "project.json").read_text(encoding="utf-8")
+        )
+        assert committed["status"] == "translated"
+        assert committed["translation_quality_status"] == "passed"
+
+        cancel_result = api_translate.cancel_task(pid=pid)
+
+        assert cancel_result["status"] == "no_task"
+        assert is_cancelled(pid) is False
+        after_cancel = json.loads(
+            (pdir / "project.json").read_text(encoding="utf-8")
+        )
+        assert after_cancel["status"] == "translated"
+        assert after_cancel["translation_quality_status"] == "passed"
+        export = TestClient(app).post(
+            f"/api/projects/{pid}/export?format=translated"
+        )
+        assert export.status_code == 200
+        assert "已经提交的认证译文" in export.json()["content"]
+    finally:
+        release_unregister.set()
+        worker.join(timeout=5)
+        reset_cancel(pid)
+        with api_translate._tasks_lock:
+            api_translate.active_tasks.pop(pid, None)
+
+    assert not worker.is_alive()
+
+
 def test_saved_edit_can_be_recertified_with_hash_bound_delivery(
     tmp_path,
     monkeypatch,

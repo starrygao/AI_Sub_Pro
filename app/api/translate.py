@@ -601,10 +601,41 @@ def _cancelled_project_fields(pid: str, stage: str) -> dict:
     }
 
 
-def _mark_project_cancelled(pid: str, stage: str) -> dict:
+def _project_has_committed_terminal_state(pid: str, project: dict) -> bool:
+    if (
+        project.get("status") == "processing"
+        or project.get("pipeline_stage")
+    ):
+        return False
+    try:
+        state = load_workflow_state(pid)
+    except Exception:
+        state = {}
+    stages = state.get("stages", {}) if isinstance(state, dict) else {}
+    active_stages = {
+        name
+        for name, item in stages.items()
+        if (
+            isinstance(item, dict)
+            and item.get("status") in {"pending", "running"}
+        )
+    } if isinstance(stages, dict) else set()
+    status = project.get("status")
+    if status == "translated":
+        return not (active_stages - {"translate"})
+    if status == "asr_done":
+        return not (active_stages - {"asr"})
+    return status in {"completed", "error", "cancelled"}
+
+
+def _mark_project_cancelled(pid: str, stage: str) -> Optional[dict]:
     with translation_delivery_lock(pid) as acquired:
         if not acquired:
             raise RuntimeError("translation delivery lock acquisition failed")
+        project = _load_project(pid)
+        if _project_has_committed_terminal_state(pid, project):
+            reset_cancel(pid)
+            return None
         fields = _cancelled_project_fields(pid, stage)
         mutate_project(
             pid,
@@ -5851,12 +5882,16 @@ def cancel_task(pid: str = PathParam(pattern=PID_PATTERN)):
         # Signal worker threads via scheduler cancel events — they'll observe at
         # the next _check_cancel checkpoint and raise.
         request_cancel(pid)
-        _best_effort_cancel_workflow(pid, stage)
         fields = {"status": "cancelled", "progress_msg": "已取消"}
         try:
-            fields = _mark_project_cancelled(pid, stage)
+            committed_fields = _mark_project_cancelled(pid, stage)
         except Exception:
-            pass
+            committed_fields = fields
+        if committed_fields is None:
+            reset_cancel(pid)
+            return {"status": "no_task"}
+        fields = committed_fields
+        _best_effort_cancel_workflow(pid, stage)
         message = fields.get("progress_msg") if isinstance(fields.get("progress_msg"), str) else "已取消"
         _emit_progress(pid, stage, 0, message)
         return {
