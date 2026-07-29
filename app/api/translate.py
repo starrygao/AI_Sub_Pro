@@ -2466,15 +2466,30 @@ def _update_and_overlay_semantic_issue_ledger(
     }
 
 
-def _remove_verified_semantic_issues(report, verified_ids: set[int]) -> None:
-    if not verified_ids:
+def _remove_verified_semantic_issues(
+    report,
+    verified_hashes: dict[int, str],
+    verified_issue_types_by_id: dict[int, set[str]] | None = None,
+) -> None:
+    if not verified_hashes:
         return
     report.issues = [
         issue
         for issue in (getattr(report, "issues", []) or [])
         if not (
-            getattr(issue, "block_id", None) in verified_ids
+            verified_hashes.get(getattr(issue, "block_id", None))
+            == _semantic_content_hash(
+                getattr(issue, "source_text", ""),
+                getattr(issue, "translation", ""),
+            )
             and getattr(issue, "type", "") in _SEMANTIC_LEDGER_ISSUE_TYPES
+            and (
+                verified_issue_types_by_id is None
+                or getattr(issue, "type", "") in verified_issue_types_by_id.get(
+                    getattr(issue, "block_id", None),
+                    set(),
+                )
+            )
         )
     ]
     _refresh_quality_report_issue_summary(report)
@@ -2483,6 +2498,7 @@ def _remove_verified_semantic_issues(report, verified_ids: set[int]) -> None:
 def _resolve_semantic_issue_ledger(
     ledger: dict,
     verified_hashes: dict[int, str],
+    verified_issue_types_by_id: dict[int, set[str]] | None = None,
 ) -> None:
     if not verified_hashes:
         return
@@ -2496,6 +2512,7 @@ def _resolve_semantic_issue_ledger(
         (
             item.get("block_id"),
             item.get("content_hash"),
+            item.get("type"),
             item.get("resolved_by_content_hash"),
         )
         for item in resolved
@@ -2508,6 +2525,15 @@ def _resolve_semantic_issue_ledger(
         if not verified_hash:
             remaining.append(dict(item))
             continue
+        if (
+            verified_issue_types_by_id is not None
+            and item.get("type") not in verified_issue_types_by_id.get(
+                block_id,
+                set(),
+            )
+        ):
+            remaining.append(dict(item))
+            continue
         resolution = dict(item)
         resolution.update({
             "resolution": "targeted_double_ok",
@@ -2516,6 +2542,7 @@ def _resolve_semantic_issue_ledger(
         resolution_key = (
             block_id,
             item.get("content_hash"),
+            item.get("type"),
             verified_hash,
         )
         if resolution_key not in resolved_keys:
@@ -2531,11 +2558,19 @@ def _apply_verified_semantic_resolution(
     report,
     ledger: dict,
     verified_hashes: dict[int, str],
+    verified_issue_types_by_id: dict[int, set[str]] | None = None,
 ) -> None:
     """Resolve accepted hashes without letting ledger overlays reinsert them."""
-    verified_ids = set(verified_hashes)
-    _remove_verified_semantic_issues(report, verified_ids)
-    _resolve_semantic_issue_ledger(ledger, verified_hashes)
+    _remove_verified_semantic_issues(
+        report,
+        verified_hashes,
+        verified_issue_types_by_id,
+    )
+    _resolve_semantic_issue_ledger(
+        ledger,
+        verified_hashes,
+        verified_issue_types_by_id,
+    )
 
 
 def _same_hash_semantic_qa_failed_ids(report, blocks, ledger: dict) -> set[int]:
@@ -3621,6 +3656,12 @@ def _targeted_semantic_items(
             continue
         prior_draft = getattr(issue, "translation", "")
         source_text = getattr(issue, "source_text", "")
+        position = position_by_id.get(block_id)
+        if (
+            (not isinstance(source_text, str) or not source_text)
+            and position is not None
+        ):
+            source_text = getattr(active_blocks[position], "text", "")
         prior_by_id.setdefault(block_id, []).append({
             "type": getattr(issue, "type", ""),
             "message": getattr(issue, "message", ""),
@@ -3739,6 +3780,8 @@ def _targeted_semantic_failure_issue(
 
     messages = {
         "invalid_schema": "targeted semantic QA returned an invalid response schema",
+        "provider_unavailable": "targeted semantic QA provider is unavailable",
+        "provider_error": "targeted semantic QA provider request failed",
         "transport_mismatch": (
             "targeted semantic QA returned inconsistent translation/verdict fields"
         ),
@@ -3885,15 +3928,31 @@ def _run_targeted_semantic_verification(
                 for item in pending:
                     block_id = item["id"]
                     matching = results_by_id.get(str(block_id), [])
-                    stage = (
-                        _targeted_semantic_result_stage(matching[0], item)
-                        if len(matching) == 1
-                        else "invalid_schema"
-                    )
+                    if provider_error:
+                        stage = (
+                            "provider_unavailable"
+                            if primary is None
+                            or not hasattr(primary, "translate_batch")
+                            else "provider_error"
+                        )
+                    else:
+                        stage = (
+                            _targeted_semantic_result_stage(matching[0], item)
+                            if len(matching) == 1
+                            else "invalid_schema"
+                        )
                     final_stage_by_id[str(block_id)] = stage
                     batch_stages[str(block_id)] = stage
                     if stage in _TARGETED_SEMANTIC_CORRECTABLE_STAGES:
                         next_pending.append(item)
+                        continue
+                    if stage in {"provider_unavailable", "provider_error"}:
+                        failed_ids.append(block_id)
+                        pass_issues[block_id] = _targeted_semantic_failure_issue(
+                            item,
+                            stage,
+                            strict_quality_gate=strict_quality_gate,
+                        )
                         continue
                     checked_ids.append(block_id)
                     if stage == "explicit_ok":
@@ -3962,6 +4021,19 @@ def _quality_score(report) -> tuple[int, int, int]:
     issue_count, error_count, _warning_count = _quality_issue_counts(report)
     unresolved = len(getattr(report, "unresolved_blocks", []) or [])
     return error_count, issue_count, unresolved
+
+
+def _quality_issue_identity(issue) -> tuple:
+    """Ignore diagnostic wording while distinguishing content-bound failures."""
+    return (
+        getattr(issue, "block_id", None),
+        getattr(issue, "type", ""),
+        _semantic_content_hash(
+            getattr(issue, "source_text", ""),
+            getattr(issue, "translation", ""),
+        ),
+        getattr(issue, "expected", ""),
+    )
 
 
 _AUTO_REPAIR_GUARDED_FUNCTIONAL_ISSUE_TYPES = frozenset({
@@ -5005,10 +5077,20 @@ def _persist_translation_quality_report(
         )
         report = run_quality_pass("initial", include_semantics=True)
         repair_enabled = _qa_auto_repair_enabled(cfg)
-        if repair_enabled and report.issues and remaining_repair_rounds > 0:
+        from app.engines.translation_qa import (
+            prioritized_repairable_quality_issues,
+        )
+
+        if (
+            repair_enabled
+            and prioritized_repairable_quality_issues(report.issues)
+            and remaining_repair_rounds > 0
+        ):
             previous_score = _quality_score(report)
             first_round_number = used_repair_rounds + 1
             for round_offset in range(remaining_repair_rounds):
+                if not prioritized_repairable_quality_issues(report.issues):
+                    break
                 round_number = first_round_number + round_offset
                 if progress_callback is not None:
                     try:
@@ -5054,6 +5136,11 @@ def _persist_translation_quality_report(
                 }
                 before_failing_ids = {
                     issue.block_id
+                    for issue in (getattr(report, "issues", []) or [])
+                    if isinstance(getattr(issue, "block_id", None), int)
+                }
+                before_issue_identities = {
+                    _quality_issue_identity(issue)
                     for issue in (getattr(report, "issues", []) or [])
                     if isinstance(getattr(issue, "block_id", None), int)
                 }
@@ -5114,6 +5201,10 @@ def _persist_translation_quality_report(
                         report,
                         semantic_ledger,
                         revalidated_hashes,
+                        verified_issue_types_by_id={
+                            block_id: {"semantic_qa_failed"}
+                            for block_id in revalidated_hashes
+                        },
                     )
                     _update_and_overlay_semantic_issue_ledger(
                         report,
@@ -5282,7 +5373,7 @@ def _persist_translation_quality_report(
                 )
                 _remove_verified_semantic_issues(
                     report,
-                    targeted_verified_ids,
+                    targeted_verified_hashes,
                 )
                 regressions = _auto_repair_functional_regressions(
                     report_before_round,
@@ -5405,9 +5496,18 @@ def _persist_translation_quality_report(
                         for issue in (getattr(report, "issues", []) or [])
                         if isinstance(getattr(issue, "block_id", None), int)
                     }
-                    newly_discovered_convergence_ids = (
-                        convergence_failing_ids - before_failing_ids
-                    )
+                    convergence_issue_identities = {
+                        _quality_issue_identity(issue)
+                        for issue in (getattr(report, "issues", []) or [])
+                        if isinstance(getattr(issue, "block_id", None), int)
+                    }
+                    newly_discovered_convergence_ids = {
+                        identity[0]
+                        for identity in (
+                            convergence_issue_identities
+                            - before_issue_identities
+                        )
+                    }
                     round_trace["semantic_convergence_scan"] = {
                         "performed": True,
                         "new_issue_block_ids": sorted(

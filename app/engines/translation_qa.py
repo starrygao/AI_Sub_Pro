@@ -140,6 +140,11 @@ _SENTENCE_END_PUNCT_RE = re.compile(r"[.!?。！？]\s*$")
 _SEMANTIC_ELLIPSIS_RE = re.compile(r"(?:\.{2,}|…+)[\"'”’)\]}】）]*\s*$")
 _SEMANTIC_TERMINAL_RE = re.compile(r"[.!?。！？][\"'”’)\]}】）]*\s*$")
 _LOWERCASE_CONTINUATION_RE = re.compile(r"^[\"'“‘(\[{]*[a-z]")
+_DUAL_SPEAKER_CONTINUATION_RE = re.compile(
+    r"^[\"'“‘(\[{]*(?:and|as|at|because|but|by|for|from|if|in|of|on|or|"
+    r"so|than|that|then|to|unless|until|when|where|which|while|who|with|"
+    r"without)\b"
+)
 _DIALOGUE_DASH_PREFIX_RE = re.compile(r"^\s*[-‐‑‒–—―]\s*")
 _SINGLE_SPEAKER_START_RE = re.compile(
     r"^\s*(?:[-‐‑‒–—―]\s*\S|[A-Z][A-Za-z0-9 .'\-]{0,47}[:：]\s*\S)"
@@ -1824,7 +1829,7 @@ def _cross_cue_semantic_continuation(previous, following) -> bool:
     dual_speaker_first_line_continues = bool(
         len(following_lines) > 1
         and first_dialogue_line != following_line
-        and _LOWERCASE_CONTINUATION_RE.match(first_dialogue_line)
+        and _DUAL_SPEAKER_CONTINUATION_RE.match(first_dialogue_line)
     )
     if (
         _starts_new_speaker_cue(following_source)
@@ -1846,6 +1851,19 @@ def _cross_cue_semantic_continuation(previous, following) -> bool:
         _UPPERCASE_CONTINUATION_RE.match(continuation_line)
         and _INCOMPLETE_TRAILING_WORD_RE.search(previous_line)
     )
+
+
+def _semantic_seed_positions_in_window(
+    seed_positions: set[int],
+    start: int,
+    size: int,
+) -> list[int]:
+    """Return seeds in a fixed-width candidate group without scanning the component."""
+    return [
+        position
+        for position in range(start, start + size)
+        if position in seed_positions
+    ]
 
 
 def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dict]:
@@ -1905,8 +1923,8 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
             component_end += 1
         component_seed_positions = {
             position
-            for position in semantic_seed_positions
-            if component_start <= position <= component_end
+            for position in range(component_start, component_end + 1)
+            if position in semantic_seed_positions
         }
         ordered_seed_positions = sorted(component_seed_positions)
         partition_start = (0, component_start)
@@ -1933,40 +1951,30 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
                     seed_position,
                     component_end - group_size + 1,
                 )
-                group_starts = sorted(
-                    range(earliest_start, latest_start + 1),
-                    key=lambda start: (
-                        -sum(
-                            start <= position < start + group_size
-                            for position in ordered_seed_positions
-                        ),
+                def transition_priority(start: int) -> tuple:
+                    window_seeds = _semantic_seed_positions_in_window(
+                        component_seed_positions,
+                        start,
+                        group_size,
+                    )
+                    seed_count = len(window_seeds)
+                    seed_center = sum(window_seeds) / max(1, seed_count)
+                    return (
+                        -seed_count,
                         abs(
-                            2 * (
-                                sum(
-                                    position
-                                    for position in ordered_seed_positions
-                                    if start <= position < start + group_size
-                                )
-                                / max(
-                                    1,
-                                    sum(
-                                        start <= position < start + group_size
-                                        for position in ordered_seed_positions
-                                    ),
-                                )
-                            )
+                            2 * seed_center
                             - (2 * start + group_size - 1)
                         ),
                         -(
                             start + group_size - 1
-                            - max(
-                                position
-                                for position in ordered_seed_positions
-                                if start <= position < start + group_size
-                            )
+                            - window_seeds[-1]
                         ),
                         start,
-                    ),
+                    )
+
+                group_starts = sorted(
+                    range(earliest_start, latest_start + 1),
+                    key=transition_priority,
                 )
                 for group_start in group_starts:
                     group_end = group_start + group_size - 1
@@ -2035,11 +2043,11 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
             group_start, group_end, partition_state = selected
             component_groups.append(list(range(group_start, group_end + 1)))
         for component_positions in component_groups:
-            group_seed_positions = [
-                position
-                for position in ordered_seed_positions
-                if position in component_positions
-            ]
+            group_seed_positions = _semantic_seed_positions_in_window(
+                component_seed_positions,
+                component_positions[0],
+                len(component_positions),
+            )
             semantic_repair_positions.update(component_positions)
             group_ids = [
                 block_id
@@ -2134,7 +2142,14 @@ def prioritized_repairable_quality_issues(
 ) -> list[QualityIssue]:
     """Repair blocking failures before spending a round on report-only warnings."""
     repairable = repairable_quality_issues(issues)
-    blocking = [issue for issue in repairable if _is_blocking_issue(issue)]
+    blocking = [
+        issue
+        for issue in repairable
+        if (
+            _is_blocking_issue(issue)
+            or getattr(issue, "type", "") == "semantic_uncertain"
+        )
+    ]
     return blocking or repairable
 
 

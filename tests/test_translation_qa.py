@@ -1404,6 +1404,22 @@ def test_repair_items_handle_three_thousand_cue_seed_partition_without_recursion
         assert any(abs(member_id - seed_id) == 1 for member_id in group)
 
 
+def test_semantic_seed_window_lookup_has_constant_width_operation_bound():
+    from app.engines.translation_qa import _semantic_seed_positions_in_window
+
+    class MembershipOnlySeeds(set):
+        def __iter__(self):
+            raise AssertionError("window lookup must not scan the full seed set")
+
+    seeds = MembershipOnlySeeds(range(100_000))
+
+    assert _semantic_seed_positions_in_window(seeds, 50_000, 3) == [
+        50_000,
+        50_001,
+        50_002,
+    ]
+
+
 @pytest.mark.parametrize("invalid_time", [None, "not-a-timestamp"])
 def test_repair_items_require_parseable_timestamps_for_cross_cue_grouping(
     invalid_time,
@@ -1482,6 +1498,44 @@ def test_repair_items_include_dual_speaker_cue_when_first_line_continues():
     assert item_by_id[35]["semantic_group_ids"] == [35, 36, 37]
     assert item_by_id[36]["semantic_group_ids"] == [35, 36, 37]
     assert item_by_id[37]["semantic_group_ids"] == [35, 36, 37]
+
+
+@pytest.mark.parametrize(
+    "first_speaker_line",
+    [
+        "you stay here.",
+        "we should split up.",
+        "he can wait.",
+        "she knows the way.",
+        "they already left.",
+    ],
+)
+def test_repair_items_do_not_treat_lowercase_pronoun_as_dual_speaker_continuation(
+    first_speaker_line,
+):
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(40, "We should go now", "我们现在该走了"),
+        _block(
+            41,
+            f"-{first_speaker_line}\n-I'll come later.",
+            "-你留在这里。\n-我晚点来。",
+        ),
+    ]
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=40,
+            message="speaker identity must remain separate",
+        ),
+    ]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == [40]
+    assert "semantic_group_ids" not in items[0]
 
 
 def test_repair_items_tie_break_follows_seed_cluster_continuation_direction():
@@ -1695,10 +1749,10 @@ def test_repairable_quality_issues_prioritize_blocking_before_report_only():
 
     issues = [
         QualityIssue(
-            type="reading_speed_too_fast",
+            type="proper_name_inconsistent",
             severity="warning",
             block_id=1,
-            message="report-only readability warning",
+            message="report-only inferred name warning",
         ),
         QualityIssue(
             type="semantic_mismatch",
@@ -1706,13 +1760,19 @@ def test_repairable_quality_issues_prioritize_blocking_before_report_only():
             block_id=2,
             message="blocking semantic mismatch",
         ),
+        QualityIssue(
+            type="semantic_uncertain",
+            severity="warning",
+            block_id=3,
+            message="strict semantic uncertainty",
+        ),
     ]
 
     first_round = prioritized_repairable_quality_issues(issues)
     second_round = prioritized_repairable_quality_issues([issues[0]])
 
-    assert [issue.block_id for issue in first_round] == [2]
-    assert [issue.block_id for issue in second_round] == [1]
+    assert [issue.block_id for issue in first_round] == [2, 3]
+    assert second_round == []
 
 
 def test_quality_checks_flag_inferred_proper_name_inconsistency():

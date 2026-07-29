@@ -6109,8 +6109,8 @@ def test_translate_pipeline_does_not_auto_repair_scientific_terms_without_expect
     assert report["summary"]["by_type"]["scientific_term_inconsistent"] == 2
     assert report["repaired_blocks"] == []
     rounds = report["trace"]["auto_repair_rounds"]
-    assert rounds[0]["candidate_blocks"] == 0
-    assert rounds[0]["result"] == "no_repair_applied"
+    assert rounds == []
+    assert report["trace"]["auto_repair_budget"]["used_rounds"] == 0
 
 
 def test_translate_pipeline_normalizes_curated_scientific_terms_before_model_repair(tmp_path, monkeypatch):
@@ -6249,8 +6249,8 @@ def test_translate_pipeline_does_not_auto_repair_inferred_proper_names(tmp_path,
     assert report["summary"]["by_type"]["proper_name_inconsistent"] == 2
     assert report["repaired_blocks"] == []
     rounds = report["trace"]["auto_repair_rounds"]
-    assert rounds[0]["candidate_blocks"] == 0
-    assert rounds[0]["result"] == "no_repair_applied"
+    assert rounds == []
+    assert report["trace"]["auto_repair_budget"]["used_rounds"] == 0
     assert project["translation_quality_status"] == "passed"
     assert "需人工确认质量报告后再交付" not in project["progress_msg"]
     assert report["summary"]["quality_gate"]["passed"] is True
@@ -8700,8 +8700,67 @@ def test_targeted_semantic_items_mark_prior_issues_as_historical():
     prior = items[0]["prior_issues"][0]
     assert prior["historical_issue"] is True
     assert prior["prior_draft"] == old_draft
-    assert prior["prior_content_hash"].startswith("sha256:")
+    assert prior["prior_content_hash"] == (
+        "sha256:e72863cc74ddc6e37ff45927568c1990c5d64fc78f3dec2a16f6d829db78b6a7"
+    )
     assert prior["prior_content_hash"] != items[0]["candidate_content_hash"]
+
+
+def test_targeted_semantic_provider_failure_is_not_retried_as_schema_error():
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=475,
+        start=timedelta(seconds=475),
+        end=timedelta(seconds=476),
+        text="The gate is still locked.",
+        translation="大门仍然锁着。",
+    )
+    prior_report = TranslationQaReport(
+        status="needs_review",
+        issues=[QualityIssue(
+            type="semantic_uncertain",
+            severity="warning",
+            block_id=475,
+            message="meaning requires focused verification",
+        )],
+    )
+
+    class OfflinePrimary:
+        def __init__(self):
+            self.calls = 0
+
+        def translate_batch(self, items, prompt):
+            self.calls += 1
+            raise RuntimeError("offline")
+
+    primary = OfflinePrimary()
+    issues, verified_ids, verified_hashes, traces = (
+        api_translate._run_targeted_semantic_verification(
+            {"translation": {}},
+            type("Translator", (), {"primary": primary})(),
+            [block],
+            "简体中文",
+            {475},
+            prior_report,
+            [],
+            strict_quality_gate=True,
+        )
+    )
+
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert primary.calls == 2
+    assert len(traces) == 2
+    assert all(len(trace["batches"]) == 1 for trace in traces)
+    assert all(
+        trace["stage_codes_by_block_id"] == {"475": "provider_error"}
+        for trace in traces
+    )
+    assert all(trace["failed_block_ids"] == [475] for trace in traces)
 
 
 @pytest.mark.parametrize(
@@ -10115,6 +10174,102 @@ def test_rollback_overlay_cannot_reinsert_same_hash_after_targeted_double_ok():
     assert ledger["resolved"][0]["resolved_by_content_hash"] == verified_hash
 
 
+def test_same_hash_qa_revalidation_preserves_other_semantic_issue_types():
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+
+    content_hash = (
+        "sha256:c5572e91e135bf9edfaada76eb2a6d4183bc2c48a86d114ae3afb29edd3bfae3"
+    )
+    issue_types = [
+        "semantic_mismatch",
+        "semantic_uncertain",
+        "semantic_qa_failed",
+    ]
+    report = TranslationQaReport(
+        status="needs_review",
+        issues=[
+            QualityIssue(
+                type=issue_type,
+                severity="error" if issue_type != "semantic_uncertain" else "warning",
+                block_id=37,
+                message=issue_type,
+                source_text="source",
+                translation="translation",
+            )
+            for issue_type in issue_types
+        ],
+        summary={},
+    )
+    ledger = {
+        "outstanding": [
+            {
+                "block_id": 37,
+                "content_hash": content_hash,
+                "type": issue_type,
+                "message": issue_type,
+            }
+            for issue_type in issue_types
+        ],
+        "resolved": [],
+    }
+
+    api_translate._apply_verified_semantic_resolution(
+        report,
+        ledger,
+        {37: content_hash},
+        verified_issue_types_by_id={37: {"semantic_qa_failed"}},
+    )
+
+    assert [issue.type for issue in report.issues] == [
+        "semantic_mismatch",
+        "semantic_uncertain",
+    ]
+    assert [item["type"] for item in ledger["outstanding"]] == [
+        "semantic_mismatch",
+        "semantic_uncertain",
+    ]
+    assert [item["type"] for item in ledger["resolved"]] == [
+        "semantic_qa_failed",
+    ]
+
+
+def test_semantic_ledger_resolved_dedupe_keeps_distinct_issue_types():
+    from app.api import translate as api_translate
+
+    content_hash = "sha256:same-content"
+    resolution = {
+        "block_id": 37,
+        "content_hash": content_hash,
+        "resolved_by_content_hash": content_hash,
+        "resolution": "targeted_double_ok",
+    }
+    ledger = {
+        "outstanding": [{
+            "block_id": 37,
+            "content_hash": content_hash,
+            "type": "semantic_mismatch",
+            "message": "meaning changed",
+        }],
+        "resolved": [{
+            **resolution,
+            "type": "semantic_qa_failed",
+            "message": "provider failed",
+        }],
+    }
+
+    api_translate._resolve_semantic_issue_ledger(
+        ledger,
+        {37: content_hash},
+    )
+
+    assert ledger["outstanding"] == []
+    assert [item["type"] for item in ledger["resolved"]] == [
+        "semantic_qa_failed",
+        "semantic_mismatch",
+    ]
+
+
 def test_semantic_qa_failed_same_hash_is_reverified_without_forced_rewrite(
     tmp_path,
     monkeypatch,
@@ -10251,9 +10406,18 @@ def test_semantic_qa_failed_same_hash_is_reverified_without_forced_rewrite(
     assert saved_reports[-1]["summary"]["quality_gate"]["passed"] is True
 
 
-def test_convergence_scan_gives_new_global_semantic_issue_a_repair_round(
+@pytest.mark.parametrize(
+    ("initial_issue_type", "convergence_block_id"),
+    [
+        ("semantic_mismatch", 712),
+        ("missing_translation", 1),
+    ],
+)
+def test_convergence_scan_gives_new_issue_identity_a_repair_round(
     tmp_path,
     monkeypatch,
+    initial_issue_type,
+    convergence_block_id,
 ):
     from copy import deepcopy
 
@@ -10281,6 +10445,7 @@ def test_convergence_scan_gives_new_global_semantic_issue_a_repair_round(
     block_by_id = {block.index: block for block in blocks}
     full_qa_calls = []
     repaired_ids = []
+    repair_count_by_id = {}
     saved_reports = []
 
     monkeypatch.setattr(
@@ -10298,15 +10463,15 @@ def test_convergence_scan_gives_new_global_semantic_issue_a_repair_round(
         lambda *args, **kwargs: [],
     )
 
-    def report_for(block_id, trace):
+    def report_for(block_id, trace, issue_type="semantic_mismatch"):
         issues = []
         if block_id is not None:
             block = block_by_id[block_id]
             issues = [QualityIssue(
-                type="semantic_mismatch",
+                type=issue_type,
                 severity="error",
                 block_id=block_id,
-                message="semantic mismatch",
+                message=issue_type,
                 source_text=block.text,
                 translation=block.translation,
             )]
@@ -10314,17 +10479,23 @@ def test_convergence_scan_gives_new_global_semantic_issue_a_repair_round(
             status="needs_review" if issues else "ok",
             issues=issues,
             unresolved_blocks=[block_id] if issues else [],
-            summary={"by_type": {"semantic_mismatch": len(issues)}},
+            summary={"by_type": {issue_type: len(issues)}},
             trace=trace,
         )
 
     def fake_full_qa(*args, **kwargs):
         trace = args[6]
         full_qa_calls.append(1)
-        discovered_by_call = {1: 1, 2: 712}
+        discovered_by_call = {1: 1, 2: convergence_block_id}
+        issue_type = (
+            initial_issue_type
+            if len(full_qa_calls) == 1
+            else "semantic_mismatch"
+        )
         return report_for(
             discovered_by_call.get(len(full_qa_calls)),
             trace,
+            issue_type,
         )
 
     monkeypatch.setattr(
@@ -10349,10 +10520,12 @@ def test_convergence_scan_gives_new_global_semantic_issue_a_repair_round(
     ):
         block_id = report.issues[0].block_id
         repaired_ids.append(block_id)
+        repair_count_by_id[block_id] = repair_count_by_id.get(block_id, 0) + 1
         replacement = {
-            1: "我没有离开。",
-            712: "好吧，你又需要我了……",
-        }[block_id]
+            (1, 1): "我没有离开。",
+            (1, 2): "我确实没有离开。",
+            (712, 1): "好吧，你又需要我了……",
+        }[(block_id, repair_count_by_id[block_id])]
         block_by_id[block_id].translation = replacement
         repair_trace.update({
             "repair_attempts": 1,
@@ -10428,13 +10601,13 @@ def test_convergence_scan_gives_new_global_semantic_issue_a_repair_round(
         strict_quality_gate=True,
     )
 
-    assert repaired_ids == [1, 712]
-    assert [item["id"] for item in repaired] == [1, 712]
+    assert repaired_ids == [1, convergence_block_id]
+    assert [item["id"] for item in repaired] == [1, convergence_block_id]
     assert len(full_qa_calls) == 4
     rounds = saved_reports[-1]["trace"]["auto_repair_rounds"]
     assert rounds[0]["semantic_convergence_scan"][
         "new_issue_block_ids"
-    ] == [712]
+    ] == [convergence_block_id]
     assert rounds[1]["semantic_convergence_scan"][
         "new_issue_block_ids"
     ] == []
