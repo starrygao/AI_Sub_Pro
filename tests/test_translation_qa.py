@@ -1355,6 +1355,55 @@ def test_repair_items_reserve_neighbor_capacity_for_later_boundary_seed():
         assert any(abs(member_id - seed_id) == 1 for member_id in group)
 
 
+def test_repair_items_handle_three_thousand_cue_seed_partition_without_recursion():
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    block_count = 3000
+    first_id = 10_000
+    blocks = [
+        _block(
+            first_id + offset,
+            "what we know" if offset == 0 else f"and fragment {offset}",
+            f"旧译{offset}",
+        )
+        for offset in range(block_count)
+    ]
+    seed_ids = {
+        first_id + offset
+        for offset in range(0, block_count, 3)
+    }
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=block_id,
+            message="semantic mismatch",
+        )
+        for block_id in sorted(seed_ids)
+    ]
+
+    items = build_repair_items(blocks, issues)
+    item_by_id = {item["id"]: item for item in items}
+    groups = sorted({
+        tuple(item["semantic_group_ids"])
+        for item in items
+        if "semantic_group_ids" in item
+    })
+
+    assert groups
+    assert all(2 <= len(group) <= 3 for group in groups)
+    assert all(
+        list(group) == list(range(group[0], group[-1] + 1))
+        for group in groups
+    )
+    flattened = [member for group in groups for member in group]
+    assert len(flattened) == len(set(flattened))
+    for seed_id in seed_ids:
+        group = item_by_id[seed_id]["semantic_group_ids"]
+        assert seed_id in group
+        assert any(abs(member_id - seed_id) == 1 for member_id in group)
+
+
 @pytest.mark.parametrize("invalid_time", [None, "not-a-timestamp"])
 def test_repair_items_require_parseable_timestamps_for_cross_cue_grouping(
     invalid_time,

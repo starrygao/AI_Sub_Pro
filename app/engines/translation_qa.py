@@ -1889,23 +1889,16 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
             if component_start <= position <= component_end
         }
         ordered_seed_positions = sorted(component_seed_positions)
-        partition_cache: dict[
-            tuple[int, int],
-            Optional[list[list[int]]],
-        ] = {}
+        partition_start = (0, component_start)
 
-        def partition_seed_groups(
-            seed_offset: int,
-            first_available_position: int,
-        ) -> Optional[list[list[int]]]:
-            cache_key = (seed_offset, first_available_position)
-            if cache_key in partition_cache:
-                return partition_cache[cache_key]
+        def candidate_transitions(
+            state: tuple[int, int],
+        ) -> list[tuple[int, int, tuple[int, int]]]:
+            seed_offset, first_available_position = state
             if seed_offset >= len(ordered_seed_positions):
                 return []
-
             seed_position = ordered_seed_positions[seed_offset]
-            candidates = []
+            transitions = []
             max_group_size = min(
                 _MAX_SEMANTIC_GROUP_CUES,
                 component_end - component_start + 1,
@@ -1938,26 +1931,64 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
                         and ordered_seed_positions[next_seed_offset] <= group_end
                     ):
                         next_seed_offset += 1
-                    suffix = partition_seed_groups(
-                        next_seed_offset,
-                        group_end + 1,
-                    )
-                    if suffix is None:
-                        continue
-                    candidates.append([
-                        list(range(group_start, group_end + 1)),
-                        *suffix,
-                    ])
+                    transitions.append((
+                        group_start,
+                        group_end,
+                        (next_seed_offset, group_end + 1),
+                    ))
+            return transitions
 
-            partition = (
-                min(candidates, key=len)
-                if candidates
-                else None
-            )
-            partition_cache[cache_key] = partition
-            return partition
+        # Every transition advances the seed offset, so the reachable state
+        # graph is acyclic and can be solved iteratively without recursion.
+        # The fixed 2-3 cue group width also bounds transitions and frontier
+        # variants per seed, keeping this linear in practice for long chains.
+        reachable_states = {partition_start}
+        pending_states = [partition_start]
+        while pending_states:
+            state = pending_states.pop()
+            for _group_start, _group_end, next_state in (
+                candidate_transitions(state)
+            ):
+                if next_state in reachable_states:
+                    continue
+                reachable_states.add(next_state)
+                pending_states.append(next_state)
 
-        component_groups = partition_seed_groups(0, component_start) or []
+        partition_cost: dict[tuple[int, int], Optional[int]] = {}
+        partition_choice: dict[
+            tuple[int, int],
+            Optional[tuple[int, int, tuple[int, int]]],
+        ] = {}
+        for state in sorted(reachable_states, reverse=True):
+            seed_offset, _first_available_position = state
+            if seed_offset >= len(ordered_seed_positions):
+                partition_cost[state] = 0
+                partition_choice[state] = None
+                continue
+            best_cost = None
+            best_transition = None
+            for transition in candidate_transitions(state):
+                next_state = transition[2]
+                suffix_cost = partition_cost.get(next_state)
+                if suffix_cost is None:
+                    continue
+                candidate_cost = 1 + suffix_cost
+                # Keep the first equal-cost transition: candidate order encodes
+                # the established largest-group then centered/start tie-break.
+                if best_cost is None or candidate_cost < best_cost:
+                    best_cost = candidate_cost
+                    best_transition = transition
+            partition_cost[state] = best_cost
+            partition_choice[state] = best_transition
+
+        component_groups = []
+        partition_state = partition_start
+        while True:
+            selected = partition_choice.get(partition_state)
+            if selected is None:
+                break
+            group_start, group_end, partition_state = selected
+            component_groups.append(list(range(group_start, group_end + 1)))
         for component_positions in component_groups:
             group_seed_positions = [
                 position
