@@ -1600,13 +1600,11 @@ def test_saved_edit_can_be_recertified_with_hash_bound_delivery(
     assert "重新认证译文" in export.json()["content"]
 
 
-def _run_certified_burn_consumer(
+def _seed_current_certified_burn_project(
     tmp_path,
     monkeypatch,
     *,
     pid,
-    consumer,
-    identity_fault,
 ):
     api_translate, pdir = _configure_source_generation_pipeline(
         tmp_path,
@@ -1626,6 +1624,24 @@ def _run_certified_burn_consumer(
         pid,
         "简体中文",
         burn_follows=False,
+    )
+    return api_translate, pdir, project_path
+
+
+def _run_certified_burn_consumer(
+    tmp_path,
+    monkeypatch,
+    *,
+    pid,
+    consumer,
+    identity_fault,
+):
+    api_translate, pdir, project_path = (
+        _seed_current_certified_burn_project(
+            tmp_path,
+            monkeypatch,
+            pid=pid,
+        )
     )
 
     report_path = pdir / "translation_qa_report.json"
@@ -1717,6 +1733,206 @@ def test_certified_burn_consumers_accept_complete_current_delivery(
     )
 
     assert len(calls) == 1
+
+
+def test_burn_reads_immutable_subtitle_snapshot_and_cleans_it_on_success(
+    tmp_path,
+    monkeypatch,
+):
+    import threading
+
+    pid = "burnimmutablesnapshot"
+    api_translate, pdir, _ = _seed_current_certified_burn_project(
+        tmp_path,
+        monkeypatch,
+        pid=pid,
+    )
+    original_path = pdir / "bilingual.srt"
+    certified_bytes = original_path.read_bytes()
+    burn_entered = threading.Event()
+    release_burn = threading.Event()
+    captured = {}
+
+    def fake_burn(video, tracks, output, **kwargs):
+        snapshot = Path(tracks[0].path)
+        captured["snapshot"] = snapshot
+        captured["before"] = snapshot.read_bytes()
+        captured["mode"] = snapshot.stat().st_mode
+        burn_entered.set()
+        if not release_burn.wait(timeout=5):
+            raise RuntimeError("test timed out inside burn")
+        captured["after"] = snapshot.read_bytes()
+        Path(output).write_bytes(b"burned-from-snapshot")
+        return True
+
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+    worker = threading.Thread(
+        target=api_translate._run_burn_pipeline,
+        args=(pid,),
+    )
+    worker.start()
+    try:
+        assert burn_entered.wait(timeout=5)
+        original_path.write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\n并发篡改原字幕\n",
+            encoding="utf-8",
+        )
+    finally:
+        release_burn.set()
+        worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    snapshot = captured["snapshot"]
+    assert snapshot.parent == pdir
+    assert snapshot != original_path
+    assert captured["mode"] & 0o222 == 0
+    assert captured["before"] == certified_bytes
+    assert captured["after"] == certified_bytes
+    assert not snapshot.exists()
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["status"] == "completed"
+    assert Path(project["output_video"]).read_bytes() == b"burned-from-snapshot"
+
+
+def test_cancel_during_burn_is_not_blocked_and_aborts_before_output_commit(
+    tmp_path,
+    monkeypatch,
+):
+    import threading
+
+    from app.engines.scheduler import reset_cancel
+
+    pid = "cancelburnoutsidelock"
+    api_translate, pdir, _ = _seed_current_certified_burn_project(
+        tmp_path,
+        monkeypatch,
+        pid=pid,
+    )
+    original_path = pdir / "bilingual.srt"
+    certified_bytes = original_path.read_bytes()
+    burn_entered = threading.Event()
+    release_burn = threading.Event()
+    cancel_done = threading.Event()
+    captured = {}
+    cancel_result = {}
+
+    def fake_burn(video, tracks, output, **kwargs):
+        snapshot = Path(tracks[0].path)
+        captured["snapshot"] = snapshot
+        captured["before"] = snapshot.read_bytes()
+        burn_entered.set()
+        if not release_burn.wait(timeout=5):
+            raise RuntimeError("test timed out inside cancellable burn")
+        captured["after"] = snapshot.read_bytes()
+        Path(output).write_bytes(b"must-not-commit")
+        return True
+
+    def cancel_worker():
+        cancel_result.update(api_translate.cancel_task(pid=pid))
+        cancel_done.set()
+
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+    worker = threading.Thread(
+        target=api_translate._run_burn_pipeline,
+        args=(pid,),
+    )
+    worker.start()
+    assert burn_entered.wait(timeout=5)
+    original_path.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n取消时篡改原字幕\n",
+        encoding="utf-8",
+    )
+    canceller = threading.Thread(target=cancel_worker)
+    canceller.start()
+    try:
+        assert cancel_done.wait(timeout=1)
+    finally:
+        release_burn.set()
+        worker.join(timeout=5)
+        canceller.join(timeout=5)
+
+    try:
+        assert not worker.is_alive()
+        assert not canceller.is_alive()
+        assert cancel_result["status"] == "cancelled"
+        assert cancel_result["project_status"] == "translated"
+        assert captured["before"] == certified_bytes
+        assert captured["after"] == certified_bytes
+        assert not captured["snapshot"].exists()
+        project = json.loads(
+            (pdir / "project.json").read_text(encoding="utf-8")
+        )
+        assert project["status"] == "translated"
+        assert not (pdir / "original_subtitled.mp4").exists()
+    finally:
+        reset_cancel(pid)
+
+
+def test_cancel_after_burn_commit_before_unregister_returns_no_task(
+    tmp_path,
+    monkeypatch,
+):
+    import threading
+
+    from app.engines.scheduler import is_cancelled, reset_cancel
+
+    pid = "cancelafterburncommit"
+    api_translate, pdir, _ = _seed_current_certified_burn_project(
+        tmp_path,
+        monkeypatch,
+        pid=pid,
+    )
+    monkeypatch.setattr(api_translate, "active_tasks", {})
+    unregister_entered = threading.Event()
+    release_unregister = threading.Event()
+    captured = {}
+    real_unregister = api_translate.unregister_task
+
+    def fake_burn(video, tracks, output, **kwargs):
+        captured["snapshot"] = Path(tracks[0].path)
+        Path(output).write_bytes(b"committed-burn")
+        return True
+
+    def pause_before_unregister(task_pid):
+        unregister_entered.set()
+        if not release_unregister.wait(timeout=5):
+            raise RuntimeError("test timed out before burn unregister")
+        real_unregister(task_pid)
+
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(
+        api_translate,
+        "unregister_task",
+        pause_before_unregister,
+    )
+    result = api_translate.start_burn(pid=pid)
+    assert result["status"] == "started"
+    try:
+        assert unregister_entered.wait(timeout=5)
+        committed = json.loads(
+            (pdir / "project.json").read_text(encoding="utf-8")
+        )
+        assert committed["status"] == "completed"
+        assert Path(committed["output_video"]).read_bytes() == b"committed-burn"
+
+        cancel_result = api_translate.cancel_task(pid=pid)
+
+        assert cancel_result["status"] == "no_task"
+        assert is_cancelled(pid) is False
+        after_cancel = json.loads(
+            (pdir / "project.json").read_text(encoding="utf-8")
+        )
+        assert after_cancel["status"] == "completed"
+        assert not captured["snapshot"].exists()
+    finally:
+        release_unregister.set()
+        with api_translate._tasks_lock:
+            worker = api_translate.active_tasks.get(pid)
+        if worker is not None:
+            worker.join(timeout=5)
+        reset_cancel(pid)
+        with api_translate._tasks_lock:
+            api_translate.active_tasks.pop(pid, None)
 
 
 def test_publish_first_promotion_failure_leaves_delivery_invalid(

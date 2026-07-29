@@ -13,7 +13,7 @@ import tempfile
 import threading
 import unicodedata
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict
 
@@ -5415,7 +5415,106 @@ def _mark_burn_failed(pid: str, reason: str) -> None:
 class _BurnDeliveryResult:
     status: str
     output_video: str = ""
+    staged_output: str = ""
     reason: str = ""
+
+
+def _snapshot_burn_tracks(
+    pdir: Path,
+    tracks: list[SubtitleTrack],
+) -> tuple[list[SubtitleTrack], list[Path]]:
+    snapshots = []
+    snapshot_tracks = []
+    try:
+        for index, track in enumerate(tracks):
+            source = Path(track.path)
+            if source.is_symlink() or not source.is_file():
+                raise RuntimeError(
+                    "burn subtitle source is not a regular file"
+                )
+            suffix = source.suffix.lower()
+            if suffix not in {".srt", ".ass", ".ssa", ".vtt"}:
+                suffix = ".srt"
+            with tempfile.NamedTemporaryFile(
+                "wb",
+                dir=pdir,
+                prefix=f".burn-subtitle.{index}.",
+                suffix=suffix,
+                delete=False,
+            ) as handle:
+                snapshot = Path(handle.name)
+                snapshots.append(snapshot)
+                handle.write(source.read_bytes())
+            os.chmod(snapshot, 0o400)
+            snapshot_tracks.append(
+                replace(track, path=str(snapshot))
+            )
+        return snapshot_tracks, snapshots
+    except Exception:
+        for snapshot in snapshots:
+            try:
+                _unlink_delivery_path(snapshot)
+            except Exception:
+                pass
+        raise
+
+
+def _new_burn_output_stage(pdir: Path, final_path: Path) -> Path:
+    with tempfile.NamedTemporaryFile(
+        dir=pdir,
+        prefix=f".{final_path.name}.burn.",
+        suffix=".tmp.mp4",
+        delete=False,
+    ) as handle:
+        return Path(handle.name)
+
+
+def _discard_burn_output_stage(result: _BurnDeliveryResult) -> None:
+    if not result.staged_output:
+        return
+    stage = Path(result.staged_output)
+    try:
+        _unlink_delivery_path(stage)
+    except Exception as exc:
+        log.warning(
+            "failed to clean staged burn output %s: %s",
+            stage.name,
+            exc,
+        )
+
+
+def _commit_successful_burn(
+    pid: str,
+    result: _BurnDeliveryResult,
+    *,
+    message: str,
+) -> str:
+    """Promote output at the burn cancellation commit point.
+
+    A cancel observed before this delivery-locked checkpoint aborts and leaves
+    the final output untouched. A cancel arriving after the checkpoint waits
+    for the completed project commit and is then reported as no_task.
+    """
+    stage = Path(result.staged_output)
+    final_path = Path(result.output_video)
+    with translation_delivery_lock(pid) as acquired:
+        if not acquired:
+            raise RuntimeError("translation delivery lock acquisition failed")
+        _check_cancel(pid)
+        safe_final = _safe_generated_project_output_path(
+            pid,
+            final_path.name,
+        )
+        if (
+            safe_final is None
+            or safe_final != final_path
+            or stage.is_symlink()
+            or not stage.is_file()
+        ):
+            raise RuntimeError("burn output commit path is invalid")
+        os.replace(stage, final_path)
+        _mark_burn_completed(pid, str(final_path), message)
+        return str(final_path)
 
 
 def _burn_validated_translation_delivery(
@@ -5423,8 +5522,11 @@ def _burn_validated_translation_delivery(
     *,
     callback,
 ) -> _BurnDeliveryResult:
-    """Validate and consume one immutable translation delivery under its lock."""
+    """Snapshot a validated delivery under lock, then burn outside the lock."""
     pdir = PROJECTS_DIR / pid
+    snapshots: list[Path] = []
+    staged_output: Optional[Path] = None
+    keep_staged_output = False
     with translation_delivery_lock(pid) as acquired:
         if not acquired:
             return _BurnDeliveryResult(
@@ -5472,19 +5574,52 @@ def _burn_validated_translation_delivery(
                 "invalid_output",
                 reason="字幕烧录失败: 输出路径无效",
             )
+        tracks, snapshots = _snapshot_burn_tracks(pdir, tracks)
+        try:
+            staged_output = _new_burn_output_stage(pdir, output_path)
+        except Exception:
+            for snapshot in snapshots:
+                try:
+                    _unlink_delivery_path(snapshot)
+                except Exception:
+                    pass
+            raise
+
+    try:
         _check_cancel(pid)
-        output_video = str(output_path)
         success = burn_subtitles(
             video_path,
             tracks,
-            output_video,
+            str(staged_output),
             callback=callback,
         )
+        if success:
+            keep_staged_output = True
         return _BurnDeliveryResult(
             "success" if success else "failed",
-            output_video=output_video,
+            output_video=str(output_path),
+            staged_output=str(staged_output),
             reason="" if success else "字幕烧录失败，但翻译已完成",
         )
+    finally:
+        for snapshot in snapshots:
+            try:
+                _unlink_delivery_path(snapshot)
+            except Exception as exc:
+                log.warning(
+                    "failed to clean burn subtitle snapshot %s: %s",
+                    snapshot.name,
+                    exc,
+                )
+        if staged_output is not None and not keep_staged_output:
+            try:
+                _unlink_delivery_path(staged_output)
+            except Exception as exc:
+                log.warning(
+                    "failed to clean staged burn output %s: %s",
+                    staged_output.name,
+                    exc,
+                )
 
 
 def _run_burn_pipeline(pid: str):
@@ -5525,8 +5660,14 @@ def _run_burn_pipeline(pid: str):
                 _scheduler_complete_progress(pid, "翻译完成，但字幕烧录失败")
                 return
             if burn_result.status == "success":
-                output_video = burn_result.output_video
-                _mark_burn_completed(pid, output_video, "全部完成! 字幕已烧录到视频")
+                try:
+                    output_video = _commit_successful_burn(
+                        pid,
+                        burn_result,
+                        message="全部完成! 字幕已烧录到视频",
+                    )
+                finally:
+                    _discard_burn_output_stage(burn_result)
                 _best_effort_finish_stage(
                     pid,
                     "burn",
@@ -5943,8 +6084,14 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                     _emit_progress(pid, "burn", 0, "字幕烧录失败")
                     return
                 if burn_result.status == "success":
-                    output_video = burn_result.output_video
-                    _mark_burn_completed(pid, output_video, "字幕烧录完成!")
+                    try:
+                        output_video = _commit_successful_burn(
+                            pid,
+                            burn_result,
+                            message="字幕烧录完成!",
+                        )
+                    finally:
+                        _discard_burn_output_stage(burn_result)
                     _best_effort_finish_stage(
                         pid,
                         "burn",
