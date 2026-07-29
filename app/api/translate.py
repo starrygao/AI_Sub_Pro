@@ -151,6 +151,17 @@ def _mark_task_launch_initialized(pid: str, task) -> None:
             _task_launch_stages.pop(pid, None)
 
 
+def _start_registered_task(pid: str, task) -> None:
+    try:
+        task.start()
+    except Exception:
+        with _tasks_lock:
+            if active_tasks.get(pid) is task:
+                unregister_task(pid, task=task)
+                reset_cancel(pid)
+        raise
+
+
 def _registered_task_launch_stage(pid: str) -> str:
     with _tasks_lock:
         return _task_launch_stages.get(pid, "")
@@ -882,6 +893,10 @@ def _run_asr_pipeline(pid: str, audio_track: int, language: str, owns_registrati
         with slot("asr", pid):
             mutate_project(pid, lambda p: p.update({"status": "processing"}),
                            normalize=_apply_safe_defaults)
+            _mark_task_launch_initialized(
+                pid,
+                threading.current_thread(),
+            )
             project = _load_project(pid)
             pdir = str(PROJECTS_DIR / pid)
             video_path = project["video_path"]
@@ -5062,6 +5077,10 @@ def _run_translate_pipeline(
         with slot("translate", pid):
             mutate_project(pid, lambda p: p.update({"status": "processing"}),
                            normalize=_apply_safe_defaults)
+            _mark_task_launch_initialized(
+                pid,
+                threading.current_thread(),
+            )
             project = _load_project(pid)
             pdir = str(PROJECTS_DIR / pid)
             cfg = Config.to_dict()
@@ -5898,6 +5917,10 @@ def _run_burn_pipeline(pid: str):
             video_path = project["video_path"]
             _best_effort_start_stage(pid, "burn", input_artifact=video_path)
             _mark_stage_running(pid, "burn", message="正在烧录字幕到视频...", progress=75)
+            _mark_task_launch_initialized(
+                pid,
+                threading.current_thread(),
+            )
 
             _emit_progress(pid, "burn", 0, "正在烧录字幕到视频...")
             _check_cancel(pid)
@@ -6072,8 +6095,7 @@ def start_asr(pid: str = PathParam(pattern=PID_PATTERN), req: ASRRequest = ASRRe
     except Exception:
         unregister_task(pid, task=t)
         raise
-    _mark_task_launch_initialized(pid, t)
-    t.start()
+    _start_registered_task(pid, t)
     return {"status": "started", "message": "ASR pipeline started"}
 
 
@@ -6115,8 +6137,7 @@ def start_translate(pid: str = PathParam(pattern=PID_PATTERN), req: TranslateReq
     except Exception:
         unregister_task(pid, task=t)
         raise
-    _mark_task_launch_initialized(pid, t)
-    t.start()
+    _start_registered_task(pid, t)
     return {"status": "started", "message": "Translation started"}
 
 
@@ -6181,8 +6202,7 @@ def start_full(pid: str = PathParam(pattern=PID_PATTERN), req: FullPipelineReque
     except Exception:
         unregister_task(pid, task=t)
         raise
-    _mark_task_launch_initialized(pid, t)
-    t.start()
+    _start_registered_task(pid, t)
     return {"status": "started", "message": "Full pipeline started"}
 
 
@@ -6230,8 +6250,7 @@ def start_transcribe_translate(pid: str = PathParam(pattern=PID_PATTERN), req: F
     except Exception:
         unregister_task(pid, task=t)
         raise
-    _mark_task_launch_initialized(pid, t)
-    t.start()
+    _start_registered_task(pid, t)
     return {
         "status": "started",
         "message": "Transcription and translation started",
@@ -6341,6 +6360,10 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
                 video_path = project["video_path"]
                 _best_effort_start_stage(pid, "burn", input_artifact=video_path)
                 _mark_stage_running(pid, "burn", message="正在烧录字幕到视频...", progress=75)
+                _mark_task_launch_initialized(
+                    pid,
+                    threading.current_thread(),
+                )
 
                 _emit_progress(pid, "burn", 0, "正在烧录字幕到视频...")
                 _check_cancel(pid)
@@ -6430,8 +6453,7 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
     except Exception:
         unregister_task(pid, task=t)
         raise
-    _mark_task_launch_initialized(pid, t)
-    t.start()
+    _start_registered_task(pid, t)
     return {"status": "started", "message": "Burning subtitles into video"}
 
 

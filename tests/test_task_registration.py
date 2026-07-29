@@ -39,6 +39,54 @@ def test_register_new_task_clears_stale_cancel(monkeypatch):
     reset_cancel("p-new")
 
 
+def test_start_failure_cleans_registration_marker_generation_and_cancel_event(
+    tmp_project_dir,
+    monkeypatch,
+):
+    from app.engines.scheduler import is_cancelled, request_cancel, reset_cancel
+    from app.utils.project_store import atomic_write_json
+
+    pid = "task-thread-start-failure"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir()
+    video_path = pdir / "video.mp4"
+    video_path.write_bytes(b"video")
+    atomic_write_json(pdir / "project.json", {
+        "id": pid,
+        "name": "Start failure",
+        "video_path": str(video_path),
+        "status": "asr_done",
+        "source_type": "upload",
+        "audio_tracks": [{"index": 0, "codec": "aac", "lang": "eng"}],
+        "subtitle_tracks": [],
+        "selected_audio_track": 0,
+    })
+    monkeypatch.setattr(translate, "active_tasks", {})
+
+    def fail_start(thread):
+        request_cancel(pid)
+        raise RuntimeError("injected thread start failure")
+
+    monkeypatch.setattr(threading.Thread, "start", fail_start)
+    try:
+        with pytest.raises(RuntimeError, match="thread start failure"):
+            translate.start_asr(
+                pid=pid,
+                req=translate.ASRRequest(language="en"),
+            )
+
+        registered, generation, launch_stage = (
+            translate._registered_task_snapshot(pid)
+        )
+        assert registered is False
+        assert generation == ""
+        assert launch_stage == ""
+        assert is_cancelled(pid) is False
+    finally:
+        reset_cancel(pid)
+        translate.unregister_task(pid)
+
+
 def test_duplicate_register_does_not_clear_running_task_cancel(monkeypatch):
     from app.engines.scheduler import is_cancelled, request_cancel, reset_cancel
 

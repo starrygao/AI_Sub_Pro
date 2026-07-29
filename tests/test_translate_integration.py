@@ -1554,12 +1554,17 @@ def test_cancel_after_translation_commit_is_a_noop_before_unregister(
         ("burn", "translated", "translated"),
     ],
 )
-def test_cancel_between_registration_and_state_initialization_cancels_new_task(
+@pytest.mark.parametrize(
+    "launch_window",
+    ["post_register_pre_init", "post_init_pre_thread_start"],
+)
+def test_cancel_during_registered_launch_window_cancels_new_task(
     tmp_path,
     monkeypatch,
     start_kind,
     old_status,
     cancelled_status,
+    launch_window,
 ):
     import threading
 
@@ -1567,7 +1572,7 @@ def test_cancel_between_registration_and_state_initialization_cancels_new_task(
     from app.engines.scheduler import is_cancelled, reset_cancel
     from app.utils import project_store
 
-    pid = f"cancelregisteredbeforeinit-{start_kind}"
+    pid = f"cancellaunch-{launch_window}-{start_kind}"
     slow_boundary_entered = threading.Event()
     if start_kind in {"translate", "burn"}:
         api_translate, pdir, _ = _seed_current_certified_burn_project(
@@ -1675,23 +1680,43 @@ def test_cancel_between_registration_and_state_initialization_cancels_new_task(
                 ),
             )
 
-    registered = threading.Event()
-    release_registration = threading.Event()
+    launch_paused = threading.Event()
+    release_launch = threading.Event()
     registered_thread = {}
     real_register = api_translate.try_register_task
 
-    def pause_after_registration(*args, **kwargs):
+    def capture_registration(*args, **kwargs):
         worker = real_register(*args, **kwargs)
         registered_thread["worker"] = worker
-        registered.set()
-        if not release_registration.wait(timeout=5):
-            raise RuntimeError("test timed out after task registration")
+        if launch_window == "post_register_pre_init":
+            launch_paused.set()
+            if not release_launch.wait(timeout=5):
+                raise RuntimeError("test timed out after task registration")
         return worker
 
     monkeypatch.setattr(
         api_translate,
         "try_register_task",
-        pause_after_registration,
+        capture_registration,
+    )
+    real_thread_start = threading.Thread.start
+
+    def pause_before_registered_thread_start(thread):
+        if (
+            launch_window == "post_init_pre_thread_start"
+            and thread is registered_thread.get("worker")
+        ):
+            launch_paused.set()
+            if not release_launch.wait(timeout=5):
+                raise RuntimeError(
+                    "test timed out before registered thread start"
+                )
+        return real_thread_start(thread)
+
+    monkeypatch.setattr(
+        threading.Thread,
+        "start",
+        pause_before_registered_thread_start,
     )
     launch_result = {}
     launch_errors = []
@@ -1704,12 +1729,12 @@ def test_cancel_between_registration_and_state_initialization_cancels_new_task(
 
     launcher = threading.Thread(target=launch_worker)
     launcher.start()
-    assert registered.wait(timeout=5)
+    assert launch_paused.wait(timeout=5)
     try:
         cancel_result = api_translate.cancel_task(pid=pid)
         assert cancel_result["status"] == "cancelled"
     finally:
-        release_registration.set()
+        release_launch.set()
         launcher.join(timeout=5)
         worker = registered_thread.get("worker")
         if worker is not None:
