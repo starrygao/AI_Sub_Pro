@@ -1381,9 +1381,24 @@ def _unlink_delivery_path(path: Path) -> None:
         path.unlink()
 
 
+def _fsync_delivery_directory(directory: Path) -> None:
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _restore_delivery_artifact(path: Path, content: Optional[bytes]) -> None:
     if content is None:
+        existed = _path_lexists(path)
         _unlink_delivery_path(path)
+        if path.parent.is_dir() and not path.parent.is_symlink():
+            _fsync_delivery_directory(path.parent)
+        elif existed:
+            raise RuntimeError(
+                f"rollback parent directory is unavailable: {path.parent}"
+            )
         return
 
     handle = tempfile.NamedTemporaryFile(
@@ -1400,6 +1415,7 @@ def _restore_delivery_artifact(path: Path, content: Optional[bytes]) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(staged_restore, path)
+        _fsync_delivery_directory(path.parent)
     finally:
         if _path_lexists(staged_restore):
             _unlink_delivery_path(staged_restore)

@@ -1926,6 +1926,111 @@ def test_thread_start_failure_restores_launch_initialization_bytes_and_retries(
         reset_cancel(pid)
 
 
+@pytest.mark.parametrize("original_content", [b"old-state", None])
+def test_launch_artifact_restore_durably_syncs_replace_or_unlink(
+    tmp_path,
+    monkeypatch,
+    original_content,
+):
+    """Catches reporting rollback success before its directory entry is durable."""
+    import os
+    import stat
+
+    from app.api import translate as api_translate
+
+    path = tmp_path / "project.json"
+    path.write_bytes(b"launch-state")
+    events = []
+    real_fsync = os.fsync
+    real_replace = os.replace
+    real_unlink = api_translate._unlink_delivery_path
+
+    def recording_fsync(descriptor):
+        events.append(
+            "directory_fsync"
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode)
+            else "file_fsync"
+        )
+        return real_fsync(descriptor)
+
+    def recording_replace(source, destination):
+        events.append("replace")
+        return real_replace(source, destination)
+
+    def recording_unlink(target):
+        events.append("unlink")
+        return real_unlink(target)
+
+    monkeypatch.setattr(api_translate.os, "fsync", recording_fsync)
+    monkeypatch.setattr(api_translate.os, "replace", recording_replace)
+    monkeypatch.setattr(
+        api_translate,
+        "_unlink_delivery_path",
+        recording_unlink,
+    )
+
+    api_translate._restore_delivery_artifact(path, original_content)
+
+    if original_content is None:
+        assert events == ["unlink", "directory_fsync"]
+        assert not path.exists()
+    else:
+        assert events == [
+            "file_fsync",
+            "replace",
+            "directory_fsync",
+        ]
+        assert path.read_bytes() == original_content
+
+
+@pytest.mark.parametrize("original_content", [b"old-state", None])
+def test_launch_artifact_restore_directory_fsync_failure_is_retryable(
+    tmp_path,
+    monkeypatch,
+    original_content,
+):
+    """Catches a failed durability barrier being treated as rollback success."""
+    import os
+    import stat
+
+    from app.api import translate as api_translate
+
+    path = tmp_path / "workflow_state.json"
+    path.write_bytes(b"launch-state")
+    real_fsync = os.fsync
+    injected = {"done": False}
+
+    def fail_first_directory_fsync(descriptor):
+        if (
+            not injected["done"]
+            and stat.S_ISDIR(os.fstat(descriptor).st_mode)
+        ):
+            injected["done"] = True
+            raise OSError("injected launch rollback directory fsync failure")
+        return real_fsync(descriptor)
+
+    monkeypatch.setattr(
+        api_translate.os,
+        "fsync",
+        fail_first_directory_fsync,
+    )
+
+    with pytest.raises(
+        OSError,
+        match="launch rollback directory fsync failure",
+    ):
+        api_translate._restore_delivery_artifact(
+            path,
+            original_content,
+        )
+
+    api_translate._restore_delivery_artifact(path, original_content)
+    if original_content is None:
+        assert not path.exists()
+    else:
+        assert path.read_bytes() == original_content
+
+
 def test_thread_start_failure_blocks_edit_after_snapshot_until_rollback(
     tmp_path,
     monkeypatch,
