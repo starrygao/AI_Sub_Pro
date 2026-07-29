@@ -6125,6 +6125,114 @@ def test_targeted_semantic_taxonomy_signals_support_unicode_focused_evidence(
     assert all(trace["coverage_complete"] is True for trace in traces)
 
 
+@pytest.mark.parametrize("numeric_symbol", ["Ⅲ", "Ⅻ", "〹", "〺"])
+@pytest.mark.parametrize("embedded_in_cjk", [False, True])
+@pytest.mark.parametrize(
+    ("verdict", "expected_issue_type"),
+    [
+        ("MISMATCH: quantity changed", "semantic_mismatch"),
+        ("UNCERTAIN: quantity may have changed", "semantic_uncertain"),
+    ],
+)
+def test_targeted_semantic_compatibility_numeric_evidence_supports_quantity(
+    numeric_symbol,
+    embedded_in_cjk,
+    verdict,
+    expected_issue_type,
+):
+    source = (
+        f"第{numeric_symbol}项"
+        if embedded_in_cjk
+        else numeric_symbol
+    )
+    draft = (
+        f"拿{numeric_symbol}项"
+        if embedded_in_cjk
+        else numeric_symbol
+    )
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source=source,
+            draft=draft,
+            source_evidence=numeric_symbol,
+            target_evidence=numeric_symbol,
+            verdict=verdict,
+            taxonomy="quantity",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == [expected_issue_type]
+    assert all(trace["coverage_complete"] is True for trace in traces)
+
+
+@pytest.mark.parametrize(
+    ("numeric_symbol", "embedded_in_cjk"),
+    [
+        ("Ⅲ", False),
+        ("Ⅻ", True),
+        ("〹", False),
+        ("〺", True),
+    ],
+)
+@pytest.mark.parametrize(
+    "verdict",
+    [
+        "MISMATCH: entity changed",
+        "UNCERTAIN: entity may have changed",
+    ],
+)
+def test_targeted_semantic_compatibility_numeric_evidence_rejects_entity(
+    numeric_symbol,
+    embedded_in_cjk,
+    verdict,
+):
+    source = (
+        f"第{numeric_symbol}项"
+        if embedded_in_cjk
+        else numeric_symbol
+    )
+    draft = (
+        f"拿{numeric_symbol}项"
+        if embedded_in_cjk
+        else numeric_symbol
+    )
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source=source,
+            draft=draft,
+            source_evidence=numeric_symbol,
+            target_evidence=numeric_symbol,
+            verdict=verdict,
+            taxonomy="entity",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
+def test_targeted_semantic_combining_mark_evidence_survives_segmentation():
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source="Cafe\u0301 closed.",
+            draft="咖啡店关门。",
+            source_evidence="Café",
+            target_evidence="店",
+            verdict="MISMATCH: entity changed",
+            taxonomy="entity",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_mismatch"]
+    assert all(trace["coverage_complete"] is True for trace in traces)
+
+
 @pytest.mark.parametrize(
     (
         "verdict",

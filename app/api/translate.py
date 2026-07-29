@@ -2529,26 +2529,73 @@ _TARGETED_SEMANTIC_VERDICT_RE = re.compile(
 )
 
 
-def _semantic_text_excerpts(value: str) -> tuple[str, ...]:
+@dataclass(frozen=True)
+class _SemanticTextExcerpt:
+    text: str
+    raw_numeric: bool
+
+
+def _semantic_raw_character_kind(character: str) -> str:
+    category_group = unicodedata.category(character)[0]
+    if category_group == "N":
+        return "numeric"
+    if category_group == "L":
+        return (
+            "cased"
+            if character.lower() != character.upper()
+            else "uncased"
+        )
+    if category_group == "M":
+        return "mark"
+    return ""
+
+
+def _semantic_text_excerpt_records(
+    value: str,
+) -> tuple[_SemanticTextExcerpt, ...]:
     if not isinstance(value, str):
         return ()
-    normalized = unicodedata.normalize(
-        "NFKC",
-        unicodedata.normalize("NFKC", value).casefold(),
-    )
     excerpts = []
     current = []
-    for character in normalized:
-        category_group = unicodedata.category(character)[0]
-        if category_group in {"L", "N"}:
+    current_kind = ""
+
+    def flush_current():
+        nonlocal current, current_kind
+        if not current:
+            return
+        normalized = unicodedata.normalize(
+            "NFKC",
+            unicodedata.normalize(
+                "NFKC",
+                "".join(current),
+            ).casefold(),
+        )
+        normalized_text = "".join(
+            character
+            for character in normalized
+            if unicodedata.category(character)[0] in {"L", "M", "N"}
+        )
+        if normalized_text:
+            excerpts.append(_SemanticTextExcerpt(
+                text=normalized_text,
+                raw_numeric=current_kind == "numeric",
+            ))
+        current = []
+        current_kind = ""
+
+    for character in value:
+        character_kind = _semantic_raw_character_kind(character)
+        if character_kind == "mark" and current:
             current.append(character)
-        elif category_group == "M" and current:
-            current.append(character)
-        elif current:
-            excerpts.append("".join(current))
-            current = []
-    if current:
-        excerpts.append("".join(current))
+            continue
+        if not character_kind:
+            flush_current()
+            continue
+        if current_kind and character_kind != current_kind:
+            flush_current()
+        current_kind = character_kind
+        current.append(character)
+    flush_current()
     return tuple(excerpts)
 
 
@@ -2645,8 +2692,16 @@ def _semantic_evidence_match(evidence: str, content: str):
         )
     ):
         return None
-    evidence_excerpts = _semantic_text_excerpts(evidence)
-    content_excerpts = _semantic_text_excerpts(content)
+    evidence_excerpt_records = _semantic_text_excerpt_records(evidence)
+    content_excerpt_records = _semantic_text_excerpt_records(content)
+    evidence_excerpts = tuple(
+        excerpt.text
+        for excerpt in evidence_excerpt_records
+    )
+    content_excerpts = tuple(
+        excerpt.text
+        for excerpt in content_excerpt_records
+    )
     if (
         not evidence_excerpts
         or not content_excerpts
@@ -2666,6 +2721,7 @@ def _semantic_evidence_match(evidence: str, content: str):
     )
     return {
         "excerpts": evidence_excerpts,
+        "excerpt_records": evidence_excerpt_records,
         "content_excerpts": content_excerpts,
         "evidence_length": evidence_length,
         "content_length": content_length,
@@ -2698,16 +2754,18 @@ def _semantic_evidence_is_standard_focused(match: dict) -> bool:
     )
 
 
-def _semantic_excerpt_strong_taxonomy_signal(excerpt: str) -> str:
-    if all(
+def _semantic_excerpt_strong_taxonomy_signal(
+    excerpt: _SemanticTextExcerpt,
+) -> str:
+    if excerpt.raw_numeric or all(
         unicodedata.category(character)[0] == "N"
-        for character in excerpt
+        for character in excerpt.text
     ) or all(
         character in _TARGETED_SEMANTIC_UNCASED_NUMERAL_TOKENS
-        for character in excerpt
+        for character in excerpt.text
     ):
         return "quantity"
-    if excerpt in _TARGETED_SEMANTIC_NEGATION_TOKENS:
+    if excerpt.text in _TARGETED_SEMANTIC_NEGATION_TOKENS:
         return "negation/polarity/condition"
     return ""
 
@@ -2716,7 +2774,7 @@ def _semantic_evidence_strong_taxonomy_signals(
     match: dict,
 ) -> tuple[str, ...]:
     signals = []
-    for excerpt in match["excerpts"]:
+    for excerpt in match["excerpt_records"]:
         signal = _semantic_excerpt_strong_taxonomy_signal(excerpt)
         if signal:
             signals.append(signal)
@@ -2729,10 +2787,10 @@ def _semantic_evidence_is_single_uncased_entity_candidate(
     excerpts = match["excerpts"]
     if len(excerpts) != 1:
         return False
-    excerpt = excerpts[0]
+    excerpt = match["excerpt_records"][0]
     if (
-        _semantic_excerpt_length(excerpt) == 1
-        and not _semantic_excerpt_uses_token_boundaries(excerpt)
+        _semantic_excerpt_length(excerpt.text) == 1
+        and not _semantic_excerpt_uses_token_boundaries(excerpt.text)
         and not _semantic_excerpt_strong_taxonomy_signal(excerpt)
     ):
         return True
