@@ -1538,6 +1538,44 @@ def test_repair_items_do_not_treat_lowercase_pronoun_as_dual_speaker_continuatio
     assert "semantic_group_ids" not in items[0]
 
 
+@pytest.mark.parametrize(
+    "first_speaker_line",
+    [
+        "but you stay here.",
+        "and you wait for me.",
+        "so we should split up.",
+        "then I'll come later.",
+        "if he arrives, call me.",
+    ],
+)
+def test_repair_items_do_not_treat_common_connector_as_dual_speaker_continuation(
+    first_speaker_line,
+):
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(42, "We should go now", "我们现在该走了"),
+        _block(
+            43,
+            f"-{first_speaker_line}\n-I will come later.",
+            "-你留在这里。\n-我晚点来。",
+        ),
+    ]
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=42,
+            message="speaker identity must remain separate",
+        ),
+    ]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == [42]
+    assert "semantic_group_ids" not in items[0]
+
+
 def test_repair_items_tie_break_follows_seed_cluster_continuation_direction():
     from app.engines.translation_qa import QualityIssue, build_repair_items
 

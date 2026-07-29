@@ -8706,6 +8706,42 @@ def test_targeted_semantic_items_mark_prior_issues_as_historical():
     assert prior["prior_content_hash"] != items[0]["candidate_content_hash"]
 
 
+def test_targeted_semantic_prior_hash_uses_full_block_source_not_issue_excerpt():
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=476,
+        start=timedelta(seconds=476),
+        end=timedelta(seconds=477),
+        text="[DOOR CLOSES]\nI did not leave.",
+        translation="我没有离开。",
+    )
+    prior_report = TranslationQaReport(
+        status="needs_review",
+        issues=[QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=476,
+            message="historical draft lost the negation",
+            source_text="I did not leave.",
+            translation="我离开了。",
+        )],
+    )
+
+    items = api_translate._targeted_semantic_items(
+        [block],
+        {476},
+        prior_report,
+        [],
+    )
+
+    assert items[0]["prior_issues"][0]["prior_content_hash"] == (
+        "sha256:34c02a639fd1aba4578d01ab68f722e7476bc351e3f8d0a0c683de3bf7f8eeee"
+    )
+
+
 def test_targeted_semantic_provider_failure_is_not_retried_as_schema_error():
     from app.api import translate as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport

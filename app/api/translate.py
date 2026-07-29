@@ -3655,13 +3655,11 @@ def _targeted_semantic_items(
         if block_id not in candidate_ids:
             continue
         prior_draft = getattr(issue, "translation", "")
-        source_text = getattr(issue, "source_text", "")
         position = position_by_id.get(block_id)
-        if (
-            (not isinstance(source_text, str) or not source_text)
-            and position is not None
-        ):
+        if position is not None:
             source_text = getattr(active_blocks[position], "text", "")
+        else:
+            source_text = getattr(issue, "source_text", "")
         prior_by_id.setdefault(block_id, []).append({
             "type": getattr(issue, "type", ""),
             "message": getattr(issue, "message", ""),

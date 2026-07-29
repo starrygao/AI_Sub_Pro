@@ -140,10 +140,8 @@ _SENTENCE_END_PUNCT_RE = re.compile(r"[.!?。！？]\s*$")
 _SEMANTIC_ELLIPSIS_RE = re.compile(r"(?:\.{2,}|…+)[\"'”’)\]}】）]*\s*$")
 _SEMANTIC_TERMINAL_RE = re.compile(r"[.!?。！？][\"'”’)\]}】）]*\s*$")
 _LOWERCASE_CONTINUATION_RE = re.compile(r"^[\"'“‘(\[{]*[a-z]")
-_DUAL_SPEAKER_CONTINUATION_RE = re.compile(
-    r"^[\"'“‘(\[{]*(?:and|as|at|because|but|by|for|from|if|in|of|on|or|"
-    r"so|than|that|then|to|unless|until|when|where|which|while|who|with|"
-    r"without)\b"
+_DUAL_SPEAKER_ON_CONTINUATION_RE = re.compile(
+    r"^[\"'“‘(\[{]*on\b"
 )
 _DIALOGUE_DASH_PREFIX_RE = re.compile(r"^\s*[-‐‑‒–—―]\s*")
 _SINGLE_SPEAKER_START_RE = re.compile(
@@ -1829,7 +1827,7 @@ def _cross_cue_semantic_continuation(previous, following) -> bool:
     dual_speaker_first_line_continues = bool(
         len(following_lines) > 1
         and first_dialogue_line != following_line
-        and _DUAL_SPEAKER_CONTINUATION_RE.match(first_dialogue_line)
+        and _DUAL_SPEAKER_ON_CONTINUATION_RE.match(first_dialogue_line)
     )
     if (
         _starts_new_speaker_cue(following_source)
