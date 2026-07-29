@@ -602,9 +602,16 @@ def _cancelled_project_fields(pid: str, stage: str) -> dict:
 
 
 def _mark_project_cancelled(pid: str, stage: str) -> dict:
-    fields = _cancelled_project_fields(pid, stage)
-    mutate_project(pid, lambda p: p.update(fields), normalize=_apply_safe_defaults)
-    return fields
+    with translation_delivery_lock(pid) as acquired:
+        if not acquired:
+            raise RuntimeError("translation delivery lock acquisition failed")
+        fields = _cancelled_project_fields(pid, stage)
+        mutate_project(
+            pid,
+            lambda p: p.update(fields),
+            normalize=_apply_safe_defaults,
+        )
+        return fields
 
 
 def _resolve_audio_track(project: dict, requested: Optional[int]) -> int:
@@ -1163,6 +1170,7 @@ def _publish_translation_artifacts_locked(
     sentinel: Optional[Path] = None
     finals_touched = False
     try:
+        _check_cancel(pid)
         if expected_source_generation_hash and (
             subtitle_source_generation_hash(pdir)
             != expected_source_generation_hash
@@ -1205,6 +1213,7 @@ def _publish_translation_artifacts_locked(
             delivery_artifact_hashes=delivery_artifact_hashes,
         )
 
+        _check_cancel(pid)
         if expected_source_generation_hash and (
             subtitle_source_generation_hash(pdir)
             != expected_source_generation_hash
@@ -1212,10 +1221,14 @@ def _publish_translation_artifacts_locked(
             raise RuntimeError(
                 "subtitle source generation changed before publication"
             )
-        finals_touched = True
-        os.replace(translated_stage, finals[0])
-        os.replace(bilingual_stage, finals[1])
-        os.replace(report_stage, finals[2])
+        for staged_path, final_path in zip(
+            (translated_stage, bilingual_stage, report_stage),
+            finals,
+        ):
+            _check_cancel(pid)
+            finals_touched = True
+            os.replace(staged_path, final_path)
+        _check_cancel(pid)
         if expected_source_generation_hash:
             _verify_published_translation_artifacts(
                 *finals,
@@ -1232,6 +1245,7 @@ def _publish_translation_artifacts_locked(
             raise RuntimeError(
                 "subtitle source generation changed during publication"
             )
+        _check_cancel(pid)
         _unlink_delivery_path(sentinel)
         return write_report
     except Exception as publish_error:
@@ -1261,6 +1275,8 @@ def _publish_translation_artifacts_locked(
                     f"{path.name}: {_safe_error_message(cleanup_error)}"
                 )
 
+        if isinstance(publish_error, TaskCancelled) and not rollback_errors:
+            raise
         if sentinel is None and not rollback_errors:
             raise
 
@@ -5114,6 +5130,7 @@ def _run_translate_pipeline(
             )
             quality_passed = quality_decision.passed
             quality_message = quality_decision.message
+            _check_cancel(pid)
 
             # Save results
             _emit_progress(pid, "translate", 95, "正在保存结果...")
@@ -5162,6 +5179,7 @@ def _run_translate_pipeline(
                     raise RuntimeError(
                         "translation delivery lock acquisition failed"
                     )
+                _check_cancel(pid)
                 _remove_safe_project_files(
                     pid,
                     ["partial_translated.srt", "partial_bilingual.srt"],
@@ -5175,11 +5193,16 @@ def _run_translate_pipeline(
                             source_generation_hash
                         ),
                     )
+                except TaskCancelled:
+                    raise
                 except Exception:
                     _write_partial_outputs()
                     raise
+                _check_cancel(pid)
                 _mark_translation_artifacts(pid)
+                _check_cancel(pid)
                 _emit_progress(pid, "translate", 100, done_msg)
+                _check_cancel(pid)
                 mutate_project(
                     pid,
                     lambda p: p.update({

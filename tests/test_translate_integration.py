@@ -1335,6 +1335,144 @@ def test_publish_rejects_source_generation_changed_after_qa(
     assert not (pdir / "bilingual.srt").exists()
 
 
+def test_cancel_after_quality_decision_cannot_publish_or_overwrite_cancelled(
+    tmp_path,
+    monkeypatch,
+):
+    import threading
+
+    from app.engines.scheduler import reset_cancel
+
+    pid = "cancelafterqualitydecision"
+    api_translate, pdir = _configure_source_generation_pipeline(
+        tmp_path,
+        monkeypatch,
+        pid=pid,
+        translated_text="不应发布的新译文。",
+    )
+    qa_complete = threading.Event()
+    release_worker = threading.Event()
+    real_decision = api_translate._translation_quality_gate_decision
+
+    def pause_after_qa(*args, **kwargs):
+        decision = real_decision(*args, **kwargs)
+        qa_complete.set()
+        if not release_worker.wait(timeout=5):
+            raise RuntimeError("test timed out waiting after QA")
+        return decision
+
+    monkeypatch.setattr(
+        api_translate,
+        "_translation_quality_gate_decision",
+        pause_after_qa,
+    )
+    worker = threading.Thread(
+        target=api_translate._run_translate_pipeline,
+        args=(pid, "简体中文"),
+        kwargs={"burn_follows": False},
+    )
+    worker.start()
+    try:
+        assert qa_complete.wait(timeout=5)
+        cancel_result = api_translate.cancel_task(pid=pid)
+        assert cancel_result["status"] == "cancelled"
+    finally:
+        release_worker.set()
+        worker.join(timeout=5)
+
+    try:
+        assert not worker.is_alive()
+        project = json.loads(
+            (pdir / "project.json").read_text(encoding="utf-8")
+        )
+        assert project["status"] == "cancelled"
+        assert project.get("translation_quality_status") != "passed"
+        assert not (pdir / "translated.srt").exists()
+        assert not (pdir / "bilingual.srt").exists()
+    finally:
+        reset_cancel(pid)
+
+
+def test_cancel_inside_publish_aborts_before_promotion_without_deadlock(
+    tmp_path,
+    monkeypatch,
+):
+    import threading
+
+    from app.engines.scheduler import reset_cancel
+
+    pid = "cancelinsidepublish"
+    api_translate, pdir = _configure_source_generation_pipeline(
+        tmp_path,
+        monkeypatch,
+        pid=pid,
+        translated_text="不应提升的新译文。",
+    )
+    stage_complete = threading.Event()
+    release_worker = threading.Event()
+    cancel_requested = threading.Event()
+    real_persist = api_translate._persist_translated_srt_id_mapping
+    real_request_cancel = api_translate.request_cancel
+
+    def pause_after_staging(*args, **kwargs):
+        result = real_persist(*args, **kwargs)
+        stage_complete.set()
+        if not release_worker.wait(timeout=5):
+            raise RuntimeError("test timed out waiting before promotion")
+        return result
+
+    def signal_cancel(task_pid):
+        real_request_cancel(task_pid)
+        cancel_requested.set()
+
+    monkeypatch.setattr(
+        api_translate,
+        "_persist_translated_srt_id_mapping",
+        pause_after_staging,
+    )
+    monkeypatch.setattr(api_translate, "request_cancel", signal_cancel)
+
+    worker = threading.Thread(
+        target=api_translate._run_translate_pipeline,
+        args=(pid, "简体中文"),
+        kwargs={"burn_follows": False},
+    )
+    cancel_result = {}
+    cancel_error = []
+
+    def cancel_worker():
+        try:
+            cancel_result.update(api_translate.cancel_task(pid=pid))
+        except Exception as exc:
+            cancel_error.append(exc)
+
+    worker.start()
+    assert stage_complete.wait(timeout=5)
+    canceller = threading.Thread(target=cancel_worker)
+    canceller.start()
+    try:
+        assert cancel_requested.wait(timeout=5)
+    finally:
+        release_worker.set()
+        worker.join(timeout=5)
+        canceller.join(timeout=5)
+
+    try:
+        assert not worker.is_alive()
+        assert not canceller.is_alive()
+        assert cancel_error == []
+        assert cancel_result["status"] == "cancelled"
+        project = json.loads(
+            (pdir / "project.json").read_text(encoding="utf-8")
+        )
+        assert project["status"] == "cancelled"
+        assert project.get("translation_quality_status") != "passed"
+        assert not (pdir / "translated.srt").exists()
+        assert not (pdir / "bilingual.srt").exists()
+    finally:
+        reset_cancel(pid)
+
+
 def test_saved_edit_can_be_recertified_with_hash_bound_delivery(
     tmp_path,
     monkeypatch,
