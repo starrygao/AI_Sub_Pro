@@ -5554,7 +5554,17 @@ def test_strict_candidate_requires_two_explicit_focused_semantic_oks(
         assert report["summary"]["quality_gate"]["passed"] is False
 
 
-@pytest.mark.parametrize("provider_mode", ["raises", "missing", "unstructured_ok"])
+@pytest.mark.parametrize(
+    "provider_mode",
+    [
+        "raises",
+        "missing",
+        "unstructured_ok",
+        "ok_suffix",
+        "extra_id",
+        "unstructured_mismatch",
+    ],
+)
 def test_targeted_semantic_verification_fails_closed_on_unusable_coverage(
     provider_mode,
 ):
@@ -5585,6 +5595,27 @@ def test_targeted_semantic_verification_fails_closed_on_unusable_coverage(
                 raise RuntimeError("provider offline")
             if provider_mode == "missing":
                 return []
+            if provider_mode == "ok_suffix":
+                return [{"id": 502, "verdict": "OK looks correct"}]
+            if provider_mode == "extra_id":
+                return [
+                    {
+                        "id": 502,
+                        "verdict": "OK",
+                        "taxonomy": "none",
+                        "source_evidence": "She",
+                        "target_evidence": "她",
+                    },
+                    {
+                        "id": 999,
+                        "verdict": "OK",
+                        "taxonomy": "none",
+                        "source_evidence": "extra",
+                        "target_evidence": "额外",
+                    },
+                ]
+            if provider_mode == "unstructured_mismatch":
+                return [{"id": 502, "verdict": "MISMATCH: subject changed"}]
             return [{"id": 502, "verdict": "OK", "taxonomy": "none"}]
 
     translator = type("Translator", (), {"primary": Primary()})()
@@ -5672,12 +5703,30 @@ def test_targeted_double_ok_resolves_502_uncertainty_for_new_content_hash():
     assert issues == []
     assert verified_ids == {502}
     assert len(traces) == 2
-    assert ledger["outstanding"] == []
+    assert len(ledger["outstanding"]) == 1
+    assert ledger["outstanding"][0]["content_hash"] == old_hash
     assert ledger["resolved"][0]["content_hash"] == old_hash
     assert ledger["resolved"][0]["resolved_by_content_hash"] == (
         api_translate._semantic_block_content_hash(block)
     )
     assert ledger["resolved"][0]["resolution"] == "targeted_double_ok"
+
+    block.translation = "有人说会回来。"
+    restored_report = TranslationQaReport(
+        status="ok",
+        issues=[],
+        summary={},
+    )
+    api_translate._update_and_overlay_semantic_issue_ledger(
+        restored_report,
+        [block],
+        ledger,
+        {},
+        strict_quality_gate=True,
+    )
+    assert [issue.type for issue in restored_report.issues] == [
+        "semantic_uncertain",
+    ]
 
 
 @pytest.mark.parametrize("initial_run_id", ["same-quality-run", "stale-quality-run"])

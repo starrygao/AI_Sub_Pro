@@ -1949,6 +1949,14 @@ def _resolve_semantic_issue_ledger(
         for item in ledger.get("resolved", [])
         if isinstance(item, dict)
     ]
+    resolved_keys = {
+        (
+            item.get("block_id"),
+            item.get("content_hash"),
+            item.get("resolved_by_content_hash"),
+        )
+        for item in resolved
+    }
     for item in ledger.get("outstanding", []):
         if not isinstance(item, dict):
             continue
@@ -1962,7 +1970,16 @@ def _resolve_semantic_issue_ledger(
             "resolution": "targeted_double_ok",
             "resolved_by_content_hash": verified_hash,
         })
-        resolved.append(resolution)
+        resolution_key = (
+            block_id,
+            item.get("content_hash"),
+            verified_hash,
+        )
+        if resolution_key not in resolved_keys:
+            resolved.append(resolution)
+            resolved_keys.add(resolution_key)
+        if item.get("content_hash") != verified_hash:
+            remaining.append(dict(item))
     ledger["outstanding"] = remaining
     ledger["resolved"] = resolved
 
@@ -2475,6 +2492,10 @@ _TARGETED_SEMANTIC_TAXONOMY = frozenset({
     "quantity",
     "cross_block_alignment",
 })
+_TARGETED_SEMANTIC_VERDICT_RE = re.compile(
+    r"^(?:OK|MISMATCH:\s*\S(?:.*\S)?|UNCERTAIN:\s*\S(?:.*\S)?)$",
+    re.IGNORECASE,
+)
 
 
 def _targeted_semantic_prompt(target_language: str) -> str:
@@ -2649,6 +2670,31 @@ def _run_targeted_semantic_verification(
                 continue
 
             raw_list = raw_results if isinstance(raw_results, list) else []
+            expected_result_ids = [str(item["id"]) for item in batch]
+            returned_result_ids = [
+                str(result.get("id", ""))
+                for result in raw_list
+                if isinstance(result, dict)
+            ]
+            if (
+                len(raw_list) != len(batch)
+                or sorted(returned_result_ids) != sorted(expected_result_ids)
+            ):
+                batch_trace["error"] = (
+                    "targeted semantic QA response IDs did not exactly match "
+                    "the requested IDs"
+                )
+                for item in batch:
+                    failed_ids.append(item["id"])
+                    pass_issues[item["id"]] = QualityIssue(
+                        type="semantic_qa_failed",
+                        severity="error" if strict_quality_gate else "warning",
+                        block_id=item["id"],
+                        message=batch_trace["error"],
+                        source_text=item["original"],
+                        translation=item["draft"],
+                    )
+                continue
             results_by_id = {
                 str(item["id"]): [
                     result
@@ -2695,31 +2741,48 @@ def _run_targeted_semantic_verification(
                     and isinstance(target_evidence, str)
                     and bool(target_evidence.strip())
                 )
-                if not isinstance(verdict, str) or not verdict.strip():
-                    failed_ids.append(block_id)
-                    pass_issues[block_id] = QualityIssue(
-                        type="semantic_qa_failed",
-                        severity="error" if strict_quality_gate else "warning",
-                        block_id=block_id,
-                        message="targeted semantic QA returned no explicit verdict",
-                        source_text=item["original"],
-                        translation=item["draft"],
+                exact_verdict = bool(
+                    isinstance(verdict, str)
+                    and _TARGETED_SEMANTIC_VERDICT_RE.fullmatch(
+                        verdict.strip()
                     )
-                    continue
-                checked_ids.append(block_id)
-                if explicit_ok and not structured:
+                )
+                taxonomy_matches_verdict = (
+                    taxonomy == "none"
+                    if explicit_ok
+                    else taxonomy in (
+                        _TARGETED_SEMANTIC_TAXONOMY - {"none"}
+                    )
+                )
+                if not exact_verdict:
                     failed_ids.append(block_id)
                     pass_issues[block_id] = QualityIssue(
                         type="semantic_qa_failed",
                         severity="error" if strict_quality_gate else "warning",
                         block_id=block_id,
                         message=(
-                            "targeted semantic QA OK lacked taxonomy or source/target evidence"
+                            "targeted semantic QA returned a verdict outside "
+                            "the exact allowed grammar"
                         ),
                         source_text=item["original"],
                         translation=item["draft"],
                     )
                     continue
+                if not structured or not taxonomy_matches_verdict:
+                    failed_ids.append(block_id)
+                    pass_issues[block_id] = QualityIssue(
+                        type="semantic_qa_failed",
+                        severity="error" if strict_quality_gate else "warning",
+                        block_id=block_id,
+                        message=(
+                            "targeted semantic QA verdict lacked matching taxonomy "
+                            "or source/target evidence"
+                        ),
+                        source_text=item["original"],
+                        translation=item["draft"],
+                    )
+                    continue
+                checked_ids.append(block_id)
                 issue = _semantic_issue_from_verdict(
                     item,
                     verdict,
@@ -4245,11 +4308,15 @@ def _persist_translation_quality_report(
             phase="before_certification",
         )
         report = run_quality_pass("final", include_semantics=True)
-        resolved_semantic_ids = {
+        ledger_uncertainty_ids = {
             item.get("block_id")
-            for item in semantic_ledger.get("resolved", [])
+            for item in [
+                *semantic_ledger.get("outstanding", []),
+                *semantic_ledger.get("resolved", []),
+            ]
             if (
                 isinstance(item, dict)
+                and item.get("type") == "semantic_uncertain"
                 and isinstance(item.get("block_id"), int)
                 and not isinstance(item.get("block_id"), bool)
             )
@@ -4261,7 +4328,7 @@ def _persist_translation_quality_report(
                 list,
             )
             else []
-        ) - resolved_semantic_ids
+        ) - ledger_uncertainty_ids
         current_hash_by_id = {
             getattr(block, "index", None): _semantic_block_content_hash(block)
             for block in blocks or []
