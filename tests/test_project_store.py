@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 import threading
 
 import pytest
@@ -43,6 +45,65 @@ def test_atomic_write_creates_file(tmp_path):
     project_store.atomic_write_json(p, {"a": 1})
     assert json.loads(p.read_text(encoding="utf-8")) == {"a": 1}
     assert not (tmp_path / "x.json.tmp").exists()
+
+
+def test_atomic_write_durably_orders_file_fsync_replace_and_directory_fsync(
+    tmp_path,
+    monkeypatch,
+):
+    """Catches publishing JSON before its bytes and directory entry are durable."""
+    destination = tmp_path / "project.json"
+    events = []
+    real_fsync = os.fsync
+    real_replace = os.replace
+
+    def recording_fsync(descriptor):
+        kind = (
+            "directory_fsync"
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode)
+            else "file_fsync"
+        )
+        events.append(kind)
+        return real_fsync(descriptor)
+
+    def recording_replace(source, target):
+        events.append("replace")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(project_store.os, "fsync", recording_fsync)
+    monkeypatch.setattr(project_store.os, "replace", recording_replace)
+
+    project_store.atomic_write_json(destination, {"status": "completed"})
+
+    assert events == ["file_fsync", "replace", "directory_fsync"]
+    assert json.loads(destination.read_text(encoding="utf-8")) == {
+        "status": "completed",
+    }
+
+
+def test_atomic_write_file_fsync_failure_preserves_original_and_cleans_temp(
+    tmp_path,
+    monkeypatch,
+):
+    """Catches promotion after the private temporary file failed to sync."""
+    destination = tmp_path / "project.json"
+    destination.write_text('{"status":"old"}', encoding="utf-8")
+
+    def fail_fsync(_descriptor):
+        raise OSError("injected file fsync failure")
+
+    monkeypatch.setattr(project_store.os, "fsync", fail_fsync)
+
+    with pytest.raises(OSError, match="file fsync failure"):
+        project_store.atomic_write_json(
+            destination,
+            {"status": "completed"},
+        )
+
+    assert json.loads(destination.read_text(encoding="utf-8")) == {
+        "status": "old",
+    }
+    assert not list(tmp_path.glob("project.json.*.tmp"))
 
 
 def test_atomic_write_preserves_original_on_failure(tmp_path, monkeypatch):

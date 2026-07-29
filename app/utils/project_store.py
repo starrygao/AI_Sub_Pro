@@ -65,7 +65,14 @@ def atomic_write_json(path: Path, data: dict) -> None:
     try:
         with tmp_handle as f:
             json.dump(data, f, indent=2, ensure_ascii=False, allow_nan=False)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, path)
+        directory_descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
     finally:
         if tmp.exists():
             try:
