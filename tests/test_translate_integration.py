@@ -8713,6 +8713,47 @@ def test_targeted_semantic_one_partial_pass_never_verifies_strict_candidate():
     assert traces[1]["stage_codes_by_block_id"] == {"451": "explicit_ok"}
 
 
+def test_targeted_semantic_items_include_complete_five_cue_group_context():
+    """Targeted batches may split at four, but every item keeps the full group."""
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    blocks = [
+        SubtitleBlock(
+            index=33 + offset,
+            start=timedelta(seconds=offset),
+            end=timedelta(seconds=offset + 1),
+            text=f"fragment {offset}",
+            translation=f"片段{offset}",
+        )
+        for offset in range(5)
+    ]
+    prior_report = TranslationQaReport(
+        status="needs_review",
+        issues=[QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=35,
+            message="cross-cue meaning",
+        )],
+    )
+
+    items = api_translate._targeted_semantic_items(
+        blocks,
+        {33, 34, 35, 36, 37},
+        prior_report,
+        [[33, 34, 35, 36, 37]],
+    )
+
+    assert len(items) == 5
+    assert all(
+        [entry["id"] for entry in item["semantic_group_context"]]
+        == [33, 34, 35, 36, 37]
+        for item in items
+    )
+
+
 def test_targeted_semantic_retries_invalid_evidence_without_relaxing_two_ok():
     from app.api import translate as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport

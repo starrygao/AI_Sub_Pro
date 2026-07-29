@@ -3680,6 +3680,10 @@ def _targeted_semantic_items(
         for group_ids in semantic_groups
         for block_id in group_ids
     }
+    block_by_id = {
+        getattr(block, "index", None): block
+        for block in active_blocks
+    }
 
     def context_item(block) -> dict:
         return {
@@ -3715,7 +3719,13 @@ def _targeted_semantic_items(
             "candidate_content_hash": _semantic_block_content_hash(block),
         }
         if block_id in group_by_id:
-            item["semantic_group_ids"] = group_by_id[block_id]
+            group_ids = group_by_id[block_id]
+            item["semantic_group_ids"] = group_ids
+            item["semantic_group_context"] = [
+                context_item(block_by_id[group_id])
+                for group_id in group_ids
+                if group_id in block_by_id
+            ]
         items.append(item)
     return items
 

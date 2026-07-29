@@ -140,8 +140,8 @@ _SENTENCE_END_PUNCT_RE = re.compile(r"[.!?。！？]\s*$")
 _SEMANTIC_ELLIPSIS_RE = re.compile(r"(?:\.{2,}|…+)[\"'”’)\]}】）]*\s*$")
 _SEMANTIC_TERMINAL_RE = re.compile(r"[.!?。！？][\"'”’)\]}】）]*\s*$")
 _LOWERCASE_CONTINUATION_RE = re.compile(r"^[\"'“‘(\[{]*[a-z]")
-_DUAL_SPEAKER_ON_CONTINUATION_RE = re.compile(
-    r"^[\"'“‘(\[{]*on\b"
+_DUAL_SPEAKER_CROSS_CUE_CONTINUATION_RE = re.compile(
+    r"^[\"'“‘(\[{]*(?:on\b|after\s+what\b)"
 )
 _DIALOGUE_DASH_PREFIX_RE = re.compile(r"^\s*[-‐‑‒–—―]\s*")
 _SINGLE_SPEAKER_START_RE = re.compile(
@@ -1928,7 +1928,9 @@ def _cross_cue_semantic_continuation(previous, following) -> bool:
     dual_speaker_first_line_continues = bool(
         len(following_lines) > 1
         and first_dialogue_line != following_line
-        and _DUAL_SPEAKER_ON_CONTINUATION_RE.match(first_dialogue_line)
+        and _DUAL_SPEAKER_CROSS_CUE_CONTINUATION_RE.match(
+            first_dialogue_line
+        )
     )
     if (
         _starts_new_speaker_cue(following_source)
@@ -2026,6 +2028,12 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
             if position in semantic_seed_positions
         }
         ordered_seed_positions = sorted(component_seed_positions)
+        dense_bounded_component = (
+            component_end - component_start + 1 <= 5
+            and len(component_seed_positions) >= 3
+            and min(component_seed_positions, default=-1) == component_start
+            and max(component_seed_positions, default=-1) == component_end
+        )
         partition_start = (0, component_start)
 
         def candidate_transitions(
@@ -2037,7 +2045,11 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
             seed_position = ordered_seed_positions[seed_offset]
             transitions = []
             max_group_size = min(
-                _MAX_SEMANTIC_GROUP_CUES,
+                (
+                    5
+                    if dense_bounded_component
+                    else _MAX_SEMANTIC_GROUP_CUES
+                ),
                 component_end - component_start + 1,
             )
             for group_size in range(max_group_size, 1, -1):
@@ -2202,8 +2214,15 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
             ),
         }
         if position in semantic_group_by_position:
-            item["semantic_group_ids"] = semantic_group_by_position[position]
+            group_ids = semantic_group_by_position[position]
+            item["semantic_group_ids"] = group_ids
             item["semantic_seed_ids"] = semantic_seed_ids_by_position[position]
+            group_id_set = set(group_ids)
+            item["semantic_group_context"] = [
+                context_item(group_block)
+                for group_block in active_blocks
+                if getattr(group_block, "index", None) in group_id_set
+            ]
         reading_issue = reading_speed_by_id.get(block_id)
         duration = _duration_seconds(block)
         if reading_issue is not None and duration > 0:

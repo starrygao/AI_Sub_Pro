@@ -1542,6 +1542,106 @@ def test_repair_items_include_dual_speaker_cue_when_first_line_continues():
     assert item_by_id[37]["semantic_group_ids"] == [35, 36, 37]
 
 
+def test_repair_items_join_forgive_croat_after_what_cross_cue_clause():
+    """The real 450/451 split is one clause despite 451 containing two speakers."""
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(
+            450,
+            "[Hershel] So you can just\nforgive the Croat",
+            "[赫歇尔] 所以你就能原谅克罗地亚人",
+        ),
+        _block(
+            451,
+            "-after what he did?\n-[Renata] No.",
+            "-在他做了那些事之后？\n-[蕾娜塔] 不。",
+        ),
+    ]
+    issues = [QualityIssue(
+        type="semantic_mismatch",
+        severity="error",
+        block_id=451,
+        message="cross-cue clause",
+    )]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == [450, 451]
+    assert all(
+        item["semantic_group_ids"] == [450, 451]
+        for item in items
+    )
+
+
+def test_repair_items_do_not_join_after_what_after_complete_sentence():
+    """A terminal previous cue keeps a later 'after what' speaker turn independent."""
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(450, "I forgive the Croat.", "我原谅克罗地亚人。"),
+        _block(
+            451,
+            "-after what he did?\n-[Renata] No.",
+            "-在他做了那些事之后？\n-[蕾娜塔] 不。",
+        ),
+    ]
+    issues = [QualityIssue(
+        type="semantic_mismatch",
+        severity="error",
+        block_id=451,
+        message="independent speaker turn",
+    )]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == [451]
+    assert "semantic_group_ids" not in items[0]
+
+
+def test_repair_items_keep_dense_five_cue_semantic_component_atomic():
+    """Three real semantic seeds in 33-37 keep the bounded five-cue clause whole."""
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(33, "that maybe you could undo", "也许你能挽回"),
+        _block(34, "the damage you've done", "你造成的伤害"),
+        _block(35, "by pretending you didn't ruin everything", "假装你没毁掉一切"),
+        _block(36, "by burying the one person", "埋掉唯一的那个人"),
+        _block(
+            37,
+            "-on this godforsaken island--\n-Listen to me!",
+            "-在这座鬼岛上——\n-听我说！",
+        ),
+    ]
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=block_id,
+            message="dense cross-cue meaning",
+        )
+        for block_id in (33, 35, 37)
+    ]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == [33, 34, 35, 36, 37]
+    assert all(
+        item["semantic_group_ids"] == [33, 34, 35, 36, 37]
+        for item in items
+    )
+    assert all(
+        item["semantic_seed_ids"] == [33, 35, 37]
+        for item in items
+    )
+    assert all(
+        [entry["id"] for entry in item["semantic_group_context"]]
+        == [33, 34, 35, 36, 37]
+        for item in items
+    )
+
+
 @pytest.mark.parametrize(
     "first_speaker_line",
     [
