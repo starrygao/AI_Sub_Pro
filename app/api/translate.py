@@ -3361,12 +3361,16 @@ def _semantic_excerpts_are_anchored(
 
 
 def _semantic_evidence_match(evidence: str, content: str):
-    if (
-        not isinstance(evidence, str)
-        or any(
-            unicodedata.category(character) in {"Cc", "Cf"}
-            for character in evidence
+    if not isinstance(evidence, str):
+        return None
+    evidence = evidence.replace("\r\n", "\n")
+    if any(
+        (
+            character != "\n"
+            and unicodedata.category(character) in {"Cc", "Cf"}
         )
+        or character in {"\u2028", "\u2029"}
+        for character in evidence
     ):
         return None
     evidence_excerpt_records = _semantic_text_excerpt_records(evidence)
@@ -3720,6 +3724,8 @@ _TARGETED_SEMANTIC_CORRECTABLE_STAGES = frozenset({
     "invalid_schema",
     "transport_mismatch",
     "evidence_not_anchored",
+    "evidence_incomplete",
+    "evidence_taxonomy_conflict",
     "taxonomy_mismatch",
 })
 
@@ -3757,6 +3763,21 @@ def _targeted_semantic_result_stage(result, item: dict) -> str:
     )
     if not taxonomy_matches_verdict:
         return "taxonomy_mismatch"
+    source_match = _semantic_evidence_match(
+        source_evidence,
+        item["original"],
+    )
+    target_match = _semantic_evidence_match(
+        target_evidence,
+        item["draft"],
+    )
+    if source_match is None or target_match is None:
+        return "evidence_not_anchored"
+    if explicit_ok and not (
+        source_match["exact"]
+        and target_match["exact"]
+    ):
+        return "evidence_incomplete"
     if not _semantic_evidence_pair_is_valid(
         source_evidence,
         target_evidence,
@@ -3764,7 +3785,7 @@ def _targeted_semantic_result_stage(result, item: dict) -> str:
         explicit_ok=explicit_ok,
         taxonomy=taxonomy,
     ):
-        return "evidence_not_anchored"
+        return "evidence_taxonomy_conflict"
     return "explicit_ok" if explicit_ok else "valid_non_ok"
 
 
@@ -3785,6 +3806,12 @@ def _targeted_semantic_failure_issue(
         ),
         "evidence_not_anchored": (
             "targeted semantic QA evidence was not anchored to the candidate item"
+        ),
+        "evidence_incomplete": (
+            "targeted semantic QA evidence did not fully cover the candidate item"
+        ),
+        "evidence_taxonomy_conflict": (
+            "targeted semantic QA evidence conflicted with its taxonomy"
         ),
         "taxonomy_mismatch": (
             "targeted semantic QA taxonomy did not match the verdict"
@@ -3862,6 +3889,9 @@ def _run_targeted_semantic_verification(
                         prompt,
                         "上一响应未通过结构协议。只纠正下列 id，保持独立复核；"
                         f"失败阶段：{safe_feedback}。",
+                        "若失败阶段为 evidence_incomplete，必须分别完整回显当前"
+                        " original 和 draft；保留全部行内容，可用 LF 或将合法换行"
+                        "规范为空格，不得只返回选段。",
                     ])
                 batch_ids = [item["id"] for item in pending]
                 batch_trace = {
@@ -4532,7 +4562,12 @@ def _apply_nonempty_repair_results(
     results,
     *,
     repair_trace: dict | None = None,
+    target_language: str = "",
 ) -> list[dict]:
+    from app.engines.translation_qa import (
+        translation_candidate_contract_error,
+    )
+
     by_id = {str(getattr(block, "index", "")): block for block in blocks or []}
     initial_translation_by_id = {
         block_id: getattr(block, "translation", "")
@@ -4541,6 +4576,7 @@ def _apply_nonempty_repair_results(
     nonempty_responses = 0
     mutation_occurred = False
     unmatched = 0
+    candidate_contract_errors = {}
     for result in results or []:
         if not isinstance(result, dict):
             continue
@@ -4551,6 +4587,16 @@ def _apply_nonempty_repair_results(
         block = by_id.get(str(result.get("id", "")))
         if block is None:
             unmatched += 1
+            continue
+        candidate_error = translation_candidate_contract_error(
+            getattr(block, "text", ""),
+            translation,
+            target_language=target_language,
+        )
+        if candidate_error:
+            candidate_contract_errors[str(getattr(block, "index", ""))] = (
+                candidate_error
+            )
             continue
         current = getattr(block, "translation", "")
         if isinstance(current, str) and current == translation:
@@ -4579,6 +4625,10 @@ def _apply_nonempty_repair_results(
         repair_trace["mutation_occurred"] = mutation_occurred
         repair_trace["changed_block_ids"] = changed_ids
         repair_trace["changed_unique_ids"] = len(changed_ids)
+        if candidate_contract_errors:
+            repair_trace["candidate_contract_errors"] = (
+                candidate_contract_errors
+            )
     return applied
 
 
@@ -4803,6 +4853,7 @@ def _auto_repair_quality_issues(
                 blocks,
                 results,
                 repair_trace=batch_result_trace,
+                target_language=target_language,
             )
             nonempty_responses += batch_result_trace.get("nonempty_responses", 0)
             mutation_occurred = (

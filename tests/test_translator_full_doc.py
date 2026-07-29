@@ -388,6 +388,61 @@ def test_full_doc_retries_missing_results_in_smaller_batches(monkeypatch):
     assert [block.translation for block in blocks] == ["一", "二", "补3", "补4", "补5"]
 
 
+def test_full_doc_retries_nonempty_candidate_contract_failure(monkeypatch):
+    """Full-document mode uses the same pre-apply contract as batched mode."""
+    from app.engines.translator import SubtitleTranslator
+    from app.utils.srt import SubtitleBlock
+
+    cfg = {
+        "translation": {
+            "primary_provider": "openai",
+            "primary_model": "gpt-4o",
+            "polish_provider": "",
+            "batch_size": 0,
+            "full_doc_mode": True,
+            "missing_translation_retries": 1,
+            "missing_translation_retry_batch_size": 2,
+            "use_translation_memory": False,
+            "use_phrase_library": False,
+        },
+        "api_keys": {"openai": "sk-test"},
+    }
+    calls = []
+
+    def fake_translate_batch(items, system_prompt, retries=3):
+        calls.append([item["id"] for item in items])
+        if len(calls) == 1:
+            return [{
+                "id": 625,
+                "translation": (
+                    "original translation needs exact speaker lines and "
+                    "we should construct the output"
+                ),
+            }]
+        return [{
+            "id": 625,
+            "translation": "-索尔玛丽，我们找到了。\n-哦，谢天谢地！",
+        }]
+
+    translator = SubtitleTranslator(cfg)
+    monkeypatch.setattr(
+        translator.primary,
+        "translate_batch",
+        fake_translate_batch,
+    )
+    block = SubtitleBlock(
+        index=625,
+        start=timedelta(seconds=1),
+        end=timedelta(seconds=2),
+        text="-Solmari. We got it.\n-Oh, thank God!",
+    )
+
+    translator.translate([block], target_lang="简体中文")
+
+    assert calls == [[625], [625]]
+    assert block.translation == "-索尔玛丽，我们找到了。\n-哦，谢天谢地！"
+
+
 def test_full_doc_falls_back_to_batched_if_too_large(monkeypatch):
     """Estimated tokens > 80% of context_window -> fall back to batched mode (multiple calls)."""
     from app.engines.translator import SubtitleTranslator
@@ -584,3 +639,52 @@ def test_batched_polish_malformed_result_preserves_primary_draft(monkeypatch):
 
     assert blocks[0].translation == "draft"
     assert blocks[0].translation_error == ""
+
+
+def test_batched_polish_meta_contamination_preserves_primary_draft(monkeypatch):
+    """An invalid polish candidate must be rejected before replacing its draft."""
+    from app.engines.translator import SubtitleTranslator
+    from app.utils.srt import SubtitleBlock
+
+    cfg = {
+        "translation": {
+            "primary_provider": "openai",
+            "primary_model": "gpt-4o",
+            "polish_provider": "openai",
+            "polish_model": "gpt-4o",
+            "batch_size": 10,
+            "full_doc_mode": False,
+        },
+        "api_keys": {"openai": "sk-test"},
+    }
+    translator = SubtitleTranslator(cfg)
+    monkeypatch.setattr(
+        translator.primary,
+        "translate_batch",
+        lambda items, system_prompt, retries=3: [
+            {"id": 1, "translation": "你好。", "error": ""},
+        ],
+    )
+    monkeypatch.setattr(
+        translator.polish,
+        "translate_batch",
+        lambda items, system_prompt, retries=3: [{
+            "id": 1,
+            "translation": (
+                "the original output needs a cleaner translation "
+                "and we should construct it"
+            ),
+            "error": "",
+        }],
+    )
+    block = SubtitleBlock(
+        index=1,
+        start=timedelta(seconds=1),
+        end=timedelta(seconds=2),
+        text="Hello.",
+    )
+
+    translator.translate([block], target_lang="简体中文")
+
+    assert block.translation == "你好。"
+    assert block.translation_error == ""

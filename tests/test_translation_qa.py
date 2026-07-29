@@ -693,6 +693,48 @@ def test_quality_checks_still_require_both_real_dialogue_speaker_lines():
     assert report.summary["by_type"]["speaker_line_structure_mismatch"] == 1
 
 
+def test_quality_checks_block_strong_translation_meta_contamination():
+    """Sentence-level model commentary is a blocking defect, not residue-only noise."""
+    from app.engines.translation_qa import run_quality_checks
+
+    report = run_quality_checks(
+        [_block(
+            625,
+            "-Solmari. We got it.\n-Oh, thank God!",
+            (
+                "-[索尔玛丽]？不, original says this is a vocative "
+                "and the output needs exact speaker lines. Let's construct it."
+            ),
+        )],
+        target_language="简体中文",
+        max_chars=120,
+    )
+
+    issue = next(
+        item
+        for item in report.issues
+        if item.type == "translation_meta_contamination"
+    )
+    assert issue.severity == "error"
+    assert report.status == "needs_review"
+    assert report.unresolved_blocks == [625]
+
+
+def test_quality_checks_keep_allowed_english_entity_as_report_only_residue():
+    """A single proper name can remain a warning without being called model meta text."""
+    from app.engines.translation_qa import run_quality_checks
+
+    report = run_quality_checks(
+        [_block(626, "Ask Solmari.", "去问 Solmari。")],
+        target_language="简体中文",
+        max_chars=40,
+    )
+
+    assert "translation_meta_contamination" not in report.summary["by_type"]
+    assert report.summary["by_type"]["english_residue"] == 1
+    assert report.status == "ok"
+
+
 def test_quality_checks_do_not_treat_speaker_labels_as_sound_descriptions():
     from app.engines.translation_qa import run_quality_checks
 

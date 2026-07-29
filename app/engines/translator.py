@@ -45,6 +45,7 @@ from app.engines.domain_terms import (
 from app.engines.project_metadata import build_project_metadata_prompt_snippet
 from app.engines.subtitle_style_profiles import build_subtitle_style_prompt_snippet
 from app.engines.terminology_conflicts import collect_terminology_conflicts
+from app.engines.translation_qa import translation_candidate_contract_error
 
 log = logging.getLogger(__name__)
 
@@ -608,6 +609,11 @@ class SubtitleTranslator:
                 items,
             )
             result_map = self._result_map_from_results(normalized_results)
+            self._validate_result_map_candidates(
+                result_map,
+                items,
+                target_lang,
+            )
             self._retry_missing_primary_results(
                 result_map,
                 items,
@@ -647,10 +653,22 @@ class SubtitleTranslator:
                             polish_payload.append(r)
                     normalized_polish = reconcile_translation_results(polish_payload, polish_items)
                     polished_map = {}
+                    polish_item_by_id = {
+                        str(item["id"]): item
+                        for item in polish_items
+                    }
                     for r in normalized_polish:
                         pid = str(r.get("id"))
                         ptxt = r.get("translation", "")
                         perr = r.get("error", "")
+                        candidate_error = translation_candidate_contract_error(
+                            polish_item_by_id.get(pid, {}).get("original", ""),
+                            ptxt,
+                            target_language=target_lang,
+                        )
+                        if candidate_error:
+                            ptxt = ""
+                            perr = candidate_error
                         polished_map[pid] = (ptxt, perr)
                     # Merge polished results into results by id.
                     for r in results:
@@ -764,6 +782,11 @@ class SubtitleTranslator:
                     items,
                 )
                 result_map = self._result_map_from_results(normalized_results)
+                self._validate_result_map_candidates(
+                    result_map,
+                    items,
+                    target_lang,
+                )
                 self._retry_missing_primary_results(
                     result_map,
                     items,
@@ -800,12 +823,35 @@ class SubtitleTranslator:
                                 rid = str(r.get("id", ""))
                                 polished = r.get("translation", "")
                                 perr = r.get("error", "")
+                                polish_item = next(
+                                    (
+                                        item
+                                        for item in polish_items
+                                        if str(item.get("id", "")) == rid
+                                    ),
+                                    {},
+                                )
+                                candidate_error = (
+                                    translation_candidate_contract_error(
+                                        polish_item.get("original", ""),
+                                        polished,
+                                        target_language=target_lang,
+                                    )
+                                )
+                                if candidate_error:
+                                    polished = ""
+                                    perr = candidate_error
                                 if polished:
                                     # Polish succeeded — overwrite draft, clear any prior error.
                                     result_map[rid] = {"translation": polished, "error": ""}
                                 elif perr and rid in result_map and not result_map[rid].get("translation"):
                                     # Polish failed AND primary had no draft — record polish error.
                                     result_map[rid] = {"translation": "", "error": perr}
+                        self._validate_result_map_candidates(
+                            result_map,
+                            items,
+                            target_lang,
+                        )
 
                 # Apply results to this batch's blocks.
                 batch_blocks = [blocks[ci] for ci in batch_indices]
@@ -914,10 +960,17 @@ class SubtitleTranslator:
                     raw_retry_results if isinstance(raw_retry_results, list) else [],
                     retry_batch,
                 )
-                for result in normalized_retry_results:
-                    if not isinstance(result, dict):
-                        continue
-                    rid = str(result.get("id", ""))
+                retry_result_map = self._result_map_from_results(
+                    normalized_retry_results
+                )
+                self._validate_result_map_candidates(
+                    retry_result_map,
+                    retry_batch,
+                    target_lang,
+                )
+                for retry_item in retry_batch:
+                    rid = str(retry_item.get("id", ""))
+                    result = retry_result_map.get(rid, {})
                     current = result_map.get(rid, {})
                     if current.get("translation"):
                         continue
@@ -933,6 +986,33 @@ class SubtitleTranslator:
                             else ""
                         ),
                     }
+
+    @staticmethod
+    def _validate_result_map_candidates(
+        result_map: Dict[str, Dict[str, str]],
+        items: List[Dict],
+        target_lang: str,
+    ) -> None:
+        item_by_id = {
+            str(item.get("id")): item
+            for item in items
+            if isinstance(item, dict)
+        }
+        for rid, result in result_map.items():
+            if not isinstance(result, dict):
+                continue
+            translation = result.get("translation", "")
+            if not isinstance(translation, str) or not translation:
+                continue
+            item = item_by_id.get(rid, {})
+            error = translation_candidate_contract_error(
+                item.get("original", ""),
+                translation,
+                target_language=target_lang,
+            )
+            if error:
+                result["translation"] = ""
+                result["error"] = error
 
     # -------------------------------------------------------------- result apply
     @staticmethod

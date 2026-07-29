@@ -89,6 +89,35 @@ def test_claude_cli_provider_passes_explicit_effort_to_cli():
     assert command[command.index("--effort") + 1] == "xhigh"
 
 
+def test_claude_cli_provider_preserves_caller_declared_semantic_schema():
+    """The Claude wrapper must keep all fields declared by targeted QA."""
+    from app.engines.providers.claude_cli import ClaudeCliProvider
+
+    completed = type("Completed", (), {
+        "returncode": 0,
+        "stdout": '{"result":"[]"}',
+        "stderr": "",
+    })()
+    semantic_prompt = (
+        "Each result must contain id, translation, verdict, taxonomy, "
+        "source_evidence, and target_evidence."
+    )
+    with patch(
+        "app.engines.providers.claude_cli.subprocess.run",
+        return_value=completed,
+    ) as run:
+        ClaudeCliProvider({"model": "claude-opus-4-7"})._invoke(
+            [{"id": 1, "original": "No.", "draft": "不。"}],
+            semantic_prompt,
+        )
+
+    final_prompt = run.call_args.kwargs["input"]
+    assert "source_evidence" in final_prompt
+    assert "target_evidence" in final_prompt
+    assert "follow the response contract declared above" in final_prompt.lower()
+    assert "reply with ONLY a JSON array of {\"id\": N, \"translation\"" not in final_prompt
+
+
 def test_claude_cli_provider_omits_automatic_or_invalid_effort():
     from app.engines.providers.claude_cli import ClaudeCliProvider
 

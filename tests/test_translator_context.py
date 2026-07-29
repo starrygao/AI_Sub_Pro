@@ -227,6 +227,95 @@ def test_batched_translate_retries_empty_dialogue_translation(monkeypatch):
     assert [block.translation for block in blocks] == ["一", "二"]
 
 
+def test_batched_translate_retries_candidate_contract_contamination(monkeypatch):
+    """A non-empty model meta-comment must not bypass the bounded retry path."""
+    from app.engines.translator import SubtitleTranslator
+    from app.utils.srt import SubtitleBlock
+
+    config = {
+        "translation": {
+            "primary_provider": "openai",
+            "primary_model": "gpt-4o",
+            "batch_size": 2,
+            "context_window": 1,
+            "polish_provider": "",
+            "missing_translation_retries": 1,
+            "missing_translation_retry_batch_size": 5,
+            "use_translation_memory": False,
+            "use_phrase_library": False,
+        },
+        "api_keys": {"openai": "sk-test"},
+    }
+    calls = []
+
+    def fake_translate_batch(items, system_prompt, retries=3):
+        calls.append([item["id"] for item in items])
+        if len(calls) == 1:
+            return [
+                {
+                    "id": 625,
+                    "translation": (
+                        "-[索尔玛丽]？不, original says this is a vocative "
+                        "and the output needs exact speaker lines. Let's construct it."
+                    ),
+                },
+                {"id": 626, "translation": "穿过那些门。"},
+            ]
+        assert "补翻要求" in system_prompt
+        return [{
+            "id": 625,
+            "translation": "-索尔玛丽，我们找到了。\n-哦，谢天谢地！",
+        }]
+
+    translator = SubtitleTranslator(config)
+    monkeypatch.setattr(translator.primary, "translate_batch", fake_translate_batch)
+    blocks = [
+        SubtitleBlock(
+            index=625,
+            start=timedelta(seconds=1),
+            end=timedelta(seconds=2),
+            text="-Solmari. We got it.\n-Oh, thank God!",
+        ),
+        SubtitleBlock(
+            index=626,
+            start=timedelta(seconds=2),
+            end=timedelta(seconds=3),
+            text="Through those doors.",
+        ),
+    ]
+
+    translator.translate(blocks, target_lang="简体中文")
+
+    assert calls == [[625, 626], [625]]
+    assert [block.translation for block in blocks] == [
+        "-索尔玛丽，我们找到了。\n-哦，谢天谢地！",
+        "穿过那些门。",
+    ]
+    assert [block.translation_error for block in blocks] == ["", ""]
+
+
+@pytest.mark.parametrize(
+    ("source", "translation"),
+    [
+        ("Solmari found Hershel.", "索尔玛丽找到 Hershel 了。"),
+        ("Use HTTP here.", "这里使用 HTTP。"),
+        ("Hello.", "你好。"),
+    ],
+)
+def test_candidate_contract_allows_entities_acronyms_and_normal_dialogue(
+    source,
+    translation,
+):
+    """Names, technical identifiers, and ordinary translations are not meta output."""
+    from app.engines.translation_qa import translation_candidate_contract_error
+
+    assert translation_candidate_contract_error(
+        source,
+        translation,
+        target_language="简体中文",
+    ) == ""
+
+
 def test_batched_translate_allows_empty_sound_description(monkeypatch):
     from app.engines.translator import SubtitleTranslator
     from app.utils.srt import SubtitleBlock

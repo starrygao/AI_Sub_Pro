@@ -98,6 +98,43 @@ def test_codex_cli_provider_passes_explicit_effort_as_isolated_config(monkeypatc
     assert command[command.index("--config") + 1] == 'model_reasoning_effort="ultra"'
 
 
+def test_codex_cli_provider_preserves_caller_declared_semantic_schema(monkeypatch):
+    """The CLI wrapper must not narrow a targeted QA schema to two fields."""
+    from app.engines.providers import codex_cli as codex_mod
+    from app.engines.providers.codex_cli import CodexCliProvider
+
+    captured = {}
+
+    class FakeProcess:
+        pid = 12345
+        returncode = 0
+
+        def communicate(self, input=None, timeout=None):
+            captured["prompt"] = input
+            return ("[]", "")
+
+    monkeypatch.setattr(
+        codex_mod.subprocess,
+        "Popen",
+        lambda cmd, **kwargs: FakeProcess(),
+    )
+    semantic_prompt = (
+        "Each result must contain id, translation, verdict, taxonomy, "
+        "source_evidence, and target_evidence."
+    )
+
+    CodexCliProvider({"model": "gpt-5.6-sol"})._invoke(
+        [{"id": 1, "original": "No.", "draft": "不。"}],
+        semantic_prompt,
+    )
+
+    final_prompt = captured["prompt"]
+    assert "source_evidence" in final_prompt
+    assert "target_evidence" in final_prompt
+    assert "follow the response contract declared above" in final_prompt.lower()
+    assert "reply with ONLY a JSON array of {\"id\": N, \"translation\"" not in final_prompt
+
+
 def test_codex_cli_provider_omits_automatic_or_invalid_effort():
     from app.engines.providers.codex_cli import CodexCliProvider
 

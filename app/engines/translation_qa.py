@@ -253,6 +253,40 @@ _TECH_ALLOWED_ENGLISH_TOKENS = {
     "xml",
     "yaml",
 }
+_TRANSLATION_META_TOKENS = {
+    "answer",
+    "bracket",
+    "clean",
+    "construct",
+    "draft",
+    "exact",
+    "line",
+    "marker",
+    "need",
+    "original",
+    "output",
+    "rewrite",
+    "source",
+    "speaker",
+    "target",
+    "translate",
+    "translation",
+    "verbatim",
+}
+_TRANSLATION_META_FUNCTION_WORDS = {
+    "and",
+    "as",
+    "be",
+    "is",
+    "it",
+    "of",
+    "says",
+    "should",
+    "the",
+    "this",
+    "to",
+    "we",
+}
 _AUTO_REPAIR_REPORT_ONLY_ISSUE_TYPES = {
     "proper_name_inconsistent",
     "scientific_term_inconsistent",
@@ -693,6 +727,56 @@ def _english_residue_match(translation: str, *, allow_technical_terms: bool = Fa
     return None
 
 
+def _translation_meta_contamination_match(translation: str):
+    """Return a strong sentence/meta English match without flagging lone names."""
+    matches = [
+        match
+        for match in _ENGLISH_RE.finditer(translation or "")
+        if not _is_allowed_acronym_token(match.group(0))
+        and not _is_allowed_technical_token(match.group(0))
+    ]
+    if not matches:
+        return None
+    tokens = [match.group(0).casefold() for match in matches]
+    meta_count = sum(token in _TRANSLATION_META_TOKENS for token in tokens)
+    function_count = sum(
+        token in _TRANSLATION_META_FUNCTION_WORDS
+        for token in tokens
+    )
+    if (
+        (meta_count >= 2 and len(tokens) >= 3)
+        or (len(tokens) >= 5 and function_count >= 2)
+    ):
+        return matches[0]
+    return None
+
+
+def translation_candidate_contract_error(
+    source: str,
+    translation: str,
+    *,
+    target_language: str,
+) -> str:
+    """Classify deterministic defects that make a provider candidate unusable."""
+    if not isinstance(translation, str) or not translation:
+        return ""
+    source_structure = classify_speaker_lines(source)
+    if (
+        source_structure is not None
+        and not preserves_speaker_line_structure(
+            translation,
+            source_structure,
+        )
+    ):
+        return "candidate_contract:speaker_structure"
+    if (
+        _is_chinese_target(target_language)
+        and _translation_meta_contamination_match(translation)
+    ):
+        return "candidate_contract:meta_contamination"
+    return ""
+
+
 def _sound_description_probe_text(value: str) -> str:
     text = _HTML_TAG_RE.sub("", value or "")
     text = _ASS_OVERRIDE_RE.sub("", text)
@@ -1069,6 +1153,7 @@ _FAR_CATEGORY_BY_TYPE = {
     "proper_name_inconsistent": "functional",
     "speaker_line_structure_mismatch": "functional",
     "context_term_missing": "functional",
+    "translation_meta_contamination": "functional",
     "english_residue": "acceptability",
     "sound_description_translated": "acceptability",
     "punctuation_style": "acceptability",
@@ -1546,6 +1631,22 @@ def run_quality_checks(
                 source_text=source,
                 translation=translation,
                 expected=speaker_contract.expected_description(),
+            ))
+
+        if (
+            not sound_description
+            and
+            chinese_target
+            and translation
+            and _translation_meta_contamination_match(translation)
+        ):
+            issues.append(QualityIssue(
+                type="translation_meta_contamination",
+                severity="error",
+                block_id=block_id if isinstance(block_id, int) else None,
+                message="target subtitle contains model reasoning or meta commentary",
+                source_text=source,
+                translation=translation,
             ))
 
         if (

@@ -6454,6 +6454,41 @@ def test_apply_repair_results_counts_only_net_changes_for_duplicate_ids():
     }
 
 
+def test_apply_repair_results_rejects_meta_contamination_before_mutation():
+    """The repair apply boundary must retain the prior draft on invalid output."""
+    from app.api.translate import _apply_nonempty_repair_results
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=625,
+        start=timedelta(seconds=0),
+        end=timedelta(seconds=1),
+        text="-Solmari. We got it.\n-Oh, thank God!",
+        translation="-索尔玛丽，我们找到了。\n-哦，谢天谢地！",
+    )
+    trace = {}
+
+    applied = _apply_nonempty_repair_results(
+        [block],
+        [{
+            "id": 625,
+            "translation": (
+                "the original output needs exact speaker lines "
+                "and we should construct the translation"
+            ),
+        }],
+        repair_trace=trace,
+        target_language="简体中文",
+    )
+
+    assert applied == []
+    assert block.translation == "-索尔玛丽，我们找到了。\n-哦，谢天谢地！"
+    assert trace["candidate_contract_errors"] == {
+        "625": "candidate_contract:speaker_structure",
+    }
+    assert trace["mutation_occurred"] is False
+
+
 def test_quality_conclusion_separates_deterministic_normalization_from_model_repair():
     from app.api.translate import _finalize_quality_conclusion
     from app.engines.translation_qa import TranslationQaReport
@@ -8530,6 +8565,154 @@ def test_targeted_semantic_evidence_accepts_short_punctuated_exact_excerpts():
     assert all(trace["coverage_complete"] is True for trace in traces)
 
 
+def test_targeted_semantic_multiline_exact_evidence_is_explicit_ok():
+    """LF and CRLF evidence must fully cover the same two-line candidate."""
+    from app.api import translate as api_translate
+
+    item = {
+        "id": 625,
+        "original": "-Solmari. We got it.\n-Oh, thank God!",
+        "draft": "-索尔玛丽，我们找到了。\n-哦，谢天谢地！",
+    }
+    base = {
+        "id": 625,
+        "translation": "OK",
+        "verdict": "OK",
+        "taxonomy": "none",
+    }
+
+    lf_result = {
+        **base,
+        "source_evidence": item["original"],
+        "target_evidence": item["draft"],
+    }
+    crlf_result = {
+        **base,
+        "source_evidence": item["original"].replace("\n", "\r\n"),
+        "target_evidence": item["draft"].replace("\n", "\r\n"),
+    }
+
+    assert api_translate._targeted_semantic_result_stage(
+        lf_result,
+        item,
+    ) == "explicit_ok"
+    assert api_translate._targeted_semantic_result_stage(
+        crlf_result,
+        item,
+    ) == "explicit_ok"
+
+
+@pytest.mark.parametrize("forbidden", ["\r", "\t", "\x00", "\u200b", "\u202e"])
+def test_targeted_semantic_evidence_rejects_unsafe_control_characters(forbidden):
+    """Bare controls, zero-width text, and bidi overrides remain fail-closed."""
+    from app.api import translate as api_translate
+
+    item = {"id": 1, "original": "No.", "draft": "不。"}
+    result = {
+        "id": 1,
+        "translation": "OK",
+        "verdict": "OK",
+        "taxonomy": "none",
+        "source_evidence": f"No.{forbidden}",
+        "target_evidence": "不。",
+    }
+
+    assert api_translate._targeted_semantic_result_stage(
+        result,
+        item,
+    ) == "evidence_not_anchored"
+
+
+def test_targeted_semantic_partial_evidence_has_incomplete_stage():
+    """Anchored excerpts that omit candidate content are incomplete, not unanchored."""
+    from app.api import translate as api_translate
+
+    item = {
+        "id": 451,
+        "original": "-after what he did?\n-[Renata] No.",
+        "draft": "-在他做了那些事之后？\n-[蕾娜塔] 不。",
+    }
+    result = {
+        "id": 451,
+        "translation": "OK",
+        "verdict": "OK",
+        "taxonomy": "none",
+        "source_evidence": "after what he did",
+        "target_evidence": "在他做了那些事之后",
+    }
+
+    assert api_translate._targeted_semantic_result_stage(
+        result,
+        item,
+    ) == "evidence_incomplete"
+
+
+def test_targeted_semantic_one_partial_pass_never_verifies_strict_candidate():
+    """One incomplete pass plus one complete pass cannot satisfy strict two-OK."""
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=451,
+        start=timedelta(seconds=451),
+        end=timedelta(seconds=452),
+        text="-after what he did?\n-[Renata] No.",
+        translation="-在他做了那些事之后？\n-[蕾娜塔] 不。",
+    )
+    prior_report = TranslationQaReport(
+        status="needs_review",
+        issues=[QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=451,
+            message="historical draft omitted a speaker",
+        )],
+    )
+
+    class Primary:
+        def __init__(self):
+            self.calls = 0
+
+        def translate_batch(self, items, prompt):
+            self.calls += 1
+            item = items[0]
+            complete = self.calls > 3
+            return [{
+                "id": item["id"],
+                "translation": "OK",
+                "verdict": "OK",
+                "taxonomy": "none",
+                "source_evidence": (
+                    item["original"] if complete else "after what he did"
+                ),
+                "target_evidence": (
+                    item["draft"] if complete else "在他做了那些事之后"
+                ),
+            }]
+
+    issues, verified_ids, verified_hashes, traces = (
+        api_translate._run_targeted_semantic_verification(
+            {"translation": {}},
+            type("Translator", (), {"primary": Primary()})(),
+            [block],
+            "简体中文",
+            {451},
+            prior_report,
+            [[451]],
+            strict_quality_gate=True,
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert traces[0]["stage_codes_by_block_id"] == {
+        "451": "evidence_incomplete",
+    }
+    assert traces[1]["stage_codes_by_block_id"] == {"451": "explicit_ok"}
+
+
 def test_targeted_semantic_retries_invalid_evidence_without_relaxing_two_ok():
     from app.api import translate as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
@@ -8600,7 +8783,11 @@ def test_targeted_semantic_retries_invalid_evidence_without_relaxing_two_ok():
     assert all(trace["coverage_complete"] is True for trace in traces)
     assert all(trace["stage_codes_by_block_id"] == {"416": "explicit_ok"} for trace in traces)
     assert all(len(trace["batches"]) == 2 for trace in traces)
-    assert all(trace["batches"][0]["stage_codes_by_block_id"] == {"416": "evidence_not_anchored"} for trace in traces)
+    assert all(
+        trace["batches"][0]["stage_codes_by_block_id"]
+        == {"416": "evidence_incomplete"}
+        for trace in traces
+    )
     assert all(trace["batches"][1]["correction_retry"] is True for trace in traces)
 
 
@@ -8661,7 +8848,7 @@ def test_targeted_semantic_retry_exhaustion_still_fails_closed():
     assert primary.calls == 6
     assert all(trace["failed_block_ids"] == [625] for trace in traces)
     assert all(
-        trace["stage_codes_by_block_id"] == {"625": "evidence_not_anchored"}
+        trace["stage_codes_by_block_id"] == {"625": "evidence_incomplete"}
         for trace in traces
     )
 

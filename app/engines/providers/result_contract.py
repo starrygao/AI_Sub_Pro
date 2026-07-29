@@ -17,6 +17,26 @@ _STRUCTURED_RESULT_FIELDS = (
 )
 
 
+def provider_response_instruction(system_prompt: str) -> str:
+    """Preserve a richer response schema already declared by the caller."""
+    prompt = system_prompt if isinstance(system_prompt, str) else ""
+    targeted_fields = (
+        "verdict",
+        "taxonomy",
+        "source_evidence",
+        "target_evidence",
+    )
+    if all(field in prompt for field in targeted_fields):
+        return (
+            "Follow the response contract declared above exactly. Reply with "
+            "ONLY its JSON array, preserve every declared field, add no prose. "
+        )
+    return (
+        "Reply with ONLY a JSON array of "
+        '{"id": N, "translation": "..."} objects, no prose. '
+    )
+
+
 def reconcile_translation_results(parsed_list: List[Dict], items: List[Dict]) -> List[Dict]:
     """Return exactly one normalized result per input item.
 

@@ -7,7 +7,11 @@ import time
 from typing import List, Dict, Optional
 
 from .base import BaseProvider
-from .result_contract import reconcile_translation_results, redact_error_message
+from .result_contract import (
+    provider_response_instruction,
+    reconcile_translation_results,
+    redact_error_message,
+)
 
 log = logging.getLogger(__name__)
 
@@ -127,8 +131,7 @@ class ClaudeCliProvider(BaseProvider):
         # CLI doesn't expose separate system_prompt; inline it at the top of the prompt.
         prompt = (
             f"{system_prompt}\n\n"
-            f"Input JSON (translate each item; reply with ONLY a JSON array of "
-            f'{{\"id\": N, \"translation\": \"...\"}} objects, no prose). '
+            f"Input JSON. {provider_response_instruction(system_prompt)}"
             f"Each output id MUST be copied verbatim from the matching input "
             f"item — do not renumber — and every input item must appear exactly "
             f"once in the output:\n"
