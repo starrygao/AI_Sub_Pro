@@ -9877,6 +9877,66 @@ def test_targeted_double_ok_resolves_502_uncertainty_for_new_content_hash():
     ]
 
 
+def test_rollback_overlay_cannot_reinsert_same_hash_after_targeted_double_ok():
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=37,
+        start=timedelta(seconds=37),
+        end=timedelta(seconds=38),
+        text="-on this godforsaken island--\n-Listen to me!",
+        translation="-在这座鬼岛上——\n-听我说！",
+    )
+    discovered = TranslationQaReport(
+        status="needs_review",
+        issues=[QualityIssue(
+            type="semantic_qa_failed",
+            severity="error",
+            block_id=37,
+            message="historical focused verification failed",
+            source_text=block.text,
+            translation=block.translation,
+        )],
+    )
+    ledger = {"outstanding": [], "resolved": []}
+    api_translate._update_and_overlay_semantic_issue_ledger(
+        discovered,
+        [block],
+        ledger,
+        {},
+        strict_quality_gate=True,
+    )
+    rollback_report = TranslationQaReport(status="ok", issues=[], summary={})
+    api_translate._update_and_overlay_semantic_issue_ledger(
+        rollback_report,
+        [block],
+        ledger,
+        {},
+        strict_quality_gate=True,
+    )
+    verified_hash = api_translate._semantic_block_content_hash(block)
+
+    api_translate._apply_verified_semantic_resolution(
+        rollback_report,
+        ledger,
+        {37: verified_hash},
+    )
+    api_translate._update_and_overlay_semantic_issue_ledger(
+        rollback_report,
+        [block],
+        ledger,
+        {},
+        strict_quality_gate=True,
+    )
+
+    assert rollback_report.issues == []
+    assert ledger["outstanding"] == []
+    assert ledger["resolved"][0]["block_id"] == 37
+    assert ledger["resolved"][0]["resolved_by_content_hash"] == verified_hash
+
+
 @pytest.mark.parametrize("initial_run_id", ["same-quality-run", "stale-quality-run"])
 def test_quality_run_state_enforces_total_auto_repair_budget_across_persists(
     tmp_path,

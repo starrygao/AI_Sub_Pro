@@ -140,6 +140,7 @@ _SENTENCE_END_PUNCT_RE = re.compile(r"[.!?。！？]\s*$")
 _SEMANTIC_ELLIPSIS_RE = re.compile(r"(?:\.{2,}|…+)[\"'”’)\]}】）]*\s*$")
 _SEMANTIC_TERMINAL_RE = re.compile(r"[.!?。！？][\"'”’)\]}】）]*\s*$")
 _LOWERCASE_CONTINUATION_RE = re.compile(r"^[\"'“‘(\[{]*[a-z]")
+_DIALOGUE_DASH_PREFIX_RE = re.compile(r"^\s*[-‐‑‒–—―]\s*")
 _SINGLE_SPEAKER_START_RE = re.compile(
     r"^\s*(?:[-‐‑‒–—―]\s*\S|[A-Z][A-Za-z0-9 .'\-]{0,47}[:：]\s*\S)"
 )
@@ -1805,8 +1806,6 @@ def _cross_cue_semantic_continuation(previous, following) -> bool:
     )
     if not previous_source or not following_source:
         return False
-    if _starts_new_speaker_cue(following_source):
-        return False
 
     gap_seconds = _subtitle_time_gap_seconds(previous, following)
     if gap_seconds is None:
@@ -1816,14 +1815,35 @@ def _cross_cue_semantic_continuation(previous, following) -> bool:
 
     previous_line = previous_source.rstrip().splitlines()[-1]
     following_line = following_source.lstrip().splitlines()[0]
+    following_lines = following_source.splitlines()
+    first_dialogue_line = _DIALOGUE_DASH_PREFIX_RE.sub(
+        "",
+        following_line,
+        count=1,
+    )
+    dual_speaker_first_line_continues = bool(
+        len(following_lines) > 1
+        and first_dialogue_line != following_line
+        and _LOWERCASE_CONTINUATION_RE.match(first_dialogue_line)
+    )
+    if (
+        _starts_new_speaker_cue(following_source)
+        and not dual_speaker_first_line_continues
+    ):
+        return False
     if _SEMANTIC_ELLIPSIS_RE.search(previous_line):
         return True
     if _SEMANTIC_TERMINAL_RE.search(previous_line):
         return False
-    if _LOWERCASE_CONTINUATION_RE.match(following_line):
+    continuation_line = (
+        first_dialogue_line
+        if dual_speaker_first_line_continues
+        else following_line
+    )
+    if _LOWERCASE_CONTINUATION_RE.match(continuation_line):
         return True
     return bool(
-        _UPPERCASE_CONTINUATION_RE.match(following_line)
+        _UPPERCASE_CONTINUATION_RE.match(continuation_line)
         and _INCOMPLETE_TRAILING_WORD_RE.search(previous_line)
     )
 
@@ -1916,9 +1936,34 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
                 group_starts = sorted(
                     range(earliest_start, latest_start + 1),
                     key=lambda start: (
+                        -sum(
+                            start <= position < start + group_size
+                            for position in ordered_seed_positions
+                        ),
                         abs(
-                            2 * seed_position
+                            2 * (
+                                sum(
+                                    position
+                                    for position in ordered_seed_positions
+                                    if start <= position < start + group_size
+                                )
+                                / max(
+                                    1,
+                                    sum(
+                                        start <= position < start + group_size
+                                        for position in ordered_seed_positions
+                                    ),
+                                )
+                            )
                             - (2 * start + group_size - 1)
+                        ),
+                        -(
+                            start + group_size - 1
+                            - max(
+                                position
+                                for position in ordered_seed_positions
+                                if start <= position < start + group_size
+                            )
                         ),
                         start,
                     ),

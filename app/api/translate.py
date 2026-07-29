@@ -2524,6 +2524,17 @@ def _resolve_semantic_issue_ledger(
     ledger["resolved"] = resolved
 
 
+def _apply_verified_semantic_resolution(
+    report,
+    ledger: dict,
+    verified_hashes: dict[int, str],
+) -> None:
+    """Resolve accepted hashes without letting ledger overlays reinsert them."""
+    verified_ids = set(verified_hashes)
+    _remove_verified_semantic_issues(report, verified_ids)
+    _resolve_semantic_issue_ledger(ledger, verified_hashes)
+
+
 _SEMANTIC_QA_CONTEXT_MAX_CHARS = 4200
 _SEMANTIC_QA_CONTEXT_TERM_LIMIT = 80
 
@@ -5218,7 +5229,8 @@ def _persist_translation_quality_report(
                     for block_id, content_hash in targeted_verified_hashes.items()
                     if block_id not in rollback_latch_ids
                 }
-                _resolve_semantic_issue_ledger(
+                _apply_verified_semantic_resolution(
+                    report,
                     semantic_ledger,
                     accepted_verified_hashes,
                 )
