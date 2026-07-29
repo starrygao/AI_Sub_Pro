@@ -9,6 +9,7 @@ import hashlib
 import logging
 import math
 import re
+import stat
 import tempfile
 import threading
 import unicodedata
@@ -111,6 +112,16 @@ from app.utils.errors import redact_error_message
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/projects", tags=["pipeline"])
+_TRANSLATION_QUALITY_RUN_STATE_FILENAME = (
+    "translation_quality_run_state.json"
+)
+_TRANSLATION_QUALITY_RUN_STATE_SCHEMA_VERSION = 1
+_TRANSLATION_QUALITY_RUN_STATE_MAX_BYTES = 16 * 1024 * 1024
+_TRANSLATION_QUALITY_RUN_STATE_MAX_STRING = 4096
+_TRANSLATION_QUALITY_RUN_STATE_MIN_HISTORY = 4096
+_TRANSLATION_QUALITY_RUN_STATE_MAX_ROUNDS = 16
+_TRANSLATION_QUALITY_RUN_STATE_MIN_LEDGER_ITEMS = 15000
+_TRANSLATION_QUALITY_RUN_STATE_MIN_SEEN = 50000
 
 # Active tasks tracker
 active_tasks: Dict[str, threading.Thread] = {}
@@ -206,6 +217,7 @@ def _task_launch_state_paths(pid: str) -> tuple[Path, ...]:
         pdir / "workflow_state.json",
         pdir / "translation_qa_report.json",
         pdir / "translation_qa_report.md",
+        pdir / _TRANSLATION_QUALITY_RUN_STATE_FILENAME,
         pdir / ".translation_delivery_in_progress",
         pdir / "workflow_logs" / "asr.log",
         pdir / "workflow_logs" / "translate.log",
@@ -2287,12 +2299,20 @@ def _issue_counts_by_type(issues) -> dict:
     return counts
 
 
-def _refresh_quality_report_issue_summary(report) -> None:
+def _refresh_quality_report_issue_summary(
+    report,
+    *,
+    strict_quality_gate: bool = True,
+) -> None:
+    from app.engines.translation_qa import is_strict_blocking_issue
+
     issues = list(getattr(report, "issues", []) or [])
     blocking = [
         issue for issue in issues
-        if getattr(issue, "severity", "") in {"error", "severe"}
-        or not _is_report_only_quality_warning(issue)
+        if is_strict_blocking_issue(
+            issue,
+            strict_quality_gate=strict_quality_gate,
+        )
     ]
     report.status = "ok" if not blocking else "needs_review"
     report.unresolved_blocks = sorted({
@@ -2338,19 +2358,601 @@ def _semantic_block_content_hash(block) -> str:
 
 
 def _semantic_issue_ledger(raw_ledger) -> dict:
+    from app.engines.translation_qa import (
+        normalize_semantic_resolution_route,
+    )
+
     ledger = raw_ledger if isinstance(raw_ledger, dict) else {}
+
+    def normalized_items(field: str) -> list[dict]:
+        values = ledger.get(field, [])
+        if not isinstance(values, list):
+            return []
+        normalized = []
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            entry = dict(item)
+            route = normalize_semantic_resolution_route(
+                entry.get("type", ""),
+                entry.get("resolution_route", ""),
+            )
+            if route:
+                entry["resolution_route"] = route
+            else:
+                entry.pop("resolution_route", None)
+            normalized.append(entry)
+        return normalized
+
     return {
-        "outstanding": [
-            dict(item)
-            for item in ledger.get("outstanding", [])
-            if isinstance(item, dict)
-        ] if isinstance(ledger.get("outstanding", []), list) else [],
-        "resolved": [
-            dict(item)
-            for item in ledger.get("resolved", [])
-            if isinstance(item, dict)
-        ] if isinstance(ledger.get("resolved", []), list) else [],
+        "outstanding": normalized_items("outstanding"),
+        "resolved": normalized_items("resolved"),
     }
+
+
+def _quality_run_state_error(detail: str) -> RuntimeError:
+    return RuntimeError(
+        f"translation quality run state is invalid: {detail}"
+    )
+
+
+def _validate_quality_run_state_json_value(
+    value,
+    *,
+    path: str,
+    depth: int = 0,
+) -> None:
+    if depth > 64:
+        raise _quality_run_state_error(f"{path} nesting is too deep")
+    if value is None or isinstance(value, bool):
+        return
+    if isinstance(value, int):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise _quality_run_state_error(
+                f"{path} contains a non-finite number"
+            )
+        return
+    if isinstance(value, str):
+        if len(value) > _TRANSLATION_QUALITY_RUN_STATE_MAX_STRING:
+            raise _quality_run_state_error(
+                f"{path} contains an oversized string"
+            )
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_quality_run_state_json_value(
+                item,
+                path=f"{path}[{index}]",
+                depth=depth + 1,
+            )
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise _quality_run_state_error(
+                    f"{path} contains a non-string key"
+                )
+            _validate_quality_run_state_json_value(
+                key,
+                path=f"{path}.<key>",
+                depth=depth + 1,
+            )
+            _validate_quality_run_state_json_value(
+                item,
+                path=f"{path}.{key}",
+                depth=depth + 1,
+            )
+        return
+    raise _quality_run_state_error(
+        f"{path} contains a non-JSON value"
+    )
+
+
+def _validate_translation_quality_run_state(
+    state,
+    *,
+    expected_configured_rounds: int | None = None,
+) -> dict:
+    required_fields = {
+        "schema_version",
+        "block_count",
+        "run_id",
+        "source_generation_hash",
+        "configuration_hash",
+        "semantic_uncertain_observed_block_ids",
+        "semantic_issue_ledger",
+        "semantic_qa_history",
+        "auto_repair_rounds",
+        "auto_repair_budget",
+        "certification_recovery_used",
+        "seen_blocking_identities",
+    }
+    if not isinstance(state, dict) or set(state) != required_fields:
+        raise _quality_run_state_error(
+            "required top-level fields are missing or unknown"
+        )
+    if (
+        isinstance(state["schema_version"], bool)
+        or state["schema_version"]
+        != _TRANSLATION_QUALITY_RUN_STATE_SCHEMA_VERSION
+    ):
+        raise _quality_run_state_error("unsupported schema version")
+    block_count = state["block_count"]
+    if (
+        not isinstance(block_count, int)
+        or isinstance(block_count, bool)
+        or block_count < 0
+    ):
+        raise _quality_run_state_error(
+            "block_count must be a non-negative integer"
+        )
+    history_limit = max(
+        _TRANSLATION_QUALITY_RUN_STATE_MIN_HISTORY,
+        block_count * 8,
+    )
+    ledger_item_limit = max(
+        _TRANSLATION_QUALITY_RUN_STATE_MIN_LEDGER_ITEMS,
+        block_count * 16,
+    )
+    seen_limit = max(
+        _TRANSLATION_QUALITY_RUN_STATE_MIN_SEEN,
+        block_count * 32,
+    )
+    for field in (
+        "run_id",
+        "source_generation_hash",
+        "configuration_hash",
+    ):
+        value = state[field]
+        if (
+            not isinstance(value, str)
+            or not value
+            or len(value) > _TRANSLATION_QUALITY_RUN_STATE_MAX_STRING
+        ):
+            raise _quality_run_state_error(
+                f"{field} must be a bounded non-empty string"
+            )
+    if not isinstance(state["certification_recovery_used"], bool):
+        raise _quality_run_state_error(
+            "certification_recovery_used must be boolean"
+        )
+
+    observed = state["semantic_uncertain_observed_block_ids"]
+    if (
+        not isinstance(observed, list)
+        or len(observed) > block_count
+        or any(
+            not isinstance(block_id, int)
+            or isinstance(block_id, bool)
+            or block_id <= 0
+            for block_id in observed
+        )
+        or len(observed) != len(set(observed))
+    ):
+        raise _quality_run_state_error(
+            "semantic uncertainty ids are malformed or oversized"
+        )
+
+    history = state["semantic_qa_history"]
+    if (
+        not isinstance(history, list)
+        or len(history) > history_limit
+        or any(not isinstance(item, dict) for item in history)
+    ):
+        raise _quality_run_state_error(
+            "semantic QA history is malformed or oversized"
+        )
+
+    rounds = state["auto_repair_rounds"]
+    if (
+        not isinstance(rounds, list)
+        or len(rounds) > _TRANSLATION_QUALITY_RUN_STATE_MAX_ROUNDS
+        or any(
+            not isinstance(item, dict)
+            or not isinstance(item.get("round"), int)
+            or isinstance(item.get("round"), bool)
+            or item["round"] <= 0
+            for item in rounds
+        )
+    ):
+        raise _quality_run_state_error(
+            "auto repair rounds are malformed or oversized"
+        )
+
+    budget = state["auto_repair_budget"]
+    if (
+        not isinstance(budget, dict)
+        or set(budget) != {
+            "configured_rounds",
+            "used_rounds",
+            "remaining_rounds",
+        }
+        or any(
+            not isinstance(budget.get(field), int)
+            or isinstance(budget.get(field), bool)
+            or budget[field] < 0
+            for field in (
+                "configured_rounds",
+                "used_rounds",
+                "remaining_rounds",
+            )
+        )
+        or budget["configured_rounds"]
+        > _TRANSLATION_QUALITY_RUN_STATE_MAX_ROUNDS
+        or len(rounds) > budget["configured_rounds"]
+        or budget["used_rounds"] != len(rounds)
+        or budget["remaining_rounds"]
+        != budget["configured_rounds"] - len(rounds)
+        or (
+            expected_configured_rounds is not None
+            and budget["configured_rounds"]
+            != expected_configured_rounds
+        )
+    ):
+        raise _quality_run_state_error(
+            "auto repair budget is inconsistent"
+        )
+
+    ledger = state["semantic_issue_ledger"]
+    if (
+        not isinstance(ledger, dict)
+        or set(ledger) != {"outstanding", "resolved"}
+    ):
+        raise _quality_run_state_error(
+            "semantic issue ledger is malformed"
+        )
+    base_ledger_fields = {
+        "block_id",
+        "content_hash",
+        "type",
+        "severity",
+        "message",
+        "source_text",
+        "translation",
+        "expected",
+    }
+    for field in ("outstanding", "resolved"):
+        entries = ledger[field]
+        if (
+            not isinstance(entries, list)
+            or len(entries) > ledger_item_limit
+        ):
+            raise _quality_run_state_error(
+                f"semantic issue ledger {field} is malformed or oversized"
+            )
+        allowed_fields = set(base_ledger_fields)
+        allowed_fields.add("resolution_route")
+        if field == "resolved":
+            allowed_fields.update({
+                "resolution",
+                "resolved_by_content_hash",
+            })
+        for entry in entries:
+            if (
+                not isinstance(entry, dict)
+                or not base_ledger_fields.issubset(entry)
+                or not set(entry).issubset(allowed_fields)
+                or (
+                    field == "resolved"
+                    and not {
+                        "resolution",
+                        "resolved_by_content_hash",
+                    }.issubset(entry)
+                )
+                or not isinstance(entry.get("block_id"), int)
+                or isinstance(entry.get("block_id"), bool)
+                or entry["block_id"] <= 0
+                or entry.get("type") not in _SEMANTIC_LEDGER_ISSUE_TYPES
+                or entry.get("severity")
+                not in {"warning", "error", "severe"}
+            ):
+                raise _quality_run_state_error(
+                    f"semantic issue ledger {field} entry is malformed"
+                )
+            for string_field in (
+                "content_hash",
+                "message",
+                "source_text",
+                "translation",
+                "expected",
+            ):
+                if not isinstance(entry.get(string_field), str):
+                    raise _quality_run_state_error(
+                        f"semantic issue ledger {field} entry is malformed"
+                    )
+            if not entry["content_hash"]:
+                raise _quality_run_state_error(
+                    f"semantic issue ledger {field} hash is empty"
+                )
+            if field == "resolved" and any(
+                not isinstance(entry.get(string_field), str)
+                or not entry[string_field]
+                for string_field in (
+                    "resolution",
+                    "resolved_by_content_hash",
+                )
+            ):
+                raise _quality_run_state_error(
+                    "resolved semantic ledger entry is malformed"
+                )
+
+    seen = state["seen_blocking_identities"]
+    if (
+        not isinstance(seen, list)
+        or len(seen) > seen_limit
+    ):
+        raise _quality_run_state_error(
+            "seen blocking identities are malformed or oversized"
+        )
+    for identity in seen:
+        if (
+            not isinstance(identity, list)
+            or len(identity) != 4
+            or not isinstance(identity[0], int)
+            or isinstance(identity[0], bool)
+            or identity[0] <= 0
+            or any(not isinstance(value, str) for value in identity[1:])
+            or not identity[1]
+            or not identity[2]
+        ):
+            raise _quality_run_state_error(
+                "seen blocking identity is malformed"
+            )
+        try:
+            hash(tuple(identity))
+        except TypeError as exc:
+            raise _quality_run_state_error(
+                "seen blocking identity is not hashable"
+            ) from exc
+
+    _validate_quality_run_state_json_value(
+        state,
+        path="run_state",
+    )
+    normalized = {
+        key: value
+        for key, value in state.items()
+    }
+    normalized["semantic_issue_ledger"] = _semantic_issue_ledger(
+        ledger
+    )
+    return normalized
+
+
+def _reject_quality_run_state_json_constant(value: str):
+    raise ValueError(f"non-finite JSON constant: {value}")
+
+
+def _read_translation_quality_run_state(path: Path) -> dict | None:
+    try:
+        before = path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise _quality_run_state_error(
+            "could not inspect the state file"
+        ) from exc
+    if (
+        stat.S_ISLNK(before.st_mode)
+        or not stat.S_ISREG(before.st_mode)
+    ):
+        raise _quality_run_state_error(
+            "state path must be a regular file without symlinks"
+        )
+    if before.st_size > _TRANSLATION_QUALITY_RUN_STATE_MAX_BYTES:
+        raise _quality_run_state_error("state file is oversized")
+
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise _quality_run_state_error(
+            "could not safely open the state file"
+        ) from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_dev != before.st_dev
+            or opened.st_ino != before.st_ino
+            or opened.st_size
+            > _TRANSLATION_QUALITY_RUN_STATE_MAX_BYTES
+        ):
+            raise _quality_run_state_error(
+                "state file changed or is not regular"
+            )
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(
+                descriptor,
+                min(
+                    1024 * 1024,
+                    (
+                        _TRANSLATION_QUALITY_RUN_STATE_MAX_BYTES
+                        + 1
+                        - total
+                    ),
+                ),
+            )
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > _TRANSLATION_QUALITY_RUN_STATE_MAX_BYTES:
+                raise _quality_run_state_error(
+                    "state file is oversized"
+                )
+    finally:
+        os.close(descriptor)
+
+    try:
+        candidate = json.loads(
+            b"".join(chunks).decode("utf-8"),
+            parse_constant=_reject_quality_run_state_json_constant,
+        )
+    except (
+        UnicodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        ValueError,
+    ) as exc:
+        raise _quality_run_state_error(
+            "state file is not valid bounded JSON"
+        ) from exc
+    return candidate
+
+
+def _new_translation_quality_run_state(
+    *,
+    run_id: str,
+    source_generation_hash: str,
+    configuration_hash: str,
+    block_count: int,
+    cfg: dict,
+) -> dict:
+    round_limit = _repair_round_limit(cfg)
+    return {
+        "schema_version": (
+            _TRANSLATION_QUALITY_RUN_STATE_SCHEMA_VERSION
+        ),
+        "block_count": block_count,
+        "run_id": run_id,
+        "source_generation_hash": source_generation_hash,
+        "configuration_hash": configuration_hash,
+        "semantic_uncertain_observed_block_ids": [],
+        "semantic_issue_ledger": {
+            "outstanding": [],
+            "resolved": [],
+        },
+        "semantic_qa_history": [],
+        "auto_repair_rounds": [],
+        "auto_repair_budget": {
+            "configured_rounds": round_limit,
+            "used_rounds": 0,
+            "remaining_rounds": round_limit,
+        },
+        "certification_recovery_used": False,
+        "seen_blocking_identities": [],
+    }
+
+
+def _persist_translation_quality_run_state(
+    pdir: str | Path,
+    state: dict,
+    *,
+    block_count: int,
+) -> None:
+    budget = (
+        state.get("auto_repair_budget")
+        if isinstance(state, dict)
+        else None
+    )
+    configured_rounds = (
+        budget.get("configured_rounds")
+        if isinstance(budget, dict)
+        else None
+    )
+    validated = _validate_translation_quality_run_state(
+        state,
+        expected_configured_rounds=(
+            configured_rounds
+            if (
+                isinstance(configured_rounds, int)
+                and not isinstance(configured_rounds, bool)
+            )
+            else None
+        ),
+    )
+    if validated["block_count"] != block_count:
+        raise _quality_run_state_error(
+            "block_count does not match the current translation input"
+        )
+    try:
+        encoded = json.dumps(
+            validated,
+            indent=2,
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise _quality_run_state_error(
+            "state could not be serialized"
+        ) from exc
+    if len(encoded) > _TRANSLATION_QUALITY_RUN_STATE_MAX_BYTES:
+        raise _quality_run_state_error(
+            "serialized state is oversized"
+        )
+    atomic_write_json(
+        Path(pdir) / _TRANSLATION_QUALITY_RUN_STATE_FILENAME,
+        validated,
+    )
+
+
+def _hydrate_translation_quality_run_state(
+    pdir: str | Path,
+    *,
+    run_id: str,
+    source_generation_hash: str,
+    configuration_hash: str,
+    block_count: int,
+    cfg: dict,
+) -> dict:
+    expected_identity = {
+        "run_id": run_id,
+        "source_generation_hash": source_generation_hash,
+        "configuration_hash": configuration_hash,
+        "block_count": block_count,
+    }
+    path = Path(pdir) / _TRANSLATION_QUALITY_RUN_STATE_FILENAME
+    loaded = _read_translation_quality_run_state(path)
+    if loaded is None:
+        state = _new_translation_quality_run_state(
+            **expected_identity,
+            cfg=cfg,
+        )
+        _persist_translation_quality_run_state(
+            pdir,
+            state,
+            block_count=block_count,
+        )
+        return state
+
+    validated = _validate_translation_quality_run_state(loaded)
+    identity_matches = all(
+        validated.get(field) == expected
+        for field, expected in expected_identity.items()
+    )
+    if identity_matches:
+        configured_rounds = _repair_round_limit(cfg)
+        validated = _validate_translation_quality_run_state(
+            validated,
+            expected_configured_rounds=configured_rounds,
+        )
+        state = validated
+    else:
+        state = _new_translation_quality_run_state(
+            **expected_identity,
+            cfg=cfg,
+        )
+    _persist_translation_quality_run_state(
+        pdir,
+        state,
+        block_count=block_count,
+    )
+    return state
+
+
+def _clear_translation_quality_run_state(pdir: str | Path) -> None:
+    durable_unlink(
+        Path(pdir) / _TRANSLATION_QUALITY_RUN_STATE_FILENAME
+    )
 
 
 def _update_and_overlay_semantic_issue_ledger(
@@ -2395,7 +2997,8 @@ def _update_and_overlay_semantic_issue_ledger(
             continue
         block = block_by_id[block_id]
         content_hash = current_hash_by_id[block_id]
-        outstanding_by_key[(block_id, content_hash, issue_type)] = {
+        ledger_key = (block_id, content_hash, issue_type)
+        ledger_item = {
             "block_id": block_id,
             "content_hash": content_hash,
             "type": issue_type,
@@ -2404,7 +3007,17 @@ def _update_and_overlay_semantic_issue_ledger(
             "source_text": getattr(block, "text", ""),
             "translation": getattr(block, "translation", ""),
             "expected": getattr(issue, "expected", ""),
+            "resolution_route": getattr(issue, "resolution_route", ""),
         }
+        prior_item = outstanding_by_key.get(ledger_key)
+        if (
+            issue_type == "semantic_uncertain"
+            and isinstance(prior_item, dict)
+            and prior_item.get("resolution_route")
+            == "human_context_required"
+        ):
+            ledger_item["resolution_route"] = "human_context_required"
+        outstanding_by_key[ledger_key] = ledger_item
 
     outstanding = sorted(
         outstanding_by_key.values(),
@@ -2421,6 +3034,24 @@ def _update_and_overlay_semantic_issue_ledger(
         for item in outstanding
         if current_hash_by_id.get(item.get("block_id")) == item.get("content_hash")
     ]
+    human_owned_keys = {
+        (item.get("block_id"), item.get("type"))
+        for item in active_entries
+        if (
+            item.get("type") == "semantic_uncertain"
+            and item.get("resolution_route")
+            == "human_context_required"
+        )
+    }
+    for issue in getattr(report, "issues", []) or []:
+        if (
+            (
+                getattr(issue, "block_id", None),
+                getattr(issue, "type", ""),
+            )
+            in human_owned_keys
+        ):
+            issue.resolution_route = "human_context_required"
     existing_keys = {
         (
             getattr(issue, "block_id", None),
@@ -2445,9 +3076,13 @@ def _update_and_overlay_semantic_issue_ledger(
             source_text=item.get("source_text", ""),
             translation=item.get("translation", ""),
             expected=item.get("expected", ""),
+            resolution_route=item.get("resolution_route", ""),
         ))
         existing_keys.add(issue_key)
-    _refresh_quality_report_issue_summary(report)
+    _refresh_quality_report_issue_summary(
+        report,
+        strict_quality_gate=strict_quality_gate,
+    )
     trace["semantic_issue_ledger"] = {
         "outstanding": [dict(item) for item in outstanding],
         "resolved": [
@@ -2470,6 +3105,8 @@ def _remove_verified_semantic_issues(
     report,
     verified_hashes: dict[int, str],
     verified_issue_types_by_id: dict[int, set[str]] | None = None,
+    *,
+    strict_quality_gate: bool = True,
 ) -> None:
     if not verified_hashes:
         return
@@ -2492,7 +3129,10 @@ def _remove_verified_semantic_issues(
             )
         )
     ]
-    _refresh_quality_report_issue_summary(report)
+    _refresh_quality_report_issue_summary(
+        report,
+        strict_quality_gate=strict_quality_gate,
+    )
 
 
 def _resolve_semantic_issue_ledger(
@@ -2559,12 +3199,15 @@ def _apply_verified_semantic_resolution(
     ledger: dict,
     verified_hashes: dict[int, str],
     verified_issue_types_by_id: dict[int, set[str]] | None = None,
+    *,
+    strict_quality_gate: bool = True,
 ) -> None:
     """Resolve accepted hashes without letting ledger overlays reinsert them."""
     _remove_verified_semantic_issues(
         report,
         verified_hashes,
         verified_issue_types_by_id,
+        strict_quality_gate=strict_quality_gate,
     )
     _resolve_semantic_issue_ledger(
         ledger,
@@ -2732,8 +3375,12 @@ def _semantic_qa_prompt(
         "如果 draft 准确表达 original 的核心意思，返回 OK。",
         "如果 draft 与 original 明显无关、错位、漏掉核心动作/对象/问答关系，返回 MISMATCH: 简短中文原因。",
         "如果信息不足但高度可疑，返回 UNCERTAIN: 简短中文原因。",
+        "每项必须返回 resolution_route；MISMATCH 固定为 auto_resolvable；"
+        "UNCERTAIN 只能是 auto_resolvable 或 human_context_required，"
+        "缺失或非法值按 human_context_required 处理。",
         "必须保持 id 原样，不要新增、删除或重编号。",
-        "仅输出 JSON 数组，格式: [{\"id\": N, \"translation\": \"OK\"}]。",
+        "仅输出 JSON 数组，格式: [{\"id\": N, \"translation\": \"OK\", "
+        "\"resolution_route\": \"auto_resolvable\"}]。",
     ]
     context = _semantic_qa_context(
         meta_info=meta_info,
@@ -2793,9 +3440,13 @@ def _semantic_issue_from_verdict(
     verdict: str,
     error: str = "",
     *,
+    resolution_route: str = "",
     strict_quality_gate: bool = False,
 ):
-    from app.engines.translation_qa import QualityIssue
+    from app.engines.translation_qa import (
+        QualityIssue,
+        normalize_semantic_resolution_route,
+    )
 
     block_id = item.get("id")
     source = item.get("original", "")
@@ -2811,6 +3462,7 @@ def _semantic_issue_from_verdict(
             message=f"semantic QA did not return a usable verdict: {_safe_error_message(clean_error, 120)}",
             source_text=source if isinstance(source, str) else "",
             translation=translation if isinstance(translation, str) else "",
+            resolution_route="",
         )
 
     normalized = clean_verdict.strip().lower()
@@ -2828,6 +3480,10 @@ def _semantic_issue_from_verdict(
             message=reason or "translation does not match source meaning",
             source_text=source if isinstance(source, str) else "",
             translation=translation if isinstance(translation, str) else "",
+            resolution_route=normalize_semantic_resolution_route(
+                "semantic_mismatch",
+                resolution_route,
+            ),
         )
     if exact_verdict and normalized.startswith("uncertain:"):
         reason = clean_verdict.split(":", 1)[-1].strip() if ":" in clean_verdict else clean_verdict
@@ -2838,6 +3494,10 @@ def _semantic_issue_from_verdict(
             message=reason or "semantic QA could not confirm source-target alignment",
             source_text=source if isinstance(source, str) else "",
             translation=translation if isinstance(translation, str) else "",
+            resolution_route=normalize_semantic_resolution_route(
+                "semantic_uncertain",
+                resolution_route,
+            ),
         )
 
     return QualityIssue(
@@ -2847,6 +3507,10 @@ def _semantic_issue_from_verdict(
         message=f"semantic QA returned ambiguous verdict: {_safe_error_message(clean_verdict, 120)}",
         source_text=source if isinstance(source, str) else "",
         translation=translation if isinstance(translation, str) else "",
+        resolution_route=normalize_semantic_resolution_route(
+            "semantic_uncertain",
+            resolution_route,
+        ),
     )
 
 
@@ -3021,6 +3685,7 @@ def _run_semantic_quality_checks(
                 item,
                 verdict,
                 result_error,
+                resolution_route=result.get("resolution_route", ""),
                 strict_quality_gate=strict_policy,
             )
             if isinstance(result_error, str) and result_error.strip() and not (
@@ -3058,7 +3723,10 @@ def _run_quality_checks_with_semantics(
     progress_callback=None,
     strict_quality_gate: bool = False,
 ):
-    from app.engines.translation_qa import run_quality_checks
+    from app.engines.translation_qa import (
+        HUMAN_CONTEXT_REQUIRED,
+        run_quality_checks,
+    )
 
     report = run_quality_checks(
         blocks,
@@ -3086,6 +3754,8 @@ def _run_quality_checks_with_semantics(
         for issue in semantic_issues
         if (
             getattr(issue, "type", "") == "semantic_uncertain"
+            and getattr(issue, "resolution_route", "")
+            == HUMAN_CONTEXT_REQUIRED
             and isinstance(issue.block_id, int)
         )
     }
@@ -3100,7 +3770,10 @@ def _run_quality_checks_with_semantics(
         })
     if semantic_issues:
         report.issues.extend(semantic_issues)
-        _refresh_quality_report_issue_summary(report)
+        _refresh_quality_report_issue_summary(
+            report,
+            strict_quality_gate=strict_quality_gate,
+        )
     return report
 
 
@@ -3620,6 +4293,9 @@ def _targeted_semantic_prompt(target_language: str) -> str:
         "每个输入 id 必须且只能返回一次，不得漏项、合并或新增 id。",
         "每项必须包含 translation、verdict、taxonomy、source_evidence、target_evidence；"
         "translation 必须与 verdict 完全相同。",
+        "每项必须包含 resolution_route；MISMATCH 固定为 auto_resolvable；"
+        "UNCERTAIN 只能是 auto_resolvable 或 human_context_required，"
+        "缺失或非法值按 human_context_required 处理。",
         "verdict 只能是 OK、MISMATCH: 原因、UNCERTAIN: 原因；source_evidence 和 "
         "target_evidence 必须分别逐字引用该 id 的 original 和 draft 真实片段，不得引用 "
         "bounded_context、其他 id 或占位文本。",
@@ -3630,6 +4306,7 @@ def _targeted_semantic_prompt(target_language: str) -> str:
         "语义完全保真时 taxonomy 使用 none；任何信息不足、指代不明或证据不足必须返回 UNCERTAIN。",
         "仅输出 JSON 数组，例如："
         '[{"id":1,"translation":"OK","verdict":"OK","taxonomy":"none",'
+        '"resolution_route":"auto_resolvable",'
         '"source_evidence":"No.","target_evidence":"不。"}]。',
     ])
 
@@ -3642,6 +4319,9 @@ def _targeted_semantic_group_prompt(target_language: str) -> str:
         "必须检查组内遗漏、重复、否定/条件、实体、施受关系、人物/数量、"
         "以及不可接受的顺序漂移；任一成员不可靠时整个组返回非 OK。",
         "每个输入只能返回一个结果，id 必须保持输入 id；translation 必须与 verdict 完全相同。",
+        "每项必须包含 resolution_route；MISMATCH 固定为 auto_resolvable；"
+        "UNCERTAIN 只能是 auto_resolvable 或 human_context_required，"
+        "缺失或非法值按 human_context_required 处理。",
         "结果必须原样回显 group_ids 和 group_content_hash，不得增删、重排或改写。",
         "若输入包含 discourse_link_hashes，结果也必须按原顺序原样回显，"
         "并把 link 的 antecedent/bridge 作为只读局部证据。",
@@ -3660,6 +4340,7 @@ def _targeted_semantic_group_prompt(target_language: str) -> str:
         "任何结构、哈希、覆盖、证据或语义不确定性均不得猜测为 OK。",
         "仅输出 JSON 数组，例如："
         '[{"id":1,"translation":"OK","verdict":"OK","taxonomy":"none",'
+        '"resolution_route":"auto_resolvable",'
         '"group_ids":[1,2],"group_content_hash":"sha256:...",'
         '"source_evidence":[{"id":1,"text":"..."},{"id":2,"text":"..."}],'
         '"target_evidence":[{"id":1,"text":"..."},{"id":2,"text":"..."}]}]。',
@@ -4473,6 +5154,10 @@ def _run_targeted_semantic_verification(
                                     _semantic_issue_from_verdict(
                                         item_by_id[block_id],
                                         matching[0]["verdict"],
+                                        resolution_route=matching[0].get(
+                                            "resolution_route",
+                                            "",
+                                        ),
                                         strict_quality_gate=(
                                             strict_quality_gate
                                         ),
@@ -4552,6 +5237,94 @@ def _quality_issue_identity(issue) -> tuple:
             getattr(issue, "translation", ""),
         ),
         getattr(issue, "expected", ""),
+    )
+
+
+@dataclass(frozen=True)
+class StrictPreflightRecoverySelection:
+    union_issues: list
+    union_identities: set[tuple]
+    recovery_issues: list
+    human_block_ids: set[int]
+
+
+def _strict_preflight_recovery_selection(
+    reports,
+    blocks,
+    seen_identities: set[tuple],
+) -> StrictPreflightRecoverySelection:
+    from app.engines.translation_qa import (
+        HUMAN_CONTEXT_REQUIRED,
+        is_strict_blocking_issue,
+    )
+
+    current_hash_by_id = {
+        getattr(block, "index", None): _semantic_block_content_hash(block)
+        for block in blocks or []
+        if (
+            isinstance(getattr(block, "index", None), int)
+            and not isinstance(getattr(block, "index", None), bool)
+        )
+    }
+    issue_by_identity = {}
+    for report in reports or []:
+        for issue in getattr(report, "issues", []) or []:
+            block_id = getattr(issue, "block_id", None)
+            if block_id not in current_hash_by_id:
+                continue
+            if not is_strict_blocking_issue(issue):
+                continue
+            identity = (
+                block_id,
+                getattr(issue, "type", ""),
+                current_hash_by_id[block_id],
+                getattr(issue, "expected", ""),
+            )
+            existing = issue_by_identity.get(identity)
+            if (
+                existing is None
+                or (
+                    getattr(issue, "resolution_route", "")
+                    == HUMAN_CONTEXT_REQUIRED
+                    and getattr(existing, "resolution_route", "")
+                    != HUMAN_CONTEXT_REQUIRED
+                )
+            ):
+                issue_by_identity[identity] = issue
+
+    ordered_identities = sorted(
+        issue_by_identity,
+        key=lambda identity: tuple(str(value) for value in identity),
+    )
+    union_issues = [
+        issue_by_identity[identity]
+        for identity in ordered_identities
+    ]
+    human_block_ids = {
+        getattr(issue, "block_id", None)
+        for issue in union_issues
+        if getattr(issue, "resolution_route", "") == HUMAN_CONTEXT_REQUIRED
+    }
+    recovery_issues = [
+        issue_by_identity[identity]
+        for identity in ordered_identities
+        if (
+            identity not in seen_identities
+            and identity[0] not in human_block_ids
+            and _is_certification_recovery_content_issue(
+                issue_by_identity[identity]
+            )
+        )
+    ]
+    return StrictPreflightRecoverySelection(
+        union_issues=union_issues,
+        union_identities=set(ordered_identities),
+        recovery_issues=recovery_issues,
+        human_block_ids={
+            block_id
+            for block_id in human_block_ids
+            if isinstance(block_id, int) and not isinstance(block_id, bool)
+        },
     )
 
 
@@ -4800,6 +5573,11 @@ def _finalize_quality_conclusion(
     *,
     strict_quality_gate: bool = False,
 ) -> None:
+    from app.engines.translation_qa import (
+        HUMAN_CONTEXT_REQUIRED,
+        is_strict_blocking_issue,
+    )
+
     issue_count, error_count, warning_count = _quality_issue_counts(report)
     unresolved_count = len(getattr(report, "unresolved_blocks", []) or [])
     repair_stats = _quality_repair_statistics(report, repaired)
@@ -4821,11 +5599,21 @@ def _finalize_quality_conclusion(
     blocking_warnings = [
         issue for issue in (getattr(report, "issues", []) or [])
         if getattr(issue, "severity", "") == "warning"
-        and not _is_report_only_quality_warning(issue)
+        and (
+            is_strict_blocking_issue(issue)
+            if strict_quality_gate
+            else not _is_report_only_quality_warning(issue)
+        )
     ]
     semantic_uncertain = [
         issue for issue in (getattr(report, "issues", []) or [])
         if getattr(issue, "type", "") == "semantic_uncertain"
+    ]
+    human_semantic_uncertain = [
+        issue
+        for issue in semantic_uncertain
+        if getattr(issue, "resolution_route", "")
+        == HUMAN_CONTEXT_REQUIRED
     ]
     semantic_trace = (
         report.trace.get("semantic_qa")
@@ -4845,7 +5633,7 @@ def _finalize_quality_conclusion(
             *observed_uncertain_ids,
             *[
                 issue.block_id
-                for issue in semantic_uncertain
+                for issue in human_semantic_uncertain
                 if isinstance(issue.block_id, int)
             ],
         ]
@@ -4865,10 +5653,6 @@ def _finalize_quality_conclusion(
             for block_id in [*failed_ids, *skipped_ids]
             if isinstance(block_id, int) and not isinstance(block_id, bool)
         ]
-    if strict_quality_gate:
-        blocking_warnings.extend(
-            issue for issue in semantic_uncertain if issue not in blocking_warnings
-        )
     requires_human_review = bool(
         (strict_quality_gate and observed_uncertain_ids)
         or (not strict_quality_gate and semantic_coverage_incomplete)
@@ -5354,13 +6138,49 @@ def _auto_repair_quality_issues(
     try:
         from app.engines.providers.result_contract import reconcile_translation_results
         from app.engines.translation_qa import (
+            HUMAN_CONTEXT_REQUIRED,
             build_repair_items,
             build_repair_prompt,
             prioritized_repairable_quality_issues,
         )
 
+        human_routed_block_ids = {
+            getattr(issue, "block_id", None)
+            for issue in (getattr(report, "issues", []) or [])
+            if (
+                getattr(issue, "resolution_route", "")
+                == HUMAN_CONTEXT_REQUIRED
+                and isinstance(getattr(issue, "block_id", None), int)
+                and not isinstance(issue.block_id, bool)
+            )
+        }
+
+        def without_human_routed_groups(items: list[dict]) -> list[dict]:
+            blocked_ids = set(human_routed_block_ids)
+            for item in items:
+                group_ids = item.get("semantic_group_ids")
+                if (
+                    isinstance(group_ids, list)
+                    and blocked_ids.intersection(group_ids)
+                ):
+                    blocked_ids.update(
+                        block_id
+                        for block_id in group_ids
+                        if (
+                            isinstance(block_id, int)
+                            and not isinstance(block_id, bool)
+                        )
+                    )
+            return [
+                item
+                for item in items
+                if item.get("id") not in blocked_ids
+            ]
+
         repair_issues = prioritized_repairable_quality_issues(report.issues)
-        all_repair_items = build_repair_items(blocks, repair_issues)
+        all_repair_items = without_human_routed_groups(
+            build_repair_items(blocks, repair_issues)
+        )
         candidate_block_count = len(all_repair_items)
         blocks_by_id = {
             str(getattr(block, "index", "")): block
@@ -5416,7 +6236,9 @@ def _auto_repair_quality_issues(
 
         batch_traces = repair_trace.get("batches") if isinstance(repair_trace, dict) else None
         for positions in _repair_batch_positions(all_repair_items, max_blocks):
-            current_items = build_repair_items(blocks, repair_issues)
+            current_items = without_human_routed_groups(
+                build_repair_items(blocks, repair_issues)
+            )
             repair_items = [
                 current_items[position]
                 for position in positions
@@ -5582,7 +6404,6 @@ def _persist_translation_quality_report(
             state_can_track_run
             and quality_run_state.get("run_id") != quality_run_id
         ):
-            reset_round_limit = _repair_round_limit(cfg)
             source_generation_hash = quality_run_state.get(
                 "source_generation_hash",
                 "",
@@ -5591,26 +6412,15 @@ def _persist_translation_quality_report(
                 "configuration_hash",
                 "",
             )
+            reset_state = _new_translation_quality_run_state(
+                run_id=quality_run_id,
+                source_generation_hash=source_generation_hash,
+                configuration_hash=configuration_hash,
+                block_count=len(blocks or []),
+                cfg=cfg,
+            )
             quality_run_state.clear()
-            quality_run_state.update({
-                "run_id": quality_run_id,
-                "source_generation_hash": source_generation_hash,
-                "configuration_hash": configuration_hash,
-                "semantic_uncertain_observed_block_ids": [],
-                "semantic_issue_ledger": {
-                    "outstanding": [],
-                    "resolved": [],
-                },
-                "semantic_qa_history": [],
-                "auto_repair_rounds": [],
-                "auto_repair_budget": {
-                    "configured_rounds": reset_round_limit,
-                    "used_rounds": 0,
-                    "remaining_rounds": reset_round_limit,
-                },
-                "certification_recovery_used": False,
-                "seen_blocking_identities": [],
-            })
+            quality_run_state.update(reset_state)
         matching_run_state = (
             state_can_track_run
             and quality_run_state.get("run_id") == quality_run_id
@@ -5713,14 +6523,32 @@ def _persist_translation_quality_report(
                 trace,
                 strict_quality_gate=strict_policy,
             )
-            if pass_type not in {"final", "certification_final"}:
-                seen_blocking_identities.update(
-                    _quality_issue_identity(issue)
-                    for issue in (
-                        getattr(current_report, "issues", []) or []
+            if pass_type not in {
+                "strict_preflight_1",
+                "strict_preflight_2",
+                "final",
+                "certification_final",
+            }:
+                if strict_policy:
+                    seen_blocking_identities.update(
+                        _strict_preflight_recovery_selection(
+                            [current_report],
+                            blocks,
+                            set(),
+                        ).union_identities
                     )
-                    if getattr(issue, "severity", "") in {"error", "severe"}
-                )
+                else:
+                    seen_blocking_identities.update(
+                        _quality_issue_identity(issue)
+                        for issue in (
+                            getattr(current_report, "issues", []) or []
+                        )
+                        if getattr(issue, "severity", "") in {
+                            "error",
+                            "severe",
+                        }
+                    )
+            persist_quality_run_state()
             return current_report
 
         repair_rounds = trace.setdefault("auto_repair_rounds", [])
@@ -5737,6 +6565,95 @@ def _persist_translation_quality_report(
             "used_rounds": used_repair_rounds,
             "remaining_rounds": remaining_repair_rounds,
         }
+
+        def persist_quality_run_state() -> None:
+            if not matching_run_state:
+                return
+            persisted_used_rounds = len([
+                item
+                for item in repair_rounds
+                if isinstance(item, dict)
+            ])
+            trace["auto_repair_budget"] = {
+                "configured_rounds": round_limit,
+                "used_rounds": persisted_used_rounds,
+                "remaining_rounds": max(
+                    0,
+                    round_limit - persisted_used_rounds,
+                ),
+            }
+            quality_run_state.update({
+                "semantic_uncertain_observed_block_ids": list(
+                    trace.get(
+                        "semantic_uncertain_observed_block_ids",
+                        [],
+                    )
+                    if isinstance(
+                        trace.get(
+                            "semantic_uncertain_observed_block_ids",
+                            [],
+                        ),
+                        list,
+                    )
+                    else []
+                ),
+                "semantic_issue_ledger": {
+                    "outstanding": [
+                        dict(item)
+                        for item in semantic_ledger.get(
+                            "outstanding",
+                            [],
+                        )
+                        if isinstance(item, dict)
+                    ],
+                    "resolved": [
+                        dict(item)
+                        for item in semantic_ledger.get("resolved", [])
+                        if isinstance(item, dict)
+                    ],
+                },
+                "semantic_qa_history": [
+                    dict(item)
+                    for item in trace.get("semantic_qa_history", [])
+                    if isinstance(item, dict)
+                ],
+                "auto_repair_rounds": [
+                    dict(item)
+                    for item in repair_rounds
+                    if isinstance(item, dict)
+                ],
+                "auto_repair_budget": dict(
+                    trace["auto_repair_budget"]
+                ),
+                "certification_recovery_used": (
+                    certification_recovery_used
+                ),
+                "seen_blocking_identities": [
+                    list(identity)
+                    for identity in sorted(
+                        seen_blocking_identities,
+                        key=lambda identity: tuple(
+                            str(value)
+                            for value in identity
+                        ),
+                    )
+                ],
+            })
+            identity_values = (
+                quality_run_state.get("run_id"),
+                quality_run_state.get("source_generation_hash"),
+                quality_run_state.get("configuration_hash"),
+            )
+            if all(
+                isinstance(value, str) and bool(value)
+                for value in identity_values
+            ):
+                _persist_translation_quality_run_state(
+                    pdir,
+                    quality_run_state,
+                    block_count=len(blocks or []),
+                )
+
         repaired = []
         _run_deterministic_translation_normalizers(
             blocks,
@@ -5825,6 +6742,9 @@ def _persist_translation_quality_report(
                     for block in blocks or []
                 }
                 repair_rounds.append(round_trace)
+                # Consume the round before any targeted or repair provider
+                # call so a worker crash cannot replay the same allowance.
+                persist_quality_run_state()
                 targeted_required = _semantic_qa_enabled(
                     cfg,
                     strict_quality_gate=strict_policy,
@@ -5868,7 +6788,10 @@ def _persist_translation_quality_report(
                         )
                     ]
                     report.issues.extend(revalidation_issues)
-                    _refresh_quality_report_issue_summary(report)
+                    _refresh_quality_report_issue_summary(
+                        report,
+                        strict_quality_gate=strict_policy,
+                    )
                     _apply_verified_semantic_resolution(
                         report,
                         semantic_ledger,
@@ -5877,6 +6800,7 @@ def _persist_translation_quality_report(
                             block_id: {"semantic_qa_failed"}
                             for block_id in revalidated_hashes
                         },
+                        strict_quality_gate=strict_policy,
                     )
                     _update_and_overlay_semantic_issue_ledger(
                         report,
@@ -6046,6 +6970,7 @@ def _persist_translation_quality_report(
                 _remove_verified_semantic_issues(
                     report,
                     targeted_verified_hashes,
+                    strict_quality_gate=strict_policy,
                 )
                 regressions = _auto_repair_functional_regressions(
                     report_before_round,
@@ -6149,6 +7074,7 @@ def _persist_translation_quality_report(
                     report,
                     semantic_ledger,
                     accepted_verified_hashes,
+                    strict_quality_gate=strict_policy,
                 )
                 _update_and_overlay_semantic_issue_ledger(
                     report,
@@ -6318,30 +7244,75 @@ def _persist_translation_quality_report(
             for item in semantic_ledger.get("outstanding", [])
             if isinstance(item, dict)
         }
-        report = run_quality_pass("final", include_semantics=True)
-        final_blocking_issues = [
-            issue
-            for issue in (getattr(report, "issues", []) or [])
-            if getattr(issue, "severity", "") in {"error", "severe"}
-        ]
-        new_final_issues = [
-            issue
-            for issue in final_blocking_issues
-            if (
-                _is_certification_recovery_content_issue(issue)
-                and _quality_issue_identity(issue)
-                not in seen_blocking_identities
-                and _quality_issue_identity(issue)[:3]
-                not in outstanding_ledger_identities_before_final
+        seen_before_preflight = set(seen_blocking_identities)
+        if strict_policy:
+            preflight_reports = [
+                run_quality_pass(
+                    "strict_preflight_1",
+                    include_semantics=True,
+                ),
+                run_quality_pass(
+                    "strict_preflight_2",
+                    include_semantics=True,
+                ),
+            ]
+            preflight_selection = _strict_preflight_recovery_selection(
+                preflight_reports,
+                blocks,
+                seen_before_preflight,
             )
-        ]
+            report = replace(
+                preflight_reports[-1],
+                issues=list(preflight_selection.union_issues),
+                unresolved_blocks=sorted({
+                    issue.block_id
+                    for issue in preflight_selection.union_issues
+                    if isinstance(issue.block_id, int)
+                    and not isinstance(issue.block_id, bool)
+                }),
+            )
+            _refresh_quality_report_issue_summary(
+                report,
+                strict_quality_gate=True,
+            )
+            final_blocking_issues = list(
+                preflight_selection.union_issues
+            )
+            new_final_issues = list(
+                preflight_selection.recovery_issues
+            )
+            human_preflight_block_ids = set(
+                preflight_selection.human_block_ids
+            )
+        else:
+            report = run_quality_pass("final", include_semantics=True)
+            final_blocking_issues = [
+                issue
+                for issue in (getattr(report, "issues", []) or [])
+                if getattr(issue, "severity", "") in {"error", "severe"}
+            ]
+            new_final_issues = [
+                issue
+                for issue in final_blocking_issues
+                if (
+                    _is_certification_recovery_content_issue(issue)
+                    and _quality_issue_identity(issue)
+                    not in seen_blocking_identities
+                    and _quality_issue_identity(issue)[:3]
+                    not in outstanding_ledger_identities_before_final
+                )
+            ]
+            human_preflight_block_ids = set()
         new_final_issue_ids = {
             issue.block_id for issue in new_final_issues
         }
         eligible_final_content_issues = [
             issue
             for issue in final_blocking_issues
-            if _is_certification_recovery_content_issue(issue)
+            if (
+                _is_certification_recovery_content_issue(issue)
+                and issue.block_id not in human_preflight_block_ids
+            )
         ]
         full_final_repair_items = build_repair_items(
             blocks,
@@ -6362,6 +7333,31 @@ def _persist_translation_quality_report(
                         and not isinstance(block_id, bool)
                     )
                 )
+        if strict_policy and human_preflight_block_ids:
+            human_bound_group_ids = set()
+            for item in full_final_repair_items:
+                group_ids = item.get("semantic_group_ids")
+                if (
+                    isinstance(group_ids, list)
+                    and human_preflight_block_ids.intersection(group_ids)
+                ):
+                    human_bound_group_ids.update(
+                        block_id
+                        for block_id in group_ids
+                        if (
+                            isinstance(block_id, int)
+                            and not isinstance(block_id, bool)
+                        )
+                    )
+            recovery_scope_ids.difference_update(human_bound_group_ids)
+            new_final_issues = [
+                issue
+                for issue in new_final_issues
+                if issue.block_id in recovery_scope_ids
+            ]
+            new_final_issue_ids = {
+                issue.block_id for issue in new_final_issues
+            }
         recovery_scope_issues = [
             issue
             for issue in eligible_final_content_issues
@@ -6386,6 +7382,16 @@ def _persist_translation_quality_report(
                 # Consume the run-scoped allowance before any provider call.
                 # A crash, no-op, or rollback must not grant another attempt.
                 quality_run_state["certification_recovery_used"] = True
+                if strict_policy:
+                    seen_blocking_identities.update(
+                        preflight_selection.union_identities
+                    )
+                else:
+                    seen_blocking_identities.update(
+                        _quality_issue_identity(issue)
+                        for issue in new_final_issues
+                    )
+                persist_quality_run_state()
             recovery_trace.update({
                 "used": True,
                 "result": "attempting",
@@ -6500,7 +7506,10 @@ def _persist_translation_quality_report(
                 )
                 if targeted_issues:
                     candidate_report.issues.extend(targeted_issues)
-                    _refresh_quality_report_issue_summary(candidate_report)
+                    _refresh_quality_report_issue_summary(
+                        candidate_report,
+                        strict_quality_gate=strict_policy,
+                    )
                 _update_and_overlay_semantic_issue_ledger(
                     candidate_report,
                     blocks,
@@ -6511,6 +7520,7 @@ def _persist_translation_quality_report(
                 _remove_verified_semantic_issues(
                     candidate_report,
                     targeted_verified_hashes,
+                    strict_quality_gate=strict_policy,
                 )
                 regressions = _auto_repair_functional_regressions(
                     report_before_recovery,
@@ -6544,6 +7554,7 @@ def _persist_translation_quality_report(
                     candidate_report,
                     semantic_ledger,
                     accepted_verified_hashes,
+                    strict_quality_gate=strict_policy,
                 )
                 repaired.extend({
                     "id": block_id,
@@ -6566,20 +7577,38 @@ def _persist_translation_quality_report(
                         else "rolled_back"
                     ),
                 })
+            if not strict_policy:
+                report = run_quality_pass(
+                    "certification_final",
+                    include_semantics=True,
+                )
+        if strict_policy:
             report = run_quality_pass(
-                "certification_final",
+                "final",
                 include_semantics=True,
             )
         trace["certification_recovery"] = recovery_trace
-        seen_blocking_identities.update(
-            _quality_issue_identity(issue)
-            for issue in final_blocking_issues
-        )
-        seen_blocking_identities.update(
-            _quality_issue_identity(issue)
-            for issue in (getattr(report, "issues", []) or [])
-            if getattr(issue, "severity", "") in {"error", "severe"}
-        )
+        if strict_policy:
+            seen_blocking_identities.update(
+                preflight_selection.union_identities
+            )
+            seen_blocking_identities.update(
+                _strict_preflight_recovery_selection(
+                    [report],
+                    blocks,
+                    set(),
+                ).union_identities
+            )
+        else:
+            seen_blocking_identities.update(
+                _quality_issue_identity(issue)
+                for issue in final_blocking_issues
+            )
+            seen_blocking_identities.update(
+                _quality_issue_identity(issue)
+                for issue in (getattr(report, "issues", []) or [])
+                if getattr(issue, "severity", "") in {"error", "severe"}
+            )
         ledger_uncertainty_ids = {
             item.get("block_id")
             for item in [
@@ -6615,6 +7644,8 @@ def _persist_translation_quality_report(
             if (
                 isinstance(item, dict)
                 and item.get("type") == "semantic_uncertain"
+                and item.get("resolution_route")
+                == "human_context_required"
                 and current_hash_by_id.get(item.get("block_id"))
                 == item.get("content_hash")
             )
@@ -6666,6 +7697,7 @@ def _persist_translation_quality_report(
                     key=lambda identity: tuple(str(value) for value in identity),
                 )
             ]
+            persist_quality_run_state()
         _finalize_quality_conclusion(
             report,
             repaired,
@@ -6780,7 +7812,14 @@ def _run_translate_pipeline(
                 config=cfg,
                 project_path=Path(pdir),
             )
-            quality_run_state["configuration_hash"] = configuration_hash
+            quality_run_state = _hydrate_translation_quality_run_state(
+                pdir,
+                run_id=quality_run_id,
+                source_generation_hash=source_generation_hash,
+                configuration_hash=configuration_hash,
+                block_count=len(blocks),
+                cfg=cfg,
+            )
 
             # Restore filter state only for unfiltered timelines. filtered.srt
             # has already removed filtered rows and re-numbered entries, so
@@ -6959,6 +7998,7 @@ def _run_translate_pipeline(
                     raise TaskCancelled(
                         f"cancelled by user pid={pid}"
                     )
+                _clear_translation_quality_run_state(pdir)
                 return
 
             done_msg = f"翻译完成: {translated_count} 条"
@@ -7017,6 +8057,7 @@ def _run_translate_pipeline(
                     }),
                     normalize=_apply_safe_defaults,
                 )
+                _clear_translation_quality_run_state(pdir)
             _best_effort_finish_stage(
                 pid,
                 "translate",

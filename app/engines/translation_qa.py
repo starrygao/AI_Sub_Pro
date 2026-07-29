@@ -27,6 +27,28 @@ from app.utils.subtitle_structure import (
     preserves_speaker_line_structure,
 )
 
+AUTO_RESOLVABLE = "auto_resolvable"
+HUMAN_CONTEXT_REQUIRED = "human_context_required"
+_SEMANTIC_RESOLUTION_ROUTES = frozenset({
+    AUTO_RESOLVABLE,
+    HUMAN_CONTEXT_REQUIRED,
+})
+
+
+def normalize_semantic_resolution_route(issue_type: str, route: str = "") -> str:
+    if issue_type == "semantic_mismatch":
+        return AUTO_RESOLVABLE
+    if issue_type != "semantic_uncertain":
+        return ""
+    return (
+        route
+        if (
+            isinstance(route, str)
+            and route in _SEMANTIC_RESOLUTION_ROUTES
+        )
+        else HUMAN_CONTEXT_REQUIRED
+    )
+
 
 @dataclass
 class QualityIssue:
@@ -37,9 +59,39 @@ class QualityIssue:
     source_text: str = ""
     translation: str = ""
     expected: str = ""
+    resolution_route: str = ""
+
+    def __post_init__(self) -> None:
+        self.resolution_route = normalize_semantic_resolution_route(
+            self.type,
+            self.resolution_route,
+        )
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        payload = asdict(self)
+        if not payload["resolution_route"]:
+            payload.pop("resolution_route")
+        return payload
+
+
+def is_strict_blocking_issue(
+    issue,
+    *,
+    strict_quality_gate: bool = True,
+) -> bool:
+    if isinstance(issue, dict):
+        issue_type = issue.get("type", "")
+        severity = issue.get("severity", "")
+    else:
+        issue_type = getattr(issue, "type", "")
+        severity = getattr(issue, "severity", "")
+    return (
+        severity in {"error", "severe"}
+        or (
+            strict_quality_gate
+            and issue_type == "semantic_uncertain"
+        )
+    )
 
 
 @dataclass
@@ -2342,7 +2394,21 @@ def prioritized_repairable_quality_issues(
     issues: list[QualityIssue],
 ) -> list[QualityIssue]:
     """Repair blocking failures before spending a round on report-only warnings."""
-    repairable = repairable_quality_issues(issues)
+    human_block_ids = {
+        issue.block_id
+        for issue in issues or []
+        if (
+            getattr(issue, "resolution_route", "")
+            == HUMAN_CONTEXT_REQUIRED
+            and isinstance(getattr(issue, "block_id", None), int)
+            and not isinstance(issue.block_id, bool)
+        )
+    }
+    repairable = [
+        issue
+        for issue in repairable_quality_issues(issues)
+        if getattr(issue, "block_id", None) not in human_block_ids
+    ]
     blocking = [
         issue
         for issue in repairable

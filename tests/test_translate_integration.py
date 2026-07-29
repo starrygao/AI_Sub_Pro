@@ -77,6 +77,214 @@ def _run_semantic_pipeline_case(
 
 
 @pytest.mark.parametrize(
+    ("verdict", "route", "expected_route"),
+    [
+        ("MISMATCH: relation changed", "human_context_required", "auto_resolvable"),
+        ("UNCERTAIN: pronoun unclear", "auto_resolvable", "auto_resolvable"),
+        ("UNCERTAIN: pronoun unclear", "", "human_context_required"),
+        ("UNCERTAIN: pronoun unclear", "invalid", "human_context_required"),
+        ("UNCERTAIN: pronoun unclear", [], "human_context_required"),
+    ],
+)
+def test_semantic_verdict_parser_normalizes_resolution_route(
+    verdict,
+    route,
+    expected_route,
+):
+    from app.api import translate as api_translate
+
+    issue = api_translate._semantic_issue_from_verdict(
+        {
+            "id": 11,
+            "original": "Take his bag.",
+            "draft": "拿走他的包。",
+        },
+        verdict,
+        resolution_route=route,
+        strict_quality_gate=True,
+    )
+
+    assert issue.resolution_route == expected_route
+
+
+def test_semantic_prompts_declare_resolution_route_contract():
+    from app.api import translate as api_translate
+
+    for prompt in (
+        api_translate._semantic_qa_prompt("简体中文"),
+        api_translate._targeted_semantic_prompt("简体中文"),
+        api_translate._targeted_semantic_group_prompt("简体中文"),
+    ):
+        assert prompt.count("resolution_route") >= 2
+        assert "auto_resolvable" in prompt
+        assert "human_context_required" in prompt
+
+
+def test_semantic_ledger_roundtrip_preserves_resolution_route():
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=21,
+        start=timedelta(seconds=21),
+        end=timedelta(seconds=22),
+        text="Take his bag.",
+        translation="拿走他的包。",
+    )
+    discovered = TranslationQaReport(
+        status="needs_review",
+        issues=[QualityIssue(
+            type="semantic_uncertain",
+            severity="warning",
+            block_id=21,
+            message="pronoun needs scene context",
+            source_text=block.text,
+            translation=block.translation,
+            resolution_route="human_context_required",
+        )],
+    )
+    ledger = {"outstanding": [], "resolved": []}
+    api_translate._update_and_overlay_semantic_issue_ledger(
+        discovered,
+        [block],
+        ledger,
+        {},
+        strict_quality_gate=True,
+    )
+    restored = TranslationQaReport(status="ok", issues=[], summary={})
+    api_translate._update_and_overlay_semantic_issue_ledger(
+        restored,
+        [block],
+        api_translate._semantic_issue_ledger(ledger),
+        {},
+        strict_quality_gate=True,
+    )
+
+    assert ledger["outstanding"][0]["resolution_route"] == (
+        "human_context_required"
+    )
+    assert restored.issues[0].resolution_route == "human_context_required"
+
+
+def test_strict_preflight_selection_unions_passes_by_current_hash_and_human_wins():
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    blocks = [
+        SubtitleBlock(
+            index=block_id,
+            start=timedelta(seconds=block_id),
+            end=timedelta(seconds=block_id + 1),
+            text=f"source {block_id}",
+            translation=f"current {block_id}",
+        )
+        for block_id in (1, 2, 3)
+    ]
+
+    def issue(block_id, issue_type, route=""):
+        return QualityIssue(
+            type=issue_type,
+            severity=(
+                "warning"
+                if issue_type == "semantic_uncertain"
+                else "error"
+            ),
+            block_id=block_id,
+            message=issue_type,
+            source_text=f"source {block_id}",
+            translation=f"current {block_id}",
+            resolution_route=route,
+        )
+
+    pass_one = TranslationQaReport(
+        status="needs_review",
+        issues=[
+            issue(1, "semantic_mismatch"),
+            issue(2, "semantic_mismatch"),
+        ],
+    )
+    pass_two = TranslationQaReport(
+        status="needs_review",
+        issues=[
+            issue(
+                1,
+                "semantic_uncertain",
+                "human_context_required",
+            ),
+            issue(3, "semantic_mismatch"),
+        ],
+    )
+    stale_seen_identity = (
+        2,
+        "semantic_mismatch",
+        "sha256:stale-content",
+        "",
+    )
+
+    selection = api_translate._strict_preflight_recovery_selection(
+        [pass_one, pass_two],
+        blocks,
+        {stale_seen_identity},
+    )
+
+    assert [item.block_id for item in selection.union_issues] == [1, 1, 2, 3]
+    assert selection.human_block_ids == {1}
+    assert [item.block_id for item in selection.recovery_issues] == [2, 3]
+    assert all(
+        identity[2] == api_translate._semantic_block_content_hash(
+            next(block for block in blocks if block.index == identity[0])
+        )
+        for identity in selection.union_identities
+    )
+
+
+def test_strict_preflight_human_route_overrides_same_uncertainty_identity():
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=7,
+        start=timedelta(seconds=7),
+        end=timedelta(seconds=8),
+        text="Maybe it was his.",
+        translation="也许是他的。",
+    )
+
+    def report(route):
+        return TranslationQaReport(
+            status="needs_review",
+            issues=[QualityIssue(
+                type="semantic_uncertain",
+                severity="warning",
+                block_id=7,
+                message="pronoun context is unclear",
+                source_text=block.text,
+                translation=block.translation,
+                resolution_route=route,
+            )],
+        )
+
+    selection = api_translate._strict_preflight_recovery_selection(
+        [
+            report("auto_resolvable"),
+            report("human_context_required"),
+        ],
+        [block],
+        set(),
+    )
+
+    assert len(selection.union_issues) == 1
+    assert selection.union_issues[0].resolution_route == (
+        "human_context_required"
+    )
+    assert selection.human_block_ids == {7}
+    assert selection.recovery_issues == []
+
+
+@pytest.mark.parametrize(
     "source",
     [
         "[cup and ball clank]",
@@ -2001,6 +2209,10 @@ def test_thread_start_failure_restores_launch_initialization_bytes_and_retries(
     log_dir.mkdir(exist_ok=True)
     (log_dir / "translate.log").write_bytes(b"old log\n")
     sentinel = pdir / ".translation_delivery_in_progress"
+    quality_run_state_path = (
+        pdir / "translation_quality_run_state.json"
+    )
+    quality_run_state_path.write_bytes(b'{"run_id":"old-run"}')
 
     tracked_paths = [
         pdir / "project.json",
@@ -2008,6 +2220,7 @@ def test_thread_start_failure_restores_launch_initialization_bytes_and_retries(
         pdir / "progress.json",
         pdir / "translation_qa_report.json",
         pdir / "translation_qa_report.md",
+        quality_run_state_path,
         sentinel,
         log_dir / "asr.log",
         log_dir / "translate.log",
@@ -2052,6 +2265,9 @@ def test_thread_start_failure_restores_launch_initialization_bytes_and_retries(
         launch = lambda: api_translate.start_burn(pid=pid)
 
     def fail_start(thread):
+        quality_run_state_path.write_bytes(
+            b'{"run_id":"partially-initialized"}'
+        )
         raise RuntimeError("injected registered thread start failure")
 
     monkeypatch.setattr(threading.Thread, "start", fail_start)
@@ -4926,7 +5142,7 @@ def test_professional_pipeline_keeps_uncertainty_across_second_quality_persisten
     assert len(persisted_reports) == 2
     assert persisted_reports[0]["status"] == "needs_review"
     assert persisted_reports[1]["status"] == "needs_review"
-    assert primary.semantic_round == 4
+    assert primary.semantic_round == 8
     assert project["status"] == "error"
     assert project["translation_quality_status"] == "needs_review"
     assert report["trace"]["semantic_uncertain_observed_block_ids"] == [1]
@@ -5671,6 +5887,10 @@ def test_translate_pipeline_retries_missing_created_after_quality_repair(tmp_pat
         "status": "asr_done",
         "target_language": "简体中文",
         "original_language": "en",
+        "translation_quality_policy": "fast",
+        "translation_quality_status": None,
+        "translation_quality_run_id": "pipeline-disk-resume",
+        "translation_quality_content_hash": "",
     }), encoding="utf-8")
     (pdir / "filtered.srt").write_text(
         "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n"
@@ -5686,6 +5906,44 @@ def test_translate_pipeline_retries_missing_created_after_quality_repair(tmp_pat
             "missing_translation_retry_batch_size": 5,
         }
     })
+    monkeypatch.setattr(
+        api_translate,
+        "subtitle_source_generation_hash",
+        lambda path: "sha256:pipeline-source",
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "translation_configuration_hash",
+        lambda *args, **kwargs: "sha256:pipeline-config",
+    )
+    disk_state = {
+        "schema_version": 1,
+        "block_count": 2,
+        "run_id": "pipeline-disk-resume",
+        "source_generation_hash": "sha256:pipeline-source",
+        "configuration_hash": "sha256:pipeline-config",
+        "semantic_uncertain_observed_block_ids": [9],
+        "semantic_issue_ledger": {
+            "outstanding": [],
+            "resolved": [],
+        },
+        "semantic_qa_history": [{"pass_type": "strict_preflight_1"}],
+        "auto_repair_rounds": [],
+        "auto_repair_budget": {
+            "configured_rounds": 3,
+            "used_rounds": 0,
+            "remaining_rounds": 3,
+        },
+        "certification_recovery_used": True,
+        "seen_blocking_identities": [
+            [9, "semantic_mismatch", "sha256:content", ""],
+        ],
+    }
+    api_translate._persist_translation_quality_run_state(
+        pdir,
+        disk_state,
+        block_count=2,
+    )
     progress_messages = []
     monkeypatch.setattr(
         api_translate,
@@ -5711,6 +5969,12 @@ def test_translate_pipeline_retries_missing_created_after_quality_repair(tmp_pat
     ):
         from app.engines.translation_qa import quality_content_hash
 
+        assert quality_run_state is not disk_state
+        assert quality_run_state["run_id"] == "pipeline-disk-resume"
+        assert quality_run_state["certification_recovery_used"] is True
+        assert quality_run_state[
+            "semantic_uncertain_observed_block_ids"
+        ] == [9]
         persist_calls.append([block.translation for block in blocks])
         if len(persist_calls) == 1:
             blocks[1].translation = ""
@@ -5781,6 +6045,9 @@ def test_translate_pipeline_retries_missing_created_after_quality_repair(tmp_pat
     assert "你好" in translated
     assert "世界" in translated
     assert len(persist_calls) == 2
+    assert not (
+        pdir / "translation_quality_run_state.json"
+    ).exists()
     assert any("全片补翻缺失" in msg for _, _, msg in progress_messages)
 
 
@@ -7166,6 +7433,9 @@ def test_translate_pipeline_rolls_back_partial_multi_batch_repair_failure(
     assert project["translation_quality_status"] == "failed"
     assert not (pdir / "translated.srt").exists()
     assert not (pdir / "bilingual.srt").exists()
+    assert not (
+        pdir / "translation_quality_run_state.json"
+    ).exists()
 
 
 def test_translate_pipeline_batches_auto_repair_and_records_trace(tmp_path, monkeypatch):
@@ -7856,7 +8126,7 @@ def test_auto_repair_rolls_back_entire_semantic_group_when_one_member_regresses(
 
     round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
     assert result["translations"] == {1: "旧译1", 2: "旧译2"}
-    assert result["qa_calls"] == [1, 2]
+    assert result["qa_calls"] == [1, 2, 3, 4]
     assert result["repaired"] == []
     assert round_trace["semantic_groups"] == [[1, 2]]
     assert round_trace["proposed_block_ids"] == [1, 2]
@@ -7891,7 +8161,7 @@ def test_auto_repair_accepts_entire_semantic_group_when_all_members_improve(
 
     round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
     assert result["translations"] == {1: "正确新译1", 2: "正确新译2"}
-    assert result["qa_calls"] == [1, 2, 3]
+    assert result["qa_calls"] == [1, 2, 3, 4, 5]
     assert result["repaired"] == [
         {"id": 1, "translation": "正确新译1"},
         {"id": 2, "translation": "正确新译2"},
@@ -8282,7 +8552,7 @@ def test_auto_repair_rolls_back_new_semantic_mismatch_per_block(tmp_path, monkey
 
     round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
     assert result["block"].translation == correct
-    assert result["qa_calls"] == [1, 2]
+    assert result["qa_calls"] == [1, 2, 3, 4]
     assert result["auto_repair_calls"] == [350]
     assert result["repaired"] == []
     assert result["report"]["repaired_blocks"] == []
@@ -8318,7 +8588,7 @@ def test_auto_repair_keeps_valid_semantic_improvement(tmp_path, monkeypatch):
 
     round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
     assert result["block"].translation == correct
-    assert result["qa_calls"] == [1, 2, 3]
+    assert result["qa_calls"] == [1, 2, 3, 4, 5]
     assert result["repaired"] == [{"id": 350, "translation": correct}]
     assert round_trace["proposed_block_ids"] == [350]
     assert round_trace["accepted_block_ids"] == [350]
@@ -8349,7 +8619,7 @@ def test_auto_repair_preserves_prior_candidate_when_semantic_failure_is_unchange
 
     round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
     assert result["block"].translation == prior
-    assert result["qa_calls"] == [1, 2]
+    assert result["qa_calls"] == [1, 2, 3, 4]
     assert result["repaired"] == []
     assert round_trace["rolled_back_block_ids"] == [350]
     assert round_trace["accepted_block_ids"] == []
@@ -8374,7 +8644,7 @@ def test_auto_repair_provider_failure_rolls_back_and_fails_closed(tmp_path, monk
 
     round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
     assert result["block"].translation == original
-    assert result["qa_calls"] == [1, 2]
+    assert result["qa_calls"] == [1, 2, 3, 4]
     assert result["auto_repair_calls"] == [350]
     assert result["repaired"] == []
     assert round_trace["rolled_back_block_ids"] == [350]
@@ -8401,7 +8671,7 @@ def test_rejected_auto_repair_uncertainty_does_not_latch(tmp_path, monkeypatch):
 
     round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
     assert result["block"].translation == original
-    assert result["qa_calls"] == [1, 2]
+    assert result["qa_calls"] == [1, 2, 3, 4]
     assert round_trace["rolled_back_block_ids"] == [350]
     assert (
         result["report"]["trace"].get(
@@ -8633,7 +8903,7 @@ def test_strict_candidate_requires_two_explicit_focused_semantic_oks(
 
     report = saved_reports[-1]
     assert block_by_id[356].translation == expected_translation
-    assert len(full_qa_calls) == (3 if expected_resolved else 2)
+    assert len(full_qa_calls) == (5 if expected_resolved else 4)
     assert len(focused_calls) == (
         6 if focused_evidence is not None else 2
     )
@@ -11596,7 +11866,7 @@ def test_semantic_qa_failed_same_hash_is_reverified_without_forced_rewrite(
 
     assert repaired == []
     assert targeted_calls == [[73]]
-    assert len(full_qa_calls) == 2
+    assert len(full_qa_calls) == 4
     assert block.translation == "-三……\n-我会动手。"
     round_trace = saved_reports[-1]["trace"]["auto_repair_rounds"][0]
     assert round_trace["result"] == "reverified_without_rewrite"
@@ -11803,7 +12073,7 @@ def test_convergence_scan_gives_new_issue_identity_a_repair_round(
 
     assert repaired_ids == [1, convergence_block_id]
     assert [item["id"] for item in repaired] == [1, convergence_block_id]
-    assert len(full_qa_calls) == 4
+    assert len(full_qa_calls) == 6
     rounds = saved_reports[-1]["trace"]["auto_repair_rounds"]
     assert rounds[0]["semantic_convergence_scan"][
         "new_issue_block_ids"
@@ -12129,19 +12399,19 @@ def test_semantic_issue_ledger_is_hash_bound_and_survives_later_false_negatives(
     assert ledger["outstanding"][0]["message"] == "negation was dropped"
     assert ledger["outstanding"][0]["content_hash"].startswith("sha256:")
     assert ledger["resolved"] == []
-    assert len(quality_run_state["semantic_qa_history"]) == 8
+    assert len(quality_run_state["semantic_qa_history"]) == 16
     assert [
         item["pass_type"]
         for item in quality_run_state["semantic_qa_history"]
     ] == [
-        "initial",
-        "final",
-        "initial",
-        "final",
-        "initial",
-        "final",
-        "initial",
-        "final",
+        pass_type
+        for _ in range(4)
+        for pass_type in (
+            "initial",
+            "strict_preflight_1",
+            "strict_preflight_2",
+            "final",
+        )
     ]
     assert saved_reports[-1]["trace"]["semantic_issue_ledger"]["active_block_ids"] == [308]
 
@@ -12149,9 +12419,9 @@ def test_semantic_issue_ledger_is_hash_bound_and_survives_later_false_negatives(
 @pytest.mark.parametrize(
     ("scenario", "expected_repair_calls", "expected_full_scans"),
     [
-        ("new_identity_repaired", 1, 3),
-        ("old_identity_not_retried", 0, 2),
-        ("new_identity_noop_is_bounded", 1, 3),
+        ("new_identity_repaired", 1, 4),
+        ("old_identity_not_retried", 0, 4),
+        ("new_identity_noop_is_bounded", 1, 4),
     ],
 )
 def test_final_certification_recovery_is_new_identity_only_and_hard_bounded(
@@ -12223,7 +12493,7 @@ def test_final_certification_recovery_is_new_identity_only_and_hard_bounded(
             issues = [issue()]
         elif call_number == 1:
             issues = []
-        elif scenario == "new_identity_repaired" and call_number == 3:
+        elif scenario == "new_identity_repaired" and call_number in {3, 4}:
             issues = []
         else:
             issues = [issue()]
@@ -12453,7 +12723,7 @@ def test_final_certification_recovery_flag_survives_same_run_resume(
     api_translate._persist_translation_quality_report(**call_kwargs)
 
     assert repair_calls == [84]
-    assert scan_call == 5
+    assert scan_call == 8
     assert quality_run_state["certification_recovery_used"] is True
     assert saved_reports[-1]["trace"]["certification_recovery"] == {
         "used": True,
@@ -12701,7 +12971,7 @@ def test_final_duplicate_id_does_not_consume_later_semantic_recovery(
         trace = args[6]
         issue_type = {
             2: "duplicate_id",
-            4: "semantic_mismatch",
+            6: "semantic_mismatch",
         }.get(scan_call)
         issues = [
             QualityIssue(
@@ -12760,7 +13030,7 @@ def test_final_duplicate_id_does_not_consume_later_semantic_recovery(
 
     assert repair_types == [["semantic_mismatch"]]
     assert quality_run_state["certification_recovery_used"] is True
-    assert scan_call == 5
+    assert scan_call == 8
     assert saved_reports[0]["trace"]["certification_recovery"]["result"] == (
         "not_eligible"
     )

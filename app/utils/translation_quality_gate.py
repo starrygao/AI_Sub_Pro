@@ -238,7 +238,14 @@ def validate_quality_report(
         policy == "strict"
         and (
             bool(observed_uncertain_ids)
-            or any(issue.get("type") == "semantic_uncertain" for issue in issues)
+            or any(
+                issue.get("type") == "semantic_uncertain"
+                and issue.get(
+                    "resolution_route",
+                    "human_context_required",
+                ) != "auto_resolvable"
+                for issue in issues
+            )
         )
     )
     incomplete_fast_semantics_requires_review = (
@@ -261,7 +268,13 @@ def validate_quality_report(
     passed_issue_consistent = not passed or (
         actual_error_count == 0
         and not any(
-            issue.get("type") in {"semantic_uncertain", "semantic_qa_failed"}
+            (
+                issue.get("type") == "semantic_qa_failed"
+                or (
+                    policy == "strict"
+                    and issue.get("type") == "semantic_uncertain"
+                )
+            )
             for issue in issues
         )
     )

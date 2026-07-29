@@ -18,6 +18,7 @@ _STRUCTURED_RESULT_FIELDS = (
     "target_evidence",
     "cross_block_evidence",
     "discourse_link_hashes",
+    "resolution_route",
 )
 
 
@@ -30,7 +31,10 @@ def provider_response_instruction(system_prompt: str) -> str:
         "source_evidence",
         "target_evidence",
     )
-    if all(field in prompt for field in targeted_fields):
+    if (
+        all(field in prompt for field in targeted_fields)
+        or "resolution_route" in prompt
+    ):
         return (
             "Follow the response contract declared above exactly. Reply with "
             "ONLY its JSON array, preserve every declared field, add no prose. "

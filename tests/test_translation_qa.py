@@ -17,6 +17,132 @@ def _block(index, text, translation="", filtered=False):
     )
 
 
+def test_quality_issue_normalizes_semantic_resolution_routes_and_omits_empty_json():
+    from app.engines.translation_qa import QualityIssue
+
+    deterministic = QualityIssue(
+        type="missing_translation",
+        severity="error",
+        block_id=1,
+        message="missing",
+    )
+    mismatch = QualityIssue(
+        type="semantic_mismatch",
+        severity="error",
+        block_id=2,
+        message="wrong meaning",
+        resolution_route="human_context_required",
+    )
+    uncertain_auto = QualityIssue(
+        type="semantic_uncertain",
+        severity="warning",
+        block_id=3,
+        message="repairable ambiguity",
+        resolution_route="auto_resolvable",
+    )
+    uncertain_default = QualityIssue(
+        type="semantic_uncertain",
+        severity="warning",
+        block_id=4,
+        message="missing context",
+        resolution_route="unsupported",
+    )
+
+    assert "resolution_route" not in deterministic.to_dict()
+    assert mismatch.to_dict()["resolution_route"] == "auto_resolvable"
+    assert uncertain_auto.to_dict()["resolution_route"] == "auto_resolvable"
+    assert (
+        uncertain_default.to_dict()["resolution_route"]
+        == "human_context_required"
+    )
+
+
+def test_strict_blocking_predicate_includes_routed_uncertainty():
+    from app.engines.translation_qa import (
+        QualityIssue,
+        is_strict_blocking_issue,
+    )
+
+    auto_uncertainty = QualityIssue(
+        type="semantic_uncertain",
+        severity="warning",
+        block_id=1,
+        message="repairable",
+        resolution_route="auto_resolvable",
+    )
+    human_uncertainty = QualityIssue(
+        type="semantic_uncertain",
+        severity="warning",
+        block_id=2,
+        message="needs context",
+        resolution_route="human_context_required",
+    )
+    assert is_strict_blocking_issue(
+        auto_uncertainty,
+        strict_quality_gate=True,
+    )
+    assert is_strict_blocking_issue(
+        human_uncertainty,
+        strict_quality_gate=True,
+    )
+    assert not is_strict_blocking_issue(
+        auto_uncertainty,
+        strict_quality_gate=False,
+    )
+    assert not is_strict_blocking_issue(
+        human_uncertainty,
+        strict_quality_gate=False,
+    )
+    assert is_strict_blocking_issue(QualityIssue(
+        type="missing_translation",
+        severity="error",
+        block_id=3,
+        message="missing",
+    ), strict_quality_gate=False)
+    assert not is_strict_blocking_issue(QualityIssue(
+        type="line_too_long",
+        severity="warning",
+        block_id=4,
+        message="long",
+    ))
+
+
+def test_prioritized_repair_routes_only_auto_uncertainty():
+    from app.engines.translation_qa import (
+        QualityIssue,
+        prioritized_repairable_quality_issues,
+    )
+
+    issues = [
+        QualityIssue(
+            type="semantic_uncertain",
+            severity="warning",
+            block_id=1,
+            message="model can retry",
+            resolution_route="auto_resolvable",
+        ),
+        QualityIssue(
+            type="semantic_uncertain",
+            severity="warning",
+            block_id=2,
+            message="scene context is required",
+            resolution_route="human_context_required",
+        ),
+        QualityIssue(
+            type="missing_translation",
+            severity="error",
+            block_id=2,
+            message="same human-owned block",
+        ),
+    ]
+
+    selected = prioritized_repairable_quality_issues(issues)
+
+    assert [(issue.block_id, issue.type) for issue in selected] == [
+        (1, "semantic_uncertain"),
+    ]
+
+
 def test_quality_checks_detect_common_deterministic_issues():
     from app.engines.kb_models import ProjectKb, TermEntry
     from app.engines.translation_qa import run_quality_checks
@@ -2168,6 +2294,7 @@ def test_repairable_quality_issues_prioritize_blocking_before_report_only():
             severity="warning",
             block_id=3,
             message="strict semantic uncertainty",
+            resolution_route="auto_resolvable",
         ),
     ]
 

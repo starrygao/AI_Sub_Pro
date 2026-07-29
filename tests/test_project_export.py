@@ -134,6 +134,49 @@ def _strict_quality_report(verdict="passed", *, warning=False):
     }
 
 
+def test_strict_quality_validator_routes_auto_uncertainty_without_human_review():
+    from app.utils.translation_quality_gate import validate_quality_report
+
+    report = _strict_quality_report("failed")
+    report["issues"] = [{
+        "type": "semantic_uncertain",
+        "severity": "warning",
+        "block_id": 1,
+        "message": "wording can be retried automatically",
+        "source_text": "Maybe.",
+        "translation": "也许。",
+        "expected": "",
+        "resolution_route": "auto_resolvable",
+    }]
+    report["unresolved_blocks"] = [1]
+    report["summary"].update({
+        "issue_count": 1,
+        "error_count": 0,
+        "warning_count": 1,
+        "unresolved_blocks": 1,
+    })
+
+    decision = validate_quality_report(report)
+
+    assert decision.valid is True
+    assert decision.passed is False
+    assert decision.requires_human_review is False
+
+
+def test_strict_quality_validator_defaults_invalid_uncertainty_route_to_human():
+    from app.utils.translation_quality_gate import validate_quality_report
+
+    report = _strict_quality_report("needs_review")
+    report["issues"][0]["resolution_route"] = "unsupported"
+    report["trace"]["semantic_uncertain_observed_block_ids"] = []
+
+    decision = validate_quality_report(report)
+
+    assert decision.valid is True
+    assert decision.passed is False
+    assert decision.requires_human_review is True
+
+
 def _seed_strict_certification(tmp_project_dir, pid, verdict, *, warning=False):
     _seed_project(tmp_project_dir, pid)
     pdir = tmp_project_dir / pid
