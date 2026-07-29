@@ -316,6 +316,53 @@ def test_candidate_contract_allows_entities_acronyms_and_normal_dialogue(
     ) == ""
 
 
+def test_candidate_contract_uses_dialogue_only_source_for_speaker_structure():
+    from app.engines.translation_qa import translation_candidate_contract_error
+
+    assert translation_candidate_contract_error(
+        "-[Negan scoffing]\n-Maggie: Go.\n-Rick: No.",
+        "-走。\n-不。",
+        target_language="简体中文",
+    ) == ""
+    assert translation_candidate_contract_error(
+        "[door slams]\n-Maggie: Go.\n-Rick: No.",
+        "走。不。",
+        target_language="简体中文",
+    ) == "candidate_contract:speaker_structure"
+
+
+@pytest.mark.parametrize(
+    "translation",
+    [
+        "Translation: 你好。",
+        "Here is the translation: 你好。",
+        "译文：你好。",
+    ],
+)
+def test_candidate_contract_blocks_short_canonical_meta_headers(translation):
+    from app.engines.translation_qa import translation_candidate_contract_error
+
+    assert translation_candidate_contract_error(
+        "Hello.",
+        translation,
+        target_language="简体中文",
+    ) == "candidate_contract:meta_contamination"
+
+
+@pytest.mark.parametrize(
+    "entity",
+    ["Original Source Games", "Target Line Records"],
+)
+def test_candidate_contract_allows_exact_multiword_entities_from_source(entity):
+    from app.engines.translation_qa import translation_candidate_contract_error
+
+    assert translation_candidate_contract_error(
+        f"Welcome to {entity}.",
+        f"欢迎来到 {entity}。",
+        target_language="简体中文",
+    ) == ""
+
+
 def test_batched_translate_allows_empty_sound_description(monkeypatch):
     from app.engines.translator import SubtitleTranslator
     from app.utils.srt import SubtitleBlock

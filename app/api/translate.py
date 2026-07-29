@@ -4376,10 +4376,16 @@ def _finalize_quality_conclusion(
         conclusion = f"自动交付未通过：仍有 {error_count} 个错误、{unresolved_count} 个问题位置。"
     elif has_incomplete_repair_round:
         verdict = "failed"
-        conclusion = (
-            "自动交付未通过：自动返工未完整执行，已保留经复检接受的局部改动，"
-            "仅输出 partial 并停止正式交付。"
-        )
+        if repaired_count:
+            conclusion = (
+                "自动交付未通过：自动返工未完整执行，已保留经复检接受的局部改动，"
+                "仅输出 partial 并停止正式交付。"
+            )
+        else:
+            conclusion = (
+                "自动交付未通过：自动返工未完整执行，已回滚未完整验证的局部改动，"
+                "仅输出 partial 并停止正式交付。"
+            )
     elif blocking_warnings:
         verdict = "failed"
         conclusion = (
@@ -4573,6 +4579,7 @@ def _apply_nonempty_repair_results(
     *,
     repair_trace: dict | None = None,
     target_language: str = "",
+    semantic_groups: list[list[int]] | None = None,
 ) -> list[dict]:
     from app.engines.translation_qa import (
         translation_candidate_contract_error,
@@ -4584,9 +4591,9 @@ def _apply_nonempty_repair_results(
         for block_id, block in by_id.items()
     }
     nonempty_responses = 0
-    mutation_occurred = False
     unmatched = 0
     candidate_contract_errors = {}
+    staged_translation_by_id: dict[str, str] = {}
     for result in results or []:
         if not isinstance(result, dict):
             continue
@@ -4608,11 +4615,36 @@ def _apply_nonempty_repair_results(
                 candidate_error
             )
             continue
-        current = getattr(block, "translation", "")
-        if isinstance(current, str) and current == translation:
-            block.translation_error = ""
-            continue
-        mutation_occurred = True
+        staged_translation_by_id[str(getattr(block, "index", ""))] = (
+            translation
+        )
+    rejected_group_ids: list[list[int]] = []
+    rejected_id_keys = set(candidate_contract_errors)
+    for raw_group in semantic_groups or []:
+        group_ids = list(dict.fromkeys(
+            block_id
+            for block_id in raw_group
+            if isinstance(block_id, int) and not isinstance(block_id, bool)
+        ))
+        group_keys = {str(block_id) for block_id in group_ids}
+        if (
+            len(group_ids) > 1
+            and (
+                group_keys.intersection(candidate_contract_errors)
+                or not group_keys.issubset(staged_translation_by_id)
+            )
+        ):
+            rejected_group_ids.append(group_ids)
+            rejected_id_keys.update(group_keys)
+    for block_id in rejected_id_keys:
+        staged_translation_by_id.pop(block_id, None)
+    mutation_occurred = any(
+        staged_translation_by_id.get(block_id)
+        != initial_translation_by_id.get(block_id)
+        for block_id in staged_translation_by_id
+    )
+    for block_id, translation in staged_translation_by_id.items():
+        block = by_id[block_id]
         block.translation = translation
         block.translation_error = ""
     if unmatched:
@@ -4639,6 +4671,8 @@ def _apply_nonempty_repair_results(
             repair_trace["candidate_contract_errors"] = (
                 candidate_contract_errors
             )
+        if rejected_group_ids:
+            repair_trace["atomic_rejected_group_ids"] = rejected_group_ids
     return applied
 
 
@@ -4864,6 +4898,9 @@ def _auto_repair_quality_issues(
                 results,
                 repair_trace=batch_result_trace,
                 target_language=target_language,
+                semantic_groups=_auto_repair_semantic_groups(
+                    repair_items
+                ),
             )
             nonempty_responses += batch_result_trace.get("nonempty_responses", 0)
             mutation_occurred = (
@@ -4879,6 +4916,10 @@ def _auto_repair_quality_issues(
         return finish_outcome(True)
     except Exception as e:
         log.warning("translation QA auto-repair failed: %s", e)
+        for block_id, block in blocks_by_id.items():
+            if block_id in initial_translation_by_id:
+                block.translation = initial_translation_by_id[block_id]
+        mutation_occurred = False
         if repair_trace is not None:
             repair_trace["failure"] = "provider_or_repair_error"
         return finish_outcome(False)

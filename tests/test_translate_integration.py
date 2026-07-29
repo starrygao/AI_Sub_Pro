@@ -6448,7 +6448,7 @@ def test_apply_repair_results_counts_only_net_changes_for_duplicate_ids():
     assert block.translation == "A"
     assert trace == {
         "nonempty_responses": 2,
-        "mutation_occurred": True,
+        "mutation_occurred": False,
         "changed_block_ids": [],
         "changed_unique_ids": 0,
     }
@@ -6487,6 +6487,156 @@ def test_apply_repair_results_rejects_meta_contamination_before_mutation():
         "625": "candidate_contract:speaker_structure",
     }
     assert trace["mutation_occurred"] is False
+
+
+def test_apply_repair_results_validates_semantic_group_before_atomic_mutation():
+    from app.api.translate import _apply_nonempty_repair_results
+    from app.utils.srt import SubtitleBlock
+
+    blocks = [
+        SubtitleBlock(
+            index=1,
+            start=timedelta(seconds=0),
+            end=timedelta(seconds=1),
+            text="Go.",
+            translation="原译一。",
+        ),
+        SubtitleBlock(
+            index=2,
+            start=timedelta(seconds=1),
+            end=timedelta(seconds=2),
+            text="No.",
+            translation="原译二。",
+        ),
+    ]
+    trace = {}
+
+    applied = _apply_nonempty_repair_results(
+        blocks,
+        [
+            {"id": 1, "translation": "走。"},
+            {"id": 2, "translation": "Translation: 不。"},
+        ],
+        repair_trace=trace,
+        target_language="简体中文",
+        semantic_groups=[[1, 2]],
+    )
+
+    assert applied == []
+    assert [block.translation for block in blocks] == ["原译一。", "原译二。"]
+    assert trace["candidate_contract_errors"] == {
+        "2": "candidate_contract:meta_contamination",
+    }
+    assert trace["atomic_rejected_group_ids"] == [[1, 2]]
+    assert trace["mutation_occurred"] is False
+
+
+def test_apply_repair_results_commits_valid_semantic_group_together():
+    from app.api.translate import _apply_nonempty_repair_results
+    from app.utils.srt import SubtitleBlock
+
+    blocks = [
+        SubtitleBlock(
+            index=1,
+            start=timedelta(seconds=0),
+            end=timedelta(seconds=1),
+            text="Go.",
+            translation="原译一。",
+        ),
+        SubtitleBlock(
+            index=2,
+            start=timedelta(seconds=1),
+            end=timedelta(seconds=2),
+            text="No.",
+            translation="原译二。",
+        ),
+    ]
+
+    applied = _apply_nonempty_repair_results(
+        blocks,
+        [
+            {"id": 1, "translation": "走。"},
+            {"id": 2, "translation": "不。"},
+        ],
+        target_language="简体中文",
+        semantic_groups=[[1, 2]],
+    )
+
+    assert applied == [
+        {"id": 1, "translation": "走。"},
+        {"id": 2, "translation": "不。"},
+    ]
+    assert [block.translation for block in blocks] == ["走。", "不。"]
+
+
+def test_auto_repair_provider_exception_rolls_back_prior_batch_mutation():
+    from types import SimpleNamespace
+
+    from app.api.translate import _auto_repair_quality_issues
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    blocks = [
+        SubtitleBlock(
+            index=1,
+            start=timedelta(seconds=0),
+            end=timedelta(seconds=1),
+            text="One.",
+            translation="原译一。",
+        ),
+        SubtitleBlock(
+            index=2,
+            start=timedelta(seconds=1),
+            end=timedelta(seconds=2),
+            text="Two.",
+            translation="原译二。",
+        ),
+    ]
+    calls = []
+
+    def translate_batch(items, prompt):
+        calls.append([item["id"] for item in items])
+        if len(calls) == 2:
+            raise RuntimeError("provider failed")
+        return [{"id": 1, "translation": "新译一。"}]
+
+    report = TranslationQaReport(
+        status="needs_review",
+        issues=[
+            QualityIssue(
+                type="semantic_mismatch",
+                severity="error",
+                block_id=block.index,
+                message="wrong meaning",
+                source_text=block.text,
+                translation=block.translation,
+            )
+            for block in blocks
+        ],
+        unresolved_blocks=[1, 2],
+    )
+
+    outcome = _auto_repair_quality_issues(
+        {
+            "translation": {
+                "qa_auto_repair": True,
+                "qa_auto_repair_max_blocks": 1,
+            },
+        },
+        SimpleNamespace(
+            primary=SimpleNamespace(translate_batch=translate_batch)
+        ),
+        blocks,
+        report,
+        "简体中文",
+        None,
+    )
+
+    assert calls == [[1], [2]]
+    assert outcome.completed is False
+    assert outcome.mutation_occurred is False
+    assert outcome.changes == []
+    assert [block.translation for block in blocks] == ["原译一。", "原译二。"]
 
 
 def test_quality_conclusion_separates_deterministic_normalization_from_model_repair():
@@ -6920,7 +7070,7 @@ def test_translate_pipeline_counts_model_changes_after_normalization(
     assert "复检通过" not in report["summary"]["conclusion"]
 
 
-def test_translate_pipeline_rechecks_partial_multi_batch_repair_failure(
+def test_translate_pipeline_rolls_back_partial_multi_batch_repair_failure(
     tmp_path,
     monkeypatch,
 ):
@@ -6985,18 +7135,18 @@ def test_translate_pipeline_rechecks_partial_multi_batch_repair_failure(
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
     round_trace = report["trace"]["auto_repair_rounds"][0]
-    assert round_trace["result"] == "partial_failure"
-    assert round_trace["proposed_block_ids"] == [1]
-    assert round_trace["accepted_block_ids"] == [1]
+    assert round_trace["result"] == "repair_failed"
+    assert round_trace["proposed_block_ids"] == []
+    assert round_trace["accepted_block_ids"] == []
     assert round_trace["rolled_back_block_ids"] == []
-    assert round_trace["changed_block_ids"] == [1]
+    assert round_trace["changed_block_ids"] == []
     assert round_trace["repair_completed"] is False
     assert report["summary"]["by_type"].get("manual_term_missing", 0) == 0
-    assert report["summary"]["repair_stats"]["accepted_block_ids"] == [1]
+    assert report["summary"]["repair_stats"]["accepted_block_ids"] == []
     assert report["summary"]["repair_stats"]["rolled_back_block_ids"] == []
-    assert report["repaired_blocks"] == [{"id": 1, "translation": "第一行术语。"}]
+    assert report["repaired_blocks"] == []
     assert report["summary"]["conclusion"] == (
-        "自动交付未通过：自动返工未完整执行，已保留经复检接受的局部改动，"
+        "自动交付未通过：自动返工未完整执行，已回滚未完整验证的局部改动，"
         "仅输出 partial 并停止正式交付。"
     )
     assert report["summary"]["quality_gate"]["passed"] is False

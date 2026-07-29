@@ -127,6 +127,13 @@ def _clean_text(value) -> str:
 
 
 _ENGLISH_RE = re.compile(r"[A-Za-z]{3,}")
+_TRANSLATION_META_HEADER_RE = re.compile(
+    r"(?:^|[\r\n])\s*(?:"
+    r"translation|translated\s+text|here\s+is\s+the\s+translation|"
+    r"here'?s\s+the\s+translation|译文"
+    r")\s*[:：]",
+    re.IGNORECASE,
+)
 _SOUND_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
 _SOUND_SEQUENCE_RE = re.compile(r"^\s*(?:\[[^\]]+\]\s*)+$")
 _BRACKETED_TRANSLATION_SEGMENT_RE = re.compile(r"[\[【（(]([^\]】）)\r\n]{1,80})[\]】）)]")
@@ -727,11 +734,32 @@ def _english_residue_match(translation: str, *, allow_technical_terms: bool = Fa
     return None
 
 
-def _translation_meta_contamination_match(translation: str):
+def _translation_meta_contamination_match(
+    translation: str,
+    *,
+    source: str = "",
+):
     """Return a strong sentence/meta English match without flagging lone names."""
+    explicit_header = _TRANSLATION_META_HEADER_RE.search(translation or "")
+    if explicit_header:
+        return explicit_header
+    probe = translation or ""
+    source_tokens = re.findall(r"[A-Za-z][A-Za-z'’.-]*", source or "")
+    source_spans = {
+        " ".join(source_tokens[start:start + size])
+        for size in range(2, len(source_tokens) + 1)
+        for start in range(0, len(source_tokens) - size + 1)
+    }
+    for span in sorted(source_spans, key=len, reverse=True):
+        probe = re.sub(
+            re.escape(span),
+            " ",
+            probe,
+            flags=re.IGNORECASE,
+        )
     matches = [
         match
-        for match in _ENGLISH_RE.finditer(translation or "")
+        for match in _ENGLISH_RE.finditer(probe)
         if not _is_allowed_acronym_token(match.group(0))
         and not _is_allowed_technical_token(match.group(0))
     ]
@@ -760,7 +788,8 @@ def translation_candidate_contract_error(
     """Classify deterministic defects that make a provider candidate unusable."""
     if not isinstance(translation, str) or not translation:
         return ""
-    source_structure = classify_speaker_lines(source)
+    qa_source = dialogue_only_qa_source_text(source)
+    source_structure = classify_speaker_lines(qa_source)
     if (
         source_structure is not None
         and not preserves_speaker_line_structure(
@@ -771,7 +800,10 @@ def translation_candidate_contract_error(
         return "candidate_contract:speaker_structure"
     if (
         _is_chinese_target(target_language)
-        and _translation_meta_contamination_match(translation)
+        and _translation_meta_contamination_match(
+            translation,
+            source=qa_source,
+        )
     ):
         return "candidate_contract:meta_contamination"
     return ""
@@ -1638,7 +1670,10 @@ def run_quality_checks(
             and
             chinese_target
             and translation
-            and _translation_meta_contamination_match(translation)
+            and _translation_meta_contamination_match(
+                translation,
+                source=qa_source,
+            )
         ):
             issues.append(QualityIssue(
                 type="translation_meta_contamination",
