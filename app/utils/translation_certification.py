@@ -58,7 +58,10 @@ def validate_translation_delivery(
     expects = project_expects_translation_certification(project, project_path)
     if translation_delivery_is_invalid(project_path):
         return TranslationDeliveryValidation(
-            expects, False, False, "Translation delivery is incomplete"
+            expects,
+            False,
+            False,
+            "Translation delivery is incomplete; 翻译交付未完成，字幕文件暂不可用",
         )
     if not expects:
         return TranslationDeliveryValidation(False, True, False, "")
