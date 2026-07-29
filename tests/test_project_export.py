@@ -953,8 +953,8 @@ def test_tampered_certified_delivery_is_invalid_for_report_and_subtitle_reader(
     assert invalid_report.status_code == 200
     assert invalid_report.json()["status"] == "invalid"
     assert invalid_report.json()["summary"]["quality_gate"]["passed"] is False
-    assert invalid_subtitles.status_code == 200
-    assert invalid_subtitles.json()["blocks"][0]["translation"] == ""
+    assert invalid_subtitles.status_code == 409
+    assert "identity" in invalid_subtitles.json()["detail"].lower()
 
 
 def test_export_cannot_race_strict_subtitle_edit_before_certification_is_stale(

@@ -1720,7 +1720,17 @@ def reveal_in_finder(pid: str = PathParam(pattern=PID_PATTERN)):
 
 @router.get("/{pid}/subtitles")
 def get_subtitles(pid: str = PathParam(pattern=PID_PATTERN)):
-    """Get current subtitle blocks."""
+    """Get one delivery-locked snapshot of current subtitle blocks."""
+    with translation_delivery_lock(pid, blocking=False) as acquired:
+        if not acquired:
+            raise HTTPException(
+                409,
+                "Translation delivery is being committed",
+            )
+        return _get_subtitles_locked(pid)
+
+
+def _get_subtitles_locked(pid: str):
     pdir = _project_dir(pid)
     project = _load_project(pid)
 
@@ -1746,18 +1756,18 @@ def get_subtitles(pid: str = PathParam(pattern=PID_PATTERN)):
     # Match by timestamp since indices may differ between files
     trans_path = pdir / "translated.srt"
     trans_blocks = []
-    with translation_delivery_lock(pid, blocking=False) as acquired:
-        if acquired:
-            validation = validate_translation_delivery(project, pdir)
-            if validation.valid and trans_path.exists():
-                try:
-                    trans_blocks = parse_srt_file(str(trans_path))
-                except Exception as e:
-                    log.warning(
-                        "Could not parse translated subtitles for %s: %s",
-                        pid,
-                        e,
-                    )
+    validation = validate_translation_delivery(project, pdir)
+    if validation.expects_certification and not validation.valid:
+        raise HTTPException(409, validation.message)
+    if validation.valid and trans_path.exists():
+        try:
+            trans_blocks = parse_srt_file(str(trans_path))
+        except Exception as e:
+            log.warning(
+                "Could not parse translated subtitles for %s: %s",
+                pid,
+                e,
+            )
     if trans_blocks:
         trans_by_time = {}
         for tb in trans_blocks:

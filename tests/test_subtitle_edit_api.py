@@ -1,4 +1,5 @@
 import json
+import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -345,6 +346,41 @@ def test_get_subtitles_reports_actual_source_file(client, tmp_project_dir):
     data = r.json()
     assert data["source"] == "raw.srt"
     assert data["blocks"][0]["text"] == "Hello"
+
+
+def test_get_subtitles_returns_conflict_while_delivery_snapshot_is_locked(
+    client,
+    tmp_project_dir,
+):
+    """Catches returning a source-only 200 during an artifact-set commit."""
+    from app.utils.translation_delivery import translation_delivery_lock
+
+    pid = _seed_project(tmp_project_dir, "subtitle-reader-lock")
+    pdir = tmp_project_dir / pid
+    (pdir / "raw.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n",
+        encoding="utf-8",
+    )
+    acquired = threading.Event()
+    release = threading.Event()
+
+    def hold_delivery():
+        with translation_delivery_lock(pid) as locked:
+            assert locked
+            acquired.set()
+            assert release.wait(timeout=2)
+
+    holder = threading.Thread(target=hold_delivery)
+    holder.start()
+    assert acquired.wait(timeout=2)
+    try:
+        response = client.get(f"/api/projects/{pid}/subtitles")
+    finally:
+        release.set()
+        holder.join(timeout=2)
+
+    assert response.status_code == 409
+    assert "delivery" in response.json()["detail"].lower()
 
 
 def test_get_subtitles_returns_canonical_sound_description_metadata(client, tmp_project_dir):
