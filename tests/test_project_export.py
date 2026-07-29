@@ -1,5 +1,7 @@
 import json
+import hashlib
 import threading
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -150,6 +152,42 @@ def _seed_strict_certification(tmp_project_dir, pid, verdict, *, warning=False):
         json.dumps(_strict_quality_report(verdict, warning=warning)),
         encoding="utf-8",
     )
+    return pid
+
+
+def _sha256_identity(content: bytes) -> str:
+    return f"sha256:{hashlib.sha256(content).hexdigest()}"
+
+
+def _seed_hash_bound_strict_certification(tmp_project_dir, pid):
+    _seed_strict_certification(tmp_project_dir, pid, "passed")
+    pdir = tmp_project_dir / pid
+    raw_content = (
+        b"1\n00:00:00,000 --> 00:00:01,000\nHello\n"
+    )
+    translated_content = (pdir / "translated.srt").read_bytes()
+    bilingual_content = (
+        b"1\n00:00:00,000 --> 00:00:01,000\nHello\n\xe4\xbd\xa0\xe5\xa5\xbd\n"
+    )
+    (pdir / "raw.srt").write_bytes(raw_content)
+    (pdir / "bilingual.srt").write_bytes(bilingual_content)
+
+    source_hash = _sha256_identity(raw_content)
+    report_path = pdir / "translation_qa_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report.update({
+        "source_generation_hash": source_hash,
+        "delivery_artifact_hashes": {
+            "translated.srt": _sha256_identity(translated_content),
+            "bilingual.srt": _sha256_identity(bilingual_content),
+        },
+    })
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    project_path = pdir / "project.json"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    project["translation_quality_source_generation_hash"] = source_hash
+    project_path.write_text(json.dumps(project), encoding="utf-8")
     return pid
 
 
@@ -607,6 +645,193 @@ def test_put_subtitles_invalidates_strict_certification_before_export(
     assert "quality" in response.json()["detail"].lower()
 
 
+def test_failed_bilingual_edit_write_restores_artifacts_and_stales_certificate(
+    client,
+    tmp_project_dir,
+    monkeypatch,
+):
+    from app.api import projects as projects_api
+
+    pid = _seed_hash_bound_strict_certification(
+        tmp_project_dir,
+        "strict-edit-bilingual-failure",
+    )
+    pdir = tmp_project_dir / pid
+    original = {
+        name: (pdir / name).read_bytes()
+        for name in (
+            "raw.srt",
+            "translated.srt",
+            "bilingual.srt",
+            "project.json",
+        )
+    }
+
+    def fail_bilingual_write(blocks, path):
+        raise RuntimeError("injected bilingual edit write failure")
+
+    monkeypatch.setattr(
+        projects_api,
+        "write_bilingual_srt",
+        fail_bilingual_write,
+    )
+
+    with pytest.raises(RuntimeError, match="injected bilingual"):
+        client.put(f"/api/projects/{pid}/subtitles", json={
+            "blocks": [{
+                "index": 1,
+                "start": "00:00:00,000",
+                "end": "00:00:01,000",
+                "text": "Edited source",
+                "translation": "编辑后的译文",
+            }],
+        })
+
+    assert (pdir / "raw.srt").read_bytes() == original["raw.srt"]
+    assert (pdir / "translated.srt").read_bytes() == original["translated.srt"]
+    assert (pdir / "bilingual.srt").read_bytes() == original["bilingual.srt"]
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["translation_quality_status"] == "stale"
+    assert (pdir / ".translation_delivery_in_progress").is_file()
+    export = client.post(f"/api/projects/{pid}/export?format=translated")
+    assert export.status_code == 409
+
+
+@pytest.mark.parametrize(
+    "failed_name",
+    [
+        "raw.srt",
+        "filter_state.json",
+        "translated.srt",
+        "bilingual.srt",
+        "project.json",
+    ],
+)
+def test_failed_edit_promotion_restores_old_artifacts_and_blocks_export(
+    client,
+    tmp_project_dir,
+    monkeypatch,
+    failed_name,
+):
+    from app.api import projects as projects_api
+
+    pid = _seed_hash_bound_strict_certification(
+        tmp_project_dir,
+        f"strict-edit-promote-{failed_name.replace('.', '-')}",
+    )
+    pdir = tmp_project_dir / pid
+    (pdir / "filter_state.json").write_text(
+        json.dumps({"1": {"filtered": True, "reason": "old"}}),
+        encoding="utf-8",
+    )
+    original = {
+        name: (pdir / name).read_bytes()
+        for name in (
+            "raw.srt",
+            "filter_state.json",
+            "translated.srt",
+            "bilingual.srt",
+        )
+    }
+    real_replace = projects_api.os.replace
+    injected = False
+
+    def fail_one_promotion(source, destination):
+        nonlocal injected
+        if Path(destination) == pdir / failed_name and not injected:
+            injected = True
+            raise PermissionError(f"injected {failed_name} promotion failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(projects_api.os, "replace", fail_one_promotion)
+
+    with pytest.raises(PermissionError, match="promotion failure"):
+        client.put(f"/api/projects/{pid}/subtitles", json={
+            "blocks": [{
+                "index": 1,
+                "start": "00:00:00,000",
+                "end": "00:00:01,000",
+                "text": "Edited source",
+                "translation": "编辑后的译文",
+                "filtered": True,
+                "filter_reason": "new",
+            }],
+        })
+
+    assert injected is True
+    for name, content in original.items():
+        assert (pdir / name).read_bytes() == content
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["translation_quality_status"] == "stale"
+    assert (pdir / ".translation_delivery_in_progress").is_file()
+    export = client.post(f"/api/projects/{pid}/export?format=translated")
+    assert export.status_code == 409
+
+
+@pytest.mark.parametrize(
+    ("format_name", "artifact_name", "replacement"),
+    [
+        ("translated", "translated.srt", "未经认证的译文"),
+        ("bilingual", "bilingual.srt", "Hello\n未经认证的双语译文"),
+    ],
+)
+def test_export_rejects_artifact_bytes_that_do_not_match_certificate(
+    client,
+    tmp_project_dir,
+    format_name,
+    artifact_name,
+    replacement,
+):
+    pid = _seed_hash_bound_strict_certification(
+        tmp_project_dir,
+        f"strict-artifact-hash-{format_name}",
+    )
+    pdir = tmp_project_dir / pid
+    baseline = client.post(
+        f"/api/projects/{pid}/export?format={format_name}"
+    )
+    assert baseline.status_code == 200
+
+    (pdir / artifact_name).write_text(
+        f"1\n00:00:00,000 --> 00:00:01,000\n{replacement}\n",
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        f"/api/projects/{pid}/export?format={format_name}"
+    )
+
+    assert response.status_code == 409
+    assert "identity" in response.json()["detail"].lower()
+
+
+def test_export_rejects_source_generation_that_changed_after_certification(
+    client,
+    tmp_project_dir,
+):
+    pid = _seed_hash_bound_strict_certification(
+        tmp_project_dir,
+        "strict-source-generation-hash",
+    )
+    pdir = tmp_project_dir / pid
+    baseline = client.post(
+        f"/api/projects/{pid}/export?format=translated"
+    )
+    assert baseline.status_code == 200
+
+    (pdir / "raw.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nEdited source\n",
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        f"/api/projects/{pid}/export?format=translated"
+    )
+
+    assert response.status_code == 409
+    assert "source" in response.json()["detail"].lower()
+
+
 def test_export_cannot_race_strict_subtitle_edit_before_certification_is_stale(
     client,
     tmp_project_dir,
@@ -629,20 +854,21 @@ def test_export_cannot_race_strict_subtitle_edit_before_certification_is_stale(
         encoding="utf-8",
     )
 
-    artifacts_written = threading.Event()
+    artifacts_staged = threading.Event()
     release_put = threading.Event()
-    real_mutate_project = projects_api.mutate_project
+    real_write_bilingual = projects_api.write_bilingual_srt
 
-    def pause_before_quality_status_update(*args, **kwargs):
-        artifacts_written.set()
+    def pause_after_bilingual_stage(*args, **kwargs):
+        result = real_write_bilingual(*args, **kwargs)
+        artifacts_staged.set()
         if not release_put.wait(timeout=5):
-            raise RuntimeError("test timed out waiting to invalidate certification")
-        return real_mutate_project(*args, **kwargs)
+            raise RuntimeError("test timed out waiting to promote subtitle edit")
+        return result
 
     monkeypatch.setattr(
         projects_api,
-        "mutate_project",
-        pause_before_quality_status_update,
+        "write_bilingual_srt",
+        pause_after_bilingual_stage,
     )
     put_result = {}
 
@@ -664,10 +890,11 @@ def test_export_cannot_race_strict_subtitle_edit_before_certification_is_stale(
     put_thread = threading.Thread(target=save_edited_subtitles)
     put_thread.start()
     try:
-        assert artifacts_written.wait(timeout=5)
-        assert "未经认证的新译文" in (
+        assert artifacts_staged.wait(timeout=5)
+        assert "未经认证的新译文" not in (
             pdir / "translated.srt"
         ).read_text(encoding="utf-8")
+        assert (pdir / ".translation_delivery_in_progress").is_file()
 
         translated = client.post(
             f"/api/projects/{pid}/export?format=translated"

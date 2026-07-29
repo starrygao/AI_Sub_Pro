@@ -8,6 +8,7 @@ import uuid
 import shutil
 import re
 import logging
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -33,12 +34,18 @@ from app.utils.project_store import (
     load_project as _ps_load_project,
     mutate_project,
     atomic_write_json,
+    get_project_lock,
     PID_PATTERN,
 )
 from app.utils.translation_delivery import (
     hide_invalid_translation_artifact_fields,
+    mark_translation_delivery_invalid,
     translation_delivery_lock,
     translation_delivery_is_invalid,
+)
+from app.utils.subtitle_generation import (
+    subtitle_file_hash,
+    subtitle_source_generation_hash,
 )
 from app.utils.translation_quality_gate import (
     load_quality_report_decision,
@@ -1865,11 +1872,75 @@ def save_subtitles(data: SubtitleEdit, pid: str = PathParam(pattern=PID_PATTERN)
     with translation_delivery_lock(pid, blocking=False) as acquired:
         if not acquired:
             raise HTTPException(409, "Translation delivery is in progress or invalid")
-        project = _load_project(pid)
-        pdir = _project_dir(pid)
-        if translation_delivery_is_invalid(pdir):
-            raise HTTPException(409, "Translation delivery is in progress or invalid")
-        return _save_subtitles_locked(data, pid, project, pdir)
+        with get_project_lock(pid):
+            project = _load_project(pid)
+            pdir = _project_dir(pid)
+            if translation_delivery_is_invalid(pdir):
+                raise HTTPException(409, "Translation delivery is in progress or invalid")
+            return _save_subtitles_locked(data, pid, project, pdir)
+
+
+def _subtitle_edit_stage_path(pdir: Path, final_name: str) -> Path:
+    return pdir / f".{final_name}.{uuid.uuid4().hex}.subtitle-edit.tmp"
+
+
+def _snapshot_subtitle_edit_paths(
+    paths: list[Path],
+) -> dict[Path, Optional[bytes]]:
+    snapshots = {}
+    for path in paths:
+        if path.is_symlink() or path.is_dir():
+            raise RuntimeError(f"invalid subtitle edit target: {path.name}")
+        snapshots[path] = path.read_bytes() if path.is_file() else None
+    return snapshots
+
+
+def _restore_subtitle_edit_path(path: Path, content: Optional[bytes]) -> None:
+    if content is None:
+        if path.exists():
+            path.unlink()
+        return
+    handle = tempfile.NamedTemporaryFile(
+        dir=path.parent,
+        prefix=f".{path.name}.restore.",
+        suffix=".tmp",
+        delete=False,
+    )
+    staged = Path(handle.name)
+    try:
+        with handle:
+            handle.write(content)
+        os.replace(staged, path)
+    finally:
+        if staged.exists():
+            staged.unlink()
+
+
+def _stale_subtitle_edit_project(project: dict) -> dict:
+    updated = _apply_safe_defaults(dict(project))
+    updated.update({
+        "translation_quality_status": "stale",
+        "translation_quality_message": "字幕已编辑，需要重新运行翻译质量检查。",
+        "translation_quality_content_hash": "",
+        "translation_quality_source_generation_hash": "",
+    })
+    return updated
+
+
+def _verify_subtitle_edit_stages(stages: dict[Path, Path]) -> None:
+    for final_path, stage_path in stages.items():
+        if stage_path.is_symlink() or not stage_path.is_file():
+            raise RuntimeError(
+                f"subtitle edit staging verification failed: {final_path.name}"
+            )
+        if final_path.suffix == ".srt":
+            parse_srt_file(str(stage_path))
+        elif final_path.suffix == ".json":
+            value = json.loads(stage_path.read_text(encoding="utf-8"))
+            if not isinstance(value, dict):
+                raise RuntimeError(
+                    f"subtitle edit staging verification failed: {final_path.name}"
+                )
 
 
 def _save_subtitles_locked(
@@ -1911,21 +1982,13 @@ def _save_subtitles_locked(
         )
         blocks.append(b)
 
-    # Save the editable source timeline as well. Otherwise add/split/delete
-    # edits are lost when GET /subtitles reloads from filtered/raw/native.
     source_path = _editable_source_srt_path(pdir)
     source_keeps_filter_state = source_path.name != "filtered.srt"
-    _write_editable_source_srt(
-        blocks,
-        source_path,
-        include_filtered=source_keeps_filter_state,
-    )
-    if source_keeps_filter_state or (pdir / "filter_state.json").exists():
-        _write_filter_state(blocks, pdir / "filter_state.json")
-    # Save translated version
-    write_srt(blocks, str(pdir / "translated.srt"), use_translation=True)
-    # Save bilingual version
-    write_bilingual_srt(blocks, str(pdir / "bilingual.srt"))
+    filter_path = pdir / "filter_state.json"
+    write_filter_state = source_keeps_filter_state or filter_path.exists()
+    translated_path = pdir / "translated.srt"
+    bilingual_path = pdir / "bilingual.srt"
+    project_path = pdir / "project.json"
     report_path = pdir / "translation_qa_report.json"
     quality_policy = project.get("translation_quality_policy")
     updated_project = project
@@ -1934,15 +1997,73 @@ def _save_subtitles_locked(
         or report_path.is_file()
         or project.get("translation_quality_status")
     ):
-        updated_project = mutate_project(
-            pid,
-            lambda current: current.update({
-                "translation_quality_status": "stale",
-                "translation_quality_message": "字幕已编辑，需要重新运行翻译质量检查。",
-                "translation_quality_content_hash": "",
-            }),
-            normalize=_apply_safe_defaults,
+        updated_project = _stale_subtitle_edit_project(project)
+
+    final_paths = [source_path]
+    if write_filter_state:
+        final_paths.append(filter_path)
+    final_paths.extend([translated_path, bilingual_path, project_path])
+    snapshots = _snapshot_subtitle_edit_paths(final_paths)
+    stages = {
+        path: _subtitle_edit_stage_path(pdir, path.name)
+        for path in final_paths
+    }
+    promoted: list[Path] = []
+    sentinel = mark_translation_delivery_invalid(pdir)
+    try:
+        _write_editable_source_srt(
+            blocks,
+            stages[source_path],
+            include_filtered=source_keeps_filter_state,
         )
+        if write_filter_state:
+            _write_filter_state(blocks, stages[filter_path])
+        write_srt(
+            blocks,
+            str(stages[translated_path]),
+            use_translation=True,
+        )
+        write_bilingual_srt(blocks, str(stages[bilingual_path]))
+        atomic_write_json(stages[project_path], updated_project)
+        _verify_subtitle_edit_stages(stages)
+        for final_path in final_paths:
+            os.replace(stages[final_path], final_path)
+            promoted.append(final_path)
+        sentinel.unlink()
+    except Exception:
+        rollback_errors = []
+        for final_path in reversed(promoted):
+            try:
+                _restore_subtitle_edit_path(
+                    final_path,
+                    snapshots[final_path],
+                )
+            except Exception as rollback_error:
+                rollback_errors.append(rollback_error)
+        try:
+            mutate_project(
+                pid,
+                lambda current: current.update(
+                    _stale_subtitle_edit_project(current)
+                ),
+                normalize=_apply_safe_defaults,
+            )
+        except Exception as stale_error:
+            rollback_errors.append(stale_error)
+        if rollback_errors:
+            log.error(
+                "subtitle edit rollback incomplete for %s: %s",
+                pid,
+                "; ".join(str(error) for error in rollback_errors),
+            )
+        raise
+    finally:
+        for stage_path in stages.values():
+            try:
+                if stage_path.exists():
+                    stage_path.unlink()
+            except OSError:
+                pass
     try:
         from app.engines.translation_memory import record_edited_subtitles
         learned = record_edited_subtitles(
@@ -2008,6 +2129,9 @@ def export_srt(
         persisted_policy = quality_policy if quality_policy in {"fast", "strict"} else ""
         project_run_id = project.get("translation_quality_run_id")
         project_content_hash = project.get("translation_quality_content_hash")
+        project_source_hash = project.get(
+            "translation_quality_source_generation_hash"
+        )
         expects_certification = (
             persisted_policy == "strict"
             or report_path.is_file()
@@ -2039,6 +2163,50 @@ def export_srt(
                     409,
                     f"Translation quality gate rejected export: {decision.message}",
                 )
+            try:
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise HTTPException(
+                    409,
+                    f"Translation quality identity is unreadable: {exc}",
+                ) from exc
+            report_source_hash = report.get("source_generation_hash")
+            if project_source_hash or report_source_hash:
+                current_source_hash = subtitle_source_generation_hash(pdir)
+                if (
+                    not isinstance(project_source_hash, str)
+                    or not project_source_hash
+                    or report_source_hash != project_source_hash
+                    or current_source_hash != report_source_hash
+                ):
+                    raise HTTPException(
+                        409,
+                        "Translation source generation identity does not match certification",
+                    )
+            artifact_name = (
+                "bilingual.srt"
+                if format == "bilingual"
+                else "translated.srt"
+            )
+            report_artifact_hashes = report.get(
+                "delivery_artifact_hashes"
+            )
+            if report_artifact_hashes is not None:
+                expected_artifact_hash = (
+                    report_artifact_hashes.get(artifact_name)
+                    if isinstance(report_artifact_hashes, dict)
+                    else ""
+                )
+                if (
+                    not isinstance(expected_artifact_hash, str)
+                    or not expected_artifact_hash
+                    or subtitle_file_hash(pdir / artifact_name)
+                    != expected_artifact_hash
+                ):
+                    raise HTTPException(
+                        409,
+                        "Translation delivery artifact identity does not match certification",
+                    )
 
         if format == "bilingual":
             if (pdir / "bilingual.srt").is_file():
