@@ -670,6 +670,14 @@ def recover_burn_output_transaction(pdir: Path, project: dict) -> str:
         burn_project_generation_hash(project)
         != manifest["project_generation_hash"]
     ):
+        if (
+            manifest["state"] in {"prepared", "burning", "staged"}
+            and abort_unpromoted_burn_transaction(
+                pdir,
+                transaction_id,
+            )
+        ):
+            return BURN_RECOVERY_REVERTED
         return BURN_RECOVERY_BLOCKED
 
     try:

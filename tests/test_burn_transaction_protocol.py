@@ -368,3 +368,84 @@ def test_first_output_rollback_fsync_failure_keeps_manifest_for_restart(
     assert not final.exists()
     assert not stage.exists()
     assert not manifest_path.exists()
+
+
+@pytest.mark.parametrize("had_previous_output", [False, True])
+def test_generation_mismatch_abort_fsync_failure_recovers_on_restart(
+    tmp_path,
+    monkeypatch,
+    had_previous_output,
+):
+    """Catches a safe unpromoted transaction becoming permanently blocked."""
+    from app.utils import burn_transaction
+
+    transaction_id = "1" * 32
+    original_project = {
+        "id": tmp_path.name,
+        "status": "processing",
+        "pipeline_stage": "burn",
+        "target_language": "简体中文",
+    }
+    current_project = {
+        **original_project,
+        "target_language": "繁體中文",
+    }
+    manifest, final, stage, backup = _manifest(
+        tmp_path,
+        transaction_id=transaction_id,
+        project=original_project,
+        had_previous_output=had_previous_output,
+        state="staged",
+    )
+    if had_previous_output:
+        final.write_bytes(b"old-final")
+    stage.write_bytes(b"new-final")
+    manifest_path = tmp_path / burn_transaction.BURN_TRANSACTION_MANIFEST
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    real_fsync_directory = burn_transaction._fsync_directory
+    injected = {"done": False}
+
+    def fail_first_directory_sync(directory):
+        if not injected["done"]:
+            injected["done"] = True
+            raise OSError("injected generation abort fsync failure")
+        return real_fsync_directory(directory)
+
+    monkeypatch.setattr(
+        burn_transaction,
+        "_fsync_directory",
+        fail_first_directory_sync,
+    )
+
+    assert (
+        burn_transaction.abort_unpromoted_burn_transaction(
+            tmp_path,
+            transaction_id,
+        )
+        is False
+    )
+    assert manifest_path.is_file()
+    assert not stage.exists()
+    if had_previous_output:
+        assert final.read_bytes() == b"old-final"
+    else:
+        assert not final.exists()
+
+    monkeypatch.setattr(
+        burn_transaction,
+        "_fsync_directory",
+        real_fsync_directory,
+    )
+    assert (
+        burn_transaction.recover_burn_output_transaction(
+            tmp_path,
+            current_project,
+        )
+        == burn_transaction.BURN_RECOVERY_REVERTED
+    )
+    assert not manifest_path.exists()
+    assert not backup.exists()
+    if had_previous_output:
+        assert final.read_bytes() == b"old-final"
+    else:
+        assert not final.exists()
