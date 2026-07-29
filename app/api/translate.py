@@ -52,6 +52,15 @@ from app.utils.subtitle_generation import (
     subtitle_source_generation_hash,
 )
 from app.utils.translation_certification import validate_translation_delivery
+from app.utils.burn_transaction import (
+    BURN_TRANSACTION_MANIFEST,
+    create_burn_recovery_copy,
+    new_burn_transaction_manifest,
+    persist_burn_transaction_manifest,
+    recover_burn_output_transaction,
+    remove_burn_transaction_manifest,
+    sync_burn_transaction_directory,
+)
 from app.engines.kb_trace import write_kb_usage_trace
 from app.engines.scheduler import (
     complete_progress as _scheduler_complete_progress,
@@ -5509,10 +5518,19 @@ def _mark_translation_artifacts(pid: str) -> None:
     mutate_project(pid, lambda p: p.update(fields), normalize=_apply_safe_defaults)
 
 
-def _mark_burn_completed(pid: str, output_video: str, message: str) -> None:
+def _mark_burn_completed(
+    pid: str,
+    output_video: str,
+    message: str,
+    *,
+    transaction_id: str = "",
+) -> None:
     artifact_fields = _translation_artifact_fields(pid)
     mutate_project(pid, lambda p: p.update({"status": "completed",
                                              "output_video": output_video,
+                                             "burn_output_transaction_id": (
+                                                 transaction_id or None
+                                             ),
                                              "error": None,
                                              "progress": 100,
                                              "progress_msg": message,
@@ -5621,55 +5639,13 @@ def _discard_burn_output_stage(result: _BurnDeliveryResult) -> None:
 
 
 def _new_burn_output_backup(final_path: Path) -> Path:
-    with tempfile.NamedTemporaryFile(
-        "wb",
-        dir=final_path.parent,
-        prefix=f".{final_path.name}.rollback.",
-        suffix=".mp4",
-        delete=False,
-    ) as handle:
-        return Path(handle.name)
-
-
-def _rollback_burn_commit(
-    pid: str,
-    *,
-    final_path: Path,
-    backup_path: Optional[Path],
-    had_previous_output: bool,
-    previous_output_backed_up: bool,
-    prior_project: dict,
-    restore_project: bool,
-) -> list[Exception]:
-    errors = []
-    try:
-        if previous_output_backed_up:
-            if (
-                backup_path is None
-                or backup_path.is_symlink()
-                or not backup_path.is_file()
-            ):
-                raise RuntimeError("prior burn output recovery file is missing")
-            _unlink_delivery_path(final_path)
-            os.replace(backup_path, final_path)
-        elif not had_previous_output:
-            _unlink_delivery_path(final_path)
-    except Exception as exc:
-        errors.append(exc)
-
-    if restore_project:
-        try:
-            def restore_prior_project(project: dict) -> None:
-                project.clear()
-                project.update(prior_project)
-
-            mutate_project(
-                pid,
-                restore_prior_project,
-            )
-        except Exception as exc:
-            errors.append(exc)
-    return errors
+    for _ in range(10):
+        backup_path = final_path.parent / (
+            f".{final_path.name}.rollback.{uuid.uuid4().hex}.mp4"
+        )
+        if not _path_lexists(backup_path):
+            return backup_path
+    raise RuntimeError("burn output recovery path allocation failed")
 
 
 def _commit_successful_burn(
@@ -5708,35 +5684,47 @@ def _commit_successful_burn(
             if had_previous_output
             else None
         )
-        previous_output_backed_up = False
+        manifest = new_burn_transaction_manifest(
+            pid=pid,
+            project=prior_project,
+            stage_path=stage,
+            final_path=final_path,
+            backup_path=backup_path,
+            had_previous_output=had_previous_output,
+        )
+        persist_burn_transaction_manifest(final_path.parent, manifest)
         project_commit_attempted = False
-        preserve_backup = False
         try:
             if backup_path is not None:
-                os.replace(final_path, backup_path)
-                previous_output_backed_up = True
+                create_burn_recovery_copy(final_path, backup_path)
             os.replace(stage, final_path)
+            sync_burn_transaction_directory(final_path.parent)
             project_commit_attempted = True
-            _mark_burn_completed(pid, str(final_path), message)
-            if backup_path is not None:
-                _unlink_delivery_path(backup_path)
-            return str(final_path)
-        except Exception as exc:
-            rollback_errors = _rollback_burn_commit(
+            _mark_burn_completed(
                 pid,
-                final_path=final_path,
-                backup_path=backup_path,
-                had_previous_output=had_previous_output,
-                previous_output_backed_up=previous_output_backed_up,
-                prior_project=prior_project,
-                restore_project=project_commit_attempted,
+                str(final_path),
+                message,
+                transaction_id=manifest["transaction_id"],
             )
-            if rollback_errors:
-                preserve_backup = (
-                    previous_output_backed_up
-                    and backup_path is not None
-                    and _path_lexists(backup_path)
+        except Exception as exc:
+            rollback_errors = []
+            if not recover_burn_output_transaction(
+                final_path.parent,
+                prior_project,
+            ):
+                rollback_errors.append(
+                    RuntimeError("burn output manifest recovery failed")
                 )
+            if project_commit_attempted:
+                try:
+                    def restore_prior_project(project: dict) -> None:
+                        project.clear()
+                        project.update(prior_project)
+
+                    mutate_project(pid, restore_prior_project)
+                except Exception as restore_exc:
+                    rollback_errors.append(restore_exc)
+            if rollback_errors:
                 details = "; ".join(
                     _safe_error_message(error)
                     for error in rollback_errors
@@ -5745,20 +5733,21 @@ def _commit_successful_burn(
                     f"burn output commit failed and rollback failed: {details}"
                 ) from exc
             raise
-        finally:
-            if (
-                not preserve_backup
-                and backup_path is not None
-                and _path_lexists(backup_path)
-            ):
-                try:
-                    _unlink_delivery_path(backup_path)
-                except Exception as cleanup_exc:
-                    log.warning(
-                        "failed to clean burn output recovery file %s: %s",
-                        backup_path.name,
-                        cleanup_exc,
-                    )
+
+        try:
+            if backup_path is not None:
+                _unlink_delivery_path(backup_path)
+                sync_burn_transaction_directory(final_path.parent)
+            remove_burn_transaction_manifest(final_path.parent)
+        except Exception as cleanup_exc:
+            log.warning(
+                "committed burn transaction cleanup deferred pid=%s "
+                "manifest=%s: %s",
+                pid,
+                BURN_TRANSACTION_MANIFEST,
+                cleanup_exc,
+            )
+        return str(final_path)
 
 
 def _burn_validated_translation_delivery(

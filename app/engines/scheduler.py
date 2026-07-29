@@ -28,6 +28,7 @@ from app.utils.project_store import (
     project_dir,
     validate_pid,
 )
+from app.utils.burn_transaction import recover_burn_output_transaction
 
 log = logging.getLogger(__name__)
 
@@ -299,6 +300,8 @@ def mark_interrupted_tasks_from_previous_session() -> int:
         try:
             pid = validate_pid(pdir.name)
             project = load_project(pid)
+            if recover_burn_output_transaction(pdir, project):
+                project = load_project(pid)
             workflow_stage = _running_stage_from_workflow_state(pid)
             project_stage = project.get("pipeline_stage")
             if project_stage not in _RECOVERABLE_RUNNING_STAGES:

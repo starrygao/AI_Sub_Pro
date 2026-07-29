@@ -2080,6 +2080,7 @@ def _assert_no_burn_transaction_files(pdir):
     assert list(pdir.glob(".burn-subtitle.*")) == []
     assert list(pdir.glob(".original_subtitled.mp4.burn.*")) == []
     assert list(pdir.glob(".original_subtitled.mp4.rollback.*")) == []
+    assert not (pdir / ".burn-output-transaction.json").exists()
 
 
 @pytest.mark.parametrize("existing_output", [None, b"previous-burn"])
@@ -2204,19 +2205,8 @@ def test_burn_recovery_snapshot_failure_leaves_prior_video_untouched(
     )
     final_path = pdir / "original_subtitled.mp4"
     final_path.write_bytes(b"previous-burn")
-    real_replace = api_translate.os.replace
-
     def fail_recovery_snapshot(source, destination):
-        source_path = Path(source)
-        destination_path = Path(destination)
-        if (
-            source_path == final_path
-            and destination_path.name.startswith(
-                ".original_subtitled.mp4.rollback."
-            )
-        ):
-            raise OSError("injected burn recovery snapshot failure")
-        return real_replace(source, destination)
+        raise OSError("injected burn recovery snapshot failure")
 
     def fake_burn(video, tracks, output, **kwargs):
         Path(output).write_bytes(b"new-burn")
@@ -2224,12 +2214,102 @@ def test_burn_recovery_snapshot_failure_leaves_prior_video_untouched(
 
     monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
     monkeypatch.setattr(
-        api_translate.os,
-        "replace",
+        api_translate,
+        "create_burn_recovery_copy",
         fail_recovery_snapshot,
     )
 
     with pytest.raises(OSError, match="recovery snapshot failure"):
+        api_translate._run_burn_pipeline(pid)
+
+    assert final_path.read_bytes() == b"previous-burn"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    assert project["status"] != "completed"
+    _assert_no_burn_transaction_files(pdir)
+
+
+def test_burn_overwrite_keeps_final_visible_until_atomic_promotion(
+    tmp_path,
+    monkeypatch,
+):
+    pid = "burnatomicvisibility"
+    api_translate, pdir, _ = _seed_current_certified_burn_project(
+        tmp_path,
+        monkeypatch,
+        pid=pid,
+    )
+    final_path = pdir / "original_subtitled.mp4"
+    final_path.write_bytes(b"previous-burn")
+    real_recovery_copy = api_translate.create_burn_recovery_copy
+    observations = []
+
+    def observe_recovery_copy(source, destination):
+        manifest = json.loads(
+            (pdir / ".burn-output-transaction.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        observations.append(final_path.read_bytes())
+        assert manifest["final_name"] == final_path.name
+        assert manifest["backup_name"] == Path(destination).name
+        real_recovery_copy(source, destination)
+        observations.append(final_path.read_bytes())
+
+    def fake_burn(video, tracks, output, **kwargs):
+        Path(output).write_bytes(b"new-burn")
+        return True
+
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(
+        api_translate,
+        "create_burn_recovery_copy",
+        observe_recovery_copy,
+    )
+
+    api_translate._run_burn_pipeline(pid)
+
+    assert observations == [b"previous-burn", b"previous-burn"]
+    assert final_path.read_bytes() == b"new-burn"
+    _assert_no_burn_transaction_files(pdir)
+
+
+def test_burn_replace_after_effect_exception_restores_prior_video(
+    tmp_path,
+    monkeypatch,
+):
+    pid = "burnreplaceaftereffect"
+    api_translate, pdir, project_path = (
+        _seed_current_certified_burn_project(
+            tmp_path,
+            monkeypatch,
+            pid=pid,
+        )
+    )
+    final_path = pdir / "original_subtitled.mp4"
+    final_path.write_bytes(b"previous-burn")
+    real_replace = api_translate.os.replace
+
+    def replace_then_raise(source, destination):
+        source_path = Path(source)
+        destination_path = Path(destination)
+        if (
+            source_path.name.startswith(
+                ".original_subtitled.mp4.burn."
+            )
+            and destination_path == final_path
+        ):
+            real_replace(source, destination)
+            raise OSError("injected post-replace failure")
+        return real_replace(source, destination)
+
+    def fake_burn(video, tracks, output, **kwargs):
+        Path(output).write_bytes(b"new-burn")
+        return True
+
+    monkeypatch.setattr(api_translate, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(api_translate.os, "replace", replace_then_raise)
+
+    with pytest.raises(OSError, match="post-replace failure"):
         api_translate._run_burn_pipeline(pid)
 
     assert final_path.read_bytes() == b"previous-burn"
