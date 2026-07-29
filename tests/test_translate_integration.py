@@ -5544,6 +5544,7 @@ def test_strict_candidate_requires_two_explicit_focused_semantic_oks(
     assert all(item["coverage_complete"] is True for item in targeted)
     assert all(item["checked_block_ids"] == [355, 356] for item in targeted)
     assert len(report["trace"]["semantic_issue_ledger"]["resolved"]) == expected_resolved
+    assert report["trace"]["auto_repair_budget"]["used_rounds"] == 1
     if expected_resolved:
         assert repaired == [{"id": 356, "translation": "这是我的。"}]
         assert report["summary"]["quality_gate"]["passed"] is True
@@ -5606,6 +5607,77 @@ def test_targeted_semantic_verification_fails_closed_on_unusable_coverage(
     assert len(traces) == 2
     assert all(trace["coverage_complete"] is False for trace in traces)
     assert all(trace["failed_block_ids"] == [502] for trace in traces)
+
+
+def test_targeted_double_ok_resolves_502_uncertainty_for_new_content_hash():
+    from app.api import translate as api_translate
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=502,
+        start=timedelta(seconds=502),
+        end=timedelta(seconds=503),
+        text="She said she would return.",
+        translation="有人说会回来。",
+    )
+    prior_report = TranslationQaReport(
+        status="needs_review",
+        issues=[QualityIssue(
+            type="semantic_uncertain",
+            severity="warning",
+            block_id=502,
+            message="subject reference was not preserved",
+        )],
+    )
+    ledger = {"outstanding": [], "resolved": []}
+    api_translate._update_and_overlay_semantic_issue_ledger(
+        prior_report,
+        [block],
+        ledger,
+        {},
+        strict_quality_gate=True,
+    )
+    old_hash = ledger["outstanding"][0]["content_hash"]
+    block.translation = "她说她会回来。"
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            return [{
+                "id": 502,
+                "verdict": "OK",
+                "taxonomy": "none",
+                "source_evidence": "She ... she",
+                "target_evidence": "她……她",
+            }]
+
+    translator = type("Translator", (), {"primary": Primary()})()
+    issues, verified_ids, verified_hashes, traces = (
+        api_translate._run_targeted_semantic_verification(
+            {"translation": {}},
+            translator,
+            [block],
+            "简体中文",
+            {502},
+            prior_report,
+            [],
+            strict_quality_gate=True,
+        )
+    )
+    api_translate._resolve_semantic_issue_ledger(
+        ledger,
+        verified_hashes,
+    )
+
+    assert issues == []
+    assert verified_ids == {502}
+    assert len(traces) == 2
+    assert ledger["outstanding"] == []
+    assert ledger["resolved"][0]["content_hash"] == old_hash
+    assert ledger["resolved"][0]["resolved_by_content_hash"] == (
+        api_translate._semantic_block_content_hash(block)
+    )
+    assert ledger["resolved"][0]["resolution"] == "targeted_double_ok"
 
 
 @pytest.mark.parametrize("initial_run_id", ["same-quality-run", "stale-quality-run"])
