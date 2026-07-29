@@ -2594,9 +2594,12 @@ def _semantic_issue_from_verdict(
         )
 
     normalized = clean_verdict.strip().lower()
-    if normalized == "ok" or normalized.startswith("ok "):
+    if normalized == "ok":
         return None
-    if normalized.startswith("mismatch") or normalized.startswith("不匹配") or normalized.startswith("错译"):
+    exact_verdict = bool(
+        _TARGETED_SEMANTIC_VERDICT_RE.fullmatch(clean_verdict)
+    )
+    if exact_verdict and normalized.startswith("mismatch:"):
         reason = clean_verdict.split(":", 1)[-1].strip() if ":" in clean_verdict else clean_verdict
         return QualityIssue(
             type="semantic_mismatch",
@@ -2606,7 +2609,7 @@ def _semantic_issue_from_verdict(
             source_text=source if isinstance(source, str) else "",
             translation=translation if isinstance(translation, str) else "",
         )
-    if normalized.startswith("uncertain") or normalized.startswith("可疑") or normalized.startswith("不确定"):
+    if exact_verdict and normalized.startswith("uncertain:"):
         reason = clean_verdict.split(":", 1)[-1].strip() if ":" in clean_verdict else clean_verdict
         return QualityIssue(
             type="semantic_uncertain",
@@ -2749,8 +2752,24 @@ def _run_semantic_quality_checks(
         trace["batches"].append(batch_trace)
         try:
             raw_results = primary.translate_batch(batch, prompt)
+            raw_list = raw_results if isinstance(raw_results, list) else []
+            expected_result_ids = [str(item["id"]) for item in batch]
+            returned_result_ids = [
+                str(result.get("id", ""))
+                for result in raw_list
+                if isinstance(result, dict)
+            ]
+            if (
+                len(raw_list) != len(batch)
+                or sorted(returned_result_ids)
+                != sorted(expected_result_ids)
+            ):
+                raise ValueError(
+                    "semantic QA response IDs did not exactly match "
+                    "the requested IDs"
+                )
             results = reconcile_translation_results(
-                raw_results if isinstance(raw_results, list) else [],
+                raw_list,
                 batch,
             )
         except Exception as exc:

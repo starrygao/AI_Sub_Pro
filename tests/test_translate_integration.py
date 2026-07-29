@@ -4301,6 +4301,86 @@ def test_professional_semantic_uncertainty_requires_human_review():
     assert report.summary["quality_gate"]["unresolved_blocks"] == 1
 
 
+def test_full_semantic_scan_accepts_only_exact_ok_verdict():
+    """Catches malformed mixed verdict text being treated as an explicit OK."""
+    from app.api.translate import _run_semantic_quality_checks
+
+    block = type("Block", (), {
+        "index": 11,
+        "text": "Do not leave.",
+        "translation": "不要离开。",
+        "filtered": False,
+    })()
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            return [{
+                "id": 11,
+                "translation": "OK MISMATCH: negation was omitted",
+            }]
+
+    issues, trace = _run_semantic_quality_checks(
+        {"translation": {"quality_mode": "professional", "semantic_qa": True}},
+        type("Translator", (), {"primary": Primary()})(),
+        [block],
+        "简体中文",
+        strict_quality_gate=True,
+    )
+
+    assert [issue.type for issue in issues] == ["semantic_uncertain"]
+    assert trace["coverage_complete"] is True
+    assert trace["checked_block_ids"] == [11]
+
+
+@pytest.mark.parametrize(
+    "raw_results",
+    [
+        [
+            {"id": 21, "translation": "OK"},
+            {"id": 21, "translation": "OK"},
+        ],
+        [{"id": 21, "translation": "OK"}],
+        [
+            {"id": 21, "translation": "OK"},
+            {"id": 22, "translation": "OK"},
+            {"id": 999, "translation": "OK"},
+        ],
+    ],
+    ids=["duplicate-and-missing", "missing", "extra"],
+)
+def test_full_semantic_scan_rejects_non_exact_id_multiset(raw_results):
+    """Catches a partial/duplicate/extra provider response certifying a batch."""
+    from app.api.translate import _run_semantic_quality_checks
+
+    blocks = [
+        type("Block", (), {
+            "index": block_id,
+            "text": f"Source {block_id}",
+            "translation": f"译文 {block_id}",
+            "filtered": False,
+        })()
+        for block_id in (21, 22)
+    ]
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            return raw_results
+
+    issues, trace = _run_semantic_quality_checks(
+        {"translation": {"quality_mode": "professional", "semantic_qa": True}},
+        type("Translator", (), {"primary": Primary()})(),
+        blocks,
+        "简体中文",
+        strict_quality_gate=True,
+    )
+
+    assert {issue.block_id for issue in issues} == {21, 22}
+    assert {issue.type for issue in issues} == {"semantic_qa_failed"}
+    assert trace["checked_block_ids"] == []
+    assert trace["failed_block_ids"] == [21, 22]
+    assert trace["coverage_complete"] is False
+
+
 def test_semantic_qa_uses_dialogue_only_items_and_bounded_authoritative_context():
     from app.api.translate import _run_semantic_quality_checks
     from app.engines.kb_models import ProjectKb, TermEntry
