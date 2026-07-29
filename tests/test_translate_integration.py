@@ -6542,6 +6542,7 @@ def test_apply_repair_results_commits_valid_semantic_group_together():
             end=timedelta(seconds=1),
             text="Go.",
             translation="原译一。",
+            translation_error="old-error-1",
         ),
         SubtitleBlock(
             index=2,
@@ -6549,6 +6550,7 @@ def test_apply_repair_results_commits_valid_semantic_group_together():
             end=timedelta(seconds=2),
             text="No.",
             translation="原译二。",
+            translation_error="old-error-2",
         ),
     ]
 
@@ -6566,7 +6568,10 @@ def test_apply_repair_results_commits_valid_semantic_group_together():
         {"id": 1, "translation": "走。"},
         {"id": 2, "translation": "不。"},
     ]
-    assert [block.translation for block in blocks] == ["走。", "不。"]
+    assert [
+        (block.translation, block.translation_error)
+        for block in blocks
+    ] == [("走。", ""), ("不。", "")]
 
 
 def test_auto_repair_provider_exception_rolls_back_prior_batch_mutation():
@@ -6582,7 +6587,8 @@ def test_auto_repair_provider_exception_rolls_back_prior_batch_mutation():
             start=timedelta(seconds=0),
             end=timedelta(seconds=1),
             text="One.",
-            translation="原译一。",
+            translation="",
+            translation_error="old-error-1",
         ),
         SubtitleBlock(
             index=2,
@@ -6590,6 +6596,7 @@ def test_auto_repair_provider_exception_rolls_back_prior_batch_mutation():
             end=timedelta(seconds=2),
             text="Two.",
             translation="原译二。",
+            translation_error="old-error-2",
         ),
     ]
     calls = []
@@ -6636,7 +6643,13 @@ def test_auto_repair_provider_exception_rolls_back_prior_batch_mutation():
     assert outcome.completed is False
     assert outcome.mutation_occurred is False
     assert outcome.changes == []
-    assert [block.translation for block in blocks] == ["原译一。", "原译二。"]
+    assert [
+        (block.translation, block.translation_error)
+        for block in blocks
+    ] == [
+        ("", "old-error-1"),
+        ("原译二。", "old-error-2"),
+    ]
 
 
 def test_quality_conclusion_separates_deterministic_normalization_from_model_repair():
@@ -11674,6 +11687,310 @@ def test_final_certification_recovery_flag_survives_same_run_resume(
         "result": "already_used",
         "new_issue_block_ids": [],
     }
+
+
+@pytest.mark.parametrize("companion_fails", [False, True])
+def test_final_certification_recovery_preserves_full_mixed_identity_group(
+    tmp_path,
+    monkeypatch,
+    companion_fails,
+):
+    from copy import deepcopy
+
+    from app.api import translate as api_translate
+    from app.engines import knowledge, translation_qa
+    from app.engines.translation_qa import (
+        QualityIssue,
+        TranslationQaReport,
+        build_repair_items,
+    )
+    from app.utils.srt import SubtitleBlock
+
+    blocks = [
+        SubtitleBlock(
+            index=block_id,
+            start=timedelta(seconds=block_id),
+            end=timedelta(seconds=block_id + 1),
+            text=source,
+            translation=f"旧译{block_id}",
+        )
+        for block_id, source in [
+            (33, "that maybe you could undo"),
+            (34, "the damage you've done"),
+            (35, "by pretending you didn't ruin everything"),
+            (36, "by burying the one person"),
+            (37, "-on this godforsaken island--\n-Listen to me!"),
+        ]
+    ]
+    original_by_id = {block.index: block.translation for block in blocks}
+    block_by_id = {block.index: block for block in blocks}
+    quality_run_state = {
+        "run_id": "mixed-identity-group-run",
+        "semantic_uncertain_observed_block_ids": [],
+        "auto_repair_rounds": [{"round": number} for number in range(1, 4)],
+    }
+    scan_call = 0
+    repair_scope = []
+    targeted_scope = []
+    saved_reports = []
+
+    monkeypatch.setattr(
+        knowledge,
+        "_get_singleton",
+        lambda: type("Knowledge", (), {"select_for_project": lambda self, project: None})(),
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_run_deterministic_translation_normalizers",
+        lambda *args, **kwargs: [],
+    )
+
+    def semantic_issue(block_id):
+        block = block_by_id[block_id]
+        return QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=block_id,
+            message=f"semantic issue {block_id}",
+            source_text=block.text,
+            translation=block.translation,
+        )
+
+    def fake_quality_checks(*args, **kwargs):
+        nonlocal scan_call
+        scan_call += 1
+        trace = args[6]
+        if scan_call == 1:
+            issues = [semantic_issue(33), semantic_issue(37)]
+        elif scan_call == 2:
+            issues = [
+                semantic_issue(33),
+                semantic_issue(35),
+                semantic_issue(37),
+            ]
+        else:
+            issues = []
+        return TranslationQaReport(
+            status="needs_review" if issues else "ok",
+            issues=issues,
+            unresolved_blocks=[issue.block_id for issue in issues],
+            summary={"by_type": {"semantic_mismatch": len(issues)}},
+            trace=trace,
+        )
+
+    def fake_auto_repair(
+        cfg,
+        translator,
+        blocks,
+        report,
+        target_language,
+        project_kb,
+        repair_trace=None,
+    ):
+        items = build_repair_items(blocks, report.issues)
+        repair_scope.append([item["id"] for item in items])
+        changes = []
+        for item in items:
+            block = block_by_id[item["id"]]
+            block.translation = f"新译{block.index}"
+            changes.append({
+                "id": block.index,
+                "translation": block.translation,
+                "semantic_group_ids": list(item["semantic_group_ids"]),
+            })
+        return api_translate.AutoRepairOutcome(changes, True, True)
+
+    def fake_deterministic_quality(**kwargs):
+        return TranslationQaReport(
+            status="ok",
+            issues=[],
+            unresolved_blocks=[],
+            summary={"by_type": {}},
+            trace=kwargs["trace"],
+        )
+
+    def fake_targeted(*args, **kwargs):
+        candidate_ids = set(args[4])
+        targeted_scope.append(candidate_ids)
+        issues = [semantic_issue(34)] if companion_fails else []
+        verified = candidate_ids - {34} if companion_fails else candidate_ids
+        return (
+            issues,
+            verified,
+            {
+                block_id: api_translate._semantic_block_content_hash(
+                    block_by_id[block_id]
+                )
+                for block_id in verified
+            },
+            [
+                {"coverage_complete": True, "pass": 1},
+                {"coverage_complete": True, "pass": 2},
+            ],
+        )
+
+    monkeypatch.setattr(
+        api_translate,
+        "_run_quality_checks_with_semantics",
+        fake_quality_checks,
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_run_deterministic_quality_checks",
+        fake_deterministic_quality,
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_auto_repair_quality_issues",
+        fake_auto_repair,
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_run_targeted_semantic_verification",
+        fake_targeted,
+    )
+    monkeypatch.setattr(
+        translation_qa,
+        "save_quality_report",
+        lambda report, **kwargs: saved_reports.append(deepcopy(report.to_dict())),
+    )
+
+    api_translate._persist_translation_quality_report(
+        pid="mixed-identity-group",
+        pdir=str(tmp_path),
+        project={},
+        blocks=blocks,
+        target_language="简体中文",
+        translator=object(),
+        cfg={"translation": {"qa_auto_repair": True}},
+        quality_run_id="mixed-identity-group-run",
+        quality_run_state=quality_run_state,
+        strict_quality_gate=True,
+    )
+
+    assert repair_scope == [[33, 34, 35, 36, 37]]
+    assert targeted_scope == [{33, 34, 35, 36, 37}]
+    recovery = saved_reports[-1]["trace"]["certification_recovery"]
+    assert recovery["semantic_groups"] == [[33, 34, 35, 36, 37]]
+    if companion_fails:
+        assert {
+            block.index: block.translation for block in blocks
+        } == original_by_id
+        assert recovery["rolled_back_block_ids"] == [33, 34, 35, 36, 37]
+    else:
+        assert [block.translation for block in blocks] == [
+            f"新译{block.index}" for block in blocks
+        ]
+        assert recovery["accepted_block_ids"] == [33, 34, 35, 36, 37]
+
+
+def test_final_duplicate_id_does_not_consume_later_semantic_recovery(
+    tmp_path,
+    monkeypatch,
+):
+    from copy import deepcopy
+
+    from app.api import translate as api_translate
+    from app.engines import knowledge, translation_qa
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=84,
+        start=timedelta(seconds=84),
+        end=timedelta(seconds=85),
+        text="Take your boy as leverage?",
+        translation="拿你儿子当筹码？",
+    )
+    quality_run_state = {
+        "run_id": "duplicate-then-semantic-run",
+        "semantic_uncertain_observed_block_ids": [],
+        "auto_repair_rounds": [{"round": number} for number in range(1, 4)],
+    }
+    scan_call = 0
+    repair_types = []
+    saved_reports = []
+
+    monkeypatch.setattr(
+        knowledge,
+        "_get_singleton",
+        lambda: type("Knowledge", (), {"select_for_project": lambda self, project: None})(),
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_run_deterministic_translation_normalizers",
+        lambda *args, **kwargs: [],
+    )
+
+    def fake_quality_checks(*args, **kwargs):
+        nonlocal scan_call
+        scan_call += 1
+        trace = args[6]
+        issue_type = {
+            2: "duplicate_id",
+            4: "semantic_mismatch",
+        }.get(scan_call)
+        issues = [
+            QualityIssue(
+                type=issue_type,
+                severity="error",
+                block_id=84,
+                message=issue_type,
+                source_text=block.text,
+                translation=block.translation,
+            )
+        ] if issue_type else []
+        return TranslationQaReport(
+            status="needs_review" if issues else "ok",
+            issues=issues,
+            unresolved_blocks=[84] if issues else [],
+            summary={"by_type": {issue_type: 1} if issue_type else {}},
+            trace=trace,
+        )
+
+    def fake_auto_repair(*args, **kwargs):
+        report = args[3]
+        repair_types.append([issue.type for issue in report.issues])
+        return api_translate.AutoRepairOutcome([], False, True)
+
+    monkeypatch.setattr(
+        api_translate,
+        "_run_quality_checks_with_semantics",
+        fake_quality_checks,
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_auto_repair_quality_issues",
+        fake_auto_repair,
+    )
+    monkeypatch.setattr(
+        translation_qa,
+        "save_quality_report",
+        lambda report, **kwargs: saved_reports.append(deepcopy(report.to_dict())),
+    )
+    call_kwargs = {
+        "pid": "duplicate-then-semantic",
+        "pdir": str(tmp_path),
+        "project": {},
+        "blocks": [block],
+        "target_language": "简体中文",
+        "translator": object(),
+        "cfg": {"translation": {"qa_auto_repair": True}},
+        "quality_run_id": "duplicate-then-semantic-run",
+        "quality_run_state": quality_run_state,
+        "strict_quality_gate": True,
+    }
+
+    api_translate._persist_translation_quality_report(**call_kwargs)
+    assert quality_run_state["certification_recovery_used"] is False
+    api_translate._persist_translation_quality_report(**call_kwargs)
+
+    assert repair_types == [["semantic_mismatch"]]
+    assert quality_run_state["certification_recovery_used"] is True
+    assert scan_call == 5
+    assert saved_reports[0]["trace"]["certification_recovery"]["result"] == (
+        "not_eligible"
+    )
 
 
 def test_translate_pipeline_redacts_exception_details_in_project_error(tmp_path, monkeypatch):

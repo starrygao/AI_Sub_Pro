@@ -1599,6 +1599,31 @@ def test_repair_items_do_not_join_after_what_after_complete_sentence():
     assert "semantic_group_ids" not in items[0]
 
 
+def test_repair_items_do_not_join_independent_after_what_happened_clause():
+    """A lowercase independent clause must not attach to an unterminated cue."""
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(450, "We should leave", "我们该走了"),
+        _block(
+            451,
+            "-after what happened, stay here.\n-I'll go.",
+            "-发生那些事后，待在这里。\n-我去。",
+        ),
+    ]
+    issues = [QualityIssue(
+        type="semantic_mismatch",
+        severity="error",
+        block_id=451,
+        message="independent speaker turn",
+    )]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == [451]
+    assert "semantic_group_ids" not in items[0]
+
+
 def test_repair_items_keep_dense_five_cue_semantic_component_atomic():
     """Three real semantic seeds in 33-37 keep the bounded five-cue clause whole."""
     from app.engines.translation_qa import QualityIssue, build_repair_items

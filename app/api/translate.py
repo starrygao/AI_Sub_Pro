@@ -4074,6 +4074,42 @@ def _quality_issue_identity(issue) -> tuple:
     )
 
 
+_CERTIFICATION_RECOVERY_CONTENT_ISSUE_TYPES = frozenset({
+    "missing_translation",
+    "kb_term_missing",
+    "manual_term_missing",
+    "canonical_term_missing",
+    "core_term_inconsistent",
+    "context_term_missing",
+    "semantic_mismatch",
+    "semantic_uncertain",
+    "proper_name_inconsistent",
+    "scientific_term_inconsistent",
+    "speaker_line_structure_mismatch",
+    "translation_meta_contamination",
+})
+
+
+def _is_certification_recovery_content_issue(issue) -> bool:
+    block_id = getattr(issue, "block_id", None)
+    issue_type = getattr(issue, "type", "")
+    if (
+        not isinstance(block_id, int)
+        or isinstance(block_id, bool)
+        or issue_type not in _CERTIFICATION_RECOVERY_CONTENT_ISSUE_TYPES
+    ):
+        return False
+    if (
+        issue_type in {
+            "proper_name_inconsistent",
+            "scientific_term_inconsistent",
+        }
+        and not str(getattr(issue, "expected", "") or "").strip()
+    ):
+        return False
+    return True
+
+
 _AUTO_REPAIR_GUARDED_FUNCTIONAL_ISSUE_TYPES = frozenset({
     "missing_translation",
     "duplicate_id",
@@ -4763,6 +4799,7 @@ def _auto_repair_quality_issues(
     mutation_occurred = False
     candidate_block_count = 0
     initial_translation_by_id: dict[str, str] = {}
+    initial_translation_error_by_id: dict[str, str] = {}
     blocks_by_id: dict[str, object] = {}
 
     def finish_outcome(completed: bool) -> AutoRepairOutcome:
@@ -4828,6 +4865,10 @@ def _auto_repair_quality_issues(
         }
         initial_translation_by_id = {
             block_id: getattr(block, "translation", "")
+            for block_id, block in blocks_by_id.items()
+        }
+        initial_translation_error_by_id = {
+            block_id: getattr(block, "translation_error", "")
             for block_id, block in blocks_by_id.items()
         }
         max_blocks = _repair_item_limit(cfg)
@@ -4919,6 +4960,9 @@ def _auto_repair_quality_issues(
         for block_id, block in blocks_by_id.items():
             if block_id in initial_translation_by_id:
                 block.translation = initial_translation_by_id[block_id]
+                block.translation_error = (
+                    initial_translation_error_by_id.get(block_id, "")
+                )
         mutation_occurred = False
         if repair_trace is not None:
             repair_trace["failure"] = "provider_or_repair_error"
@@ -5202,6 +5246,7 @@ def _persist_translation_quality_report(
         report = run_quality_pass("initial", include_semantics=True)
         repair_enabled = _qa_auto_repair_enabled(cfg)
         from app.engines.translation_qa import (
+            build_repair_items,
             prioritized_repairable_quality_issues,
         )
 
@@ -5776,23 +5821,48 @@ def _persist_translation_quality_report(
             for issue in (getattr(report, "issues", []) or [])
             if getattr(issue, "severity", "") in {"error", "severe"}
         ]
-        repairable_final_issue_ids = {
-            id(issue)
-            for issue in prioritized_repairable_quality_issues(
-                final_blocking_issues
-            )
-        }
         new_final_issues = [
             issue
             for issue in final_blocking_issues
             if (
-                id(issue) in repairable_final_issue_ids
-                and getattr(issue, "type", "") != "semantic_qa_failed"
+                _is_certification_recovery_content_issue(issue)
                 and _quality_issue_identity(issue)
                 not in seen_blocking_identities
                 and _quality_issue_identity(issue)[:3]
                 not in outstanding_ledger_identities_before_final
             )
+        ]
+        new_final_issue_ids = {
+            issue.block_id for issue in new_final_issues
+        }
+        eligible_final_content_issues = [
+            issue
+            for issue in final_blocking_issues
+            if _is_certification_recovery_content_issue(issue)
+        ]
+        full_final_repair_items = build_repair_items(
+            blocks,
+            eligible_final_content_issues,
+        )
+        recovery_scope_ids = set(new_final_issue_ids)
+        for item in full_final_repair_items:
+            group_ids = item.get("semantic_group_ids")
+            if (
+                isinstance(group_ids, list)
+                and new_final_issue_ids.intersection(group_ids)
+            ):
+                recovery_scope_ids.update(
+                    block_id
+                    for block_id in group_ids
+                    if (
+                        isinstance(block_id, int)
+                        and not isinstance(block_id, bool)
+                    )
+                )
+        recovery_scope_issues = [
+            issue
+            for issue in eligible_final_content_issues
+            if issue.block_id in recovery_scope_ids
         ]
         recovery_trace = {
             "used": certification_recovery_used,
@@ -5828,9 +5898,9 @@ def _persist_translation_quality_report(
             report_before_recovery = report
             recovery_report = replace(
                 report,
-                issues=list(new_final_issues),
+                issues=recovery_scope_issues,
                 unresolved_blocks=list(
-                    recovery_trace["new_issue_block_ids"]
+                    sorted(recovery_scope_ids)
                 ),
             )
             translation_before_recovery = {

@@ -148,7 +148,11 @@ _SEMANTIC_ELLIPSIS_RE = re.compile(r"(?:\.{2,}|…+)[\"'”’)\]}】）]*\s*$")
 _SEMANTIC_TERMINAL_RE = re.compile(r"[.!?。！？][\"'”’)\]}】）]*\s*$")
 _LOWERCASE_CONTINUATION_RE = re.compile(r"^[\"'“‘(\[{]*[a-z]")
 _DUAL_SPEAKER_CROSS_CUE_CONTINUATION_RE = re.compile(
-    r"^[\"'“‘(\[{]*(?:on\b|after\s+what\b)"
+    r"^[\"'“‘(\[{]*(?:"
+    r"on\b|"
+    r"after\s+what\s+(?:he|she|they|you|we|i|it|[A-Z][A-Za-z'.-]*)"
+    r"\s+did\?[\"'”’)\]}]*\s*$"
+    r")"
 )
 _DIALOGUE_DASH_PREFIX_RE = re.compile(r"^\s*[-‐‑‒–—―]\s*")
 _SINGLE_SPEAKER_START_RE = re.compile(
