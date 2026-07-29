@@ -5,6 +5,7 @@ Handles long-running ASR and translation tasks.
 import os
 import json
 import asyncio
+import hashlib
 import logging
 import math
 import re
@@ -1769,6 +1770,159 @@ def _refresh_quality_report_issue_summary(report) -> None:
     })
 
 
+_SEMANTIC_LEDGER_ISSUE_TYPES = frozenset({
+    "semantic_mismatch",
+    "semantic_uncertain",
+    "semantic_qa_failed",
+})
+
+
+def _semantic_block_content_hash(block) -> str:
+    payload = json.dumps(
+        {
+            "source": getattr(block, "text", "")
+            if isinstance(getattr(block, "text", ""), str)
+            else "",
+            "translation": getattr(block, "translation", "")
+            if isinstance(getattr(block, "translation", ""), str)
+            else "",
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"sha256:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
+
+
+def _semantic_issue_ledger(raw_ledger) -> dict:
+    ledger = raw_ledger if isinstance(raw_ledger, dict) else {}
+    return {
+        "outstanding": [
+            dict(item)
+            for item in ledger.get("outstanding", [])
+            if isinstance(item, dict)
+        ] if isinstance(ledger.get("outstanding", []), list) else [],
+        "resolved": [
+            dict(item)
+            for item in ledger.get("resolved", [])
+            if isinstance(item, dict)
+        ] if isinstance(ledger.get("resolved", []), list) else [],
+    }
+
+
+def _update_and_overlay_semantic_issue_ledger(
+    report,
+    blocks,
+    ledger: dict,
+    trace: dict,
+    *,
+    strict_quality_gate: bool,
+) -> None:
+    from app.engines.translation_qa import QualityIssue
+
+    block_by_id = {
+        getattr(block, "index", None): block
+        for block in blocks or []
+        if (
+            isinstance(getattr(block, "index", None), int)
+            and not isinstance(getattr(block, "index", None), bool)
+        )
+    }
+    current_hash_by_id = {
+        block_id: _semantic_block_content_hash(block)
+        for block_id, block in block_by_id.items()
+    }
+    outstanding_by_key = {
+        (
+            item.get("block_id"),
+            item.get("content_hash"),
+            item.get("type"),
+        ): dict(item)
+        for item in ledger.get("outstanding", [])
+        if isinstance(item, dict)
+    }
+    for issue in list(getattr(report, "issues", []) or []):
+        issue_type = getattr(issue, "type", "")
+        block_id = getattr(issue, "block_id", None)
+        if issue_type not in _SEMANTIC_LEDGER_ISSUE_TYPES:
+            continue
+        if issue_type == "semantic_qa_failed" and not strict_quality_gate:
+            continue
+        if block_id not in current_hash_by_id:
+            continue
+        block = block_by_id[block_id]
+        content_hash = current_hash_by_id[block_id]
+        outstanding_by_key[(block_id, content_hash, issue_type)] = {
+            "block_id": block_id,
+            "content_hash": content_hash,
+            "type": issue_type,
+            "severity": getattr(issue, "severity", ""),
+            "message": getattr(issue, "message", ""),
+            "source_text": getattr(block, "text", ""),
+            "translation": getattr(block, "translation", ""),
+            "expected": getattr(issue, "expected", ""),
+        }
+
+    outstanding = sorted(
+        outstanding_by_key.values(),
+        key=lambda item: (
+            item.get("block_id", 0),
+            item.get("content_hash", ""),
+            item.get("type", ""),
+        ),
+    )
+    ledger["outstanding"] = outstanding
+    ledger.setdefault("resolved", [])
+    active_entries = [
+        item
+        for item in outstanding
+        if current_hash_by_id.get(item.get("block_id")) == item.get("content_hash")
+    ]
+    existing_keys = {
+        (
+            getattr(issue, "block_id", None),
+            getattr(issue, "type", ""),
+            getattr(issue, "message", ""),
+        )
+        for issue in (getattr(report, "issues", []) or [])
+    }
+    for item in active_entries:
+        issue_key = (
+            item.get("block_id"),
+            item.get("type", ""),
+            item.get("message", ""),
+        )
+        if issue_key in existing_keys:
+            continue
+        report.issues.append(QualityIssue(
+            type=item.get("type", "semantic_uncertain"),
+            severity=item.get("severity", "warning"),
+            block_id=item.get("block_id"),
+            message=item.get("message", ""),
+            source_text=item.get("source_text", ""),
+            translation=item.get("translation", ""),
+            expected=item.get("expected", ""),
+        ))
+        existing_keys.add(issue_key)
+    _refresh_quality_report_issue_summary(report)
+    trace["semantic_issue_ledger"] = {
+        "outstanding": [dict(item) for item in outstanding],
+        "resolved": [
+            dict(item)
+            for item in ledger.get("resolved", [])
+            if isinstance(item, dict)
+        ],
+        "active_block_ids": sorted({
+            item["block_id"]
+            for item in active_entries
+            if (
+                isinstance(item.get("block_id"), int)
+                and not isinstance(item.get("block_id"), bool)
+            )
+        }),
+    }
+
+
 _SEMANTIC_QA_CONTEXT_MAX_CHARS = 4200
 _SEMANTIC_QA_CONTEXT_TERM_LIMIT = 80
 
@@ -3104,6 +3258,11 @@ def _persist_translation_quality_report(
             quality_run_state.update({
                 "run_id": quality_run_id,
                 "semantic_uncertain_observed_block_ids": [],
+                "semantic_issue_ledger": {
+                    "outstanding": [],
+                    "resolved": [],
+                },
+                "semantic_qa_history": [],
                 "auto_repair_rounds": [],
                 "auto_repair_budget": {
                     "configured_rounds": reset_round_limit,
@@ -3139,6 +3298,50 @@ def _persist_translation_quality_report(
                 for item in prior_repair_rounds
                 if isinstance(item, dict)
             ] if isinstance(prior_repair_rounds, list) else []
+            prior_semantic_history = quality_run_state.get(
+                "semantic_qa_history",
+                [],
+            )
+            trace["semantic_qa_history"] = [
+                dict(item)
+                for item in prior_semantic_history
+                if isinstance(item, dict)
+            ] if isinstance(prior_semantic_history, list) else []
+        semantic_ledger = _semantic_issue_ledger(
+            quality_run_state.get("semantic_issue_ledger")
+            if matching_run_state
+            else None
+        )
+
+        def run_quality_pass(pass_type: str):
+            history = trace.setdefault("semantic_qa_history", [])
+            if not isinstance(history, list):
+                history = []
+                trace["semantic_qa_history"] = history
+            prior_history_length = len(history)
+            current_report = _run_quality_checks_with_semantics(
+                cfg,
+                translator,
+                blocks,
+                target_language,
+                project_kb,
+                project,
+                trace,
+                progress_callback=progress_callback,
+                strict_quality_gate=strict_policy,
+            )
+            for item in history[prior_history_length:]:
+                if isinstance(item, dict):
+                    item["pass_type"] = pass_type
+            _update_and_overlay_semantic_issue_ledger(
+                current_report,
+                blocks,
+                semantic_ledger,
+                trace,
+                strict_quality_gate=strict_policy,
+            )
+            return current_report
+
         repair_rounds = trace.setdefault("auto_repair_rounds", [])
         if not isinstance(repair_rounds, list):
             repair_rounds = []
@@ -3162,17 +3365,7 @@ def _persist_translation_quality_report(
             repaired=repaired,
             phase="before_initial_qa",
         )
-        report = _run_quality_checks_with_semantics(
-            cfg,
-            translator,
-            blocks,
-            target_language,
-            project_kb,
-            project,
-            trace,
-            progress_callback=progress_callback,
-            strict_quality_gate=strict_policy,
-        )
+        report = run_quality_pass("initial")
         repair_enabled = _qa_auto_repair_enabled(cfg)
         if repair_enabled and report.issues and remaining_repair_rounds > 0:
             previous_score = _quality_score(report)
@@ -3285,17 +3478,7 @@ def _persist_translation_quality_report(
                     repaired=round_normalizer_repairs,
                     phase="after_model_repair",
                 )
-                report = _run_quality_checks_with_semantics(
-                    cfg,
-                    translator,
-                    blocks,
-                    target_language,
-                    project_kb,
-                    project,
-                    trace,
-                    progress_callback=progress_callback,
-                    strict_quality_gate=strict_policy,
-                )
+                report = run_quality_pass("candidate")
                 proposed_translation_by_id = {
                     str(getattr(block, "index", "")): getattr(
                         block,
@@ -3379,17 +3562,7 @@ def _persist_translation_quality_report(
                             )
                         )
                     })
-                    report = _run_quality_checks_with_semantics(
-                        cfg,
-                        translator,
-                        blocks,
-                        target_language,
-                        project_kb,
-                        project,
-                        trace,
-                        progress_callback=progress_callback,
-                        strict_quality_gate=strict_policy,
-                    )
+                    report = run_quality_pass("rollback")
                 translation_after_round = {
                     str(getattr(block, "index", "")): getattr(
                         block,
@@ -3535,17 +3708,7 @@ def _persist_translation_quality_report(
             phase="before_certification",
         )
         if final_normalizer_changes:
-            report = _run_quality_checks_with_semantics(
-                cfg,
-                translator,
-                blocks,
-                target_language,
-                project_kb,
-                project,
-                trace,
-                progress_callback=progress_callback,
-                strict_quality_gate=strict_policy,
-            )
+            report = run_quality_pass("final")
         if repaired:
             report.repaired_blocks = repaired
         report.trace = trace
@@ -3553,6 +3716,23 @@ def _persist_translation_quality_report(
             quality_run_state["semantic_uncertain_observed_block_ids"] = list(
                 trace.get("semantic_uncertain_observed_block_ids", [])
             )
+            quality_run_state["semantic_issue_ledger"] = {
+                "outstanding": [
+                    dict(item)
+                    for item in semantic_ledger.get("outstanding", [])
+                    if isinstance(item, dict)
+                ],
+                "resolved": [
+                    dict(item)
+                    for item in semantic_ledger.get("resolved", [])
+                    if isinstance(item, dict)
+                ],
+            }
+            quality_run_state["semantic_qa_history"] = [
+                dict(item)
+                for item in trace.get("semantic_qa_history", [])
+                if isinstance(item, dict)
+            ]
             quality_run_state["auto_repair_rounds"] = [
                 dict(item)
                 for item in repair_rounds

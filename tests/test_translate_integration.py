@@ -3742,7 +3742,10 @@ def test_auto_repair_keeps_semantic_group_atomic_and_refreshes_later_context():
             index=index,
             start=timedelta(seconds=index),
             end=timedelta(seconds=index + 1),
-            text=f"Source {index}.",
+            text={
+                2: "If you tell him",
+                3: "we lose everything.",
+            }.get(index, f"Source {index}."),
             translation=f"旧译{index}",
         )
         for index in range(1, 5)
@@ -4664,7 +4667,7 @@ def test_auto_repair_rolls_back_changed_group_member_when_unchanged_member_qa_fa
     assert result["report"]["summary"]["quality_gate"]["passed"] is False
 
 
-def test_group_rollback_clears_new_uncertainty_from_unchanged_member(
+def test_group_rollback_preserves_unverified_uncertainty_on_unchanged_member(
     tmp_path,
     monkeypatch,
 ):
@@ -4691,7 +4694,8 @@ def test_group_rollback_clears_new_uncertainty_from_unchanged_member(
         result["report"]["trace"]["semantic_uncertain_observed_block_ids"]
         == []
     )
-    assert quality_gate["requires_human_review"] is False
+    assert quality_gate["requires_human_review"] is True
+    assert result["report"]["summary"]["by_type"]["semantic_uncertain"] == 1
 
 
 def test_group_rollback_preserves_preexisting_uncertainty_latch(
@@ -5177,6 +5181,132 @@ def test_quality_run_state_enforces_total_auto_repair_budget_across_persists(
         "improved_block_ids": [1, 2, 3],
         "still_failing_block_ids": [4],
     }
+
+
+def test_semantic_issue_ledger_is_hash_bound_and_survives_later_false_negatives(
+    tmp_path,
+    monkeypatch,
+):
+    from copy import deepcopy
+
+    from app.api import translate as api_translate
+    from app.engines import knowledge, translation_qa
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=308,
+        start=timedelta(seconds=308),
+        end=timedelta(seconds=309),
+        text="I didn't say she was guilty.",
+        translation="我说她有罪。",
+    )
+    old_translation = block.translation
+    quality_run_state = {
+        "run_id": "semantic-ledger-run",
+        "semantic_uncertain_observed_block_ids": [],
+        "auto_repair_rounds": [],
+    }
+    qa_call = 0
+    saved_reports = []
+
+    monkeypatch.setattr(
+        knowledge,
+        "_get_singleton",
+        lambda: type("Knowledge", (), {"select_for_project": lambda self, project: None})(),
+    )
+    monkeypatch.setattr(
+        api_translate,
+        "_run_deterministic_translation_normalizers",
+        lambda *args, **kwargs: [],
+    )
+
+    def fake_quality_checks(
+        cfg,
+        translator,
+        blocks,
+        target_language,
+        project_kb,
+        project,
+        trace,
+        **kwargs,
+    ):
+        nonlocal qa_call
+        qa_call += 1
+        trace.setdefault("semantic_qa_history", []).append({
+            "enabled": True,
+            "checked_block_ids": [308],
+            "coverage_complete": True,
+        })
+        issues = []
+        if qa_call == 1:
+            issues.append(QualityIssue(
+                type="semantic_mismatch",
+                severity="error",
+                block_id=308,
+                message="negation was dropped",
+                source_text=block.text,
+                translation=block.translation,
+            ))
+        return TranslationQaReport(
+            status="needs_review" if issues else "ok",
+            issues=issues,
+            unresolved_blocks=[308] if issues else [],
+            summary={"by_type": {"semantic_mismatch": len(issues)}},
+            trace=trace,
+        )
+
+    monkeypatch.setattr(
+        api_translate,
+        "_run_quality_checks_with_semantics",
+        fake_quality_checks,
+    )
+    monkeypatch.setattr(
+        translation_qa,
+        "save_quality_report",
+        lambda report, **kwargs: saved_reports.append(deepcopy(report.to_dict())),
+    )
+    call_kwargs = {
+        "pid": "semantic-ledger",
+        "pdir": str(tmp_path),
+        "project": {},
+        "blocks": [block],
+        "target_language": "简体中文",
+        "translator": object(),
+        "cfg": {"translation": {"qa_auto_repair": False}},
+        "quality_run_id": "semantic-ledger-run",
+        "quality_run_state": quality_run_state,
+        "strict_quality_gate": True,
+    }
+
+    api_translate._persist_translation_quality_report(**call_kwargs)
+    api_translate._persist_translation_quality_report(**call_kwargs)
+    block.translation = "我没说她有罪。"
+    api_translate._persist_translation_quality_report(**call_kwargs)
+    block.translation = old_translation
+    api_translate._persist_translation_quality_report(**call_kwargs)
+
+    assert [
+        [issue["type"] for issue in report["issues"]]
+        for report in saved_reports
+    ] == [
+        ["semantic_mismatch"],
+        ["semantic_mismatch"],
+        [],
+        ["semantic_mismatch"],
+    ]
+    ledger = quality_run_state["semantic_issue_ledger"]
+    assert len(ledger["outstanding"]) == 1
+    assert ledger["outstanding"][0]["block_id"] == 308
+    assert ledger["outstanding"][0]["message"] == "negation was dropped"
+    assert ledger["outstanding"][0]["content_hash"].startswith("sha256:")
+    assert ledger["resolved"] == []
+    assert len(quality_run_state["semantic_qa_history"]) == 4
+    assert [
+        item["pass_type"]
+        for item in quality_run_state["semantic_qa_history"]
+    ] == ["initial", "initial", "initial", "initial"]
+    assert saved_reports[-1]["trace"]["semantic_issue_ledger"]["active_block_ids"] == [308]
 
 
 def test_translate_pipeline_redacts_exception_details_in_project_error(tmp_path, monkeypatch):
