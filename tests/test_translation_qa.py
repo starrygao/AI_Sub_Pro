@@ -1687,6 +1687,34 @@ def test_repairable_quality_issues_require_expected_for_inferred_consistency():
     assert [issue.block_id for issue in repairable] == [2, 6, 4, 5]
 
 
+def test_repairable_quality_issues_prioritize_blocking_before_report_only():
+    from app.engines.translation_qa import (
+        QualityIssue,
+        prioritized_repairable_quality_issues,
+    )
+
+    issues = [
+        QualityIssue(
+            type="reading_speed_too_fast",
+            severity="warning",
+            block_id=1,
+            message="report-only readability warning",
+        ),
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=2,
+            message="blocking semantic mismatch",
+        ),
+    ]
+
+    first_round = prioritized_repairable_quality_issues(issues)
+    second_round = prioritized_repairable_quality_issues([issues[0]])
+
+    assert [issue.block_id for issue in first_round] == [2]
+    assert [issue.block_id for issue in second_round] == [1]
+
+
 def test_quality_checks_flag_inferred_proper_name_inconsistency():
     from app.engines.translation_qa import run_quality_checks
 
@@ -1871,6 +1899,21 @@ def test_normalize_inferred_proper_name_variants_skips_ties():
     assert normalize_inferred_proper_name_variants(blocks) == []
     assert blocks[0].translation == "李娜到了。"
     assert blocks[1].translation == "丽娜笑了。"
+
+
+def test_normalize_inferred_proper_name_variants_skips_unstable_plurality():
+    from app.engines.proper_name_normalizer import normalize_inferred_proper_name_variants
+
+    blocks = [
+        _block(1, "You see Samia Zahir today?", "你今天见到萨米娅·扎希尔了？"),
+        _block(2, "Samia Zahir spilled to him.", "萨米娅·扎希尔向他泄了底。"),
+        _block(3, "Through Samia Zahir.", "通过萨米娅·查希尔。"),
+        _block(4, "I called Samia Zahir.", "我联系了萨米亚·扎希尔。"),
+    ]
+    originals = [block.translation for block in blocks]
+
+    assert normalize_inferred_proper_name_variants(blocks) == []
+    assert [block.translation for block in blocks] == originals
 
 
 def test_quality_checks_do_not_flag_same_long_cjk_name_in_different_contexts():

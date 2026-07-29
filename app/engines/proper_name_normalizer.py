@@ -187,7 +187,12 @@ def normalize_inferred_proper_name_variants(blocks: Iterable) -> list[dict]:
         if len(counts) < 2:
             continue
         ranked = counts.most_common()
-        if ranked[0][1] < 2 or (len(ranked) > 1 and ranked[0][1] == ranked[1][1]):
+        observation_count = sum(counts.values())
+        if (
+            ranked[0][1] < 2
+            or ranked[0][1] * 2 <= observation_count
+            or (len(ranked) > 1 and ranked[0][1] == ranked[1][1])
+        ):
             continue
         canonical_signature = ranked[0][0]
         canonical = _canonical_span([

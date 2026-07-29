@@ -2129,6 +2129,15 @@ def repairable_quality_issues(issues: list[QualityIssue]) -> list[QualityIssue]:
     return repairable
 
 
+def prioritized_repairable_quality_issues(
+    issues: list[QualityIssue],
+) -> list[QualityIssue]:
+    """Repair blocking failures before spending a round on report-only warnings."""
+    repairable = repairable_quality_issues(issues)
+    blocking = [issue for issue in repairable if _is_blocking_issue(issue)]
+    return blocking or repairable
+
+
 def build_repair_prompt(
     target_language: str,
     items: list[dict],
