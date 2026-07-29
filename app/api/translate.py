@@ -38,6 +38,8 @@ from app.api.projects import (
 from app.utils.project_store import (
     PID_PATTERN,
     atomic_write_json,
+    durable_replace,
+    durable_unlink,
     get_project_lock,
     mutate_project,
     project_dir,
@@ -46,6 +48,7 @@ from app.utils.translation_delivery import (
     TRANSLATION_DELIVERY_ARTIFACTS,
     hide_invalid_translation_artifact_fields,
     mark_translation_delivery_invalid,
+    promote_staged_files,
     translation_delivery_lock,
     translation_delivery_is_invalid,
 )
@@ -1381,20 +1384,11 @@ def _unlink_delivery_path(path: Path) -> None:
         path.unlink()
 
 
-def _fsync_delivery_directory(directory: Path) -> None:
-    descriptor = os.open(directory, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
 def _restore_delivery_artifact(path: Path, content: Optional[bytes]) -> None:
     if content is None:
         existed = _path_lexists(path)
-        _unlink_delivery_path(path)
         if path.parent.is_dir() and not path.parent.is_symlink():
-            _fsync_delivery_directory(path.parent)
+            durable_unlink(path)
         elif existed:
             raise RuntimeError(
                 f"rollback parent directory is unavailable: {path.parent}"
@@ -1413,9 +1407,7 @@ def _restore_delivery_artifact(path: Path, content: Optional[bytes]) -> None:
         with handle as stream:
             stream.write(content)
             stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(staged_restore, path)
-        _fsync_delivery_directory(path.parent)
+        durable_replace(staged_restore, path)
     finally:
         if _path_lexists(staged_restore):
             _unlink_delivery_path(staged_restore)
@@ -1540,13 +1532,12 @@ def _publish_translation_artifacts_locked(
             raise RuntimeError(
                 "subtitle source generation changed before publication"
             )
-        for staged_path, final_path in zip(
+        _check_cancel(pid)
+        finals_touched = True
+        promote_staged_files(list(zip(
             (translated_stage, bilingual_stage, report_stage),
             finals,
-        ):
-            _check_cancel(pid)
-            finals_touched = True
-            os.replace(staged_path, final_path)
+        )))
         _check_cancel(pid)
         if expected_source_generation_hash:
             _verify_published_translation_artifacts(
@@ -1565,7 +1556,7 @@ def _publish_translation_artifacts_locked(
                 "subtitle source generation changed during publication"
             )
         _check_cancel(pid)
-        _unlink_delivery_path(sentinel)
+        durable_unlink(sentinel)
         return write_report
     except Exception as publish_error:
         rollback_errors = []

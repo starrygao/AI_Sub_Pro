@@ -34,12 +34,15 @@ from app.utils.project_store import (
     load_project as _ps_load_project,
     mutate_project,
     atomic_write_json,
+    durable_replace,
+    durable_unlink,
     get_project_lock,
     PID_PATTERN,
 )
 from app.utils.translation_delivery import (
     hide_invalid_translation_artifact_fields,
     mark_translation_delivery_invalid,
+    promote_staged_files,
     translation_delivery_lock,
     translation_delivery_is_invalid,
 )
@@ -1884,8 +1887,7 @@ def _snapshot_subtitle_edit_paths(
 
 def _restore_subtitle_edit_path(path: Path, content: Optional[bytes]) -> None:
     if content is None:
-        if path.exists():
-            path.unlink()
+        durable_unlink(path)
         return
     handle = tempfile.NamedTemporaryFile(
         dir=path.parent,
@@ -1897,7 +1899,8 @@ def _restore_subtitle_edit_path(path: Path, content: Optional[bytes]) -> None:
     try:
         with handle:
             handle.write(content)
-        os.replace(staged, path)
+            handle.flush()
+        durable_replace(staged, path)
     finally:
         if staged.exists():
             staged.unlink()
@@ -2013,12 +2016,19 @@ def _save_subtitles_locked(
         write_bilingual_srt(blocks, str(stages[bilingual_path]))
         atomic_write_json(stages[project_path], updated_project)
         _verify_subtitle_edit_stages(stages)
-        for final_path in final_paths:
-            os.replace(stages[final_path], final_path)
-            promoted.append(final_path)
-        sentinel.unlink()
+        promoted.extend(final_paths)
+        promote_staged_files([
+            (stages[final_path], final_path)
+            for final_path in final_paths
+        ])
+        durable_unlink(sentinel)
     except Exception:
         rollback_errors = []
+        if not translation_delivery_is_invalid(pdir):
+            try:
+                mark_translation_delivery_invalid(pdir)
+            except Exception as sentinel_error:
+                rollback_errors.append(sentinel_error)
         for final_path in reversed(promoted):
             try:
                 _restore_subtitle_edit_path(

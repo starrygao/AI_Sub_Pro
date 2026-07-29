@@ -30,6 +30,8 @@ from app.engines.workflow_state import (
 )
 from app.utils.project_store import (
     atomic_write_json,
+    durable_replace,
+    durable_unlink,
     load_project,
     mutate_project,
     project_dir,
@@ -119,8 +121,7 @@ def _restore_progress_file_bytes(
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise RuntimeError("progress path is unsafe")
     if content is None:
-        if path.exists():
-            path.unlink()
+        durable_unlink(path)
         return
     handle = tempfile.NamedTemporaryFile(
         "wb",
@@ -134,8 +135,7 @@ def _restore_progress_file_bytes(
         with handle:
             handle.write(content)
             handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp_path, path)
+        durable_replace(temp_path, path)
     finally:
         if temp_path.exists():
             temp_path.unlink()
@@ -252,18 +252,17 @@ def get_progress(pid: str) -> Optional[dict]:
         fp = project_dir(pid) / "progress.json"
     except ValueError:
         return None
-    if fp.exists():
-        try:
-            data = json.loads(fp.read_text(encoding="utf-8"))
-            if not isinstance(data, dict):
-                raise ValueError("progress payload is not an object")
-            data = _normalize_progress_payload(data)
-            with _progress_lock:
-                progress_store[pid] = data
-            return dict(data)
-        except Exception as e:
-            log.warning("load progress failed pid=%s: %s", pid, e)
     with _progress_lock:
+        if fp.exists():
+            try:
+                data = json.loads(fp.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    raise ValueError("progress payload is not an object")
+                data = _normalize_progress_payload(data)
+                progress_store[pid] = data
+                return dict(data)
+            except Exception as e:
+                log.warning("load progress failed pid=%s: %s", pid, e)
         if pid not in progress_store:
             return None
         data = progress_store[pid]

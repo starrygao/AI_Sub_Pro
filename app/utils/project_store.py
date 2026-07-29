@@ -8,6 +8,8 @@ Framework-agnostic — does not import FastAPI. The API layer translates the
 `ValueError` / `FileNotFoundError` raised here into HTTP responses.
 """
 import json
+import errno
+import logging
 import os
 import re
 import tempfile
@@ -17,12 +19,87 @@ from typing import Callable, Optional
 
 from app.config import PROJECTS_DIR
 
+log = logging.getLogger(__name__)
+
 PID_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 _PID_RE = re.compile(PID_PATTERN)
+_WINDOWS_DIRECTORY_FSYNC = os.name == "nt"
+_WINDOWS_DIRECTORY_FSYNC_UNSUPPORTED = frozenset({
+    errno.EACCES,
+    errno.EINVAL,
+    errno.ENOTSUP,
+    getattr(errno, "ENOSYS", errno.EINVAL),
+})
 
 
 class ProjectFileInvalid(ValueError):
     """Raised when project.json exists but cannot be loaded as a JSON object."""
+
+
+def fsync_directory(directory: Path) -> bool:
+    """Persist directory-entry changes.
+
+    POSIX failures are fatal. Windows does not provide a portable directory
+    handle on every supported filesystem/runtime; only those known
+    unsupported-handle errors are an explicit durability downgrade. The
+    caller can use the boolean to surface that warning without pretending an
+    already completed replace/unlink did not happen.
+    """
+    directory = Path(directory)
+    descriptor = None
+    try:
+        descriptor = os.open(directory, os.O_RDONLY)
+        os.fsync(descriptor)
+        return True
+    except OSError as exc:
+        if (
+            _WINDOWS_DIRECTORY_FSYNC
+            and exc.errno in _WINDOWS_DIRECTORY_FSYNC_UNSUPPORTED
+        ):
+            log.warning(
+                "directory durability sync is unsupported on this Windows "
+                "filesystem: %s",
+                directory,
+            )
+            return False
+        raise
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def fsync_regular_file(path: Path) -> None:
+    """Persist one existing regular file before it is promoted."""
+    path = Path(path)
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError(f"durable file is unsafe: {path.name}")
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def durable_replace(staged: Path, final: Path) -> bool:
+    """Fsync staged bytes, replace the final name, then sync its directory."""
+    staged = Path(staged)
+    final = Path(final)
+    if staged.parent != final.parent:
+        raise ValueError("durable replace requires sibling paths")
+    fsync_regular_file(staged)
+    os.replace(staged, final)
+    return fsync_directory(final.parent)
+
+
+def durable_unlink(path: Path) -> bool:
+    """Unlink a regular file/symlink-free path and persist its directory."""
+    path = Path(path)
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise RuntimeError(f"durable unlink target is unsafe: {path.name}")
+    if not path.exists():
+        return True
+    path.unlink()
+    return fsync_directory(path.parent)
 
 
 def validate_pid(pid: str) -> str:
@@ -68,11 +145,7 @@ def atomic_write_json(path: Path, data: dict) -> None:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
-        directory_descriptor = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_descriptor)
-        finally:
-            os.close(directory_descriptor)
+        fsync_directory(path.parent)
     finally:
         if tmp.exists():
             try:

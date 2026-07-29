@@ -1,4 +1,5 @@
 import json
+import errno
 import os
 import stat
 import threading
@@ -79,6 +80,89 @@ def test_atomic_write_durably_orders_file_fsync_replace_and_directory_fsync(
     assert json.loads(destination.read_text(encoding="utf-8")) == {
         "status": "completed",
     }
+
+
+def test_fsync_directory_is_mandatory_on_posix(tmp_path, monkeypatch):
+    """Catches treating a POSIX directory-fsync failure as a successful commit."""
+    monkeypatch.setattr(project_store, "_WINDOWS_DIRECTORY_FSYNC", False)
+    monkeypatch.setattr(
+        project_store.os,
+        "fsync",
+        lambda _descriptor: (_ for _ in ()).throw(
+            OSError(errno.EACCES, "denied")
+        ),
+    )
+
+    with pytest.raises(OSError, match="denied"):
+        project_store.fsync_directory(tmp_path)
+
+
+@pytest.mark.parametrize("error_number", [errno.EACCES, errno.EINVAL, errno.ENOTSUP])
+def test_fsync_directory_windows_unsupported_is_explicit_safe_downgrade(
+    tmp_path,
+    monkeypatch,
+    caplog,
+    error_number,
+):
+    """Catches reporting a completed Windows replace as an unwritten file."""
+    monkeypatch.setattr(project_store, "_WINDOWS_DIRECTORY_FSYNC", True)
+    monkeypatch.setattr(
+        project_store.os,
+        "open",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError(error_number, "unsupported directory handle")
+        ),
+    )
+
+    assert project_store.fsync_directory(tmp_path) is False
+    assert "durability" in caplog.text.lower()
+
+
+def test_durable_replace_syncs_staged_bytes_before_replace(tmp_path, monkeypatch):
+    """Catches publishing a staged artifact whose bytes were never flushed."""
+    staged = tmp_path / ".artifact.tmp"
+    final = tmp_path / "artifact.srt"
+    staged.write_bytes(b"new")
+    events = []
+    real_fsync = os.fsync
+    real_replace = os.replace
+
+    def recording_fsync(descriptor):
+        events.append(
+            "directory_fsync"
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode)
+            else "file_fsync"
+        )
+        return real_fsync(descriptor)
+
+    def recording_replace(source, target):
+        events.append("replace")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(project_store.os, "fsync", recording_fsync)
+    monkeypatch.setattr(project_store.os, "replace", recording_replace)
+
+    assert project_store.durable_replace(staged, final) is True
+    assert events == ["file_fsync", "replace", "directory_fsync"]
+    assert final.read_bytes() == b"new"
+
+
+def test_durable_unlink_syncs_parent_directory(tmp_path, monkeypatch):
+    """Catches deleting a fail-closed sentinel without persisting the deletion."""
+    path = tmp_path / ".translation_delivery_in_progress"
+    path.write_bytes(b"invalid")
+    events = []
+    real_fsync = os.fsync
+
+    def recording_fsync(descriptor):
+        events.append("directory_fsync")
+        return real_fsync(descriptor)
+
+    monkeypatch.setattr(project_store.os, "fsync", recording_fsync)
+
+    assert project_store.durable_unlink(path) is True
+    assert not path.exists()
+    assert events == ["directory_fsync"]
 
 
 def test_atomic_write_file_fsync_failure_preserves_original_and_cleans_temp(

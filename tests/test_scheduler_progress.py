@@ -1,6 +1,8 @@
 import json
 import hashlib
 import os
+from pathlib import Path
+import stat
 import threading
 
 import pytest
@@ -82,6 +84,98 @@ def test_get_progress_refreshes_stale_memory_from_disk(tmp_project_dir):
     assert payload["stage"] == "burn"
     assert payload["message"] == "fresh"
     assert progress_store["pid_stale"]["progress"] == 88
+
+
+def test_get_progress_serializes_disk_snapshot_with_memory_update(
+    tmp_project_dir,
+    monkeypatch,
+):
+    """Catches a stale disk read overwriting a newer in-memory progress update."""
+    from app.engines import scheduler
+
+    pid = "pid_progress_race"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir()
+    progress_path = pdir / "progress.json"
+    progress_path.write_text(json.dumps({
+        "progress": 10,
+        "stage": "asr",
+        "message": "old",
+    }), encoding="utf-8")
+    scheduler.progress_store.clear()
+
+    read_started = threading.Event()
+    release_read = threading.Event()
+    update_finished = threading.Event()
+    real_read_text = Path.read_text
+
+    def blocked_read_text(path, *args, **kwargs):
+        content = real_read_text(path, *args, **kwargs)
+        if path == progress_path:
+            read_started.set()
+            assert release_read.wait(timeout=2)
+        return content
+
+    monkeypatch.setattr(Path, "read_text", blocked_read_text)
+    reader = threading.Thread(target=scheduler.get_progress, args=(pid,))
+    reader.start()
+    assert read_started.wait(timeout=2)
+
+    def update():
+        scheduler.update_progress(
+            pid,
+            stage="translate",
+            local_pct=80,
+            msg="new",
+        )
+        update_finished.set()
+
+    writer = threading.Thread(target=update)
+    writer.start()
+    assert not update_finished.wait(timeout=0.1)
+    release_read.set()
+    reader.join(timeout=2)
+    writer.join(timeout=2)
+
+    assert not reader.is_alive()
+    assert not writer.is_alive()
+    assert scheduler.progress_store[pid]["message"] == "new"
+
+
+@pytest.mark.parametrize("restored_content", [None, b'{"progress":7}'])
+def test_restore_progress_file_persists_replace_or_unlink(
+    tmp_project_dir,
+    monkeypatch,
+    restored_content,
+):
+    """Catches rollback returning before the restored directory entry is durable."""
+    from app.engines import scheduler
+
+    pid = "pid_progress_restore_durable"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir()
+    progress_path = pdir / "progress.json"
+    progress_path.write_bytes(b'{"progress":99}')
+    events = []
+    real_fsync = os.fsync
+
+    def recording_fsync(descriptor):
+        events.append(
+            "directory_fsync"
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode)
+            else "file_fsync"
+        )
+        return real_fsync(descriptor)
+
+    monkeypatch.setattr(scheduler.os, "fsync", recording_fsync)
+
+    scheduler._restore_progress_file_bytes(pid, restored_content)
+
+    assert events[-1:] == ["directory_fsync"]
+    if restored_content is None:
+        assert not progress_path.exists()
+    else:
+        assert progress_path.read_bytes() == restored_content
 
 
 def test_get_progress_sanitizes_disk_payload(tmp_project_dir):

@@ -1,11 +1,16 @@
 """Visibility contract for the final translation artifact set."""
 
+import hashlib
 import os
 import threading
 from contextlib import contextmanager
 from pathlib import Path
 
-from app.utils.project_store import atomic_write_json
+from app.utils.project_store import (
+    atomic_write_json,
+    fsync_directory,
+    fsync_regular_file,
+)
 
 
 TRANSLATION_DELIVERY_SENTINEL = ".translation_delivery_in_progress"
@@ -85,6 +90,54 @@ def mark_translation_delivery_invalid(project_path: Path) -> Path:
     sentinel = translation_delivery_sentinel_path(project_path)
     atomic_write_json(sentinel, {"status": "in_progress"})
     return sentinel
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        while True:
+            chunk = stream.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def promote_staged_files(
+    pairs: list[tuple[Path, Path]],
+) -> bool:
+    """Durably promote one same-directory artifact set.
+
+    Every staged file is synced before the first name becomes visible. After
+    all replaces, the directory is synced once and every final byte identity
+    is revalidated. Callers keep the delivery sentinel until this returns.
+    """
+    normalized = [(Path(stage), Path(final)) for stage, final in pairs]
+    if not normalized:
+        return True
+    directory = normalized[0][1].parent
+    if any(
+        stage.parent != directory or final.parent != directory
+        for stage, final in normalized
+    ):
+        raise ValueError("staged delivery files must share one directory")
+    expected_hashes = {}
+    for stage, final in normalized:
+        fsync_regular_file(stage)
+        expected_hashes[final] = _file_sha256(stage)
+    for stage, final in normalized:
+        os.replace(stage, final)
+    durable = fsync_directory(directory)
+    for _stage, final in normalized:
+        if (
+            final.is_symlink()
+            or not final.is_file()
+            or _file_sha256(final) != expected_hashes[final]
+        ):
+            raise RuntimeError(
+                f"promoted delivery artifact identity mismatch: {final.name}"
+            )
+    return durable
 
 
 def hide_invalid_translation_artifact_fields(project: dict, project_path: Path) -> dict:

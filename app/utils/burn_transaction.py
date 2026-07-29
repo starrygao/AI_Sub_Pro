@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from app.utils.project_store import fsync_directory
 
 log = logging.getLogger(__name__)
 
@@ -95,11 +96,7 @@ def file_identity(path: Path) -> tuple[int, str]:
 
 
 def _fsync_directory(directory: Path) -> None:
-    descriptor = os.open(directory, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    fsync_directory(directory)
 
 
 def _fsync_regular_file(path: Path) -> None:
