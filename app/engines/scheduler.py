@@ -361,6 +361,87 @@ def _mark_interrupted_task(pid: str, stage: str) -> None:
     _clear_interrupted_progress(pid)
 
 
+def _completed_asr_artifact(pdir: Path) -> str:
+    from app.utils.srt import parse_srt_file
+
+    for name in ("filtered.srt", "raw.srt", "native.srt"):
+        path = pdir / name
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            if path.stat().st_size > 0 and parse_srt_file(str(path)):
+                return name
+        except (OSError, UnicodeError, ValueError):
+            continue
+    return ""
+
+
+def _reconcile_committed_running_stage(
+    pid: str,
+    pdir: Path,
+    project: dict,
+    stage: str,
+) -> bool:
+    project_stage = project.get("pipeline_stage")
+    if project_stage not in {None, "", stage}:
+        return False
+
+    def clear_matching_pipeline_stage() -> None:
+        if project_stage != stage:
+            return
+
+        def clear(project_state: dict) -> None:
+            if project_state.get("pipeline_stage") == stage:
+                project_state["pipeline_stage"] = None
+
+        mutate_project(pid, clear)
+
+    status = project.get("status")
+    if stage == "asr" and status == "asr_done":
+        artifact = _completed_asr_artifact(pdir)
+        if not artifact:
+            return False
+        clear_matching_pipeline_stage()
+        finish_stage(
+            pid,
+            "asr",
+            output_artifact=artifact,
+            resume_eligible=True,
+        )
+        complete_progress(pid, "识别结果已提交")
+        return True
+    if (
+        stage == "translate"
+        and status in {"translated", "completed"}
+        and project.get("translation_quality_status") == "passed"
+    ):
+        from app.utils.translation_certification import (
+            validate_translation_delivery,
+        )
+        from app.utils.translation_delivery import translation_delivery_lock
+
+        with translation_delivery_lock(pid) as acquired:
+            if not acquired:
+                return False
+            current_project = load_project(pid)
+            validation = validate_translation_delivery(
+                current_project,
+                pdir,
+            )
+            if not (validation.valid and validation.passed):
+                return False
+            clear_matching_pipeline_stage()
+            finish_stage(
+                pid,
+                "translate",
+                output_artifact="translated.srt",
+                resume_eligible=True,
+            )
+            complete_progress(pid, "翻译结果已认证并提交")
+            return True
+    return False
+
+
 def mark_interrupted_tasks_from_previous_session() -> int:
     """Convert stale running task state from a previous process into retryable errors.
 
@@ -426,6 +507,13 @@ def mark_interrupted_tasks_from_previous_session() -> int:
             if not stage and processing:
                 stage = _stage_from_progress_file(pdir) or "asr"
             if not stage:
+                continue
+            if _reconcile_committed_running_stage(
+                pid,
+                pdir,
+                project,
+                stage,
+            ):
                 continue
             _mark_interrupted_task(pid, stage)
             count += 1

@@ -422,6 +422,105 @@ def test_mark_interrupted_tasks_from_previous_session_fails_running_workflow(tmp
     assert progress_store[pid]["stage"] == ""
 
 
+def test_startup_reconciles_committed_asr_with_running_workflow(
+    tmp_project_dir,
+):
+    from app.engines.scheduler import (
+        mark_interrupted_tasks_from_previous_session,
+        progress_store,
+    )
+    from app.engines.workflow_state import load_workflow_state, start_stage
+
+    pid = "committed-asr-running-workflow"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir()
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "committed ASR",
+        "video_path": "/fake/movie.mkv",
+        "status": "asr_done",
+        "pipeline_stage": "asr",
+    }), encoding="utf-8")
+    (pdir / "filtered.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n",
+        encoding="utf-8",
+    )
+    (pdir / "progress.json").write_text(json.dumps({
+        "progress": 39,
+        "stage": "asr",
+        "message": "正在提交识别结果",
+    }), encoding="utf-8")
+    start_stage(pid, "asr", input_artifact="movie.mkv")
+
+    count = mark_interrupted_tasks_from_previous_session()
+
+    assert count == 0
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["status"] == "asr_done"
+    assert project["pipeline_stage"] is None
+    state = load_workflow_state(pid)
+    assert state["stages"]["asr"]["status"] == "succeeded"
+    assert state["stages"]["asr"]["output_artifact"] == "filtered.srt"
+    progress = json.loads(
+        (pdir / "progress.json").read_text(encoding="utf-8")
+    )
+    assert progress["progress"] == 100
+    assert progress["stage"] == ""
+    assert progress_store[pid]["stage"] == ""
+
+
+def test_startup_reconciles_certified_translation_with_running_workflow(
+    tmp_project_dir,
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    from app.engines.scheduler import mark_interrupted_tasks_from_previous_session
+    from app.engines.workflow_state import load_workflow_state, start_stage
+    from app.utils import translation_certification
+
+    pid = "committed-translation-running-workflow"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir()
+    (pdir / "project.json").write_text(json.dumps({
+        "id": pid,
+        "name": "committed translation",
+        "video_path": "/fake/movie.mkv",
+        "status": "translated",
+        "translation_quality_status": "passed",
+        "pipeline_stage": "translate",
+    }), encoding="utf-8")
+    (pdir / "progress.json").write_text(json.dumps({
+        "progress": 74,
+        "stage": "translate",
+        "message": "正在提交翻译结果",
+    }), encoding="utf-8")
+    start_stage(pid, "translate", input_artifact="filtered.srt")
+    monkeypatch.setattr(
+        translation_certification,
+        "validate_translation_delivery",
+        lambda project, project_path: SimpleNamespace(
+            valid=True,
+            passed=True,
+        ),
+    )
+
+    count = mark_interrupted_tasks_from_previous_session()
+
+    assert count == 0
+    project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project["status"] == "translated"
+    assert project["pipeline_stage"] is None
+    state = load_workflow_state(pid)
+    assert state["stages"]["translate"]["status"] == "succeeded"
+    assert state["stages"]["translate"]["output_artifact"] == "translated.srt"
+    progress = json.loads(
+        (pdir / "progress.json").read_text(encoding="utf-8")
+    )
+    assert progress["progress"] == 100
+    assert progress["stage"] == ""
+
+
 def test_mark_interrupted_tasks_from_previous_session_handles_legacy_processing(tmp_project_dir):
     from app.engines.scheduler import mark_interrupted_tasks_from_previous_session
     from app.engines.workflow_state import load_workflow_state
