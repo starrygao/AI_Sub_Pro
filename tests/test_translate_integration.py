@@ -6443,6 +6443,161 @@ def test_targeted_semantic_chinese_numeral_inside_record_allows_quantity(
 
 
 @pytest.mark.parametrize(
+    ("source", "draft", "source_evidence", "target_evidence"),
+    [
+        ("Africa is vast.", "非洲辽阔。", "Africa", "非洲"),
+        ("Sanya is warm.", "三亚温暖。", "Sanya", "三亚"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("verdict", "expected_issue_type"),
+    [
+        ("MISMATCH: entity changed", "semantic_mismatch"),
+        ("UNCERTAIN: entity may have changed", "semantic_uncertain"),
+    ],
+)
+def test_targeted_semantic_multichar_cjk_entity_is_not_a_single_char_signal(
+    source,
+    draft,
+    source_evidence,
+    target_evidence,
+    verdict,
+    expected_issue_type,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source=source,
+            draft=draft,
+            source_evidence=source_evidence,
+            target_evidence=target_evidence,
+            verdict=verdict,
+            taxonomy="entity",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == [expected_issue_type]
+    assert all(trace["coverage_complete"] is True for trace in traces)
+
+
+@pytest.mark.parametrize(
+    (
+        "source",
+        "draft",
+        "source_evidence",
+        "target_evidence",
+        "aligned_taxonomy",
+    ),
+    [
+        (
+            "Choose one item.",
+            "选择一项。",
+            "one",
+            "一项",
+            "quantity",
+        ),
+        (
+            "Do not go.",
+            "不走。",
+            "not",
+            "不走",
+            "negation/polarity/condition",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    ("verdict_prefix", "expected_issue_type"),
+    [
+        ("MISMATCH", "semantic_mismatch"),
+        ("UNCERTAIN", "semantic_uncertain"),
+    ],
+)
+def test_targeted_semantic_embedded_cjk_signal_requires_other_side_corroboration(
+    source,
+    draft,
+    source_evidence,
+    target_evidence,
+    aligned_taxonomy,
+    verdict_prefix,
+    expected_issue_type,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source=source,
+            draft=draft,
+            source_evidence=source_evidence,
+            target_evidence=target_evidence,
+            verdict=f"{verdict_prefix}: semantic signal changed",
+            taxonomy=aligned_taxonomy,
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == [expected_issue_type]
+    assert all(trace["coverage_complete"] is True for trace in traces)
+
+
+@pytest.mark.parametrize(
+    ("source", "draft", "source_evidence", "target_evidence"),
+    [
+        ("Choose one item.", "选择一项。", "one", "一项"),
+        ("Do not go.", "不走。", "not", "不走"),
+    ],
+)
+def test_targeted_semantic_other_side_strong_signal_rejects_wrong_entity(
+    source,
+    draft,
+    source_evidence,
+    target_evidence,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source=source,
+            draft=draft,
+            source_evidence=source_evidence,
+            target_evidence=target_evidence,
+            verdict="MISMATCH: entity changed",
+            taxonomy="entity",
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
+@pytest.mark.parametrize(
+    ("text", "taxonomy"),
+    [
+        ("一项", "quantity"),
+        ("不走", "negation/polarity/condition"),
+    ],
+)
+def test_targeted_semantic_dual_cjk_embedded_signal_fails_closed(
+    text,
+    taxonomy,
+):
+    issues, verified_ids, verified_hashes, traces = (
+        _run_targeted_semantic_evidence_case(
+            source=text,
+            draft=text,
+            source_evidence=text,
+            target_evidence=text,
+            verdict="UNCERTAIN: semantic signal may have changed",
+            taxonomy=taxonomy,
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert all(trace["coverage_complete"] is False for trace in traces)
+
+
+@pytest.mark.parametrize(
     "taxonomy",
     ["negation/polarity/condition", "quantity"],
 )

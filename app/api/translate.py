@@ -2524,6 +2524,23 @@ _TARGETED_SEMANTIC_SINGLE_CHAR_NEGATION_TOKENS = frozenset(
     for token in _TARGETED_SEMANTIC_NEGATION_TOKENS
     if len(token) == 1
 )
+_TARGETED_SEMANTIC_QUANTITY_TOKENS = frozenset({
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "hundred",
+    "thousand",
+    "million",
+    "billion",
+})
 _TARGETED_SEMANTIC_UNCASED_NUMERAL_TOKENS = frozenset(
     "零〇一二三四五六七八九十百千万亿兆两"
     "壹贰貳叁參肆伍陆陸柒捌玖拾佰仟萬億"
@@ -2783,20 +2800,41 @@ def _semantic_excerpt_strong_taxonomy_signals(
     if excerpt.raw_numeric or any(
         unicodedata.category(character)[0] == "N"
         for character in excerpt.text
-    ) or any(
-        character in _TARGETED_SEMANTIC_UNCASED_NUMERAL_TOKENS
-        for character in excerpt.text
-    ):
-        signals.append("quantity")
-    if (
-        excerpt.text in _TARGETED_SEMANTIC_NEGATION_TOKENS
-        or any(
-            character in _TARGETED_SEMANTIC_SINGLE_CHAR_NEGATION_TOKENS
+    ) or (
+        excerpt.text in _TARGETED_SEMANTIC_QUANTITY_TOKENS
+    ) or (
+        bool(excerpt.text)
+        and all(
+            character in _TARGETED_SEMANTIC_UNCASED_NUMERAL_TOKENS
             for character in excerpt.text
         )
     ):
+        signals.append("quantity")
+    if excerpt.text in _TARGETED_SEMANTIC_NEGATION_TOKENS:
         signals.append("negation/polarity/condition")
     return tuple(signals)
+
+
+def _semantic_excerpt_ambiguous_taxonomy_hints(
+    excerpt: _SemanticTextExcerpt,
+) -> tuple[str, ...]:
+    if (
+        _semantic_excerpt_length(excerpt.text) <= 1
+        or _semantic_excerpt_uses_token_boundaries(excerpt.text)
+    ):
+        return ()
+    hints = []
+    if any(
+        character in _TARGETED_SEMANTIC_UNCASED_NUMERAL_TOKENS
+        for character in excerpt.text
+    ):
+        hints.append("quantity")
+    if any(
+        character in _TARGETED_SEMANTIC_SINGLE_CHAR_NEGATION_TOKENS
+        for character in excerpt.text
+    ):
+        hints.append("negation/polarity/condition")
+    return tuple(hints)
 
 
 def _semantic_evidence_strong_taxonomy_signals(
@@ -2808,6 +2846,17 @@ def _semantic_evidence_strong_taxonomy_signals(
             _semantic_excerpt_strong_taxonomy_signals(excerpt)
         )
     return tuple(signals)
+
+
+def _semantic_evidence_ambiguous_taxonomy_hints(
+    match: dict,
+) -> tuple[str, ...]:
+    hints = []
+    for excerpt in match["excerpt_records"]:
+        hints.extend(
+            _semantic_excerpt_ambiguous_taxonomy_hints(excerpt)
+        )
+    return tuple(hints)
 
 
 def _semantic_evidence_is_single_uncased_entity_candidate(
@@ -2862,6 +2911,15 @@ def _semantic_evidence_pair_is_valid(
     if strong_signals and any(
         signal != taxonomy
         for signal in strong_signals
+    ):
+        return False
+    ambiguous_signals = (
+        _semantic_evidence_ambiguous_taxonomy_hints(source_match)
+        + _semantic_evidence_ambiguous_taxonomy_hints(target_match)
+    )
+    if (
+        taxonomy in ambiguous_signals
+        and taxonomy not in strong_signals
     ):
         return False
 
