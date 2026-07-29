@@ -7315,6 +7315,8 @@ def _run_auto_repair_group_guard_case(
     semantic_groups,
     issues_by_qa_call,
     preexisting_uncertain_ids=None,
+    source_texts=None,
+    actual_targeted_payload=None,
 ):
     from copy import deepcopy
     from types import SimpleNamespace
@@ -7329,7 +7331,7 @@ def _run_auto_repair_group_guard_case(
             index=block_id,
             start=timedelta(seconds=block_id),
             end=timedelta(seconds=block_id + 1),
-            text=f"Source {block_id}.",
+            text=(source_texts or {}).get(block_id, f"Source {block_id}."),
             translation=translation,
         )
         for block_id, translation in sorted(initial_translations.items())
@@ -7513,11 +7515,12 @@ def _run_auto_repair_group_guard_case(
         "_run_deterministic_quality_checks",
         fake_deterministic_quality,
     )
-    monkeypatch.setattr(
-        api_translate,
-        "_run_targeted_semantic_verification",
-        fake_targeted_quality,
-    )
+    if actual_targeted_payload is None:
+        monkeypatch.setattr(
+            api_translate,
+            "_run_targeted_semantic_verification",
+            fake_targeted_quality,
+        )
     monkeypatch.setattr(
         api_translate,
         "_auto_repair_quality_issues",
@@ -7537,11 +7540,44 @@ def _run_auto_repair_group_guard_case(
                 ),
             }
 
-    translator = type(
-        "Translator",
-        (),
-        {"last_quality_trace": InitialTrace()},
-    )()
+    if actual_targeted_payload is None:
+        translator = type(
+            "Translator",
+            (),
+            {"last_quality_trace": InitialTrace()},
+        )()
+    else:
+        from app.engines.providers.codex_cli import CodexCliProvider
+
+        class NormalizedTargetedPrimary:
+            def translate_batch(self, items, prompt):
+                assert "translation" in prompt
+                payload = []
+                for item in items:
+                    result = {
+                        "id": item["id"],
+                        "translation": "OK",
+                        "verdict": "OK",
+                        "taxonomy": "none",
+                        "source_evidence": item["original"],
+                        "target_evidence": item["draft"],
+                    }
+                    if actual_targeted_payload == "missing_translation":
+                        result.pop("translation")
+                    payload.append(result)
+                return CodexCliProvider._parse(
+                    json.dumps(payload, ensure_ascii=False),
+                    items,
+                )
+
+        translator = type(
+            "Translator",
+            (),
+            {
+                "last_quality_trace": InitialTrace(),
+                "primary": NormalizedTargetedPrimary(),
+            },
+        )()
     repaired = api_translate._persist_translation_quality_report(
         pid="semantic-group-rollback",
         pdir=str(tmp_path),
@@ -7632,6 +7668,88 @@ def test_auto_repair_accepts_entire_semantic_group_when_all_members_improve(
     assert round_trace["rolled_back_block_ids"] == []
     assert round_trace["accepted_semantic_groups"] == [[1, 2]]
     assert round_trace["rolled_back_semantic_groups"] == []
+
+
+def test_auto_repair_accepts_cross_cue_group_after_codex_result_normalization(
+    tmp_path,
+    monkeypatch,
+):
+    result = _run_auto_repair_group_guard_case(
+        tmp_path,
+        monkeypatch,
+        initial_translations={
+            35: "假装你没有烧掉一切。",
+            36: "埋掉那个人。",
+        },
+        candidate_translations={
+            35: "假装你没有把一切都烧光，",
+            36: "还把唯一的那个人埋了。",
+        },
+        semantic_groups=[[35, 36]],
+        issues_by_qa_call=[
+            [(35, "semantic_mismatch", "error")],
+            [],
+        ],
+        source_texts={
+            35: "pretend you don't torch everything",
+            36: "by burying the one person.",
+        },
+        actual_targeted_payload="valid",
+    )
+
+    round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
+    assert result["translations"] == {
+        35: "假装你没有把一切都烧光，",
+        36: "还把唯一的那个人埋了。",
+    }
+    assert result["repaired"] == [
+        {"id": 35, "translation": "假装你没有把一切都烧光，"},
+        {"id": 36, "translation": "还把唯一的那个人埋了。"},
+    ]
+    assert round_trace["targeted_semantic_qa"] == {
+        "requested_block_ids": [35, 36],
+        "verified_block_ids": [35, 36],
+        "issue_block_ids": [],
+        "focused_passes": 2,
+        "coverage_complete": True,
+    }
+    assert round_trace["accepted_semantic_groups"] == [[35, 36]]
+    assert round_trace["rolled_back_semantic_groups"] == []
+
+
+def test_auto_repair_rejects_cross_cue_group_when_codex_result_lacks_translation(
+    tmp_path,
+    monkeypatch,
+):
+    result = _run_auto_repair_group_guard_case(
+        tmp_path,
+        monkeypatch,
+        initial_translations={35: "旧译一", 36: "旧译二"},
+        candidate_translations={35: "正确新译一", 36: "正确新译二"},
+        semantic_groups=[[35, 36]],
+        issues_by_qa_call=[
+            [(35, "semantic_mismatch", "error")],
+            [(35, "semantic_mismatch", "error")],
+        ],
+        source_texts={
+            35: "pretend you don't torch everything",
+            36: "by burying the one person.",
+        },
+        actual_targeted_payload="missing_translation",
+    )
+
+    round_trace = result["report"]["trace"]["auto_repair_rounds"][0]
+    assert result["translations"] == {35: "旧译一", 36: "旧译二"}
+    assert result["repaired"] == []
+    assert round_trace["targeted_semantic_qa"] == {
+        "requested_block_ids": [35, 36],
+        "verified_block_ids": [],
+        "issue_block_ids": [35, 36],
+        "focused_passes": 2,
+        "coverage_complete": False,
+    }
+    assert round_trace["accepted_semantic_groups"] == []
+    assert round_trace["rolled_back_semantic_groups"] == [[35, 36]]
 
 
 def test_auto_repair_rolls_back_changed_group_member_when_unchanged_member_qa_fails(
@@ -8402,6 +8520,79 @@ def test_targeted_semantic_evidence_accepts_short_punctuated_exact_excerpts():
     }
     assert len(traces) == 2
     assert all(trace["coverage_complete"] is True for trace in traces)
+
+
+@pytest.mark.parametrize(
+    "payload_override",
+    [
+        {"translation": "OK looks correct", "verdict": "OK looks correct"},
+        {"taxonomy": "unsupported"},
+        {"source_evidence": "text from another cue"},
+        {"translation": "MISMATCH: inconsistent transport field"},
+    ],
+)
+def test_targeted_semantic_verification_rejects_malformed_codex_normalized_fields(
+    payload_override,
+):
+    from app.api import translate as api_translate
+    from app.engines.providers.codex_cli import CodexCliProvider
+    from app.engines.translation_qa import QualityIssue, TranslationQaReport
+    from app.utils.srt import SubtitleBlock
+
+    block = SubtitleBlock(
+        index=502,
+        start=timedelta(seconds=502),
+        end=timedelta(seconds=503),
+        text="She said she would return.",
+        translation="她说她会回来。",
+    )
+    prior_report = TranslationQaReport(
+        status="needs_review",
+        issues=[QualityIssue(
+            type="semantic_uncertain",
+            severity="warning",
+            block_id=502,
+            message="pronoun reference needs confirmation",
+        )],
+    )
+
+    class Primary:
+        def translate_batch(self, items, prompt):
+            assert "translation 必须与 verdict 完全相同" in prompt
+            payload = {
+                "id": 502,
+                "translation": "OK",
+                "verdict": "OK",
+                "taxonomy": "none",
+                "source_evidence": "She said she would return.",
+                "target_evidence": "她说她会回来。",
+            }
+            payload.update(payload_override)
+            return CodexCliProvider._parse(
+                json.dumps([payload], ensure_ascii=False),
+                items,
+            )
+
+    translator = type("Translator", (), {"primary": Primary()})()
+    issues, verified_ids, verified_hashes, traces = (
+        api_translate._run_targeted_semantic_verification(
+            {"translation": {}},
+            translator,
+            [block],
+            "简体中文",
+            {502},
+            prior_report,
+            [],
+            strict_quality_gate=True,
+        )
+    )
+
+    assert verified_ids == set()
+    assert verified_hashes == {}
+    assert [issue.type for issue in issues] == ["semantic_qa_failed"]
+    assert len(traces) == 2
+    assert all(trace["coverage_complete"] is False for trace in traces)
+    assert all(trace["failed_block_ids"] == [502] for trace in traces)
 
 
 def _run_targeted_semantic_evidence_case(

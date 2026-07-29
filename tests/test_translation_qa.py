@@ -1228,6 +1228,49 @@ def test_repair_items_cap_long_continuation_chains_at_three_cues():
     assert len({tuple(item["semantic_group_ids"]) for item in items}) == 1
 
 
+@pytest.mark.parametrize(
+    ("failing_id", "expected_group"),
+    [
+        (202, [201, 202, 203]),
+        (203, [202, 203, 204]),
+    ],
+)
+def test_repair_items_center_long_continuation_groups_on_semantic_seed(
+    failing_id,
+    expected_group,
+):
+    from app.engines.translation_qa import QualityIssue, build_repair_items
+
+    blocks = [
+        _block(
+            200 + offset,
+            "what we know" if offset == 0 else f"and fragment {offset}",
+            f"旧译{offset}",
+        )
+        for offset in range(5)
+    ]
+    issues = [
+        QualityIssue(
+            type="semantic_mismatch",
+            severity="error",
+            block_id=failing_id,
+            message="meaning crosses the cue boundary",
+        ),
+    ]
+
+    items = build_repair_items(blocks, issues)
+
+    assert [item["id"] for item in items] == expected_group
+    assert all(
+        item["semantic_group_ids"] == expected_group
+        for item in items
+    )
+    assert all(
+        item["semantic_seed_ids"] == [failing_id]
+        for item in items
+    )
+
+
 def test_repair_items_partition_multiple_semantic_seeds_without_overlap():
     from app.engines.translation_qa import QualityIssue, build_repair_items
 

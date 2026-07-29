@@ -133,6 +133,47 @@ def test_codex_cli_provider_parse_handles_markdown_wrap():
     assert out[0]["translation"] == "甲"
 
 
+def test_codex_cli_provider_parse_preserves_targeted_semantic_fields():
+    from app.engines.providers.codex_cli import CodexCliProvider
+
+    items = [{"id": 1, "original": "No.", "draft": "不。"}]
+    text = (
+        '[{"id":1,"translation":"OK","verdict":"OK","taxonomy":"none",'
+        '"source_evidence":"No.","target_evidence":"不。",'
+        '"untrusted_extra":"must not pass through"}]'
+    )
+
+    out = CodexCliProvider._parse(text, items)
+
+    assert out == [{
+        "id": 1,
+        "translation": "OK",
+        "error": "",
+        "verdict": "OK",
+        "taxonomy": "none",
+        "source_evidence": "No.",
+        "target_evidence": "不。",
+    }]
+
+
+def test_codex_cli_provider_parse_rejects_targeted_result_without_translation():
+    from app.engines.providers.codex_cli import CodexCliProvider
+
+    items = [{"id": 1, "original": "No.", "draft": "不。"}]
+    text = (
+        '[{"id":1,"verdict":"OK","taxonomy":"none",'
+        '"source_evidence":"No.","target_evidence":"不。"}]'
+    )
+
+    out = CodexCliProvider._parse(text, items)
+
+    assert out == [{
+        "id": 1,
+        "translation": "",
+        "error": "missing translation in model response",
+    }]
+
+
 def test_codex_cli_provider_redacts_cli_error_secrets():
     from app.engines.providers.codex_cli import CodexCliProvider
 

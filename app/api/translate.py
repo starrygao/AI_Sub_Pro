@@ -3530,7 +3530,8 @@ def _targeted_semantic_prompt(target_language: str) -> str:
         "重点核查以下 taxonomy：negation/polarity/condition、entity、agent_patient、"
         "possession_person_number、quantity、cross_block_alignment。",
         "每个输入 id 必须且只能返回一次，不得漏项、合并或新增 id。",
-        "每项必须包含 verdict、taxonomy、source_evidence、target_evidence。",
+        "每项必须包含 translation、verdict、taxonomy、source_evidence、target_evidence；"
+        "translation 必须与 verdict 完全相同。",
         "verdict 只能是 OK、MISMATCH: 原因、UNCERTAIN: 原因；source_evidence 和 "
         "target_evidence 必须分别逐字引用该 id 的 original 和 draft 真实片段，不得引用 "
         "bounded_context、其他 id 或占位文本。",
@@ -3540,7 +3541,7 @@ def _targeted_semantic_prompt(target_language: str) -> str:
         "MISMATCH/UNCERTAIN 的每个聚焦片段都必须与 taxonomy 一致，混合 taxonomy 信号必须拒绝。",
         "语义完全保真时 taxonomy 使用 none；任何信息不足、指代不明或证据不足必须返回 UNCERTAIN。",
         "仅输出 JSON 数组，例如："
-        '[{"id":1,"verdict":"OK","taxonomy":"none",'
+        '[{"id":1,"translation":"OK","verdict":"OK","taxonomy":"none",'
         '"source_evidence":"No.","target_evidence":"不。"}]。',
     ])
 
@@ -3782,6 +3783,11 @@ def _run_targeted_semantic_verification(
                         verdict.strip()
                     )
                 )
+                translation_matches_verdict = (
+                    "translation" not in result
+                    or "verdict" not in result
+                    or result.get("translation") == result.get("verdict")
+                )
                 taxonomy_matches_verdict = (
                     taxonomy == "none"
                     if explicit_ok
@@ -3789,7 +3795,7 @@ def _run_targeted_semantic_verification(
                         _TARGETED_SEMANTIC_TAXONOMY - {"none"}
                     )
                 )
-                if not exact_verdict:
+                if not exact_verdict or not translation_matches_verdict:
                     failed_ids.append(block_id)
                     pass_issues[block_id] = QualityIssue(
                         type="semantic_qa_failed",
@@ -3797,7 +3803,8 @@ def _run_targeted_semantic_verification(
                         block_id=block_id,
                         message=(
                             "targeted semantic QA returned a verdict outside "
-                            "the exact allowed grammar"
+                            "the exact allowed grammar or inconsistent "
+                            "translation/verdict fields"
                         ),
                         source_text=item["original"],
                         translation=item["draft"],

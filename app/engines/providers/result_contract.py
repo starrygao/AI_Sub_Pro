@@ -5,6 +5,12 @@ from app.utils.errors import redact_error_message
 
 MISSING_ID_ERROR = "missing in model response"
 MISSING_TRANSLATION_ERROR = "missing translation in model response"
+_STRUCTURED_RESULT_FIELDS = (
+    "verdict",
+    "taxonomy",
+    "source_evidence",
+    "target_evidence",
+)
 
 
 def reconcile_translation_results(parsed_list: List[Dict], items: List[Dict]) -> List[Dict]:
@@ -12,8 +18,9 @@ def reconcile_translation_results(parsed_list: List[Dict], items: List[Dict]) ->
 
     Providers can receive model output in slightly different wrappers, but once
     a JSON list is available the downstream contract is the same: match by id,
-    preserve intentional empty-string translations, and surface malformed
-    values as explicit per-block errors.
+    preserve intentional empty-string translations, retain only the structured
+    semantic-review fields understood downstream, and surface malformed values
+    as explicit per-block errors.
     """
     by_id = {str(r.get("id")): r for r in parsed_list if isinstance(r, dict)}
     out: List[Dict] = []
@@ -31,11 +38,17 @@ def reconcile_translation_results(parsed_list: List[Dict], items: List[Dict]) ->
         value = r["translation"]
         provided_error = r.get("error") if isinstance(r.get("error"), str) else ""
         if isinstance(value, str):
-            out.append({
+            normalized = {
                 "id": item_id,
                 "translation": value,
                 "error": provided_error if not value else "",
+            }
+            normalized.update({
+                field: r[field]
+                for field in _STRUCTURED_RESULT_FIELDS
+                if field in r
             })
+            out.append(normalized)
         else:
             out.append({
                 "id": item_id,

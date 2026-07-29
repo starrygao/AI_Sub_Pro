@@ -1888,23 +1888,37 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
             for position in semantic_seed_positions
             if component_start <= position <= component_end
         }
-        for group_start in range(
-            component_start,
-            component_end + 1,
-            _MAX_SEMANTIC_GROUP_CUES,
-        ):
-            component_positions = list(range(
-                group_start,
-                min(
-                    component_end + 1,
-                    group_start + _MAX_SEMANTIC_GROUP_CUES,
-                ),
-            ))
-            group_seed_positions = (
-                component_seed_positions.intersection(component_positions)
+        seed_clusters: list[list[int]] = []
+        for seed_position in sorted(component_seed_positions):
+            if (
+                not seed_clusters
+                or seed_position - seed_clusters[-1][0]
+                >= _MAX_SEMANTIC_GROUP_CUES
+            ):
+                seed_clusters.append([seed_position])
+            else:
+                seed_clusters[-1].append(seed_position)
+        previous_group_end = component_start - 1
+        for group_seed_positions in seed_clusters:
+            seed_start = group_seed_positions[0]
+            seed_end = group_seed_positions[-1]
+            seed_span = seed_end - seed_start + 1
+            left_context = (_MAX_SEMANTIC_GROUP_CUES - seed_span) // 2
+            latest_start = max(
+                component_start,
+                component_end - _MAX_SEMANTIC_GROUP_CUES + 1,
             )
-            if not group_seed_positions:
-                continue
+            group_start = min(
+                max(component_start, seed_start - left_context),
+                latest_start,
+            )
+            group_start = max(group_start, previous_group_end + 1)
+            group_end = min(
+                component_end,
+                group_start + _MAX_SEMANTIC_GROUP_CUES - 1,
+            )
+            component_positions = list(range(group_start, group_end + 1))
+            previous_group_end = group_end
             semantic_repair_positions.update(component_positions)
             group_ids = [
                 block_id
@@ -1918,7 +1932,7 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
                 continue
             group_seed_ids = [
                 getattr(active_blocks[item_position], "index", None)
-                for item_position in sorted(group_seed_positions)
+                for item_position in group_seed_positions
             ]
             for item_position in component_positions:
                 semantic_group_by_position[item_position] = group_ids
