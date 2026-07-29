@@ -79,7 +79,9 @@ router = APIRouter(prefix="/api/projects", tags=["pipeline"])
 
 # Active tasks tracker
 active_tasks: Dict[str, threading.Thread] = {}
-_tasks_lock = threading.Lock()
+_tasks_lock = threading.RLock()
+_task_launch_stages: Dict[str, str] = {}
+_task_generations: Dict[str, str] = {}
 _SOUND_DESCRIPTION_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
 _KB_REVIEW_REQUIRED_CODE = "kb_review_required"
 _QA_AUTO_REPAIR_MAX_BLOCKS = 20
@@ -109,7 +111,17 @@ class TaskAlreadyRunning(Exception):
         self.pid = pid
 
 
-def try_register_task(pid: str, factory, *, reset_cancellation: bool = False):
+class StaleTaskGeneration(RuntimeError):
+    """Raised when a cancellation target was replaced before state commit."""
+
+
+def try_register_task(
+    pid: str,
+    factory,
+    *,
+    reset_cancellation: bool = False,
+    launch_stage: str = "",
+):
     """Atomically register a pipeline thread for `pid`.
 
     Raises TaskAlreadyRunning if one is already registered. The returned thread
@@ -121,14 +133,57 @@ def try_register_task(pid: str, factory, *, reset_cancellation: bool = False):
         if reset_cancellation:
             reset_cancel(pid)
         t = factory()
+        generation = uuid.uuid4().hex
+        try:
+            setattr(t, "_aisubpro_task_generation", generation)
+        except Exception:
+            pass
         active_tasks[pid] = t
+        _task_generations[pid] = generation
+        if launch_stage:
+            _task_launch_stages[pid] = launch_stage
     return t
 
 
-def unregister_task(pid: str) -> None:
+def _mark_task_launch_initialized(pid: str, task) -> None:
+    with _tasks_lock:
+        if active_tasks.get(pid) is task:
+            _task_launch_stages.pop(pid, None)
+
+
+def _registered_task_launch_stage(pid: str) -> str:
+    with _tasks_lock:
+        return _task_launch_stages.get(pid, "")
+
+
+def _registered_task_snapshot(pid: str) -> tuple[bool, str, str]:
+    with _tasks_lock:
+        return (
+            pid in active_tasks,
+            _task_generations.get(pid, ""),
+            _task_launch_stages.get(pid, ""),
+        )
+
+
+def unregister_task(pid: str, *, task=None) -> None:
     """Remove `pid` from the active-task registry (safe if absent)."""
     with _tasks_lock:
+        registered = active_tasks.get(pid)
+        if task is not None and registered is not task:
+            return
+        caller_generation = getattr(
+            threading.current_thread(),
+            "_aisubpro_task_generation",
+            "",
+        )
+        if (
+            caller_generation
+            and _task_generations.get(pid) != caller_generation
+        ):
+            return
         active_tasks.pop(pid, None)
+        _task_launch_stages.pop(pid, None)
+        _task_generations.pop(pid, None)
 
 
 def is_task_registered(pid: str) -> bool:
@@ -601,7 +656,13 @@ def _cancelled_project_fields(pid: str, stage: str) -> dict:
     }
 
 
-def _project_has_committed_terminal_state(pid: str, project: dict) -> bool:
+def _project_has_committed_terminal_state(
+    pid: str,
+    project: dict,
+    stage: str,
+) -> bool:
+    if _registered_task_launch_stage(pid):
+        return False
     if (
         project.get("status") == "processing"
         or project.get("pipeline_stage")
@@ -620,7 +681,15 @@ def _project_has_committed_terminal_state(pid: str, project: dict) -> bool:
             and item.get("status") in {"pending", "running"}
         )
     } if isinstance(stages, dict) else set()
+    stage_state = stages.get(stage) if isinstance(stages, dict) else None
+    if (
+        isinstance(stage_state, dict)
+        and stage_state.get("status") == "cancelled"
+    ):
+        return False
     status = project.get("status")
+    if status == "cancelled":
+        return False
     if status == "translated":
         return not (active_stages - {"translate"})
     if status == "asr_done":
@@ -628,21 +697,37 @@ def _project_has_committed_terminal_state(pid: str, project: dict) -> bool:
     return status in {"completed", "error", "cancelled"}
 
 
-def _mark_project_cancelled(pid: str, stage: str) -> Optional[dict]:
+def _mark_project_cancelled(
+    pid: str,
+    stage: str,
+    *,
+    expected_task_generation: Optional[str] = None,
+) -> Optional[dict]:
     with translation_delivery_lock(pid) as acquired:
         if not acquired:
             raise RuntimeError("translation delivery lock acquisition failed")
-        project = _load_project(pid)
-        if _project_has_committed_terminal_state(pid, project):
-            reset_cancel(pid)
-            return None
-        fields = _cancelled_project_fields(pid, stage)
-        mutate_project(
-            pid,
-            lambda p: p.update(fields),
-            normalize=_apply_safe_defaults,
-        )
-        return fields
+        with _tasks_lock:
+            if (
+                expected_task_generation is not None
+                and _task_generations.get(pid)
+                != (expected_task_generation or None)
+            ):
+                raise StaleTaskGeneration(pid)
+            project = _load_project(pid)
+            if _project_has_committed_terminal_state(
+                pid,
+                project,
+                stage,
+            ):
+                reset_cancel(pid)
+                return None
+            fields = _cancelled_project_fields(pid, stage)
+            mutate_project(
+                pid,
+                lambda p: p.update(fields),
+                normalize=_apply_safe_defaults,
+            )
+            return fields
 
 
 def _resolve_audio_track(project: dict, requested: Optional[int]) -> int:
@@ -5803,15 +5888,17 @@ def start_asr(pid: str = PathParam(pattern=PID_PATTERN), req: ASRRequest = ASRRe
     try:
         t = try_register_task(pid, lambda: threading.Thread(
             target=_run_asr_pipeline, args=(pid, audio_track, language), daemon=True),
-            reset_cancellation=True)
+            reset_cancellation=True,
+            launch_stage="asr")
     except TaskAlreadyRunning:
         raise HTTPException(409, "Task already running for this project")
     try:
         _persist_workflow_options(pid, audio_track=audio_track, language=language)
         _reset_workflow_for_action(pid, "asr")
     except Exception:
-        unregister_task(pid)
+        unregister_task(pid, task=t)
         raise
+    _mark_task_launch_initialized(pid, t)
     t.start()
     return {"status": "started", "message": "ASR pipeline started"}
 
@@ -5837,7 +5924,8 @@ def start_translate(pid: str = PathParam(pattern=PID_PATTERN), req: TranslateReq
             kwargs={"burn_follows": False},
             daemon=True,
         ),
-            reset_cancellation=True)
+            reset_cancellation=True,
+            launch_stage="translate")
     except TaskAlreadyRunning:
         raise HTTPException(409, "Task already running for this project")
     try:
@@ -5851,8 +5939,9 @@ def start_translate(pid: str = PathParam(pattern=PID_PATTERN), req: TranslateReq
         )
         _mark_project_stage_queued(pid, "translate", "等待翻译资源...")
     except Exception:
-        unregister_task(pid)
+        unregister_task(pid, task=t)
         raise
+    _mark_task_launch_initialized(pid, t)
     t.start()
     return {"status": "started", "message": "Translation started"}
 
@@ -5900,7 +5989,9 @@ def start_full(pid: str = PathParam(pattern=PID_PATTERN), req: FullPipelineReque
             target=_run_full_pipeline,
             args=(pid, audio_track, language, target_lang),
             daemon=True,
-        ), reset_cancellation=True)
+        ),
+            reset_cancellation=True,
+            launch_stage="asr")
     except TaskAlreadyRunning:
         raise HTTPException(409, "Task already running for this project")
     try:
@@ -5914,8 +6005,9 @@ def start_full(pid: str = PathParam(pattern=PID_PATTERN), req: FullPipelineReque
         _reset_workflow_for_action(pid, "full")
         _begin_translation_quality_run(pid, expected_policy="strict")
     except Exception:
-        unregister_task(pid)
+        unregister_task(pid, task=t)
         raise
+    _mark_task_launch_initialized(pid, t)
     t.start()
     return {"status": "started", "message": "Full pipeline started"}
 
@@ -5941,7 +6033,9 @@ def start_transcribe_translate(pid: str = PathParam(pattern=PID_PATTERN), req: F
             target=_run_asr_translate_pipeline,
             args=(pid, audio_track, language, target_lang),
             daemon=True,
-        ), reset_cancellation=True)
+        ),
+            reset_cancellation=True,
+            launch_stage="asr")
     except TaskAlreadyRunning:
         raise HTTPException(409, "Task already running for this project")
     try:
@@ -5960,8 +6054,9 @@ def start_transcribe_translate(pid: str = PathParam(pattern=PID_PATTERN), req: F
             ),
         )
     except Exception:
-        unregister_task(pid)
+        unregister_task(pid, task=t)
         raise
+    _mark_task_launch_initialized(pid, t)
     t.start()
     return {
         "status": "started",
@@ -6014,18 +6109,32 @@ def resume_project(pid: str = PathParam(pattern=PID_PATTERN)):
 def cancel_task(pid: str = PathParam(pattern=PID_PATTERN)):
     """Cancel running task (best effort, cooperative via scheduler cancel events)."""
     project = _load_project(pid)
+    (
+        task_registered,
+        task_generation,
+        task_launch_stage,
+    ) = _registered_task_snapshot(pid)
     cancellable_pipeline = (
         project.get("status") == "processing"
         or bool(project.get("pipeline_stage"))
     )
-    if is_task_registered(pid) or cancellable_pipeline:
-        stage = _resolve_cancel_stage(pid, project)
+    if task_registered or cancellable_pipeline:
+        stage = (
+            task_launch_stage
+            or _resolve_cancel_stage(pid, project)
+        )
         # Signal worker threads via scheduler cancel events — they'll observe at
         # the next _check_cancel checkpoint and raise.
         request_cancel(pid)
         fields = {"status": "cancelled", "progress_msg": "已取消"}
         try:
-            committed_fields = _mark_project_cancelled(pid, stage)
+            committed_fields = _mark_project_cancelled(
+                pid,
+                stage,
+                expected_task_generation=task_generation,
+            )
+        except StaleTaskGeneration:
+            return {"status": "no_task"}
         except Exception:
             committed_fields = fields
         if committed_fields is None:
@@ -6138,14 +6247,16 @@ def start_burn(pid: str = PathParam(pattern=PID_PATTERN)):
             pid,
             lambda: threading.Thread(target=_burn_task, daemon=True),
             reset_cancellation=True,
+            launch_stage="burn",
         )
     except TaskAlreadyRunning:
         raise HTTPException(409, "Task already running for this project")
     try:
         _reset_workflow_for_action(pid, "burn")
     except Exception:
-        unregister_task(pid)
+        unregister_task(pid, task=t)
         raise
+    _mark_task_launch_initialized(pid, t)
     t.start()
     return {"status": "started", "message": "Burning subtitles into video"}
 

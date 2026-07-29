@@ -1545,6 +1545,196 @@ def test_cancel_after_translation_commit_is_a_noop_before_unregister(
     assert not worker.is_alive()
 
 
+@pytest.mark.parametrize(
+    ("start_kind", "old_status", "cancelled_status"),
+    [
+        ("translate", "translated", "cancelled"),
+        ("asr", "asr_done", "cancelled"),
+        ("full", "completed", "cancelled"),
+        ("burn", "translated", "translated"),
+    ],
+)
+def test_cancel_between_registration_and_state_initialization_cancels_new_task(
+    tmp_path,
+    monkeypatch,
+    start_kind,
+    old_status,
+    cancelled_status,
+):
+    import threading
+
+    from app.api import projects as projects_api
+    from app.engines.scheduler import is_cancelled, reset_cancel
+    from app.utils import project_store
+
+    pid = f"cancelregisteredbeforeinit-{start_kind}"
+    slow_boundary_entered = threading.Event()
+    if start_kind in {"translate", "burn"}:
+        api_translate, pdir, _ = _seed_current_certified_burn_project(
+            tmp_path,
+            monkeypatch,
+            pid=pid,
+        )
+        assert json.loads(
+            (pdir / "project.json").read_text(encoding="utf-8")
+        )["status"] == old_status
+    else:
+        from app.api import translate as api_translate
+
+        pdir = tmp_path / pid
+        pdir.mkdir(parents=True)
+        video_path = pdir / "original.mp4"
+        video_path.write_bytes(b"video")
+        (pdir / "project.json").write_text(
+            json.dumps({
+                "id": pid,
+                "name": "old terminal project",
+                "video_path": str(video_path),
+                "status": old_status,
+                "source_type": "upload",
+                "workflow_mode": "translate_burn",
+                "audio_tracks": [{
+                    "index": 0,
+                    "codec": "aac",
+                    "lang": "eng",
+                }],
+                "subtitle_tracks": [],
+                "selected_audio_track": 0,
+                "target_language": "简体中文",
+                "original_language": "en",
+            }),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
+        monkeypatch.setattr(projects_api, "PROJECTS_DIR", tmp_path)
+        monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
+
+    monkeypatch.setattr(api_translate, "active_tasks", {})
+    monkeypatch.setattr(api_translate, "require_translation_ready", lambda: None)
+
+    if start_kind == "translate":
+        class UnexpectedTranslator:
+            last_quality_trace = None
+
+            def __init__(self, cfg):
+                pass
+
+            def translate(
+                self,
+                blocks,
+                target_lang,
+                meta_info=None,
+                kb_data=None,
+                callback=None,
+            ):
+                slow_boundary_entered.set()
+                for block in blocks:
+                    block.translation = "不应生成的新译文"
+                return blocks
+
+            def get_kb_usage_trace(self):
+                return {"project": {}, "matches": []}
+
+        monkeypatch.setattr(
+            "app.engines.translator.SubtitleTranslator",
+            UnexpectedTranslator,
+        )
+        launch = lambda: api_translate.start_translate(
+            pid=pid,
+            req=api_translate.TranslateRequest(target_language="简体中文"),
+        )
+    elif start_kind == "burn":
+        def unexpected_burn(video, tracks, output, **kwargs):
+            slow_boundary_entered.set()
+            Path(output).write_bytes(b"must-not-burn")
+            return True
+
+        monkeypatch.setattr(api_translate, "burn_subtitles", unexpected_burn)
+        launch = lambda: api_translate.start_burn(pid=pid)
+    else:
+        def unexpected_preprocess(*args, **kwargs):
+            slow_boundary_entered.set()
+            raise RuntimeError("ASR work must not start after cancellation")
+
+        monkeypatch.setattr(
+            "app.engines.audio.preprocess_audio",
+            unexpected_preprocess,
+        )
+        if start_kind == "asr":
+            launch = lambda: api_translate.start_asr(
+                pid=pid,
+                req=api_translate.ASRRequest(language="en"),
+            )
+        else:
+            launch = lambda: api_translate.start_full(
+                pid=pid,
+                req=api_translate.FullPipelineRequest(
+                    language="en",
+                    target_language="简体中文",
+                    workflow_mode="translate_burn",
+                ),
+            )
+
+    registered = threading.Event()
+    release_registration = threading.Event()
+    registered_thread = {}
+    real_register = api_translate.try_register_task
+
+    def pause_after_registration(*args, **kwargs):
+        worker = real_register(*args, **kwargs)
+        registered_thread["worker"] = worker
+        registered.set()
+        if not release_registration.wait(timeout=5):
+            raise RuntimeError("test timed out after task registration")
+        return worker
+
+    monkeypatch.setattr(
+        api_translate,
+        "try_register_task",
+        pause_after_registration,
+    )
+    launch_result = {}
+    launch_errors = []
+
+    def launch_worker():
+        try:
+            launch_result.update(launch())
+        except Exception as exc:
+            launch_errors.append(exc)
+
+    launcher = threading.Thread(target=launch_worker)
+    launcher.start()
+    assert registered.wait(timeout=5)
+    try:
+        cancel_result = api_translate.cancel_task(pid=pid)
+        assert cancel_result["status"] == "cancelled"
+    finally:
+        release_registration.set()
+        launcher.join(timeout=5)
+        worker = registered_thread.get("worker")
+        if worker is not None:
+            worker.join(timeout=5)
+
+    try:
+        assert not launcher.is_alive()
+        assert worker is not None and not worker.is_alive()
+        assert launch_errors == []
+        assert launch_result["status"] == "started"
+        assert slow_boundary_entered.is_set() is False
+        project = json.loads(
+            (pdir / "project.json").read_text(encoding="utf-8")
+        )
+        assert project["status"] == cancelled_status
+        assert project.get("pipeline_stage") is None
+        assert is_cancelled(pid) is True
+        if start_kind == "burn":
+            assert not (pdir / "original_subtitled.mp4").exists()
+    finally:
+        reset_cancel(pid)
+        with api_translate._tasks_lock:
+            api_translate.active_tasks.pop(pid, None)
+
+
 def test_saved_edit_can_be_recertified_with_hash_bound_delivery(
     tmp_path,
     monkeypatch,

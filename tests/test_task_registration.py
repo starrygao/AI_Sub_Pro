@@ -165,3 +165,93 @@ def test_cancel_pipeline_stage_without_registered_task_sets_cancel_event(tmp_pro
         assert data["error"] is None
     finally:
         reset_cancel(pid)
+
+
+def test_stale_cancel_request_cannot_cancel_new_task_generation(
+    tmp_project_dir,
+    monkeypatch,
+):
+    from app.engines.scheduler import is_cancelled, reset_cancel
+    from app.utils.project_store import atomic_write_json
+
+    pid = "cancel-old-generation"
+    pdir = tmp_project_dir / pid
+    pdir.mkdir()
+    atomic_write_json(pdir / "project.json", {
+        "id": pid,
+        "name": "Generation race",
+        "video_path": str(tmp_project_dir / "video.mp4"),
+        "status": "processing",
+        "pipeline_stage": "translate",
+        "audio_tracks": [],
+        "subtitle_tracks": [],
+    })
+    monkeypatch.setattr(translate, "active_tasks", {})
+    old_worker = threading.Thread(target=lambda: None)
+    translate.try_register_task(
+        pid,
+        lambda: old_worker,
+        reset_cancellation=True,
+        launch_stage="translate",
+    )
+
+    old_cancel_reached_commit = threading.Event()
+    release_old_cancel = threading.Event()
+    real_mark_cancelled = translate._mark_project_cancelled
+
+    def pause_old_cancel(*args, **kwargs):
+        old_cancel_reached_commit.set()
+        if not release_old_cancel.wait(timeout=5):
+            raise RuntimeError("test timed out before old cancel commit")
+        return real_mark_cancelled(*args, **kwargs)
+
+    monkeypatch.setattr(
+        translate,
+        "_mark_project_cancelled",
+        pause_old_cancel,
+    )
+    cancel_result = {}
+
+    def cancel_old_generation():
+        cancel_result.update(translate.cancel_task(pid=pid))
+
+    canceller = threading.Thread(target=cancel_old_generation)
+    canceller.start()
+    assert old_cancel_reached_commit.wait(timeout=5)
+
+    translate.unregister_task(pid)
+    atomic_write_json(pdir / "project.json", {
+        "id": pid,
+        "name": "Generation race",
+        "video_path": str(tmp_project_dir / "video.mp4"),
+        "status": "processing",
+        "pipeline_stage": "translate",
+        "audio_tracks": [],
+        "subtitle_tracks": [],
+    })
+    new_worker = threading.Thread(target=lambda: None)
+    translate.try_register_task(
+        pid,
+        lambda: new_worker,
+        reset_cancellation=True,
+        launch_stage="translate",
+    )
+    try:
+        assert is_cancelled(pid) is False
+    finally:
+        release_old_cancel.set()
+        canceller.join(timeout=5)
+
+    try:
+        assert not canceller.is_alive()
+        assert cancel_result["status"] == "no_task"
+        assert is_cancelled(pid) is False
+        project = json.loads(
+            (pdir / "project.json").read_text(encoding="utf-8")
+        )
+        assert project["status"] == "processing"
+        assert project["pipeline_stage"] == "translate"
+        assert translate.active_tasks[pid] is new_worker
+    finally:
+        translate.unregister_task(pid)
+        reset_cancel(pid)
