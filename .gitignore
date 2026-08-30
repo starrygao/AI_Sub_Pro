@@ -39,3 +39,6 @@ models/asr/
 # Logs
 *.log
 .superpowers/
+
+# Consolidated local runtime data and model caches (may contain secrets)
+.runtime/
