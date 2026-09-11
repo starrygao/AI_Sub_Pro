@@ -497,6 +497,7 @@ class SubtitleTranslator:
         return {
             "provider": name,
             "model": model,
+            "effort": effort,
             "api_key": _coerce_text_setting(api_keys.get(name), ""),
         }
 

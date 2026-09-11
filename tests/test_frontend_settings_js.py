@@ -22,7 +22,7 @@ def test_load_settings_applies_workflow_language_defaults_to_project_actions():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -74,7 +74,7 @@ def test_frontend_api_key_panel_only_lists_selected_key_providers():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -135,7 +135,7 @@ def test_frontend_reasoning_effort_options_follow_local_cli_model_capabilities()
         """
         const fs = require('fs');
         const vm = require('vm');
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -177,7 +177,7 @@ def test_save_settings_applies_workflow_language_defaults_to_project_actions():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -227,7 +227,7 @@ def test_frontend_tmdb_key_test_calls_endpoint_and_sets_status():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -277,7 +277,7 @@ def test_frontend_provider_key_test_blocks_duplicate_submits_while_pending():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -329,7 +329,7 @@ def test_frontend_tmdb_key_test_blocks_duplicate_submits_while_pending():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -381,7 +381,7 @@ def test_frontend_paste_key_updates_tmdb_settings_section():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = {
           console,
           setTimeout,
@@ -421,7 +421,7 @@ def test_frontend_api_key_panel_stays_visible_for_online_polish_provider():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -464,7 +464,7 @@ def test_frontend_claude_cli_panel_is_visible_for_primary_or_polish_provider():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -498,7 +498,7 @@ def test_frontend_local_cli_panel_is_visible_for_claude_or_codex_provider():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -531,7 +531,7 @@ def test_frontend_formats_asr_recommendation_from_system_check():
         """
         const fs = require('fs');
         const vm = require('vm');
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -565,7 +565,7 @@ def test_frontend_uses_system_asr_model_options_and_notifies_missing_backend():
         """
         const fs = require('fs');
         const vm = require('vm');
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -618,7 +618,7 @@ def test_frontend_asr_setup_actions_are_actionable():
         """
         const fs = require('fs');
         const vm = require('vm');
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const clipboardWrites = [];
         const context = {
           console,
@@ -701,7 +701,7 @@ def test_frontend_network_downloader_status_is_actionable_in_settings():
         """
         const fs = require('fs');
         const vm = require('vm');
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const clipboardWrites = [];
         const context = {
           console,
@@ -781,7 +781,7 @@ def test_frontend_normalizes_asr_mode_and_backend_from_settings_payload():
         """
         const fs = require('fs');
         const vm = require('vm');
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -829,7 +829,7 @@ def test_frontend_codex_cli_panel_is_visible_for_primary_or_polish_provider():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -863,7 +863,7 @@ def test_frontend_model_loader_ignores_stale_provider_responses():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -916,7 +916,7 @@ def test_cli_settings_model_options_follow_shared_model_catalog():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -953,7 +953,7 @@ def test_opening_settings_checks_selected_cli_statuses():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -993,7 +993,7 @@ def test_cli_model_catalog_refresh_updates_shared_cache():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -1033,7 +1033,7 @@ def test_frontend_model_loader_clears_loading_when_switching_to_static_provider(
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -1087,7 +1087,7 @@ def test_frontend_model_loader_clears_loading_when_switching_to_codex_cli():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -1141,7 +1141,7 @@ def test_frontend_model_loader_updates_selected_model_when_provider_changes():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -1150,7 +1150,7 @@ def test_frontend_model_loader_updates_selected_model_when_provider_changes():
           const state = context.app();
           state.settings.translation.primary_model = 'gpt-4o';
 
-          await state.fetchModels('deepseek', 'primary');
+          await state.fetchModels('deepseek', 'primary', {providerChanged: true});
 
           const expectedModels = ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'];
           if (JSON.stringify(state.primaryModels) !== JSON.stringify(expectedModels)) {
@@ -1181,7 +1181,7 @@ def test_frontend_model_loader_updates_selection_from_live_models_and_clears_pol
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -1197,10 +1197,10 @@ def test_frontend_model_loader_updates_selection_from_live_models_and_clears_pol
           };
 
           await state.fetchModels('openai', 'primary');
-          if (JSON.stringify(state.primaryModels) !== JSON.stringify(['provider-live'])) {
+          if (JSON.stringify(state.primaryModels) !== JSON.stringify(['gpt-4o', 'provider-live'])) {
             throw new Error(`expected live models, got ${JSON.stringify(state.primaryModels)}`);
           }
-          if (state.settings.translation.primary_model !== 'provider-live') {
+          if (state.settings.translation.primary_model !== 'gpt-4o') {
             throw new Error(`expected selected model to update from live list, got ${state.settings.translation.primary_model}`);
           }
 
@@ -1224,7 +1224,7 @@ def test_frontend_model_loader_surfaces_current_request_errors():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -1254,7 +1254,7 @@ def test_frontend_model_loader_surfaces_current_request_errors():
           if (state.modelErrors.primary !== '') {
             throw new Error(`expected model error to clear after success, got ${state.modelErrors.primary}`);
           }
-          if (JSON.stringify(state.primaryModels) !== JSON.stringify(['gpt-ok'])) {
+          if (JSON.stringify(state.primaryModels) !== JSON.stringify(['gpt-6-astra', 'gpt-ok'])) {
             throw new Error(`expected fetched models after recovery, got ${JSON.stringify(state.primaryModels)}`);
           }
         })().catch((err) => {
@@ -1273,7 +1273,7 @@ def test_frontend_kb_category_labels_are_localized():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -1305,7 +1305,7 @@ def test_frontend_api_helper_formats_fastapi_validation_errors():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = {
           console,
           setTimeout,
@@ -1351,7 +1351,7 @@ def test_frontend_kb_crud_surfaces_backend_detail_errors():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const calls = [];
         const context = {
           console,
@@ -1436,7 +1436,7 @@ def test_frontend_kb_list_ignores_stale_slow_response_after_refresh():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -1489,7 +1489,7 @@ def test_frontend_select_kb_ignores_stale_slow_response_when_switching_keys():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -1546,7 +1546,7 @@ def test_frontend_select_kb_current_key_is_noop_even_when_dirty():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -1593,7 +1593,7 @@ def test_frontend_select_kb_confirmed_discard_clears_old_draft_when_load_fails()
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -1650,7 +1650,7 @@ def test_frontend_kb_save_blocks_duplicate_submits_while_pending():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -1720,7 +1720,7 @@ def test_frontend_kb_delete_blocks_duplicate_confirm_and_delete_while_pending():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -1797,7 +1797,7 @@ def test_frontend_new_kb_declined_discard_does_not_create_project():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -1848,7 +1848,7 @@ def test_frontend_new_kb_confirmed_discard_creates_and_selects_once():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -1910,7 +1910,7 @@ def test_frontend_claude_cli_status_surfaces_backend_detail_error():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = {
           console,
           setTimeout,
@@ -1950,7 +1950,7 @@ def test_frontend_claude_cli_status_blocks_duplicate_checks_while_pending():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -1998,7 +1998,7 @@ def test_frontend_codex_cli_status_surfaces_backend_detail_error():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = {
           console,
           setTimeout,
@@ -2038,7 +2038,7 @@ def test_frontend_codex_cli_status_blocks_duplicate_checks_while_pending():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -2086,7 +2086,7 @@ def test_frontend_save_settings_blocks_duplicate_submits_while_pending():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -2151,7 +2151,7 @@ def test_frontend_view_navigation_guards_unsaved_kb_changes():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = {
           console,
           setTimeout,
@@ -2207,7 +2207,7 @@ def test_frontend_project_rename_uses_modal_state_and_patches_trimmed_name():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -2264,7 +2264,7 @@ def test_frontend_project_rename_blocks_duplicate_save_while_pending():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -2320,7 +2320,7 @@ def test_frontend_archive_project_blocks_duplicate_submits_while_pending():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -2375,7 +2375,7 @@ def test_frontend_reveal_in_finder_blocks_duplicate_submits_while_pending():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -2432,7 +2432,7 @@ def test_frontend_new_kb_modal_focuses_input_and_clears_on_cancel():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -2472,7 +2472,7 @@ def test_frontend_subtitle_delete_waits_for_app_confirmation():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -2517,7 +2517,7 @@ def test_project_filter_recent_tasks_and_next_action_helpers():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -2589,3 +2589,73 @@ def test_settings_group_navigation_markup_is_present():
         'id="settings-storage-release"',
     ):
         assert snippet in html
+
+
+def test_refresh_preserves_unlisted_current_model_for_both_stages():
+    result = run_js("""
+      const fs = require('fs'), vm = require('vm');
+      const context = {console, setTimeout, clearTimeout};
+      vm.createContext(context);
+      vm.runInContext(('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8')), context);
+      (async () => {
+        const state = context.app();
+        state.settings.api_keys.openai = 'test';
+        state.settings.translation = {primary_provider:'openai', primary_model:'custom-model',
+          polish_provider:'openai', polish_model:'custom-polish'};
+        state.api = async () => ({models:['gpt-4.1'], source:'remote'});
+        await state.fetchModels('openai', 'primary');
+        await state.fetchModels('openai', 'polish');
+        if (state.settings.translation.primary_model !== 'custom-model' ||
+            state.settings.translation.polish_model !== 'custom-polish') throw Error('selection overwritten');
+        if (!state.primaryModels.includes('custom-model') || !state.polishModels.includes('custom-polish'))
+          throw Error('current selection missing from dropdown');
+      })().catch(e => { console.error(e); process.exit(1); });
+    """)
+    assert result.returncode == 0, result.stderr
+
+
+def test_model_refresh_retries_fallback_and_force_bypasses_cache():
+    result = run_js("""
+      const fs = require('fs'), vm = require('vm');
+      const context = {console, setTimeout, clearTimeout}; vm.createContext(context);
+      vm.runInContext('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'),context);
+      (async () => {
+        const state = context.app(); let calls=0;
+        state.settings.translation={primary_provider:'openai',primary_model:'gpt-4.1'};
+        state.settings.api_keys.openai='test';
+        state.api=async()=> {calls++; return calls===1
+          ? {models:['gpt-4.1'],fallback:true,source:'fallback',reason:'unreachable'}
+          : {models:['gpt-6-astra'],source:'remote'};};
+        await state.fetchModels('openai','primary');
+        await state.fetchModels('openai','primary');
+        if(calls!==2) throw Error('fallback prevented recovery');
+        await state.fetchModels('openai','primary');
+        if(calls!==2) throw Error('successful response not cached');
+        await state.fetchModels('openai','primary',{force:true});
+        if(calls!==3) throw Error('force refresh used cache');
+        if(!state.modelSelectionStatus('primary').includes('未列出')) throw Error('missing availability warning');
+        if(state.settings.translation.primary_model!=='gpt-4.1') throw Error('saved model overwritten');
+      })().catch(e=>{console.error(e);process.exit(1);});
+    """)
+    assert result.returncode == 0, result.stderr
+
+
+def test_pending_catalog_response_preserves_user_model_change_and_shares_request():
+    result = run_js("""
+      const fs=require('fs'),vm=require('vm'); const context={console,setTimeout,clearTimeout}; vm.createContext(context);
+      vm.runInContext('globalThis.AISUBPRO_MODEL_CATALOG = '+fs.readFileSync('app/model_catalog.json','utf8')+';'+fs.readFileSync('app/static/js/app.js','utf8'),context);
+      (async()=>{
+        const state=context.app(); let release,calls=0;
+        state.settings.api_keys.openai='test';
+        state.settings.translation={primary_provider:'openai',polish_provider:'openai',primary_model:'',polish_model:'gpt-4o'};
+        state.api=()=>{calls++;return new Promise(resolve=>{release=resolve;});};
+        const first=state.fetchModels('openai','primary');
+        const second=state.fetchModels('openai','polish');
+        state.settings.translation.primary_model='gpt-4.1';
+        release({models:['gpt-6-astra'],source:'remote'});
+        await Promise.all([first,second]);
+        if(calls!==1) throw Error('duplicate provider requests');
+        if(state.settings.translation.primary_model!=='gpt-4.1' || state.settings.translation.polish_model!=='gpt-4o') throw Error('stage selections overwritten');
+      })().catch(e=>{console.error(e);process.exit(1);});
+    """)
+    assert result.returncode == 0, result.stderr

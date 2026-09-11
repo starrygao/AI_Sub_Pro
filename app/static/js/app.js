@@ -131,6 +131,10 @@ function app() {
     modelLoading: { primary: false, polish: false },
     modelErrors: { primary: '', polish: '' },
     modelCache: {},
+    modelCatalog: globalThis.AISUBPRO_MODEL_CATALOG || {providers: {}},
+    modelCatalogStates: {},
+    modelProviders: {},
+    modelFetches: {},
     modelRequestSeq: { primary: 0, polish: 0 },
     ws: null,
     wsReconnectTimer: null,
@@ -1929,22 +1933,7 @@ function app() {
         max: '最大',
         ultra: '极限（多代理）',
       };
-      let levels = [];
-      if (provider === 'claude_cli') {
-        if (model === 'claude-fable-5' || model === 'claude-opus-4-7') {
-          levels = ['low', 'medium', 'high', 'xhigh', 'max'];
-        } else if (model === 'claude-sonnet-4-6') {
-          levels = ['low', 'medium', 'high', 'max'];
-        }
-      } else if (provider === 'codex_cli') {
-        if (model === 'gpt-6-astra' || model === 'gpt-5.6-sol' || model === 'gpt-5.6-terra') {
-          levels = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
-        } else if (model === 'gpt-5.6-luna') {
-          levels = ['low', 'medium', 'high', 'xhigh', 'max'];
-        } else {
-          levels = ['low', 'medium', 'high', 'xhigh'];
-        }
-      }
+      const levels = this.modelCapability(provider, model)?.reasoning_efforts || [];
       return ['auto', ...levels].map(value => ({ value, label: labels[value] }));
     },
 
@@ -4655,107 +4644,143 @@ function app() {
       }
     },
 
+    modelCapability(provider, model) {
+      const remote = this.modelCatalogStates[provider]?.capabilities?.[model];
+      if (remote) return remote;
+      const entries = this.modelCatalog.providers?.[provider]?.models || {};
+      if (entries[model]) return entries[model];
+      if (provider === 'openai' && typeof model === 'string') {
+        return entries[model.replace(/-\d{4}-\d{2}-\d{2}$/, '')] || null;
+      }
+      return null;
+    },
+
     setModelOptions(targetKey, models) {
-      const safeModels = Array.isArray(models)
-        ? models.filter(m => typeof m === 'string' && m.trim()).map(m => m.trim())
-        : [];
+      const safeModels = [...new Set(Array.isArray(models)
+        ? models.filter(m => typeof m === 'string' && m.trim()).map(m => m.trim()) : [])];
+      this.ensureSelectedModel(targetKey, safeModels);
       if (targetKey === 'primary') this.primaryModels = safeModels;
       else this.polishModels = safeModels;
-      this.ensureSelectedModel(targetKey, safeModels);
     },
 
     providerModelFallback(provider) {
-      const fallback = {
-        openai: ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5-mini', 'gpt-5-nano', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'gpt-4o-mini'],
-        deepseek: ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
-        gemini: ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro-preview', 'gemini-3.1-flash-lite', 'gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'],
-        claude_cli: ['claude-fable-5', 'claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
-        codex_cli: ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark'],
-      };
-      return fallback[provider] || [];
+      return Object.keys(this.modelCatalog.providers?.[provider]?.models || {});
     },
 
     cliProviderModelOptions(provider) {
-      const cached = this.modelCache[provider];
-      const models = Array.isArray(cached) && cached.length > 0
-        ? cached
-        : this.providerModelFallback(provider);
-      return models.filter(model => typeof model === 'string' && model.trim()).map(model => model.trim());
+      return this.modelCache[provider] || this.providerModelFallback(provider);
     },
 
     async refreshCliProviderModelCatalog(provider) {
       try {
         const response = await this.api(`/api/models/${provider}`);
-        const models = Array.isArray(response.models)
-          ? response.models.filter(model => typeof model === 'string' && model.trim()).map(model => model.trim())
-          : [];
-        if (models.length > 0) this.modelCache[provider] = models;
+        this.cacheModelResponse(provider, response);
       } catch (error) {
         console.warn(`refreshCliProviderModelCatalog failed for ${provider}:`, error);
       }
       return this.cliProviderModelOptions(provider);
     },
 
+    cacheModelResponse(provider, response) {
+      const models = [...new Set(Array.isArray(response.models)
+        ? response.models.filter(m => typeof m === 'string' && m.trim()).map(m => m.trim()) : [])];
+      const source = response.source || (response.fallback ? 'fallback' : 'remote');
+      this.modelCatalogStates[provider] = {...response, models, source};
+      // Fallbacks must remain retryable when credentials or connectivity recover.
+      if (models.length && source !== 'fallback') this.modelCache[provider] = models;
+      else delete this.modelCache[provider];
+      return models;
+    },
+
     ensureSelectedModel(targetKey, models) {
       if (!this.isPlainObject(this.settings.translation)) this.settings.translation = {};
       const field = targetKey === 'primary' ? 'primary_model' : 'polish_model';
       const current = typeof this.settings.translation[field] === 'string'
-        ? this.settings.translation[field].trim()
-        : '';
-      if (targetKey === 'polish' && models.length === 0) {
-        this.settings.translation.polish_model = '';
-        this.normalizeReasoningEffort(targetKey);
-        return;
-      }
-      if (models.length > 0 && !models.includes(current)) {
+        ? this.settings.translation[field].trim() : '';
+      if (current) {
+        if (!models.includes(current)) models.unshift(current);
+      } else if (models.length) {
         this.settings.translation[field] = models[0];
       }
       this.normalizeReasoningEffort(targetKey);
     },
 
-    async fetchModels(provider, target) {
+    modelSelectionStatus(target) {
+      const provider = this.settings.translation?.[`${target}_provider`];
+      const model = this.settings.translation?.[`${target}_model`];
+      if (!provider || !model) return '';
+      const state = this.modelCatalogStates[provider];
+      let status = '内置目录；账号可用性待确认';
+      if (state?.source === 'remote') {
+        status = state.models.includes(model)
+          ? '服务端已列出；实际调用权限待验证'
+          : '服务端未列出当前型号；已保留选择，请确认权限或更换型号';
+      } else if (state?.reason === 'missing_key') {
+        status = '内置目录；填写并保存密钥后可刷新';
+      } else if (state?.source === 'fallback') {
+        status = '暂未获取在线目录；已保留当前选择';
+      }
+      const tokens = this.modelCapability(provider, model)?.context_window_tokens;
+      return status + (tokens
+        ? ` · 上下文 ${tokens.toLocaleString()} tokens`
+        : ' · 上下文待确认，暂按 32,000 tokens 处理');
+    },
+
+    async fetchModels(provider, target, options = {}) {
       const targetKey = target === 'primary' ? 'primary' : 'polish';
       const requestId = ++this.modelRequestSeq[targetKey];
+      const previousProvider = this.modelProviders[targetKey]
+        ?? this.settings.translation?.[`${targetKey}_provider`];
+      this.modelProviders[targetKey] = provider;
       this.modelErrors[targetKey] = '';
+      if (options.providerChanged || (previousProvider && previousProvider !== provider)) {
+        this.settings.translation[`${targetKey}_model`] = '';
+        this.settings.translation[`${targetKey}_effort`] = 'auto';
+      }
       if (!provider) {
-        if (targetKey === 'polish') this.setModelOptions(targetKey, []);
+        this.settings.translation[`${targetKey}_model`] = '';
+        this.setModelOptions(targetKey, []);
         this.modelLoading[targetKey] = false;
         return;
       }
-      // Use cache if available
+      if (options.force) delete this.modelCache[provider];
       if (this.modelCache[provider]) {
         this.setModelOptions(targetKey, this.modelCache[provider]);
         this.modelLoading[targetKey] = false;
         return;
       }
-      // Static fallback (used while loading or if no key)
-      const fb = this.providerModelFallback(provider);
-      this.setModelOptions(targetKey, fb);
-      // Try fetching from API
+      const automaticSelection = !this.settings.translation[`${targetKey}_model`];
+      this.setModelOptions(targetKey, this.providerModelFallback(provider));
+      const loadingSelection = this.settings.translation[`${targetKey}_model`];
       const apiKeys = this.isPlainObject(this.settings.api_keys) ? this.settings.api_keys : {};
-      const requiresApiKey = provider !== 'claude_cli' && provider !== 'codex_cli';
-      if (requiresApiKey && !apiKeys[provider]) {
+      if (!this.isLocalCliProvider(provider) && !apiKeys[provider]) {
+        this.modelCatalogStates[provider] = {source: 'fallback', reason: 'missing_key'};
         this.modelLoading[targetKey] = false;
         return;
       }
       this.modelLoading[targetKey] = true;
       try {
-        const r = await this.api(`/api/models/${provider}`);
+        // Share a provider request between translation and polishing, while each
+        // stage keeps its own sequence guard and selection.
+        if (!this.modelFetches[provider]) {
+          this.modelFetches[provider] = this.api(`/api/models/${provider}`)
+            .finally(() => { delete this.modelFetches[provider]; });
+        }
+        const response = await this.modelFetches[provider];
         if (this.modelRequestSeq[targetKey] !== requestId) return;
-        const models = Array.isArray(r.models)
-          ? r.models.filter(m => typeof m === 'string' && m.trim()).map(m => m.trim())
-          : [];
-        if (models.length > 0) {
-          this.modelCache[provider] = models;
-          this.setModelOptions(targetKey, models);
+        const models = this.cacheModelResponse(provider, response);
+        if (automaticSelection && this.settings.translation[`${targetKey}_model`] === loadingSelection) {
+          this.settings.translation[`${targetKey}_model`] = '';
         }
-      } catch(e) {
-        console.warn('fetchModels failed:', e);
+        this.setModelOptions(targetKey, models.length ? models : this.providerModelFallback(provider));
+      } catch (error) {
         if (this.modelRequestSeq[targetKey] === requestId) {
-          this.modelErrors[targetKey] = `模型列表加载失败：${e.message || '请稍后重试'}`;
+          this.modelCatalogStates[provider] = {source: 'fallback', reason: 'unreachable'};
+          this.modelErrors[targetKey] = `模型列表加载失败：${error.message || '请稍后重试'}`;
         }
+      } finally {
+        if (this.modelRequestSeq[targetKey] === requestId) this.modelLoading[targetKey] = false;
       }
-      if (this.modelRequestSeq[targetKey] === requestId) this.modelLoading[targetKey] = false;
     },
 
     async testKey(provider) {

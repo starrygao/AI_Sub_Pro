@@ -1,0 +1,442 @@
+{
+  "version": 1,
+  "verified_at": "2026-09-11",
+  "unknown_context_window_tokens": 32000,
+  "providers": {
+    "openai": {
+      "models": {
+        "gpt-6-astra": {
+          "context_window_tokens": 1050000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "temperature": false,
+          "token_limit_parameter": "max_completion_tokens",
+          "source": "https://developers.openai.com/api/docs/models/gpt-6-astra"
+        },
+        "gpt-5.6-sol": {
+          "context_window_tokens": 1050000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "temperature": false,
+          "token_limit_parameter": "max_completion_tokens",
+          "source": "https://developers.openai.com/api/docs/models/gpt-5.6-sol"
+        },
+        "gpt-5.6-terra": {
+          "context_window_tokens": 1050000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "temperature": false,
+          "token_limit_parameter": "max_completion_tokens",
+          "source": "https://developers.openai.com/api/docs/models/gpt-5.6-terra"
+        },
+        "gpt-5.6-luna": {
+          "context_window_tokens": 1050000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "temperature": false,
+          "token_limit_parameter": "max_completion_tokens",
+          "source": "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
+        },
+        "gpt-5.5": {
+          "context_window_tokens": 1050000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "temperature": false,
+          "token_limit_parameter": "max_completion_tokens",
+          "source": "https://developers.openai.com/api/docs/models/gpt-5.5"
+        },
+        "gpt-5.4": {
+          "context_window_tokens": 1050000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "temperature": false,
+          "token_limit_parameter": "max_completion_tokens",
+          "source": "https://developers.openai.com/api/docs/models/gpt-5.4"
+        },
+        "gpt-5.4-mini": {
+          "context_window_tokens": 400000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "temperature": false,
+          "token_limit_parameter": "max_completion_tokens",
+          "source": "https://developers.openai.com/api/docs/models/gpt-5.4-mini"
+        },
+        "gpt-5.4-nano": {
+          "context_window_tokens": 400000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "temperature": false,
+          "token_limit_parameter": "max_completion_tokens",
+          "source": "https://developers.openai.com/api/docs/models/gpt-5.4-nano"
+        },
+        "gpt-5-mini": {
+          "context_window_tokens": 400000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "temperature": false,
+          "token_limit_parameter": "max_completion_tokens",
+          "source": "https://developers.openai.com/api/docs/models/gpt-5-mini"
+        },
+        "gpt-5-nano": {
+          "context_window_tokens": 400000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "temperature": false,
+          "token_limit_parameter": "max_completion_tokens",
+          "source": "https://developers.openai.com/api/docs/models/gpt-5-nano"
+        },
+        "gpt-4.1": {
+          "context_window_tokens": 1047576,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://developers.openai.com/api/docs/models/gpt-4.1"
+        },
+        "gpt-4.1-mini": {
+          "context_window_tokens": 1047576,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://developers.openai.com/api/docs/models/gpt-4.1-mini"
+        },
+        "gpt-4o": {
+          "context_window_tokens": 128000,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://developers.openai.com/api/docs/models/gpt-4o"
+        },
+        "gpt-4o-mini": {
+          "context_window_tokens": 128000,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://developers.openai.com/api/docs/models/gpt-4o-mini"
+        }
+      }
+    },
+    "deepseek": {
+      "models": {
+        "deepseek-flash": {
+          "context_window_tokens": 1000000,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "deepseek-v4-pro": {
+          "context_window_tokens": 1000000,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "deepseek-chat": {
+          "context_window_tokens": null,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "deepseek-reasoner": {
+          "context_window_tokens": null,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://api-docs.deepseek.com/quick_start/pricing/"
+        }
+      }
+    },
+    "gemini": {
+      "models": {
+        "gemini-3.8-flash": {
+          "context_window_tokens": 1048576,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash"
+        },
+        "gemini-3.7-flash": {
+          "context_window_tokens": 1048576,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://ai.google.dev/gemini-api/docs/models/gemini-3.7-flash"
+        },
+        "gemini-3.6-flash": {
+          "context_window_tokens": 1048576,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://ai.google.dev/gemini-api/docs/models/gemini-3.6-flash"
+        },
+        "gemini-3.5-flash": {
+          "context_window_tokens": 1048576,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash"
+        },
+        "gemini-3.5-flash-lite": {
+          "context_window_tokens": 1048576,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite"
+        },
+        "gemini-3.1-pro-preview": {
+          "context_window_tokens": 1048576,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://ai.google.dev/gemini-api/docs/models/gemini-3.1-pro-preview"
+        },
+        "gemini-3.1-flash-lite": {
+          "context_window_tokens": 1048576,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-lite"
+        },
+        "gemini-3-flash-preview": {
+          "context_window_tokens": 1048576,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://ai.google.dev/gemini-api/docs/models/gemini-3-flash-preview"
+        },
+        "gemini-2.5-pro": {
+          "context_window_tokens": 1048576,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-pro"
+        },
+        "gemini-2.5-flash": {
+          "context_window_tokens": 1048576,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash"
+        },
+        "gemini-2.5-flash-lite": {
+          "context_window_tokens": 1048576,
+          "reasoning_efforts": [],
+          "temperature": true,
+          "token_limit_parameter": "max_tokens",
+          "source": "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-lite"
+        }
+      }
+    },
+    "codex_cli": {
+      "models": {
+        "gpt-6-astra": {
+          "context_window_tokens": 272000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ],
+          "temperature": false,
+          "token_limit_parameter": null,
+          "source": "Codex CLI model metadata (effective default context), checked 2026-09-11"
+        },
+        "gpt-5.6-sol": {
+          "context_window_tokens": 272000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ],
+          "temperature": false,
+          "token_limit_parameter": null,
+          "source": "Codex CLI model metadata (effective default context), checked 2026-09-11"
+        },
+        "gpt-5.6-terra": {
+          "context_window_tokens": 272000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ],
+          "temperature": false,
+          "token_limit_parameter": null,
+          "source": "Codex CLI model metadata (effective default context), checked 2026-09-11"
+        },
+        "gpt-5.6-luna": {
+          "context_window_tokens": 272000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "temperature": false,
+          "token_limit_parameter": null,
+          "source": "Codex CLI model metadata (effective default context), checked 2026-09-11"
+        },
+        "gpt-5.5": {
+          "context_window_tokens": 272000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "temperature": false,
+          "token_limit_parameter": null,
+          "source": "Codex CLI model metadata (effective default context), checked 2026-09-11"
+        },
+        "gpt-5.4": {
+          "context_window_tokens": null,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "temperature": false,
+          "token_limit_parameter": null,
+          "source": "Existing CLI adapter effort support; effective CLI context not verified"
+        },
+        "gpt-5.4-mini": {
+          "context_window_tokens": null,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "temperature": false,
+          "token_limit_parameter": null,
+          "source": "Existing CLI adapter effort support; effective CLI context not verified"
+        },
+        "gpt-5.3-codex": {
+          "context_window_tokens": null,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "temperature": false,
+          "token_limit_parameter": null,
+          "source": "Existing CLI adapter effort support; effective CLI context not verified"
+        },
+        "gpt-5.3-codex-spark": {
+          "context_window_tokens": 128000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "temperature": false,
+          "token_limit_parameter": null,
+          "source": "Codex CLI model metadata (effective default context), checked 2026-09-11"
+        }
+      }
+    },
+    "claude_cli": {
+      "models": {
+        "claude-fable-5": {
+          "context_window_tokens": 1000000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "temperature": false,
+          "token_limit_parameter": null,
+          "source": "https://support.claude.com/en/articles/8606394-how-large-is-the-context-window-on-paid-claude-plans"
+        },
+        "claude-opus-4-7": {
+          "context_window_tokens": 1000000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "temperature": false,
+          "token_limit_parameter": null,
+          "source": "https://support.claude.com/en/articles/8606394-how-large-is-the-context-window-on-paid-claude-plans"
+        },
+        "claude-sonnet-4-6": {
+          "context_window_tokens": 1000000,
+          "reasoning_efforts": [
+            "low",
+            "medium",
+            "high",
+            "max"
+          ],
+          "temperature": false,
+          "token_limit_parameter": null,
+          "source": "https://platform.claude.com/docs/en/models/sonnet-4-6/overview"
+        },
+        "claude-haiku-4-5": {
+          "context_window_tokens": 200000,
+          "reasoning_efforts": [],
+          "temperature": false,
+          "token_limit_parameter": null,
+          "source": "https://platform.claude.com/docs/en/models/overview"
+        }
+      }
+    }
+  }
+}

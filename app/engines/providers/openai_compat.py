@@ -13,6 +13,7 @@ from typing import List, Dict, Optional
 from openai import OpenAI
 
 from .base import BaseProvider
+from app.engines.model_catalog import capabilities, context_window
 from .result_contract import reconcile_translation_results, redact_error_message
 
 log = logging.getLogger(__name__)
@@ -24,20 +25,6 @@ PROVIDER_URLS = {
     "gemini": "https://generativelanguage.googleapis.com/v1beta/openai/",
 }
 
-# Approximate input context windows per model (tokens). Used to advise
-# full-document mode. Lookup is by substring against the model name lower-cased.
-_CONTEXT_WINDOWS = {
-    "gpt-4o": 128_000,
-    "gpt-4-turbo": 128_000,
-    "gpt-4": 8_192,
-    "gpt-3.5-turbo": 16_384,
-    "deepseek-chat": 64_000,
-    "deepseek-reasoner": 64_000,
-    "gemini-2.0-flash": 1_048_576,
-    "gemini-2.5-pro": 2_097_152,
-    "gemini-1.5-pro": 2_097_152,
-    "gemini-1.5-flash": 1_048_576,
-}
 
 
 def _clean_str(value, default: str = "") -> str:
@@ -139,6 +126,9 @@ class OpenAICompatProvider(BaseProvider):
         self.model = _clean_str(cfg.get("model") or model)
         if not self.model:
             raise ValueError("OpenAICompatProvider requires a 'model'")
+        requested_effort = _clean_str(cfg.get("effort"), "auto").lower()
+        supported_efforts = capabilities(self.provider_name, self.model)["reasoning_efforts"]
+        self.effort = requested_effort if requested_effort in supported_efforts else "auto"
         resolved_key = _clean_str(cfg.get("api_key") or api_key)
         resolved_base = (
             _clean_str(cfg.get("base_url"))
@@ -180,8 +170,10 @@ class OpenAICompatProvider(BaseProvider):
                     "messages": messages,
                 }
                 # New OpenAI reasoning models reject custom sampling parameters.
-                if not self._uses_openai_reasoning_parameters:
+                if capabilities(self.provider_name, self.model)["temperature"] is True:
                     kwargs["temperature"] = 0.3
+                if self.provider_name == "openai" and self.effort != "auto":
+                    kwargs["reasoning_effort"] = self.effort
                 # DeepSeek supports json response format
                 if self.is_deepseek:
                     kwargs["response_format"] = {"type": "json_object"}
@@ -244,11 +236,9 @@ class OpenAICompatProvider(BaseProvider):
         log.error("translate_batch exhausted %d retries: %s", retries, err_msg)
         return [{"id": it.get("id"), "translation": "", "error": err_msg} for it in items]
 
-    @property
-    def _uses_openai_reasoning_parameters(self) -> bool:
-        return self.provider_name == "openai" and self.model.lower().startswith(
-            ("gpt-5", "gpt-6", "o1", "o3", "o4")
-        )
+    def _connection_token_limit(self) -> dict:
+        parameter = capabilities(self.provider_name, self.model)["token_limit_parameter"]
+        return {parameter: 32 if parameter == "max_completion_tokens" else 5} if parameter else {}
 
     def test_connection(self) -> bool:
         """Test if the provider is reachable."""
@@ -256,8 +246,7 @@ class OpenAICompatProvider(BaseProvider):
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": "Hi"}],
-                **({"max_completion_tokens": 32} if self._uses_openai_reasoning_parameters
-                   else {"max_tokens": 5}),
+                **self._connection_token_limit(),
             )
             return bool(response.choices)
         except Exception as e:
@@ -271,8 +260,4 @@ class OpenAICompatProvider(BaseProvider):
 
     @property
     def context_window_tokens(self) -> int:
-        lower = self.model.lower()
-        for prefix, n in _CONTEXT_WINDOWS.items():
-            if prefix in lower:
-                return n
-        return 32_000
+        return context_window(self.provider_name, self.model)

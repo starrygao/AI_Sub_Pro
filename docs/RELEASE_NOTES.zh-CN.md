@@ -2,6 +2,13 @@
 
 语言：[English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.28 - 统一模型能力管理
+
+- 前后端共享模型目录，统一上下文预算与请求参数支持信息。
+- 刷新模型列表时保留当前选择，并显示目录可用性状态。
+- 开放已支持的 OpenAI 推理强度选项，分别管理 API 和 CLI 能力。
+- macOS 安装包：`AI_Sub_Pro_v1.3.28.dmg`。
+
 ## v1.3.27 - 模型目录更新
 
 - 更新 OpenAI、Codex CLI、Gemini 和 DeepSeek 模型选项。

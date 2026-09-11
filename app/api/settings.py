@@ -2,6 +2,7 @@
 Settings and knowledge base API routes.
 """
 import copy
+import json
 import logging
 import math
 
@@ -11,6 +12,7 @@ from typing import Optional
 
 from app.config import Config
 from app.version import APP_VERSION
+from app.engines.model_catalog import CATALOG, model_ids, catalog_response
 import app.engines.providers  # noqa: F401  (load provider modules before concurrent requests)
 from app.engines.asr_capabilities import ASR_BACKENDS, ASR_MODES, detect_asr_capabilities, recommend_asr_settings
 from app.engines.knowledge import _get_singleton as _kb_singleton, invalidate_translator_kb
@@ -736,47 +738,30 @@ def system_check():
     }
 
 
+@router.get("/model-catalog.js")
+def model_catalog_script():
+    """Bootstrap the UI from the same capability catalog used by providers."""
+    from fastapi.responses import Response
+    return Response("globalThis.AISUBPRO_MODEL_CATALOG = " + json.dumps(CATALOG) + ";",
+                    media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+
+
 @router.get("/models/{provider}")
 def list_models(provider: str):
     """Fetch available models from a provider using the configured API key."""
-    from app.engines.providers.claude_cli import CLAUDE_CLI_MODELS
-    from app.engines.providers.codex_cli import CODEX_CLI_MODELS
     from app.engines.translator import PROVIDER_URLS
     from openai import OpenAI
-
-    # Text translation fallback catalog verified against official model docs on 2026-09-11.
-    fallback = {
-        "openai": [
-            "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra",
-            "gpt-5.6-luna", "gpt-5.5", "gpt-5.4",
-            "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5-mini",
-            "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini",
-            "gpt-4o", "gpt-4o-mini",
-        ],
-        "deepseek": [
-            "deepseek-flash", "deepseek-v4-pro", "deepseek-chat",
-            "deepseek-reasoner",
-        ],
-        "gemini": [
-            "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash",
-            "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview",
-            "gemini-3.1-flash-lite", "gemini-3-flash-preview", "gemini-2.5-pro",
-            "gemini-2.5-flash", "gemini-2.5-flash-lite",
-        ],
-        "claude_cli": CLAUDE_CLI_MODELS,
-        "codex_cli": CODEX_CLI_MODELS,
-    }
 
     provider = _validate_provider_field("provider", provider, allow_empty=False)
 
     if provider in ("claude_cli", "codex_cli"):
-        return {"models": fallback[provider], "fallback": True}
+        return catalog_response(provider, model_ids(provider), "static", "cli")
 
     cfg = Config.to_dict()
     api_key = _dict_section(cfg, "api_keys").get(provider, "")
     if not isinstance(api_key, str) or not api_key.strip():
         # No key — return fallback instead of error
-        return {"models": fallback.get(provider, []), "fallback": True}
+        return catalog_response(provider, model_ids(provider), "fallback", "missing_key")
     api_key = api_key.strip()
 
     base_url = PROVIDER_URLS.get(provider, PROVIDER_URLS["openai"])
@@ -806,12 +791,12 @@ def list_models(provider: str):
             models.append(mid)
         models = sorted(set(models))
         if not models:
-            return {"models": fallback.get(provider, []), "fallback": True}
-        return {"models": models}
+            return catalog_response(provider, model_ids(provider), "fallback", "empty")
+        return catalog_response(provider, models, "remote")
     except Exception as e:
         from app.utils.errors import redact_error_message
         log.warning("Failed to fetch models for %s: %s", provider, redact_error_message(e))
-        return {"models": fallback.get(provider, []), "fallback": True}
+        return catalog_response(provider, model_ids(provider), "fallback", "unreachable")
 
 
 @router.get("/knowledge")

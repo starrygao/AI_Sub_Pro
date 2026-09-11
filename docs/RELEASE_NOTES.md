@@ -2,6 +2,13 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.28 - Unified model capabilities
+
+- Share one model catalog across the UI and translation providers, including context budgets and supported request parameters.
+- Preserve selected models when refreshing lists and show catalog availability status.
+- Expose supported OpenAI reasoning efforts while keeping API and CLI capabilities separate.
+- macOS package: `AI_Sub_Pro_v1.3.28.dmg`.
+
 ## v1.3.27 - Model catalog refresh
 
 - Refresh OpenAI, Codex CLI, Gemini and DeepSeek model options.

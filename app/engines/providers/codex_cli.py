@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .base import BaseProvider
+from app.engines.model_catalog import model_ids, model_efforts, context_window
 from .result_contract import (
     provider_response_instruction,
     reconcile_translation_results,
@@ -19,30 +20,10 @@ from .result_contract import (
 
 log = logging.getLogger(__name__)
 
-CODEX_CLI_MODELS = [
-    "gpt-6-astra",
-    "gpt-5.6-sol",
-    "gpt-5.6-terra",
-    "gpt-5.6-luna",
-    "gpt-5.5",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5.3-codex",
-    "gpt-5.3-codex-spark",
-]
+CODEX_CLI_MODELS = model_ids("codex_cli")
 DEFAULT_CODEX_CLI_MODEL = "gpt-5.5"
 ALLOWED_CODEX_CLI_EFFORTS = {"auto", "low", "medium", "high", "xhigh", "max", "ultra"}
-CODEX_CLI_MODEL_EFFORTS = {
-    "gpt-6-astra": {"low", "medium", "high", "xhigh", "max", "ultra"},
-    "gpt-5.6-sol": {"low", "medium", "high", "xhigh", "max", "ultra"},
-    "gpt-5.6-terra": {"low", "medium", "high", "xhigh", "max", "ultra"},
-    "gpt-5.6-luna": {"low", "medium", "high", "xhigh", "max"},
-    "gpt-5.5": {"low", "medium", "high", "xhigh"},
-    "gpt-5.4": {"low", "medium", "high", "xhigh"},
-    "gpt-5.4-mini": {"low", "medium", "high", "xhigh"},
-    "gpt-5.3-codex": {"low", "medium", "high", "xhigh"},
-    "gpt-5.3-codex-spark": {"low", "medium", "high", "xhigh"},
-}
+CODEX_CLI_MODEL_EFFORTS = model_efforts("codex_cli")
 
 
 def _coerce_timeout(value) -> int:
@@ -119,7 +100,7 @@ class CodexCliProvider(BaseProvider):
 
     @property
     def context_window_tokens(self) -> int:
-        return 1_000_000
+        return context_window("codex_cli", self.model)
 
     def translate_batch(self, items, system_prompt, retries: int = 3):
         if not self.check_cli_available():

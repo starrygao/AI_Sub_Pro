@@ -1376,13 +1376,13 @@
           <div class="grid grid-cols-2 gap-4">
             <div>
               <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">主翻译引擎</label>
-              <select x-model="settings.translation.primary_provider" @change="fetchModels(settings.translation.primary_provider, 'primary')" aria-label="主翻译引擎" class="w-full px-3 py-2 rounded-xl text-[13px]">
+              <select x-model="settings.translation.primary_provider" @change="fetchModels(settings.translation.primary_provider, 'primary', {providerChanged: true})" aria-label="主翻译引擎" class="w-full px-3 py-2 rounded-xl text-[13px]">
                 <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="gemini">Gemini</option><option value="claude_cli">Claude CLI (本机)</option><option value="codex_cli">Codex CLI (本机)</option>
               </select>
             </div>
             <div>
               <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">润色引擎</label>
-              <select x-model="settings.translation.polish_provider" @change="fetchModels(settings.translation.polish_provider, 'polish')" aria-label="润色引擎" class="w-full px-3 py-2 rounded-xl text-[13px]">
+              <select x-model="settings.translation.polish_provider" @change="fetchModels(settings.translation.polish_provider, 'polish', {providerChanged: true})" aria-label="润色引擎" class="w-full px-3 py-2 rounded-xl text-[13px]">
                 <option value="">不使用</option><option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="gemini">Gemini</option><option value="claude_cli">Claude CLI (本机)</option><option value="codex_cli">Codex CLI (本机)</option>
               </select>
             </div>
@@ -1394,6 +1394,10 @@
                 </select>
                 <span x-show="modelLoading.primary" class="absolute right-8 top-2.5 text-[11px] text-surface-400 animate-pulse">加载中...</span>
               </div>
+              <p role="status" class="mt-1.5 text-[11px] text-surface-400" x-text="modelSelectionStatus('primary')"></p>
+              <button type="button" @click="fetchModels(settings.translation.primary_provider, 'primary', {force: true})"
+                      :disabled="modelLoading.primary || !settings.translation.primary_provider"
+                      aria-label="刷新主翻译模型列表" class="mt-1.5 text-[11px] text-accent disabled:opacity-50">刷新模型列表</button>
               <p x-show="modelErrors.primary" class="mt-1.5 text-[11px] text-danger" x-text="modelErrors.primary"></p>
             </div>
             <div>
@@ -1405,9 +1409,13 @@
                 </select>
                 <span x-show="modelLoading.polish" class="absolute right-8 top-2.5 text-[11px] text-surface-400 animate-pulse">加载中...</span>
               </div>
+              <p role="status" class="mt-1.5 text-[11px] text-surface-400" x-text="modelSelectionStatus('polish')"></p>
+              <button type="button" @click="fetchModels(settings.translation.polish_provider, 'polish', {force: true})"
+                      :disabled="modelLoading.polish || !settings.translation.polish_provider"
+                      aria-label="刷新润色模型列表" class="mt-1.5 text-[11px] text-accent disabled:opacity-50">刷新模型列表</button>
               <p x-show="modelErrors.polish" class="mt-1.5 text-[11px] text-danger" x-text="modelErrors.polish"></p>
             </div>
-            <div x-show="isLocalCliProvider(settings.translation.primary_provider)" x-cloak>
+            <div x-show="reasoningEffortOptions(settings.translation.primary_provider, settings.translation.primary_model).length > 1" x-cloak>
               <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">主翻译推理强度</label>
               <select x-model="settings.translation.primary_effort" aria-label="主翻译推理强度" class="w-full px-3 py-2 rounded-xl text-[13px]">
                 <template x-for="option in reasoningEffortOptions(settings.translation.primary_provider, settings.translation.primary_model)" :key="'primary-effort-' + option.value">
@@ -1415,7 +1423,7 @@
                 </template>
               </select>
             </div>
-            <div x-show="isLocalCliProvider(settings.translation.polish_provider)" x-cloak>
+            <div x-show="reasoningEffortOptions(settings.translation.polish_provider, settings.translation.polish_model).length > 1" x-cloak>
               <label class="block text-[12px] text-surface-400 mb-1.5 font-medium">润色推理强度</label>
               <select x-model="settings.translation.polish_effort" aria-label="润色推理强度" class="w-full px-3 py-2 rounded-xl text-[13px]">
                 <template x-for="option in reasoningEffortOptions(settings.translation.polish_provider, settings.translation.polish_model)" :key="'polish-effort-' + option.value">
@@ -1953,6 +1961,7 @@
        aria-label="选择音频文件"
        @change="handleAudioFileSelect($event)">
 
+<script src="/api/model-catalog.js"></script>
 <script src="/static/js/app.js?v=20260713-cli-effort-settings"></script>
 </body>
 </html>

@@ -7,6 +7,7 @@ import time
 from typing import List, Dict, Optional
 
 from .base import BaseProvider
+from app.engines.model_catalog import model_ids, model_efforts, context_window
 from .result_contract import (
     provider_response_instruction,
     reconcile_translation_results,
@@ -15,20 +16,10 @@ from .result_contract import (
 
 log = logging.getLogger(__name__)
 
-CLAUDE_CLI_MODELS = [
-    "claude-fable-5",
-    "claude-opus-4-7",
-    "claude-sonnet-4-6",
-    "claude-haiku-4-5",
-]
+CLAUDE_CLI_MODELS = model_ids("claude_cli")
 ALLOWED_CLAUDE_CLI_MODELS = set(CLAUDE_CLI_MODELS)
 ALLOWED_CLAUDE_CLI_EFFORTS = {"auto", "low", "medium", "high", "xhigh", "max"}
-CLAUDE_CLI_MODEL_EFFORTS = {
-    "claude-fable-5": {"low", "medium", "high", "xhigh", "max"},
-    "claude-opus-4-7": {"low", "medium", "high", "xhigh", "max"},
-    "claude-sonnet-4-6": {"low", "medium", "high", "max"},
-    "claude-haiku-4-5": set(),
-}
+CLAUDE_CLI_MODEL_EFFORTS = model_efforts("claude_cli")
 
 
 def _coerce_timeout(value) -> int:
@@ -104,7 +95,7 @@ class ClaudeCliProvider(BaseProvider):
 
     @property
     def context_window_tokens(self) -> int:
-        return 1_000_000
+        return context_window("claude_cli", self.model)
 
     def translate_batch(self, items, system_prompt, retries: int = 3):
         if not self.check_cli_available():
