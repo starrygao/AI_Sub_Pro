@@ -8289,6 +8289,8 @@ def _run_translate_pipeline(
     pipeline (see `_run_asr_pipeline`).
     """
     try:
+        _check_cancel(pid)
+        _mark_project_stage_queued(pid, "translate", "等待翻译资源...")
         with slot("translate", pid):
             mutate_project(pid, lambda p: p.update({"status": "processing"}),
                            normalize=_apply_safe_defaults)

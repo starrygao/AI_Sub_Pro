@@ -1,3 +1,10 @@
+## v1.3.32
+
+Installer: `AI_Sub_Pro_v1.3.32.dmg`
+
+- Keep full-pipeline projects visibly processing while waiting for a translation slot after subtitle extraction.
+- Persist and publish the waiting stage for both translation-only and translation-and-burn workflows.
+
 ## v1.3.31
 
 Installer: `AI_Sub_Pro_v1.3.31.dmg`
