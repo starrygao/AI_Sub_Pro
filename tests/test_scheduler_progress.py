@@ -879,7 +879,7 @@ def test_startup_orphan_cleanup_skips_registered_active_worker(
 ):
     import threading
 
-    from app.api import translate
+    from app.services import translation_tasks as translate
     from app.engines.scheduler import (
         mark_interrupted_tasks_from_previous_session,
         reset_cancel,

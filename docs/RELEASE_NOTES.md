@@ -2,6 +2,14 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.29 - Quality evaluation, release verification and credential storage
+
+- Evaluate fresh translator output with timings, submission/rework metrics and manual-review packets.
+- Pin the macOS arm64 release environment and verify the real bundle using isolated legacy data and synthetic Keychain credentials.
+- Move translation workers into a shared task service and extract frontend model settings.
+- Store API credentials in the OS vault; settings responses expose configured state only.
+- macOS package: `AI_Sub_Pro_v1.3.29.dmg`.
+
 ## v1.3.28 - Unified model capabilities
 
 - Share one model catalog across the UI and translation providers, including context budgets and supported request parameters.

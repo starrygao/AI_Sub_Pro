@@ -1,8 +1,8 @@
 {
   "name": "ai-sub-pro",
-  "version": "1.3.28",
+  "version": "1.3.29",
   "scripts": {
-    "build:css": "npx --yes tailwindcss@3.4.17 -c tailwind.config.js -i app/static/css/tailwind.input.css -o app/static/css/tailwind.css --minify",
+    "build:css": "tailwindcss -c tailwind.config.js -i app/static/css/tailwind.input.css -o app/static/css/tailwind.css --minify",
     "dev": "cd electron && npx electron .",
     "start": "python3 app/main.py",
     "release:prepare": "python3 tools/release/prepare_release.py --dist-dir dist --output dist/release-size-report.json --checksum-dir dist",
@@ -10,6 +10,6 @@
     "build-win": "cd electron && npm run build-win"
   },
   "devDependencies": {
-    "tailwindcss": "^3.4.17"
+    "tailwindcss": "3.4.17"
   }
 }

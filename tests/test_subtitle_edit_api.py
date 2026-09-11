@@ -44,7 +44,7 @@ def test_save_subtitles_rejects_busy_project_without_writing_files(
     tmp_project_dir,
     busy_state,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     pid = _seed_project(tmp_project_dir, f"subedit-{busy_state}")
     pdir = tmp_project_dir / pid

@@ -462,7 +462,7 @@ def mark_interrupted_tasks_from_previous_session() -> int:
         try:
             pid = validate_pid(pdir.name)
             try:
-                from app.api.translate import is_task_registered
+                from app.services.translation_tasks import is_task_registered
 
                 active_worker = is_task_registered(pid)
             except Exception:

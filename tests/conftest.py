@@ -26,7 +26,7 @@ def tmp_project_dir(tmp_path, monkeypatch):
     # patch the ones already in sys.modules so a test that runs after them
     # sees the tmp dir (without this, the first ASR test in alphabetical order
     # binds the real path and contaminates the rest of the session).
-    for _modname in ("app.api.translate", "app.api.projects",
+    for _modname in ("app.services.translation_tasks", "app.api.projects",
                      "app.engines.trailer_pipeline"):
         import sys as _sys
         _mod = _sys.modules.get(_modname)
@@ -45,3 +45,12 @@ def _reset_scheduler_progress_store():
         progress_store.clear()
     except ImportError:
         yield
+
+
+@pytest.fixture(autouse=True)
+def isolated_credential_store(monkeypatch):
+    # Unit tests never touch the user's OS credential store.
+    import app.config as cfg
+    from tests.test_credentials import MemoryCredentialStore
+    stores = {}
+    monkeypatch.setattr(cfg, 'credential_store', lambda: stores.setdefault(str(cfg.CONFIG_FILE), MemoryCredentialStore()))

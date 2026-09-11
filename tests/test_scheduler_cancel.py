@@ -24,7 +24,7 @@ def test_cancel_marks_workflow_stage_cancelled(tmp_project_dir, monkeypatch):
 
     from fastapi.testclient import TestClient
 
-    from app.api import translate
+    from app.services import translation_tasks as translate
     from app.engines.workflow_state import load_workflow_state, start_stage
     from app.main import app
     from app.utils.project_store import atomic_write_json
@@ -59,7 +59,7 @@ def test_cancel_marks_workflow_stage_cancelled(tmp_project_dir, monkeypatch):
 def test_cancel_registered_translate_uses_running_workflow_stage(tmp_project_dir, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from app.api import translate
+    from app.services import translation_tasks as translate
     from app.engines.scheduler import reset_cancel
     from app.engines.workflow_state import (
         finish_stage,
@@ -103,7 +103,7 @@ def test_cancel_registered_translate_uses_running_workflow_stage(tmp_project_dir
 def test_cancel_registered_full_pipeline_uses_next_pending_stage(tmp_project_dir, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from app.api import translate
+    from app.services import translation_tasks as translate
     from app.engines.scheduler import reset_cancel
     from app.engines.workflow_state import finish_stage, load_workflow_state, reset_workflow
     from app.main import app

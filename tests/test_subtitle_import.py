@@ -148,7 +148,7 @@ def test_import_subtitle_rejects_empty_or_unparseable_srt(client):
 
 
 def test_start_translate_accepts_subtitle_only_project(tmp_project_dir, monkeypatch):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
     from app.utils import project_store
 
     monkeypatch.setattr(translate_api, "PROJECTS_DIR", tmp_project_dir)

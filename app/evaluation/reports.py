@@ -65,6 +65,10 @@ def _markdown(report: dict[str, Any]) -> str:
         "",
     ]
 
+    if report.get("run"):
+        lines.extend(["Run: " + str(report["run"]), ""])
+    if report.get("baseline_deltas"):
+        lines.extend(["Baseline rate deltas: " + str(report["baseline_deltas"]), ""])
     for case in report["cases"]:
         terminology = case["terminology"]
         missing_translation = case["missing_translation"]
@@ -90,6 +94,17 @@ def _markdown(report: dict[str, Any]) -> str:
             ]
         )
 
+        if "runtime" in case:
+            lines.extend(["- Runtime: " + str(case["runtime"]),
+                          "- Execution error: " + str(case.get("execution_error")), "",
+                          "| ID | Source | Generated | Reference |", "| --- | --- | --- | --- |"])
+            candidates = {b['id']: b['translation'] for b in case['candidate_blocks']}
+            references = {b['id']: b['translation'] for b in case['reference_blocks']}
+            def cell(value):
+                return str(value).replace('|', '\uFF5C').replace('\n', '<br>')
+            for block in case['source_blocks']:
+                lines.append('| ' + ' | '.join(cell(v) for v in [block['id'], block['text'], candidates.get(block['id'], ''), references.get(block['id'], '')]) + ' |')
+            lines.append('')
     lines.extend(
         [
             "## Manual scoring",

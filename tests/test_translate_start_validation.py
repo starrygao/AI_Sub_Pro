@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 def _client(tmp_project_dir, monkeypatch):
     from app.api import projects as projects_api
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
     from app.utils import project_store
 
     monkeypatch.setattr(projects_api, "PROJECTS_DIR", tmp_project_dir)
@@ -33,7 +33,7 @@ def _seed_project(tmp_project_dir, pid="audio01"):
 
 
 def _allow_translation(monkeypatch):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
     monkeypatch.setattr(
         translate_api,
         "require_translation_ready",
@@ -130,7 +130,7 @@ def test_start_translate_rejects_blank_target_language(tmp_project_dir, monkeypa
 
 
 def test_translation_dependent_starts_reject_missing_provider_before_launch(tmp_project_dir, monkeypatch):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
 
     client = _client(tmp_project_dir, monkeypatch)
 
@@ -153,7 +153,7 @@ def test_translation_dependent_starts_reject_missing_provider_before_launch(tmp_
 
 
 def test_start_translate_generates_kb_suggestions_without_blocking_by_default(tmp_project_dir, monkeypatch):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
 
     _isolate_kb(tmp_project_dir, monkeypatch)
     client = _client(tmp_project_dir, monkeypatch)
@@ -176,7 +176,7 @@ def test_start_translate_generates_kb_suggestions_without_blocking_by_default(tm
 
 
 def test_start_translate_treats_kb_suggestions_as_soft_hints(tmp_project_dir, monkeypatch):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
 
     _isolate_kb(tmp_project_dir, monkeypatch)
     client = _client(tmp_project_dir, monkeypatch)
@@ -203,7 +203,7 @@ def test_start_translate_treats_kb_suggestions_as_soft_hints(tmp_project_dir, mo
 
 
 def test_start_translate_professional_mode_generates_suggestions_without_blocking(tmp_project_dir, monkeypatch):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
 
     _isolate_kb(tmp_project_dir, monkeypatch)
     client = _client(tmp_project_dir, monkeypatch)
@@ -237,7 +237,7 @@ def test_full_and_transcribe_translate_persist_strict_policy_before_workers_star
     tmp_project_dir,
     monkeypatch,
 ):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
 
     client = _client(tmp_project_dir, monkeypatch)
     _allow_translation(monkeypatch)
@@ -287,7 +287,7 @@ def test_full_and_transcribe_translate_persist_strict_policy_before_workers_star
 
 
 def test_start_translate_keeps_running_when_kb_suggestions_are_rejected(tmp_project_dir, monkeypatch):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
 
     _isolate_kb(tmp_project_dir, monkeypatch)
     client = _client(tmp_project_dir, monkeypatch)
@@ -330,7 +330,7 @@ def test_start_translate_keeps_running_when_kb_suggestions_are_rejected(tmp_proj
 
 
 def test_start_full_persists_requested_workflow_options_before_launch(tmp_project_dir, monkeypatch):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
 
     client = _client(tmp_project_dir, monkeypatch)
     _allow_translation(monkeypatch)
@@ -360,7 +360,7 @@ def test_start_full_persists_requested_workflow_options_before_launch(tmp_projec
 
 
 def test_start_full_translate_only_dispatches_without_burn_and_persists_mode(tmp_project_dir, monkeypatch):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
 
     client = _client(tmp_project_dir, monkeypatch)
     _allow_translation(monkeypatch)
@@ -397,7 +397,7 @@ def test_start_full_translate_only_dispatches_without_burn_and_persists_mode(tmp
 
 
 def test_start_full_dispatches_audio_and_subtitle_sources_to_supported_workflows(tmp_project_dir, monkeypatch):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
 
     _allow_translation(monkeypatch)
     launched = {}
@@ -485,7 +485,7 @@ def test_start_full_dispatches_audio_and_subtitle_sources_to_supported_workflows
 
 
 def test_start_translate_persists_requested_target_language_before_launch(tmp_project_dir, monkeypatch):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
 
     client = _client(tmp_project_dir, monkeypatch)
     _allow_translation(monkeypatch)
@@ -506,7 +506,7 @@ def test_start_translate_persists_requested_target_language_before_launch(tmp_pr
 
 
 def test_start_translate_clears_stale_failure_while_queued(tmp_project_dir, monkeypatch):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
 
     client = _client(tmp_project_dir, monkeypatch)
     _allow_translation(monkeypatch)
@@ -542,7 +542,7 @@ def test_start_translate_clears_stale_failure_while_queued(tmp_project_dir, monk
 
 
 def test_start_asr_persists_requested_language_and_audio_track_before_launch(tmp_project_dir, monkeypatch):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
 
     client = _client(tmp_project_dir, monkeypatch)
     pid = _seed_project(tmp_project_dir)
@@ -626,7 +626,7 @@ def test_start_burn_rejects_projects_without_video_burn_stage(tmp_project_dir, m
 
 
 def test_resume_audio_project_with_translated_srt_does_not_launch_burn(tmp_project_dir, monkeypatch):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
 
     _allow_translation(monkeypatch)
     launched = {}
@@ -687,14 +687,14 @@ def test_resume_audio_project_with_translated_srt_does_not_launch_burn(tmp_proje
 
 
 def test_resolve_text_option_ignores_non_string_legacy_fallback():
-    from app.api.translate import _resolve_text_option
+    from app.services.translation_tasks import _resolve_text_option
 
     assert _resolve_text_option(None, ["bad"], "auto", "language") == "auto"
     assert _resolve_text_option(None, {"bad": "value"}, "简体中文", "target_language") == "简体中文"
 
 
 def test_asr_runtime_config_coercion_rejects_dirty_values():
-    from app.api.translate import _coerce_bool_option, _coerce_int_option, _coerce_str_option
+    from app.services.translation_tasks import _coerce_bool_option, _coerce_int_option, _coerce_str_option
 
     assert _coerce_bool_option("yes", True) is True
     assert _coerce_bool_option(False, True) is False

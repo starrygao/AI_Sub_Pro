@@ -23,7 +23,7 @@ def test_toast_suppresses_duplicate_active_messages():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -48,7 +48,7 @@ def test_load_projects_and_settings_surface_errors_without_spam():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -84,7 +84,7 @@ def test_sidebar_auto_collapse_uses_scroll_hysteresis_and_viewport_guard():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'));
         const context = { console, setTimeout, clearTimeout, window: { innerWidth: 1280 } };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -125,7 +125,7 @@ def test_load_projects_ignores_stale_response_when_archive_filter_changes():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -175,7 +175,7 @@ def test_project_list_timer_skips_idle_project_lists():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'));
         let timerCallback = null;
         const context = {
           console,
@@ -239,7 +239,7 @@ def test_frontend_init_is_idempotent():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'));
         let intervalCount = 0;
         let listenerCount = 0;
         const context = {
@@ -299,7 +299,7 @@ def test_projects_view_refreshes_when_entered():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -335,7 +335,7 @@ def test_system_check_errors_are_visible_and_clear_after_success():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -371,7 +371,7 @@ def test_system_check_retry_blocks_duplicate_requests_while_loading():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -421,7 +421,7 @@ def test_system_check_force_refresh_ignores_stale_response():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -462,7 +462,7 @@ def test_progress_poll_errors_are_visible_and_clear_after_success():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -505,7 +505,7 @@ def test_progress_poll_ignores_stale_response_after_project_changes():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -558,7 +558,7 @@ def test_frontend_loads_workflow_state_and_retries_failed_stage():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -608,7 +608,7 @@ def test_resume_workflow_uses_backend_stage_and_keeps_pending_guard():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -661,7 +661,7 @@ def test_open_project_ignores_stale_mutations_after_workflow_state_delay():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -723,7 +723,7 @@ def test_home_dashboard_summary_counts_active_projects_and_sorts_recent_items():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = fs.readFileSync('app/static/js/app.js', 'utf8');
+        const code = (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);

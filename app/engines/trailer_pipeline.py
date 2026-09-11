@@ -7,7 +7,7 @@ import logging
 import re
 from pathlib import Path
 
-from app.api.projects import _load_project
+from app.services.translation_tasks import _load_project
 from app.config import PROJECTS_DIR
 from app.utils.project_store import mutate_project
 from app.engines.scheduler import (
@@ -196,7 +196,7 @@ def _vtt_to_srt(vtt_text: str) -> str:
 
 def _save_partial(pid: str, **fields) -> None:
     """Atomically merge `fields` into the project under the per-pid lock."""
-    from app.api.projects import _apply_safe_defaults
+    from app.services.project_defaults import _apply_safe_defaults
     mutate_project(pid, lambda p: p.update(fields), normalize=_apply_safe_defaults)
 
 
@@ -207,7 +207,7 @@ def _check_cancelled(pid: str) -> None:
 
 def _run_asr_for_project(pid: str) -> None:
     """Invoke existing ASR pipeline on a project. Deferred import to avoid circular."""
-    from app.api.translate import _run_asr_pipeline
+    from app.services.translation_tasks import _run_asr_pipeline
     proj = _load_project(pid)
     audio_track = proj.get("selected_audio_track", 0) or 0
     language = proj.get("asr_language", "auto") or "auto"
@@ -215,21 +215,15 @@ def _run_asr_for_project(pid: str) -> None:
 
 
 def _run_translate_for_project(pid: str, *, burn_follows: bool) -> None:
-    from app.api.translate import _run_translate_pipeline
+    from app.services.translation_tasks import _run_translate_pipeline
     proj = _load_project(pid)
     target_lang = proj.get("target_language", "简体中文") or "简体中文"
     _run_translate_pipeline(pid, target_lang, burn_follows=burn_follows)
 
 
 def _run_burn_for_project(pid: str) -> None:
-    """Burn stage. Prefers the dedicated helper, falls back to _burn_task if exposed."""
-    from app.api import translate as api_translate
-    if hasattr(api_translate, "_run_burn_pipeline"):
-        api_translate._run_burn_pipeline(pid)
-    elif hasattr(api_translate, "_burn_task"):
-        api_translate._burn_task(pid)
-    else:
-        raise RuntimeError("No burn entry point found in app.api.translate")
+    from app.services.translation_tasks import _run_burn_pipeline
+    _run_burn_pipeline(pid)
 
 
 def _coerce_max_height(value) -> int:

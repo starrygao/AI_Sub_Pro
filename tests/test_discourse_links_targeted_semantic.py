@@ -31,7 +31,7 @@ def _blocks():
 
 
 def test_targeted_singleton_binds_read_only_discourse_link_hash():
-    from app.api.translate import (
+    from app.services.translation_tasks import (
         _targeted_semantic_items,
         _targeted_semantic_result_stage,
     )
@@ -64,7 +64,7 @@ def test_targeted_singleton_binds_read_only_discourse_link_hash():
 
 
 def test_targeted_groups_linked_ends_only_when_both_are_candidates():
-    from app.api.translate import (
+    from app.services.translation_tasks import (
         _targeted_semantic_items,
         _targeted_semantic_verification_units,
     )
@@ -106,7 +106,7 @@ def test_targeted_groups_linked_ends_only_when_both_are_candidates():
 
 
 def test_non_contiguous_semantic_group_is_one_repair_batch_unit():
-    from app.api.translate import _repair_batch_positions
+    from app.services.translation_tasks import _repair_batch_positions
 
     items = [
         {"id": 84, "semantic_group_ids": [84, 86]},
@@ -123,7 +123,7 @@ def test_non_contiguous_semantic_group_is_one_repair_batch_unit():
 
 
 def test_non_contiguous_group_endpoints_apply_atomically():
-    from app.api.translate import _apply_nonempty_repair_results
+    from app.services.translation_tasks import _apply_nonempty_repair_results
 
     blocks = _blocks()
     original_by_id = {block.index: block.translation for block in blocks}
@@ -154,7 +154,7 @@ def test_non_contiguous_group_endpoints_apply_atomically():
 
 
 def test_targeted_detection_keeps_filtered_bridge_in_read_only_timeline():
-    from app.api.translate import _targeted_semantic_items
+    from app.services.translation_tasks import _targeted_semantic_items
 
     blocks = _blocks()
     blocks[1].filtered = True
@@ -174,7 +174,7 @@ def test_targeted_detection_keeps_filtered_bridge_in_read_only_timeline():
 
 
 def test_targeted_filtered_bridge_can_block_link_by_reintroducing_noun():
-    from app.api.translate import _targeted_semantic_items
+    from app.services.translation_tasks import _targeted_semantic_items
 
     blocks = _blocks()
     blocks[1].filtered = True
@@ -191,7 +191,7 @@ def test_targeted_filtered_bridge_can_block_link_by_reintroducing_noun():
 
 
 def test_targeted_filtered_bridge_still_counts_toward_cue_distance():
-    from app.api.translate import _targeted_semantic_items
+    from app.services.translation_tasks import _targeted_semantic_items
 
     blocks = [
         SubtitleBlock(

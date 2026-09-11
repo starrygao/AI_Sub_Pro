@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASE_VERSION = "1.3.28"
+RELEASE_VERSION = "1.3.29"
 
 
 def test_release_workflow_supports_pr_dry_run_tag_release_and_uploads():
@@ -21,7 +21,7 @@ def test_release_workflow_supports_pr_dry_run_tag_release_and_uploads():
     assert "dry-run" in workflow
     assert "--allow-empty" in workflow
     assert "tools/release/prepare_release.py" in workflow
-    assert "requirements-asr.txt" in workflow
+    assert "tools/release/setup_environment.sh" in workflow
     assert "sha256" in workflow.lower()
     assert "release-size-report.json" in workflow
     assert "python3 -m pytest -q" in workflow

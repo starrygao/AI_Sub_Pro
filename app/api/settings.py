@@ -1,3 +1,10 @@
+from app.services.provider_readiness import (
+    _PROVIDER_LABELS,
+    _configured_translation_providers,
+    _dict_section,
+    _provider_readiness,
+    _translation_readiness,
+)
 """
 Settings and knowledge base API routes.
 """
@@ -46,13 +53,6 @@ def _test_key_failure_message(provider: str) -> str:
     return "连接失败，请检查 API 密钥、模型或网络设置"
 
 
-_PROVIDER_LABELS = {
-    "openai": "OpenAI",
-    "deepseek": "DeepSeek",
-    "gemini": "Gemini",
-    "claude_cli": "Claude CLI",
-    "codex_cli": "Codex CLI",
-}
 
 _OBJECT_CONFIG_SECTIONS = {
     "api_keys",
@@ -65,9 +65,6 @@ _OBJECT_CONFIG_SECTIONS = {
     "general",
 }
 
-def _dict_section(cfg: dict, key: str) -> dict:
-    value = cfg.get(key) if isinstance(cfg, dict) else None
-    return value if isinstance(value, dict) else {}
 
 
 def _asr_backend_installed(caps: dict, backend: str) -> bool:
@@ -246,142 +243,10 @@ def _reject_non_finite_numbers(value, path: str = "settings") -> None:
             _reject_non_finite_numbers(item, f"{path}[{index}]")
 
 
-def _provider_readiness(provider: str, *, role_label: str, cfg: dict) -> dict:
-    label = _PROVIDER_LABELS.get(provider, provider)
-
-    if provider == "claude_cli":
-        from app.engines.providers.claude_cli import ClaudeCliProvider
-
-        try:
-            installed = ClaudeCliProvider.check_cli_available()
-        except Exception:
-            installed = False
-        try:
-            logged_in = ClaudeCliProvider.check_logged_in() if installed else False
-        except Exception:
-            logged_in = False
-
-        ready = installed and logged_in
-        if ready:
-            hint = f"{role_label} Claude Code 已就绪"
-        elif installed:
-            hint = f"{role_label}请运行 claude 完成登录"
-        else:
-            hint = f"{role_label}未检测到 claude 命令"
-        return {
-            "translation_provider": provider,
-            "translation_label": label,
-            "translation_ready": ready,
-            "translation_hint": hint,
-            "claude_cli_installed": installed,
-            "claude_cli_logged_in": logged_in,
-            "codex_cli_installed": None,
-            "codex_cli_logged_in": None,
-        }
-
-    if provider == "codex_cli":
-        from app.engines.providers.codex_cli import CodexCliProvider
-
-        try:
-            installed = CodexCliProvider.check_cli_available()
-        except Exception:
-            installed = False
-        try:
-            logged_in = CodexCliProvider.check_logged_in() if installed else False
-        except Exception:
-            logged_in = False
-
-        ready = installed and logged_in
-        if ready:
-            hint = f"{role_label}Codex CLI 已就绪"
-        elif installed:
-            hint = f"{role_label}请运行 codex login 完成登录"
-        else:
-            hint = f"{role_label}未检测到 codex 命令"
-        return {
-            "translation_provider": provider,
-            "translation_label": label,
-            "translation_ready": ready,
-            "translation_hint": hint,
-            "claude_cli_installed": None,
-            "claude_cli_logged_in": None,
-            "codex_cli_installed": installed,
-            "codex_cli_logged_in": logged_in,
-        }
-
-    api_keys = _dict_section(cfg, "api_keys")
-    api_key = api_keys.get(provider)
-    has_key = bool(api_key) if isinstance(api_key, str) else False
-    return {
-        "translation_provider": provider,
-        "translation_label": label,
-        "translation_ready": has_key,
-        "translation_hint": f"{role_label}已配置" if has_key else f"{role_label}请配置 {label} API 密钥",
-        "claude_cli_installed": None,
-        "claude_cli_logged_in": None,
-        "codex_cli_installed": None,
-        "codex_cli_logged_in": None,
-    }
 
 
-def _configured_translation_providers(translation: dict) -> list[tuple[str, str]]:
-    raw_primary = translation.get("primary_provider")
-    primary_value = raw_primary.strip() if isinstance(raw_primary, str) else ""
-    primary = primary_value if primary_value in _PROVIDER_LABELS else "openai"
-
-    raw_polish = translation.get("polish_provider")
-    polish_value = raw_polish.strip() if isinstance(raw_polish, str) else ""
-    polish = polish_value if polish_value in _PROVIDER_LABELS else ""
-
-    providers = [("主翻译引擎：", primary)]
-    if polish and polish != primary:
-        providers.append(("润色引擎：", polish))
-    return providers
 
 
-def _translation_readiness(cfg: dict) -> dict:
-    """Return readiness for all configured translation workflow providers."""
-    translation = _dict_section(cfg, "translation")
-    provider_checks = [
-        _provider_readiness(provider, role_label=role_label, cfg=cfg)
-        for role_label, provider in _configured_translation_providers(translation)
-    ]
-    blocking = [check for check in provider_checks if not check.get("translation_ready")]
-    ready = not blocking
-
-    primary_check = provider_checks[0] if provider_checks else _provider_readiness(
-        "openai", role_label="主翻译引擎：", cfg=cfg
-    )
-    status_source = blocking[0] if blocking else primary_check
-    hints = [check["translation_hint"] for check in blocking]
-    if not hints:
-        configured_labels = [check["translation_label"] for check in provider_checks]
-        hint = "、".join(configured_labels) + " 已配置"
-    else:
-        hint = "；".join(hints)
-
-    claude_checks = [check for check in provider_checks if check["translation_provider"] == "claude_cli"]
-    claude_installed = claude_checks[0]["claude_cli_installed"] if claude_checks else None
-    claude_logged_in = claude_checks[0]["claude_cli_logged_in"] if claude_checks else None
-    codex_checks = [check for check in provider_checks if check["translation_provider"] == "codex_cli"]
-    codex_installed = codex_checks[0]["codex_cli_installed"] if codex_checks else None
-    codex_logged_in = codex_checks[0]["codex_cli_logged_in"] if codex_checks else None
-
-    return {
-        "translation_provider": status_source["translation_provider"],
-        "translation_label": status_source["translation_label"],
-        "translation_ready": ready,
-        # Backward-compatible alias consumed by the existing home screen.
-        "api_key": ready,
-        "translation_hint": hint,
-        "translation_required_providers": [
-            check["translation_provider"] for check in provider_checks
-        ],
-        "claude_cli_installed": claude_installed,
-        "claude_cli_logged_in": claude_logged_in,
-        "codex_cli_installed": codex_installed,
-        "codex_cli_logged_in": codex_logged_in,
-    }
 
 
 def current_translation_readiness() -> dict:
@@ -403,7 +268,7 @@ def require_translation_ready() -> dict:
 @router.get("/settings")
 def get_settings():
     """Get current configuration."""
-    settings = Config.to_dict()
+    settings = Config.public_dict()
     settings["app_info"] = {
         "name": "AI Sub Pro",
         "version": APP_VERSION,
@@ -548,10 +413,27 @@ def update_settings(data: dict):
     """Update configuration (partial update)."""
     payload = copy.deepcopy(data) if isinstance(data, dict) else data
     if isinstance(payload, dict):
-        payload.pop("app_info", None)
+        for field in ("app_info", "credentials_configured", "_credential_refs"):
+            payload.pop(field, None)
+        clear = payload.pop("clear_credentials", [])
+        if not isinstance(clear, list) or any(k not in {"openai", "deepseek", "gemini", "tmdb"} for k in clear):
+            raise HTTPException(status_code=400, detail="Invalid credential removal list")
+        # Blank fields represent an unchanged secret. Deletion is explicit.
+        for section, key in [("api_keys", p) for p in ("openai", "deepseek", "gemini")] + [("tmdb", "api_key")]:
+            fields = payload.get(section)
+            name = key if section == "api_keys" else "tmdb"
+            if isinstance(fields, dict) and fields.get(key) == "" and name not in clear:
+                fields.pop(key, None)
+        for name in clear:
+            section, key = ("tmdb", "api_key") if name == "tmdb" else ("api_keys", name)
+            payload.setdefault(section, {})[key] = ""
     _validate_settings_update(payload)
-    Config.update(payload)
-    return {"status": "ok"}
+    from app.credentials import CredentialError
+    try:
+        Config.update(payload)
+    except CredentialError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+    return {"status": "ok", "credentials_configured": Config.public_dict()["credentials_configured"]}
 
 
 @router.post("/settings/test-key")
@@ -576,19 +458,19 @@ def test_api_key(req: TestKeyRequest):
                 "message": "OK" if ok else "Codex CLI 未安装或未登录 (CLI not installed or not logged in)",
             }
         from app.engines.translator import TranslationProvider
-        translation_provider = TranslationProvider(provider, req.api_key or "", req.model or "")
+        translation_provider = TranslationProvider(provider, req.api_key or Config.get("api_keys", provider, default=""), req.model or "")
         success = translation_provider.test_connection()
         return {"success": success, "message": "连接成功" if success else "连接失败"}
     except Exception as e:
         log.warning("Provider key test failed provider=%s exc=%s", provider, type(e).__name__)
-        log.debug("Provider key test failure detail", exc_info=e)
+        # SDK exceptions can embed user credentials; keep logs to exception type.
         return {"success": False, "message": _test_key_failure_message(provider)}
 
 
 @router.post("/settings/test-tmdb-key")
 async def test_tmdb_key(req: TestTmdbKeyRequest):
     """Test if a TMDB key can reach the TMDB API without saving it."""
-    api_key = req.api_key.strip() if isinstance(req.api_key, str) else ""
+    api_key = (req.api_key or Config.get("tmdb", "api_key", default="")).strip()
     if not api_key:
         return {"success": False, "message": "请先填写 TMDB API 密钥"}
     language = req.language.strip() if isinstance(req.language, str) and req.language.strip() else "zh-CN"

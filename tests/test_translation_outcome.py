@@ -3,7 +3,7 @@ pipeline reports an error instead of a false 'completed'."""
 from datetime import timedelta
 
 from app.utils.srt import SubtitleBlock
-from app.api.translate import (
+from app.services.translation_tasks import (
     _incomplete_translation_message,
     _translation_completion_counts,
     _translation_failed_completely,

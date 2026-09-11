@@ -564,7 +564,7 @@ def test_new_strict_report_cannot_certify_old_delivery_artifact(
     monkeypatch,
     format,
 ):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
     from app.utils import project_store
 
     pid = _seed_strict_certification(

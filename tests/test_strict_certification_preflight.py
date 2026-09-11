@@ -48,7 +48,7 @@ def _report(trace, issues):
 
 
 def _setup_persist(monkeypatch, saved_reports):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines import knowledge, translation_qa
 
     monkeypatch.setattr(
@@ -111,7 +111,7 @@ def _disk_state_from_fresh_path(api_translate, path):
 def test_quality_run_state_rejects_symlink_without_following_it(
     tmp_path,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path)
     state_path = tmp_path / "translation_quality_run_state.json"
@@ -133,7 +133,7 @@ def test_quality_run_state_rejects_symlink_without_following_it(
 def test_quality_run_state_rejects_files_larger_than_16_mib(
     tmp_path,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state_path = tmp_path / "translation_quality_run_state.json"
     state_path.write_bytes(b" " * ((16 * 1024 * 1024) + 1))
@@ -147,7 +147,7 @@ def test_quality_run_state_rejects_files_larger_than_16_mib(
 def test_quality_run_state_initializes_durable_recovery_trace(
     tmp_path,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path)
 
@@ -166,7 +166,7 @@ def test_quality_run_state_initializes_durable_recovery_trace(
 def test_quality_run_state_hydrates_durable_accepted_hash_evidence(
     tmp_path,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     content_hash = "sha256:" + ("a" * 64)
     state = _disk_state(api_translate, tmp_path)
@@ -194,7 +194,7 @@ def test_quality_run_state_hydrates_durable_accepted_hash_evidence(
 
 
 def test_recovery_trace_checkpoint_preserves_accepted_hash_evidence():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     evidence = [{
         "block_id": 7,
@@ -267,7 +267,7 @@ def test_quality_run_state_rejects_malformed_accepted_hash_evidence(
     evidence,
     block_count,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path, block_count=block_count)
     state["certification_recovery_trace"][
@@ -280,7 +280,7 @@ def test_quality_run_state_rejects_malformed_accepted_hash_evidence(
 
 
 def test_recovery_trace_checkpoint_discards_malformed_hash_evidence():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     checkpoint = api_translate._certification_recovery_trace_checkpoint(
         {
@@ -318,7 +318,7 @@ def test_quality_run_state_rejects_hash_evidence_for_nonaccepted_result(
     used,
     result,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path)
     state["certification_recovery_used"] = used
@@ -340,7 +340,7 @@ def test_quality_run_state_rejects_hash_evidence_for_nonaccepted_result(
 def test_quality_run_state_rejects_accepted_ids_for_rolled_back_result(
     tmp_path,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path)
     state["certification_recovery_used"] = True
@@ -357,7 +357,7 @@ def test_quality_run_state_rejects_accepted_ids_for_rolled_back_result(
 
 
 def test_recovery_trace_checkpoint_clears_accepted_ids_after_rollback():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     checkpoint = api_translate._certification_recovery_trace_checkpoint(
         {
@@ -399,7 +399,7 @@ def test_quality_run_state_rejects_invalid_accepted_block_relationships(
     tmp_path,
     trace_update,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path, block_count=2)
     state["certification_recovery_used"] = True
@@ -446,7 +446,7 @@ def test_quality_run_state_rejects_invalid_accepted_block_relationships(
 def test_recovery_trace_checkpoint_downgrades_invalid_accepted_relation(
     trace,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     checkpoint = api_translate._certification_recovery_trace_checkpoint(
         trace,
@@ -466,7 +466,7 @@ def test_recovery_trace_checkpoint_downgrades_invalid_accepted_relation(
 def test_quality_run_state_rejects_hash_evidence_outside_recovery_scope(
     tmp_path,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path, block_count=2)
     state["certification_recovery_used"] = True
@@ -511,7 +511,7 @@ def test_quality_run_state_rejects_hash_evidence_outside_recovery_scope(
 def test_recovery_trace_checkpoint_clears_relationally_invalid_evidence(
     trace,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     checkpoint = api_translate._certification_recovery_trace_checkpoint(
         trace,
@@ -524,7 +524,7 @@ def test_recovery_trace_checkpoint_clears_relationally_invalid_evidence(
 def test_quality_run_state_rejects_rediscovery_without_hash_evidence(
     tmp_path,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path, block_count=2)
     state["certification_recovery_used"] = True
@@ -546,7 +546,7 @@ def test_quality_run_state_rejects_rediscovery_without_hash_evidence(
 
 
 def test_recovery_trace_checkpoint_clears_unproven_rediscovery():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     checkpoint = api_translate._certification_recovery_trace_checkpoint(
         {
@@ -572,7 +572,7 @@ def test_recovery_trace_checkpoint_clears_unproven_rediscovery():
 def test_quality_run_state_migrates_matching_v1_recovery_flag_to_v2_trace(
     tmp_path,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path)
     state["schema_version"] = 1
@@ -601,7 +601,7 @@ def test_quality_run_state_rejects_non_integer_v1_schema_aliases(
     tmp_path,
     schema_version,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path)
     state["schema_version"] = schema_version
@@ -617,7 +617,7 @@ def test_quality_run_state_rejects_float_v2_schema_alias(
     tmp_path,
     stale,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path)
     state["schema_version"] = 2.0
@@ -632,7 +632,7 @@ def test_quality_run_state_rejects_float_v2_schema_alias(
 def test_quality_run_state_rejects_oversized_recovery_trace_ids(
     tmp_path,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path, block_count=1)
     state["certification_recovery_trace"]["requested_block_ids"] = [1, 2]
@@ -665,7 +665,7 @@ def test_quality_run_state_rejects_invalid_recovery_result_combinations(
     tmp_path,
     mutation,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path)
     mutation(state["certification_recovery_trace"])
@@ -679,7 +679,7 @@ def test_quality_run_state_rejects_invalid_recovery_result_combinations(
 
 
 def test_recovery_trace_checkpoint_handles_unhashable_result_safely():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     checkpoint = api_translate._certification_recovery_trace_checkpoint(
         {"result": []},
@@ -726,7 +726,7 @@ def test_quality_run_state_rejects_malformed_round_provenance_nodes(
     tmp_path,
     round_provenance,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path, block_count=1)
     state["auto_repair_rounds"] = [{
@@ -746,7 +746,7 @@ def test_quality_run_state_rejects_malformed_round_provenance_nodes(
 def test_quality_run_state_sizes_exact_pretty_json_before_atomic_write(
     tmp_path,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path)
     state["semantic_qa_history"] = [{
@@ -782,7 +782,7 @@ def test_stale_in_memory_run_state_resets_through_complete_schema_before_pass(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     block = _block(1)
     stale_state = {
@@ -859,7 +859,7 @@ def test_stale_in_memory_run_state_resets_through_complete_schema_before_pass(
 def test_quality_run_state_allows_5001_block_checkpoint_and_hydration(
     tmp_path,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(
         api_translate,
@@ -890,7 +890,7 @@ def test_quality_run_state_allows_5001_block_checkpoint_and_hydration(
 def test_quality_run_state_resets_on_block_count_identity_mismatch(
     tmp_path,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     stale_state = _disk_state(
         api_translate,
@@ -925,7 +925,7 @@ def test_quality_run_state_resets_on_block_count_identity_mismatch(
 def test_quality_run_state_rejects_invalid_block_count_fail_safe(
     tmp_path,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(
         api_translate,
@@ -964,7 +964,7 @@ def test_matching_quality_run_state_rejects_missing_or_invalid_required_fields(
     tmp_path,
     mutation,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path)
     mutation(state)
@@ -988,7 +988,7 @@ def test_matching_quality_run_state_rejects_invalid_seen_identity(
     tmp_path,
     seen_identity,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path)
     state["seen_blocking_identities"] = [seen_identity]
@@ -1018,7 +1018,7 @@ def test_matching_quality_run_state_rejects_malformed_ledger(
     tmp_path,
     malformed_ledger,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path)
     state["semantic_issue_ledger"] = malformed_ledger
@@ -1062,7 +1062,7 @@ def test_matching_quality_run_state_rejects_nested_collection_overflow(
     field,
     value,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path)
     state[field] = value
@@ -1075,7 +1075,7 @@ def test_matching_quality_run_state_rejects_nested_collection_overflow(
 def test_matching_quality_run_state_rejects_ledger_overflow(
     tmp_path,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state(api_translate, tmp_path)
     ledger_item = {
@@ -1100,7 +1100,7 @@ def test_matching_quality_run_state_rejects_ledger_overflow(
 def test_matching_quality_run_state_rejects_string_overflow(
     tmp_path,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     state = _disk_state_from_fresh_path(
         api_translate,
@@ -1115,7 +1115,7 @@ def test_matching_quality_run_state_rejects_string_overflow(
 def test_legacy_uncertain_ledger_route_defaults_human_and_cannot_downgrade(
     tmp_path,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     block = _block(1)
     content_hash = api_translate._semantic_block_content_hash(block)
@@ -1163,7 +1163,7 @@ def test_strict_certification_unions_both_preflights_then_runs_one_final(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     blocks = [_block(1), _block(2)]
     for block in blocks:
@@ -1274,7 +1274,7 @@ def test_strict_certification_human_route_prevents_same_block_mutation(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     blocks = [_block(1), _block(2)]
     for block in blocks:
@@ -1368,7 +1368,7 @@ def test_human_routed_uncertainty_never_enters_standard_repair_rounds(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     block = _block(1)
     original = block.translation
@@ -1421,7 +1421,7 @@ def test_human_routed_uncertainty_never_enters_standard_repair_rounds(
 
 
 def test_human_routed_member_blocks_its_entire_semantic_repair_group():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -1483,7 +1483,7 @@ def test_strict_certification_consumes_recovery_before_exception_and_resume(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     block = _block(1)
     state = _state("strict-resume")
@@ -1553,7 +1553,7 @@ def test_strict_final_discovery_never_recurses_and_fast_scan_cost_is_unchanged(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     strict_block = _block(1)
     strict_state = _state("strict-final-bound")
@@ -1635,7 +1635,7 @@ def test_human_uncertainty_route_is_monotonic_across_preflight_and_final(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     block = _block(1)
     block.text = "Complete sentence."
@@ -1703,7 +1703,7 @@ def test_recovery_crash_resumes_from_atomic_disk_state_not_shared_memory(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     block = _block(1)
     block.text = "Complete sentence."
@@ -1849,7 +1849,7 @@ def test_recovery_accepted_checkpoint_resumes_final_rediscovery_from_disk(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines import translation_qa
 
     blocks = [_block(block_id) for block_id in (1, 2, 3)]
@@ -2057,7 +2057,7 @@ def test_convergence_provenance_is_on_disk_before_post_scan_crash(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import (
         QualityIssue,
         TranslationQaReport,
@@ -2193,7 +2193,7 @@ def test_standard_repair_round_is_consumed_on_disk_before_provider_call(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     block = _block(1)
     block.text = "Complete sentence."
@@ -2298,7 +2298,7 @@ def test_disk_quality_state_resets_on_any_identity_mismatch(
     identity_field,
     replacement,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     expected_identity = {
         "run_id": "identity-run",
@@ -2345,7 +2345,7 @@ def test_fast_uncertainty_is_report_only_and_persisted_certificate_is_valid(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils.translation_quality_gate import validate_quality_report
 
     block = _block(1)

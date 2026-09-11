@@ -1,0 +1,538 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "pronoun-owner",
+      "tags": [
+        "cross_sentence_reference",
+        "authored_regression"
+      ],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {
+        "name": "pronoun-owner",
+        "provenance": "Newly authored minimal fixture for existing regression categories; not a captured model run"
+      },
+      "source_blocks": [
+        {
+          "id": "1",
+          "text": "Mara lent Lina her coat."
+        },
+        {
+          "id": "2",
+          "text": "Lina returned it the next morning."
+        }
+      ],
+      "candidate_blocks": [
+        {
+          "id": "1",
+          "translation": "玛拉把外套借给了莉娜。"
+        },
+        {
+          "id": "2",
+          "translation": "莉娜第二天早上把外套还了回去。"
+        }
+      ],
+      "reference_blocks": [
+        {
+          "id": "1",
+          "translation": "玛拉把外套借给了莉娜。"
+        },
+        {
+          "id": "2",
+          "translation": "莉娜第二天早上把外套还了回去。"
+        }
+      ],
+      "expected_terms": []
+    },
+    {
+      "id": "conditional-split",
+      "tags": [
+        "condition",
+        "authored_regression"
+      ],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {
+        "name": "conditional-split",
+        "provenance": "Newly authored minimal fixture for existing regression categories; not a captured model run"
+      },
+      "source_blocks": [
+        {
+          "id": "1",
+          "text": "If the power fails,"
+        },
+        {
+          "id": "2",
+          "text": "leave the chamber immediately."
+        }
+      ],
+      "candidate_blocks": [
+        {
+          "id": "1",
+          "translation": "如果断电，"
+        },
+        {
+          "id": "2",
+          "translation": "立刻离开舱室。"
+        }
+      ],
+      "reference_blocks": [
+        {
+          "id": "1",
+          "translation": "如果断电，"
+        },
+        {
+          "id": "2",
+          "translation": "立刻离开舱室。"
+        }
+      ],
+      "expected_terms": []
+    },
+    {
+      "id": "unless-negation",
+      "tags": [
+        "condition",
+        "authored_regression"
+      ],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {
+        "name": "unless-negation",
+        "provenance": "Newly authored minimal fixture for existing regression categories; not a captured model run"
+      },
+      "source_blocks": [
+        {
+          "id": "1",
+          "text": "Do not open the hatch"
+        },
+        {
+          "id": "2",
+          "text": "unless the warning light goes out."
+        }
+      ],
+      "candidate_blocks": [
+        {
+          "id": "1",
+          "translation": "不要打开舱门，"
+        },
+        {
+          "id": "2",
+          "translation": "除非警示灯已经熄灭。"
+        }
+      ],
+      "reference_blocks": [
+        {
+          "id": "1",
+          "translation": "不要打开舱门，"
+        },
+        {
+          "id": "2",
+          "translation": "除非警示灯已经熄灭。"
+        }
+      ],
+      "expected_terms": []
+    },
+    {
+      "id": "slang-off-hook",
+      "tags": [
+        "slang",
+        "authored_regression"
+      ],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {
+        "name": "slang-off-hook",
+        "provenance": "Newly authored minimal fixture for existing regression categories; not a captured model run"
+      },
+      "source_blocks": [
+        {
+          "id": "1",
+          "text": "You're off the hook."
+        },
+        {
+          "id": "2",
+          "text": "But do not try that again."
+        }
+      ],
+      "candidate_blocks": [
+        {
+          "id": "1",
+          "translation": "这次就放过你了。"
+        },
+        {
+          "id": "2",
+          "translation": "但别再这么干。"
+        }
+      ],
+      "reference_blocks": [
+        {
+          "id": "1",
+          "translation": "这次就放过你了。"
+        },
+        {
+          "id": "2",
+          "translation": "但别再这么干。"
+        }
+      ],
+      "expected_terms": []
+    },
+    {
+      "id": "slang-shot",
+      "tags": [
+        "slang",
+        "authored_regression"
+      ],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {
+        "name": "slang-shot",
+        "provenance": "Newly authored minimal fixture for existing regression categories; not a captured model run"
+      },
+      "source_blocks": [
+        {
+          "id": "1",
+          "text": "Give it your best shot."
+        },
+        {
+          "id": "2",
+          "text": "We are counting on you."
+        }
+      ],
+      "candidate_blocks": [
+        {
+          "id": "1",
+          "translation": "尽力一试吧。"
+        },
+        {
+          "id": "2",
+          "translation": "我们指望你了。"
+        }
+      ],
+      "reference_blocks": [
+        {
+          "id": "1",
+          "translation": "尽力一试吧。"
+        },
+        {
+          "id": "2",
+          "translation": "我们指望你了。"
+        }
+      ],
+      "expected_terms": []
+    },
+    {
+      "id": "name-repeat",
+      "tags": [
+        "proper_name",
+        "authored_regression"
+      ],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {
+        "name": "name-repeat",
+        "provenance": "Newly authored minimal fixture for existing regression categories; not a captured model run"
+      },
+      "source_blocks": [
+        {
+          "id": "1",
+          "text": "Captain Mara is on deck."
+        },
+        {
+          "id": "2",
+          "text": "Tell Mara the engine is ready."
+        }
+      ],
+      "candidate_blocks": [
+        {
+          "id": "1",
+          "translation": "玛拉船长在甲板上。"
+        },
+        {
+          "id": "2",
+          "translation": "告诉玛拉，引擎准备好了。"
+        }
+      ],
+      "reference_blocks": [
+        {
+          "id": "1",
+          "translation": "玛拉船长在甲板上。"
+        },
+        {
+          "id": "2",
+          "translation": "告诉玛拉，引擎准备好了。"
+        }
+      ],
+      "expected_terms": [
+        {
+          "source": "Mara",
+          "target": "玛拉"
+        }
+      ]
+    },
+    {
+      "id": "sound-plus-dialogue",
+      "tags": [
+        "sound_description",
+        "authored_regression"
+      ],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {
+        "name": "sound-plus-dialogue",
+        "provenance": "Newly authored minimal fixture for existing regression categories; not a captured model run"
+      },
+      "source_blocks": [
+        {
+          "id": "1",
+          "text": "[alarm beeping]"
+        },
+        {
+          "id": "2",
+          "text": "Everyone, step back!"
+        }
+      ],
+      "candidate_blocks": [
+        {
+          "id": "1",
+          "translation": "[警报鸣响]"
+        },
+        {
+          "id": "2",
+          "translation": "所有人后退！"
+        }
+      ],
+      "reference_blocks": [
+        {
+          "id": "1",
+          "translation": "[警报鸣响]"
+        },
+        {
+          "id": "2",
+          "translation": "所有人后退！"
+        }
+      ],
+      "expected_terms": []
+    },
+    {
+      "id": "interruption",
+      "tags": [
+        "speaker_structure",
+        "authored_regression"
+      ],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {
+        "name": "interruption",
+        "provenance": "Newly authored minimal fixture for existing regression categories; not a captured model run"
+      },
+      "source_blocks": [
+        {
+          "id": "1",
+          "text": "- I thought you said—"
+        },
+        {
+          "id": "2",
+          "text": "- I said wait."
+        }
+      ],
+      "candidate_blocks": [
+        {
+          "id": "1",
+          "translation": "- 我以为你说——"
+        },
+        {
+          "id": "2",
+          "translation": "- 我说了，等着。"
+        }
+      ],
+      "reference_blocks": [
+        {
+          "id": "1",
+          "translation": "- 我以为你说——"
+        },
+        {
+          "id": "2",
+          "translation": "- 我说了，等着。"
+        }
+      ],
+      "expected_terms": []
+    },
+    {
+      "id": "ellipsis-reference",
+      "tags": [
+        "cross_sentence_reference",
+        "authored_regression"
+      ],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {
+        "name": "ellipsis-reference",
+        "provenance": "Newly authored minimal fixture for existing regression categories; not a captured model run"
+      },
+      "source_blocks": [
+        {
+          "id": "1",
+          "text": "The blue wire, not the red one."
+        },
+        {
+          "id": "2",
+          "text": "Cut it now."
+        }
+      ],
+      "candidate_blocks": [
+        {
+          "id": "1",
+          "translation": "是蓝线，不是红线。"
+        },
+        {
+          "id": "2",
+          "translation": "现在剪断蓝线。"
+        }
+      ],
+      "reference_blocks": [
+        {
+          "id": "1",
+          "translation": "是蓝线，不是红线。"
+        },
+        {
+          "id": "2",
+          "translation": "现在剪断蓝线。"
+        }
+      ],
+      "expected_terms": []
+    },
+    {
+      "id": "conditional-counterfactual",
+      "tags": [
+        "condition",
+        "authored_regression"
+      ],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {
+        "name": "conditional-counterfactual",
+        "provenance": "Newly authored minimal fixture for existing regression categories; not a captured model run"
+      },
+      "source_blocks": [
+        {
+          "id": "1",
+          "text": "If she had called sooner,"
+        },
+        {
+          "id": "2",
+          "text": "we could have stopped the launch."
+        }
+      ],
+      "candidate_blocks": [
+        {
+          "id": "1",
+          "translation": "要是她早点打来电话，"
+        },
+        {
+          "id": "2",
+          "translation": "我们本可以阻止发射。"
+        }
+      ],
+      "reference_blocks": [
+        {
+          "id": "1",
+          "translation": "要是她早点打来电话，"
+        },
+        {
+          "id": "2",
+          "translation": "我们本可以阻止发射。"
+        }
+      ],
+      "expected_terms": []
+    },
+    {
+      "id": "sound-music",
+      "tags": [
+        "sound_description",
+        "authored_regression"
+      ],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {
+        "name": "sound-music",
+        "provenance": "Newly authored minimal fixture for existing regression categories; not a captured model run"
+      },
+      "source_blocks": [
+        {
+          "id": "1",
+          "text": "[soft music]"
+        },
+        {
+          "id": "2",
+          "text": "There is no place like home."
+        }
+      ],
+      "candidate_blocks": [
+        {
+          "id": "1",
+          "translation": "[轻柔的音乐]"
+        },
+        {
+          "id": "2",
+          "translation": "还是家里好。"
+        }
+      ],
+      "reference_blocks": [
+        {
+          "id": "1",
+          "translation": "[轻柔的音乐]"
+        },
+        {
+          "id": "2",
+          "translation": "还是家里好。"
+        }
+      ],
+      "expected_terms": []
+    },
+    {
+      "id": "negative-quantity",
+      "tags": [
+        "negation",
+        "authored_regression"
+      ],
+      "source_language": "en",
+      "target_language": "zh-CN",
+      "project": {
+        "name": "negative-quantity",
+        "provenance": "Newly authored minimal fixture for existing regression categories; not a captured model run"
+      },
+      "source_blocks": [
+        {
+          "id": "1",
+          "text": "Not all the doors are locked."
+        },
+        {
+          "id": "2",
+          "text": "Try the one beside the stairs."
+        }
+      ],
+      "candidate_blocks": [
+        {
+          "id": "1",
+          "translation": "并非所有门都锁了。"
+        },
+        {
+          "id": "2",
+          "translation": "试试楼梯旁边那扇。"
+        }
+      ],
+      "reference_blocks": [
+        {
+          "id": "1",
+          "translation": "并非所有门都锁了。"
+        },
+        {
+          "id": "2",
+          "translation": "试试楼梯旁边那扇。"
+        }
+      ],
+      "expected_terms": []
+    }
+  ]
+}

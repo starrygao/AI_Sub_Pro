@@ -5,6 +5,10 @@ import os
 import json
 import copy
 import shutil
+import threading
+import uuid
+import logging
+from app.credentials import SystemCredentialStore, CredentialError
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -175,7 +179,20 @@ def _backup_invalid_config() -> None:
     shutil.copy2(CONFIG_FILE, backup)
 
 
+def credential_store():
+    return SystemCredentialStore(CONFIG_FILE)
+
+
+def _secret_fields(data):
+    keys = data.get("api_keys", {})
+    if isinstance(keys, dict):
+        for key in keys:
+            yield "api_keys", key
+    yield "tmdb", "api_key"
+
+
 class Config:
+    _lock = threading.RLock()
     _data: dict = {}
 
     @classmethod
@@ -191,13 +208,91 @@ class Config:
                 cls._data = copy.deepcopy(DEFAULT_CONFIG)
         else:
             cls._data = copy.deepcopy(DEFAULT_CONFIG)
+        # Credential failures must never be interpreted as corrupt JSON.
+        refs = saved.get("_credential_refs", {}) if CONFIG_FILE.exists() and 'saved' in locals() and isinstance(saved, dict) else {}
+        cls._data.pop("_credential_refs", None)
+        store = credential_store()
+        for section, key in _secret_fields(cls._data):
+            ref = refs.get(section + "." + key)
+            if ref:
+                value = store.get(ref)
+                if value is None:
+                    raise CredentialError("已保存的系统凭证无法读取；原配置已保留")
+                cls._data.setdefault(section, {})[key] = value
         cls.save()
         return cls._data
 
     @classmethod
-    def save(cls):
+    def _persist(cls, data):
         from app.utils.project_store import atomic_write_json
-        atomic_write_json(CONFIG_FILE, cls._data)
+        store = credential_store()
+        disk = copy.deepcopy(data)
+        disk.pop("_credential_refs", None)
+        old_refs = {}
+        if CONFIG_FILE.exists():
+            try:
+                old_refs = json.loads(CONFIG_FILE.read_text()).get("_credential_refs", {})
+            except (ValueError, AttributeError):
+                pass
+        refs, created = {}, []
+        publishing = False
+        try:
+            for section, key in _secret_fields(disk):
+                field = section + "." + key
+                value = disk.get(section, {}).get(key, "")
+                old = old_refs.get(field)
+                if value:
+                    if old and store.get(old) == value:
+                        refs[field] = old
+                    else:
+                        ref = uuid.uuid4().hex
+                        created.append(ref)
+                        store.set(ref, value)
+                        if store.get(ref) != value:
+                            raise CredentialError("系统凭证写入验证失败，原配置已保留")
+                        refs[field] = ref
+                disk.setdefault(section, {})[key] = ""
+            if refs:
+                disk["_credential_refs"] = refs
+            publishing = True
+            atomic_write_json(CONFIG_FILE, disk)
+        except Exception:
+            # A rename may commit before the filesystem reports a sync error.
+            # Never delete credentials that the visible config now references.
+            if publishing:
+                try:
+                    if json.loads(CONFIG_FILE.read_text()) == disk:
+                        logging.getLogger(__name__).warning("Configuration committed; durability confirmation failed, old credential retained")
+                        return
+                except (OSError, ValueError):
+                    pass
+            for ref in created:
+                try:
+                    store.delete(ref)
+                except CredentialError:
+                    pass
+            raise
+        for ref in set(old_refs.values()) - set(refs.values()):
+            try:
+                store.delete(ref)
+            except CredentialError:
+                logging.getLogger(__name__).warning("Obsolete credential cleanup deferred")
+
+    @classmethod
+    def save(cls):
+        with cls._lock:
+            cls._persist(cls._data)
+
+    @classmethod
+    def public_dict(cls):
+        data = cls.to_dict()
+        configured = {}
+        for section, key in _secret_fields(data):
+            configured[key if section == "api_keys" else "tmdb"] = bool(data.get(section, {}).get(key))
+            data.setdefault(section, {})[key] = ""
+        data.pop("_credential_refs", None)
+        data["credentials_configured"] = configured
+        return data
 
     @classmethod
     def get(cls, *keys, default=None):
@@ -213,19 +308,25 @@ class Config:
     def set_val(cls, *keys_and_value):
         """set_val('api_keys', 'openai', 'sk-xxx') -> config[api_keys][openai] = 'sk-xxx'"""
         keys, value = keys_and_value[:-1], keys_and_value[-1]
-        d = cls._data
-        for k in keys[:-1]:
-            d = d.setdefault(k, {})
-        d[keys[-1]] = value
-        cls.save()
+        with cls._lock:
+            data = copy.deepcopy(cls._data)
+            d = data
+            for key in keys[:-1]:
+                d = d.setdefault(key, {})
+            d[keys[-1]] = value
+            cls._persist(data)
+            cls._data = data
 
     @classmethod
     def update(cls, data: dict):
-        sanitized = copy.deepcopy(data)
-        _drop_legacy_cli_models(sanitized)
-        cls._data = _deep_merge(cls._data, sanitized)
-        _drop_legacy_cli_models(cls._data)
-        cls.save()
+        with cls._lock:
+            sanitized = copy.deepcopy(data)
+            sanitized.pop("_credential_refs", None)
+            _drop_legacy_cli_models(sanitized)
+            updated = _deep_merge(cls._data, sanitized)
+            _drop_legacy_cli_models(updated)
+            cls._persist(updated)
+            cls._data = updated
 
     @classmethod
     def to_dict(cls) -> dict:

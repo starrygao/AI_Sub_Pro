@@ -18,7 +18,7 @@ def _run_semantic_pipeline_case(
     supports_missing_retry=False,
 ):
     """Run the real translation pipeline while replacing only the model boundary."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pdir = tmp_path / pid
@@ -91,7 +91,7 @@ def test_semantic_verdict_parser_normalizes_resolution_route(
     route,
     expected_route,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     issue = api_translate._semantic_issue_from_verdict(
         {
@@ -108,7 +108,7 @@ def test_semantic_verdict_parser_normalizes_resolution_route(
 
 
 def test_semantic_prompts_declare_resolution_route_contract():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     for prompt in (
         api_translate._semantic_qa_prompt("简体中文"),
@@ -121,7 +121,7 @@ def test_semantic_prompts_declare_resolution_route_contract():
 
 
 def test_semantic_ledger_roundtrip_preserves_resolution_route():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -168,7 +168,7 @@ def test_semantic_ledger_roundtrip_preserves_resolution_route():
 
 
 def test_strict_preflight_selection_unions_passes_by_current_hash_and_human_wins():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -241,7 +241,7 @@ def test_strict_preflight_selection_unions_passes_by_current_hash_and_human_wins
 
 
 def test_strict_preflight_human_route_overrides_same_uncertainty_identity():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -293,7 +293,7 @@ def test_strict_preflight_human_route_overrides_same_uncertainty_identity():
     ],
 )
 def test_semantic_qa_skips_regular_sound_verb_morphology(source):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils.srt import SubtitleBlock
 
     block = SubtitleBlock(
@@ -309,7 +309,7 @@ def test_semantic_qa_skips_regular_sound_verb_morphology(source):
 
 def test_start_asr_initializes_workflow_state(tmp_project_dir, monkeypatch):
     from app.api import projects as projects_api
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
     from app.main import app
 
@@ -350,7 +350,7 @@ def test_start_asr_initializes_workflow_state(tmp_project_dir, monkeypatch):
 
 def test_retry_rejects_active_task(tmp_project_dir, monkeypatch):
     from app.api import projects as projects_api
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
     from app.main import app
 
@@ -377,7 +377,7 @@ def test_retry_rejects_active_task(tmp_project_dir, monkeypatch):
 
 def test_retry_blank_stage_falls_back_to_latest_failed(tmp_project_dir, monkeypatch):
     from app.api import projects as projects_api
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.workflow_state import fail_stage, reset_workflow
     from app.utils import project_store
     from app.main import app
@@ -420,7 +420,7 @@ def test_retry_blank_stage_falls_back_to_latest_failed(tmp_project_dir, monkeypa
 
 def test_resume_chooses_translate_when_filtered_srt_exists(tmp_project_dir, monkeypatch):
     from app.api import projects as projects_api
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
     from app.main import app
 
@@ -464,7 +464,7 @@ def test_resume_chooses_translate_when_filtered_srt_exists(tmp_project_dir, monk
 
 def test_resume_ignores_translated_srt_directory(tmp_project_dir, monkeypatch):
     from app.api import projects as projects_api
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
     from app.main import app
 
@@ -503,7 +503,7 @@ def test_resume_ignores_translated_srt_directory(tmp_project_dir, monkeypatch):
 
 def test_resume_ignores_raw_srt_symlink_outside_project(tmp_project_dir, monkeypatch):
     from app.api import projects as projects_api
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
     from app.main import app
 
@@ -545,7 +545,7 @@ def test_resume_ignores_raw_srt_symlink_outside_project(tmp_project_dir, monkeyp
 
 
 def test_build_bilingual_tracks_skips_symlinked_generated_zh_output(tmp_project_dir, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "tracksymlink"
@@ -577,7 +577,7 @@ def test_build_bilingual_tracks_skips_symlinked_generated_zh_output(tmp_project_
 
 
 def test_build_bilingual_tracks_generates_regular_project_local_tracks(tmp_project_dir, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "trackregular"
@@ -608,7 +608,7 @@ def test_build_bilingual_tracks_generates_regular_project_local_tracks(tmp_proje
 
 
 def test_reset_workflow_for_action_preserves_retry_count(tmp_project_dir):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.workflow_state import fail_stage, load_workflow_state, reset_workflow
 
     pid = "retrykeep"
@@ -634,7 +634,7 @@ def test_emit_progress_routes_through_scheduler():
     ``from app.engines.scheduler import update_progress as _scheduler_update_progress``
     so patching the origin doesn't rebind already-imported callers.
     """
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     with patch.object(api_translate, "_scheduler_update_progress") as mock_update:
         api_translate._emit_progress("pidx", stage="asr", local_pct=10, msg="m")
     mock_update.assert_called_once_with("pidx", stage="asr", local_pct=10, msg="m")
@@ -642,13 +642,13 @@ def test_emit_progress_routes_through_scheduler():
 
 def test_translate_module_reexports_scheduler_progress_store():
     """Compatibility import must still expose scheduler's progress_store."""
-    from app.api.translate import progress_store as from_translate
+    from app.services.translation_tasks import progress_store as from_translate
     from app.engines.scheduler import progress_store as from_scheduler
     assert from_translate is from_scheduler
 
 
 def test_translate_pipeline_ignores_malformed_filter_entries_per_block(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "trans001"
@@ -709,7 +709,7 @@ def test_translate_pipeline_ignores_malformed_filter_entries_per_block(tmp_path,
 
 
 def test_translate_pipeline_does_not_apply_stale_filter_state_to_filtered_srt(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "trans004"
@@ -754,7 +754,7 @@ def test_translate_pipeline_does_not_apply_stale_filter_state_to_filtered_srt(tm
 
 
 def test_translate_pipeline_tolerates_malformed_progress_callback_values(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "trans002"
@@ -794,7 +794,7 @@ def test_translate_pipeline_tolerates_malformed_progress_callback_values(tmp_pat
 
 
 def test_translate_pipeline_writes_quality_report(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transqa"
@@ -857,7 +857,7 @@ def test_translate_pipeline_writes_quality_report(tmp_path, monkeypatch):
 
 
 def test_translate_pipeline_before_burn_stays_at_global_75(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transbeforeburn"
@@ -925,7 +925,7 @@ def test_translate_pipeline_before_burn_stays_at_global_75(tmp_path, monkeypatch
 
 
 def test_pipeline_orchestrators_pass_explicit_burn_followup(monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     calls = []
     monkeypatch.setattr(api_translate, "_run_asr_pipeline", lambda *args, **kwargs: None)
@@ -973,7 +973,7 @@ def test_translate_pipeline_final_artifacts_are_transactional_on_publish_failure
     monkeypatch,
     failure_stage,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
     from app.utils import srt as srt_utils
 
@@ -1077,7 +1077,7 @@ def test_publish_cleans_real_stage_when_handle_close_fails(
     failed_allocation,
     first_cleanup_fails,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
     import tempfile as real_tempfile
     from types import SimpleNamespace
@@ -1155,7 +1155,7 @@ def test_save_subtitles_rejects_verify_to_clear_publish_window(
 
     from fastapi.testclient import TestClient
     from app.api import projects as projects_api
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.main import app
     from app.utils import project_store
     from app.utils.srt import SubtitleBlock, write_bilingual_srt
@@ -1261,7 +1261,7 @@ def test_subtitle_put_cannot_enter_publish_to_certification_window(
 
     from fastapi.testclient import TestClient
     from app.api import projects as projects_api
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.main import app
     from app.utils import project_store
 
@@ -1375,7 +1375,7 @@ def _configure_source_generation_pipeline(
     translated_text="流水线认证译文。",
 ):
     from app.api import projects as projects_api
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pdir = tmp_path / pid
@@ -1801,7 +1801,7 @@ def test_cancel_during_registered_launch_window_cancels_new_task(
             (pdir / "project.json").read_text(encoding="utf-8")
         )["status"] == old_status
     else:
-        from app.api import translate as api_translate
+        from app.services import translation_tasks as api_translate
 
         pdir = tmp_path / pid
         pdir.mkdir(parents=True)
@@ -1983,7 +1983,7 @@ def test_cancel_ack_survives_registered_thread_start_failure(
 ):
     """Catches launch rollback resurrecting the pre-cancel project state."""
     from app.api import projects as projects_api
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "cancel-ack-start-failure"
@@ -2043,7 +2043,7 @@ def test_full_pipeline_preserves_committed_burn_failure_after_late_cancel(
     """Catches the full-pipeline wrapper overwriting burn's terminal commit."""
     import threading
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.scheduler import (
         discard_cancel_generation,
         request_cancel,
@@ -2164,7 +2164,7 @@ def test_thread_start_failure_restores_launch_initialization_bytes_and_retries(
             pid=pid,
         )
     else:
-        from app.api import translate as api_translate
+        from app.services import translation_tasks as api_translate
 
         pdir = tmp_path / pid
         pdir.mkdir()
@@ -2305,7 +2305,7 @@ def test_launch_artifact_restore_durably_syncs_replace_or_unlink(
     import os
     import stat
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     path = tmp_path / "project.json"
     path.write_bytes(b"launch-state")
@@ -2362,7 +2362,7 @@ def test_launch_artifact_restore_directory_fsync_failure_is_retryable(
     import os
     import stat
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     path = tmp_path / "workflow_state.json"
     path.write_bytes(b"launch-state")
@@ -3938,7 +3938,7 @@ def test_publish_first_promotion_failure_leaves_delivery_invalid(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
     from app.utils.srt import SubtitleBlock, write_bilingual_srt
 
@@ -3992,7 +3992,7 @@ def test_publish_restores_old_artifacts_but_keeps_them_hidden_on_late_failure(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
     from app.utils.srt import SubtitleBlock, write_bilingual_srt
 
@@ -4052,7 +4052,7 @@ def test_publish_reports_rollback_permission_error_and_hides_leftover(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.api import projects as projects_api
     from app.utils import project_store
     from app.utils.srt import SubtitleBlock, write_bilingual_srt
@@ -4145,7 +4145,7 @@ def test_publish_reports_rollback_permission_error_and_hides_leftover(
 
 
 def test_publish_success_removes_delivery_sentinel(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
     from app.utils.srt import SubtitleBlock, write_bilingual_srt
 
@@ -4185,7 +4185,7 @@ def test_publish_sentinel_clear_failure_rolls_back_and_remains_hidden(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
     from app.utils.srt import SubtitleBlock, write_bilingual_srt
 
@@ -4234,7 +4234,7 @@ def test_publish_sentinel_clear_failure_rolls_back_and_remains_hidden(
 
 
 def test_translate_pipeline_marks_contextual_background_speakers(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "contextspeaker"
@@ -4295,7 +4295,7 @@ def test_translate_pipeline_marks_contextual_background_speakers(tmp_path, monke
 
 
 def test_full_pipeline_stops_before_burn_when_quality_gate_fails(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "fullqagate"
@@ -4367,7 +4367,7 @@ def test_full_pipeline_stops_before_burn_when_quality_gate_fails(tmp_path, monke
 
 
 def test_translate_done_message_ignores_blank_sound_descriptions(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transsound"
@@ -4420,7 +4420,7 @@ def test_translate_done_message_ignores_blank_sound_descriptions(tmp_path, monke
 
 
 def test_translate_pipeline_marks_partial_translation_as_error(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transpartial"
@@ -4486,7 +4486,7 @@ def test_translate_pipeline_marks_partial_translation_as_error(tmp_path, monkeyp
 
 
 def test_translate_pipeline_blocks_export_when_cleaned_translation_is_empty(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transexportempty"
@@ -4540,7 +4540,7 @@ def test_translate_pipeline_blocks_export_when_cleaned_translation_is_empty(tmp_
 
 
 def test_translate_pipeline_professional_semantic_mismatch_blocks_delivery(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transsemanticbad"
@@ -4616,7 +4616,7 @@ def test_translate_pipeline_professional_semantic_mismatch_blocks_delivery(tmp_p
 
 
 def test_professional_semantic_uncertainty_requires_human_review():
-    from app.api.translate import (
+    from app.services.translation_tasks import (
         _finalize_quality_conclusion,
         _refresh_quality_report_issue_summary,
         _run_semantic_quality_checks,
@@ -4672,7 +4672,7 @@ def test_professional_semantic_uncertainty_requires_human_review():
 
 def test_full_semantic_scan_accepts_only_exact_ok_verdict():
     """Catches malformed mixed verdict text being treated as an explicit OK."""
-    from app.api.translate import _run_semantic_quality_checks
+    from app.services.translation_tasks import _run_semantic_quality_checks
 
     block = type("Block", (), {
         "index": 11,
@@ -4719,7 +4719,7 @@ def test_full_semantic_scan_accepts_only_exact_ok_verdict():
 )
 def test_full_semantic_scan_rejects_non_exact_id_multiset(raw_results):
     """Catches a partial/duplicate/extra provider response certifying a batch."""
-    from app.api.translate import _run_semantic_quality_checks
+    from app.services.translation_tasks import _run_semantic_quality_checks
 
     blocks = [
         type("Block", (), {
@@ -4751,7 +4751,7 @@ def test_full_semantic_scan_rejects_non_exact_id_multiset(raw_results):
 
 
 def test_semantic_qa_uses_dialogue_only_items_and_bounded_authoritative_context():
-    from app.api.translate import _run_semantic_quality_checks
+    from app.services.translation_tasks import _run_semantic_quality_checks
     from app.engines.kb_models import ProjectKb, TermEntry
 
     blocks = [
@@ -4958,7 +4958,7 @@ def test_semantic_qa_uses_dialogue_only_items_and_bounded_authoritative_context(
 
 
 def test_semantic_qa_context_serializes_untrusted_values_without_prompt_escape():
-    from app.api.translate import _semantic_qa_prompt
+    from app.services.translation_tasks import _semantic_qa_prompt
     from app.engines.kb_models import ProjectKb, TermEntry
 
     prompt = _semantic_qa_prompt(
@@ -5152,7 +5152,7 @@ def test_professional_pipeline_keeps_uncertainty_across_second_quality_persisten
 
 
 def test_professional_semantic_provider_unavailable_fails_closed():
-    from app.api.translate import _run_semantic_quality_checks
+    from app.services.translation_tasks import _run_semantic_quality_checks
 
     blocks = [
         type("Block", (), {
@@ -5284,7 +5284,7 @@ def test_professional_pipeline_fails_closed_for_semantic_coverage_errors(
 
 
 def test_professional_semantic_batch_failure_tracks_failed_ids():
-    from app.api.translate import _run_semantic_quality_checks
+    from app.services.translation_tasks import _run_semantic_quality_checks
 
     blocks = [
         type("Block", (), {
@@ -5319,7 +5319,7 @@ def test_professional_semantic_batch_failure_tracks_failed_ids():
 
 
 def test_professional_semantic_partial_coverage_fails_closed():
-    from app.api.translate import _run_semantic_quality_checks
+    from app.services.translation_tasks import _run_semantic_quality_checks
 
     blocks = [
         type("Block", (), {
@@ -5361,7 +5361,7 @@ def test_professional_semantic_partial_coverage_fails_closed():
 
 
 def test_quality_gate_rejects_stale_or_hash_mismatched_report(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "staleqareport"
@@ -5479,7 +5479,7 @@ def test_quality_gate_rejects_malformed_or_contradictory_certification(
 ):
     import copy
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "malformedcert"
@@ -5545,7 +5545,7 @@ def test_quality_gate_decision_keeps_validated_human_review_classification(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "reviewdecision"
@@ -5615,7 +5615,7 @@ def test_quality_gate_decision_keeps_validated_human_review_classification(
 
 
 def test_translation_start_invalidates_prior_certification(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "invalidateqa"
@@ -5653,7 +5653,7 @@ def test_translate_pipeline_does_not_swallow_quality_report_persistence_failure(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines import translation_qa
     from app.utils import project_store
 
@@ -5720,7 +5720,7 @@ def test_translate_pipeline_does_not_swallow_quality_report_persistence_failure(
 
 
 def test_translate_pipeline_final_retry_repairs_missing_translation(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transfinalretry"
@@ -5798,7 +5798,7 @@ def test_translate_pipeline_final_retry_repairs_missing_translation(tmp_path, mo
 
 
 def test_translate_pipeline_skips_final_retry_when_missing_count_is_catastrophic(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transfinalretryhuge"
@@ -5874,7 +5874,7 @@ def test_translate_pipeline_skips_final_retry_when_missing_count_is_catastrophic
 def test_translate_pipeline_retries_missing_created_after_quality_repair(tmp_path, monkeypatch):
     from pathlib import Path
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transpostqaretry"
@@ -6067,7 +6067,7 @@ def test_translate_pipeline_skips_recertification_when_post_quality_retry_is_noo
 ):
     from pathlib import Path
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transpostqanoop"
@@ -6190,7 +6190,7 @@ def test_translate_pipeline_skips_recertification_when_post_quality_retry_is_noo
 
 
 def test_translate_pipeline_can_auto_repair_quality_issues(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transrepair"
@@ -6254,7 +6254,7 @@ def test_translate_pipeline_can_auto_repair_quality_issues(tmp_path, monkeypatch
 
 
 def test_translate_pipeline_auto_repair_preserves_omitted_rows(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translator import SubtitleTranslator
     from app.utils import project_store
 
@@ -6329,7 +6329,7 @@ def test_translate_pipeline_auto_repair_preserves_omitted_rows(tmp_path, monkeyp
 
 
 def test_translate_pipeline_does_not_auto_repair_scientific_terms_without_expected(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transscientificnorepair"
@@ -6391,7 +6391,7 @@ def test_translate_pipeline_does_not_auto_repair_scientific_terms_without_expect
 
 
 def test_translate_pipeline_normalizes_curated_scientific_terms_before_model_repair(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transscientificcuratedrepair"
@@ -6468,7 +6468,7 @@ def test_translate_pipeline_normalizes_curated_scientific_terms_before_model_rep
 
 
 def test_translate_pipeline_does_not_auto_repair_inferred_proper_names(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transpropernamenorepair"
@@ -6535,7 +6535,7 @@ def test_translate_pipeline_does_not_auto_repair_inferred_proper_names(tmp_path,
 
 
 def test_quality_gate_does_not_block_expected_name_at_question_tail():
-    from app.api.translate import _finalize_quality_conclusion
+    from app.services.translation_tasks import _finalize_quality_conclusion
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
 
     report = TranslationQaReport(
@@ -6562,7 +6562,7 @@ def test_quality_gate_does_not_block_expected_name_at_question_tail():
 
 
 def test_quality_gate_error_failure_is_unattended_not_human_review():
-    from app.api.translate import _finalize_quality_conclusion
+    from app.services.translation_tasks import _finalize_quality_conclusion
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
 
     report = TranslationQaReport(
@@ -6595,7 +6595,7 @@ def test_quality_gate_error_failure_is_unattended_not_human_review():
 
 
 def test_quality_gate_warning_passes_with_report_only_notice():
-    from app.api.translate import _finalize_quality_conclusion
+    from app.services.translation_tasks import _finalize_quality_conclusion
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
 
     report = TranslationQaReport(
@@ -6625,7 +6625,7 @@ def test_quality_gate_warning_passes_with_report_only_notice():
 
 
 def test_quality_gate_never_claims_recheck_passed_after_not_improved_round():
-    from app.api.translate import _finalize_quality_conclusion
+    from app.services.translation_tasks import _finalize_quality_conclusion
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
 
     report = TranslationQaReport(
@@ -6660,7 +6660,7 @@ def test_quality_gate_never_claims_recheck_passed_after_not_improved_round():
 
 
 def test_apply_repair_results_counts_nonempty_responses_and_changed_unique_ids():
-    from app.api.translate import _apply_nonempty_repair_results
+    from app.services.translation_tasks import _apply_nonempty_repair_results
     from app.utils.srt import SubtitleBlock
 
     blocks = [
@@ -6700,7 +6700,7 @@ def test_apply_repair_results_counts_nonempty_responses_and_changed_unique_ids()
 
 
 def test_apply_repair_results_counts_only_net_changes_for_duplicate_ids():
-    from app.api.translate import _apply_nonempty_repair_results
+    from app.services.translation_tasks import _apply_nonempty_repair_results
     from app.utils.srt import SubtitleBlock
 
     block = SubtitleBlock(
@@ -6733,7 +6733,7 @@ def test_apply_repair_results_counts_only_net_changes_for_duplicate_ids():
 
 def test_apply_repair_results_rejects_meta_contamination_before_mutation():
     """The repair apply boundary must retain the prior draft on invalid output."""
-    from app.api.translate import _apply_nonempty_repair_results
+    from app.services.translation_tasks import _apply_nonempty_repair_results
     from app.utils.srt import SubtitleBlock
 
     block = SubtitleBlock(
@@ -6767,7 +6767,7 @@ def test_apply_repair_results_rejects_meta_contamination_before_mutation():
 
 
 def test_apply_repair_results_validates_semantic_group_before_atomic_mutation():
-    from app.api.translate import _apply_nonempty_repair_results
+    from app.services.translation_tasks import _apply_nonempty_repair_results
     from app.utils.srt import SubtitleBlock
 
     blocks = [
@@ -6809,7 +6809,7 @@ def test_apply_repair_results_validates_semantic_group_before_atomic_mutation():
 
 
 def test_apply_repair_results_commits_valid_semantic_group_together():
-    from app.api.translate import _apply_nonempty_repair_results
+    from app.services.translation_tasks import _apply_nonempty_repair_results
     from app.utils.srt import SubtitleBlock
 
     blocks = [
@@ -6854,7 +6854,7 @@ def test_apply_repair_results_commits_valid_semantic_group_together():
 def test_auto_repair_provider_exception_rolls_back_prior_batch_mutation():
     from types import SimpleNamespace
 
-    from app.api.translate import _auto_repair_quality_issues
+    from app.services.translation_tasks import _auto_repair_quality_issues
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -6930,7 +6930,7 @@ def test_auto_repair_provider_exception_rolls_back_prior_batch_mutation():
 
 
 def test_quality_conclusion_separates_deterministic_normalization_from_model_repair():
-    from app.api.translate import _finalize_quality_conclusion
+    from app.services.translation_tasks import _finalize_quality_conclusion
     from app.engines.translation_qa import TranslationQaReport
 
     normalization = {
@@ -7008,7 +7008,7 @@ def test_quality_conclusion_separates_deterministic_normalization_from_model_rep
 def test_quality_conclusion_preserves_three_round_provenance_events_across_resume():
     import json
 
-    from app.api.translate import _finalize_quality_conclusion
+    from app.services.translation_tasks import _finalize_quality_conclusion
     from app.engines.translation_qa import TranslationQaReport
 
     persisted_trace = json.loads(json.dumps({
@@ -7091,7 +7091,7 @@ def test_quality_conclusion_preserves_three_round_provenance_events_across_resum
 
 
 def test_repair_provenance_rediscovery_uses_current_block_hash_for_86_shape():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -7125,7 +7125,7 @@ def test_repair_provenance_rediscovery_uses_current_block_hash_for_86_shape():
 
 
 def test_repair_provenance_group_companion_excludes_59_61_seed():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     assert api_translate._group_companion_block_ids(
         {59, 60, 61},
@@ -7134,7 +7134,7 @@ def test_repair_provenance_group_companion_excludes_59_61_seed():
 
 
 def test_auto_repair_keeps_semantic_group_atomic_and_refreshes_later_context():
-    from app.api.translate import _auto_repair_quality_issues
+    from app.services.translation_tasks import _auto_repair_quality_issues
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -7228,7 +7228,7 @@ def test_auto_repair_keeps_semantic_group_atomic_and_refreshes_later_context():
 
 
 def test_semantic_repair_fails_closed_when_atomic_group_exceeds_batch_capacity():
-    from app.api.translate import _auto_repair_quality_issues
+    from app.services.translation_tasks import _auto_repair_quality_issues
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -7298,7 +7298,7 @@ def test_translate_pipeline_records_improved_and_still_failing_ids(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transrepairtruth"
@@ -7378,7 +7378,7 @@ def test_translate_pipeline_removes_sdh_reintroduced_by_model_repair(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transrepairsdh"
@@ -7441,7 +7441,7 @@ def test_translate_pipeline_counts_model_changes_after_normalization(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transrepairnormalizedback"
@@ -7519,7 +7519,7 @@ def test_translate_pipeline_rolls_back_partial_multi_batch_repair_failure(
     tmp_path,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transrepairpartialfailure"
@@ -7604,7 +7604,7 @@ def test_translate_pipeline_rolls_back_partial_multi_batch_repair_failure(
 
 
 def test_translate_pipeline_batches_auto_repair_and_records_trace(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "transrepaircap"
@@ -7696,7 +7696,7 @@ def test_translate_pipeline_batches_auto_repair_and_records_trace(tmp_path, monk
 
 
 def test_translate_pipeline_limits_auto_repair_rounds(tmp_path, monkeypatch):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
 
     assert translate_api._repair_round_limit({"translation": {}}) == 3
     assert translate_api._repair_round_limit({"translation": {"qa_auto_repair_rounds": 0}}) == 3
@@ -7719,7 +7719,7 @@ def _run_auto_repair_semantic_guard_case(
 ):
     from copy import deepcopy
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines import knowledge, translation_qa
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
@@ -7955,7 +7955,7 @@ def _run_auto_repair_group_guard_case(
     from copy import deepcopy
     from types import SimpleNamespace
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines import knowledge, translation_qa
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
@@ -8916,7 +8916,7 @@ def test_strict_candidate_requires_two_explicit_focused_semantic_oks(
     from copy import deepcopy
     from types import SimpleNamespace
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines import knowledge, translation_qa
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
@@ -9168,7 +9168,7 @@ def test_targeted_semantic_verdicts_reject_evidence_from_another_block(
     verdict,
     taxonomy,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -9249,7 +9249,7 @@ def test_targeted_semantic_verdicts_reject_evidence_from_another_block(
 
 
 def test_targeted_semantic_evidence_accepts_short_punctuated_exact_excerpts():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -9306,7 +9306,7 @@ def test_targeted_semantic_evidence_accepts_short_punctuated_exact_excerpts():
 
 def test_targeted_semantic_multiline_exact_evidence_is_explicit_ok():
     """LF and CRLF evidence must fully cover the same two-line candidate."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     item = {
         "id": 625,
@@ -9344,7 +9344,7 @@ def test_targeted_semantic_multiline_exact_evidence_is_explicit_ok():
 @pytest.mark.parametrize("forbidden", ["\r", "\t", "\x00", "\u200b", "\u202e"])
 def test_targeted_semantic_evidence_rejects_unsafe_control_characters(forbidden):
     """Bare controls, zero-width text, and bidi overrides remain fail-closed."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     item = {"id": 1, "original": "No.", "draft": "不。"}
     result = {
@@ -9364,7 +9364,7 @@ def test_targeted_semantic_evidence_rejects_unsafe_control_characters(forbidden)
 
 def test_targeted_semantic_partial_evidence_has_incomplete_stage():
     """Anchored excerpts that omit candidate content are incomplete, not unanchored."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     item = {
         "id": 451,
@@ -9388,7 +9388,7 @@ def test_targeted_semantic_partial_evidence_has_incomplete_stage():
 
 def test_targeted_semantic_one_partial_pass_never_verifies_strict_candidate():
     """One incomplete pass plus one complete pass cannot satisfy strict two-OK."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -9454,7 +9454,7 @@ def test_targeted_semantic_one_partial_pass_never_verifies_strict_candidate():
 
 def test_targeted_semantic_items_include_complete_five_cue_group_context():
     """Targeted batches may split at four, but every item keeps the full group."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -9495,7 +9495,7 @@ def test_targeted_semantic_items_include_complete_five_cue_group_context():
 
 def test_targeted_semantic_five_member_group_payload_deduplicates_context():
     """A five-member unit carries one bounded outer context, not five copies."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -9607,7 +9607,7 @@ def _semantic_group_response(
 
 def test_targeted_semantic_group_double_ok_accepts_396_397_equivalent_regrouping():
     """A two-cue sentence is certified by two bound group verdicts, not per cue."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     blocks, prior_report = _semantic_group_396_397_fixture()
 
@@ -9659,7 +9659,7 @@ def test_targeted_semantic_group_double_ok_accepts_396_397_equivalent_regrouping
 
 def test_targeted_semantic_group_pass_two_non_ok_rejects_every_member():
     """One non-OK group pass prevents every member from being verified."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     blocks, prior_report = _semantic_group_396_397_fixture()
 
@@ -9713,7 +9713,7 @@ def test_targeted_semantic_group_pass_two_non_ok_rejects_every_member():
 
 def test_targeted_semantic_two_groups_use_four_isolated_strict_calls():
     """Each group gets its own provider request and cannot taint its peer."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -9838,7 +9838,7 @@ def test_targeted_semantic_group_binding_and_anchored_evidence_fail_closed(
     expected_stage,
 ):
     """Group ids, hash, coverage, membership and order are mandatory."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     blocks, prior_report = _semantic_group_396_397_fixture()
 
@@ -9914,7 +9914,7 @@ def test_targeted_semantic_group_non_ok_requires_focused_member_evidence(
     target_focus,
 ):
     """A non-cross taxonomy needs one focused member; peers are full context."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -9980,7 +9980,7 @@ def test_targeted_semantic_group_non_ok_requires_focused_member_evidence(
 
 def test_targeted_semantic_cross_block_non_ok_binds_focused_group_evidence():
     """Cross-cue defects bind focused excerpts to different member ids."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     blocks, prior_report = _semantic_group_396_397_fixture()
 
@@ -10033,7 +10033,7 @@ def test_targeted_semantic_group_non_ok_rejects_full_echo_as_taxonomy_evidence(
     taxonomy,
 ):
     """Full member echoes are neutral context, never proof of a group defect."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     blocks, prior_report = _semantic_group_396_397_fixture()
 
@@ -10072,7 +10072,7 @@ def test_targeted_semantic_group_non_ok_rejects_full_echo_as_taxonomy_evidence(
 
 def test_targeted_semantic_group_missing_member_structure_fails_whole_group():
     """An unconstructable member prevents provider review of the whole group."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     blocks, prior_report = _semantic_group_396_397_fixture()
     blocks[1].translation = ""
@@ -10110,7 +10110,7 @@ def test_targeted_semantic_group_missing_member_structure_fails_whole_group():
 
 def test_targeted_semantic_group_double_ok_resolves_ledger_by_member_current_hash():
     """A bound group verdict resolves each old issue to its own current hash."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     blocks, prior_report = _semantic_group_396_397_fixture()
     ledger = {"outstanding": [], "resolved": []}
@@ -10164,7 +10164,7 @@ def test_targeted_semantic_group_double_ok_resolves_ledger_by_member_current_has
 
 
 def test_targeted_semantic_retries_invalid_evidence_without_relaxing_two_ok():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -10242,7 +10242,7 @@ def test_targeted_semantic_retries_invalid_evidence_without_relaxing_two_ok():
 
 
 def test_targeted_semantic_retry_exhaustion_still_fails_closed():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -10304,7 +10304,7 @@ def test_targeted_semantic_retry_exhaustion_still_fails_closed():
 
 
 def test_targeted_semantic_items_mark_prior_issues_as_historical():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -10344,7 +10344,7 @@ def test_targeted_semantic_items_mark_prior_issues_as_historical():
 
 
 def test_targeted_semantic_prior_hash_uses_full_block_source_not_issue_excerpt():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -10380,7 +10380,7 @@ def test_targeted_semantic_prior_hash_uses_full_block_source_not_issue_excerpt()
 
 
 def test_targeted_semantic_provider_failure_is_not_retried_as_schema_error():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -10450,7 +10450,7 @@ def test_targeted_semantic_provider_failure_is_not_retried_as_schema_error():
 def test_targeted_semantic_verification_rejects_malformed_codex_normalized_fields(
     payload_override,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.providers.codex_cli import CodexCliProvider
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
@@ -10512,7 +10512,7 @@ def test_targeted_semantic_verification_rejects_malformed_codex_normalized_field
 
 
 def test_targeted_semantic_verification_rejects_codex_result_without_verdict():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.providers.codex_cli import CodexCliProvider
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
@@ -10572,7 +10572,7 @@ def test_targeted_semantic_verification_rejects_codex_result_without_verdict():
 def test_targeted_semantic_verification_rejects_codex_result_id_violations(
     response_violation,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.providers.codex_cli import CodexCliProvider
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
@@ -10651,7 +10651,7 @@ def _run_targeted_semantic_evidence_case(
     verdict,
     taxonomy,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -11610,7 +11610,7 @@ def test_targeted_semantic_multifragment_evidence_anchors_each_excerpt(
 def test_targeted_semantic_verification_fails_closed_on_unusable_coverage(
     provider_mode,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -11698,7 +11698,7 @@ def test_targeted_semantic_verification_fails_closed_on_unusable_coverage(
 
 
 def test_targeted_double_ok_resolves_502_uncertainty_for_new_content_hash():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -11788,7 +11788,7 @@ def test_targeted_double_ok_resolves_502_uncertainty_for_new_content_hash():
 
 
 def test_rollback_overlay_cannot_reinsert_same_hash_after_targeted_double_ok():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
 
@@ -11848,7 +11848,7 @@ def test_rollback_overlay_cannot_reinsert_same_hash_after_targeted_double_ok():
 
 
 def test_same_hash_qa_revalidation_preserves_other_semantic_issue_types():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
 
     content_hash = (
@@ -11908,7 +11908,7 @@ def test_same_hash_qa_revalidation_preserves_other_semantic_issue_types():
 
 
 def test_semantic_ledger_resolved_dedupe_keeps_distinct_issue_types():
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     content_hash = "sha256:same-content"
     resolution = {
@@ -11949,7 +11949,7 @@ def test_semantic_qa_failed_same_hash_is_reverified_without_forced_rewrite(
 ):
     from copy import deepcopy
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines import knowledge, translation_qa
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
@@ -12094,7 +12094,7 @@ def test_convergence_scan_gives_new_issue_identity_a_repair_round(
 ):
     from copy import deepcopy
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines import knowledge, translation_qa
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
@@ -12312,7 +12312,7 @@ def test_quality_run_state_enforces_total_auto_repair_budget_across_persists(
 ):
     from copy import deepcopy
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines import knowledge, translation_qa
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
@@ -12507,7 +12507,7 @@ def test_semantic_issue_ledger_is_hash_bound_and_survives_later_false_negatives(
 ):
     from copy import deepcopy
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines import knowledge, translation_qa
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
@@ -12654,7 +12654,7 @@ def test_final_certification_recovery_is_new_identity_only_and_hard_bounded(
 ):
     from copy import deepcopy
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines import knowledge, translation_qa
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
@@ -12859,7 +12859,7 @@ def test_non_strict_certification_final_records_same_hash_rediscovery(
 ):
     from copy import deepcopy
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines import knowledge, translation_qa
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
@@ -13007,7 +13007,7 @@ def test_final_certification_recovery_flag_survives_same_run_resume(
 ):
     from copy import deepcopy
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines import knowledge, translation_qa
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
@@ -13136,7 +13136,7 @@ def test_final_certification_recovery_preserves_full_mixed_identity_group(
 ):
     from copy import deepcopy
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines import knowledge, translation_qa
     from app.engines.translation_qa import (
         QualityIssue,
@@ -13410,7 +13410,7 @@ def test_final_duplicate_id_does_not_consume_later_semantic_recovery(
 ):
     from copy import deepcopy
 
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines import knowledge, translation_qa
     from app.engines.translation_qa import QualityIssue, TranslationQaReport
     from app.utils.srt import SubtitleBlock
@@ -13514,7 +13514,7 @@ def test_final_duplicate_id_does_not_consume_later_semantic_recovery(
 
 
 def test_translate_pipeline_redacts_exception_details_in_project_error(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
     pid = "trans003"
@@ -13555,7 +13555,7 @@ def test_translate_pipeline_redacts_exception_details_in_project_error(tmp_path,
 
 
 def test_asr_pipeline_writes_filter_state_with_atomic_json(tmp_path, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.utils import project_store
     from app.utils.srt import SubtitleBlock
 

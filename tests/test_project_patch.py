@@ -98,7 +98,7 @@ def test_patch_translation_context_immediately_stales_certification(client):
 
 def test_patch_translation_context_is_rejected_while_translation_active(client):
     """Catches mutating translation semantics after a worker snapshot."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     pid = _make_project(client)
     with api_translate._tasks_lock:
@@ -441,7 +441,8 @@ def test_delete_rejects_processing_or_pipeline_project(client, project_updates):
 
 
 def test_delete_rejects_registered_task_even_if_status_is_stale(client, monkeypatch):
-    from app.api import projects, translate
+    from app.api import projects
+    from app.services import translation_tasks as translate
 
     pid = _make_project(client)
     pdir = projects.PROJECTS_DIR / pid

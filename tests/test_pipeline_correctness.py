@@ -70,7 +70,7 @@ def test_start_burn_failure_marks_status_translated_with_error(tmp_project_dir, 
     background task, the project status must be set to 'translated' with an
     error note — matching the failure behavior of _run_burn_pipeline. Without
     this, the UI shows stale state and users don't know burn failed."""
-    from app.api import translate as tr
+    from app.services import translation_tasks as tr
     from app.api import projects as projects_api
     from app.utils import project_store
 
@@ -107,7 +107,7 @@ def test_translate_load_project_rejects_invalid_pid():
     project_store.load_project gives us the same path-traversal guard the
     write-side already has via mutate_project."""
     from fastapi import HTTPException
-    from app.api import translate as tr
+    from app.services import translation_tasks as tr
 
     with pytest.raises(HTTPException) as exc_info:
         tr._load_project("../etc/passwd")

@@ -3,7 +3,7 @@ import json
 
 def test_translate_loader_applies_safe_defaults(tmp_project_dir, monkeypatch):
     """Legacy projects loaded through api/translate._load_project must get safe defaults."""
-    import app.api.translate as translate_mod
+    import app.services.translation_tasks as translate_mod
     monkeypatch.setattr(translate_mod, "PROJECTS_DIR", tmp_project_dir, raising=False)
 
     pid = "legacy_translate"
@@ -34,7 +34,7 @@ def test_translate_loader_applies_safe_defaults(tmp_project_dir, monkeypatch):
 def test_translate_loader_defaults_asr_skipped(tmp_project_dir, monkeypatch):
     """asr_skipped is written by the trailer pipeline; _apply_safe_defaults
     must declare it so reload-after-restart returns a closed schema."""
-    import app.api.translate as translate_mod
+    import app.services.translation_tasks as translate_mod
     monkeypatch.setattr(translate_mod, "PROJECTS_DIR", tmp_project_dir, raising=False)
 
     pid = "pre_phase5_proj"

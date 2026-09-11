@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from app.api import translate
+from app.services import translation_tasks as translate
 
 
 def test_try_register_task_rejects_duplicate(monkeypatch):

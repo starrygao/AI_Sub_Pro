@@ -1,14 +1,15 @@
 #!/bin/bash
 # 构建 AI Sub Pro macOS DMG 安装包
-# 产出: dist/AI_Sub_Pro_v1.3.28.dmg
+# 产出: dist/AI_Sub_Pro_v1.3.29.dmg
 set -e
 cd "$(dirname "$0")"
 
 APP_NAME="AI Sub Pro"
-VERSION="1.3.28"
+VERSION="1.3.29"
 DMG_NAME="AI_Sub_Pro_v${VERSION}"
 APP_PATH="dist/${APP_NAME}.app"
 DMG_STAGING=""
+CODESIGN_IDENTITY="${AISUBPRO_CODESIGN_IDENTITY:--}"
 USE_CREATE_DMG="${AISUBPRO_USE_CREATE_DMG:-0}"
 
 cleanup_create_dmg_temp_images() {
@@ -64,22 +65,23 @@ echo "[3/5] 代码签名 (ad-hoc)..."
 codesign --remove-signature "$APP_PATH" 2>/dev/null || true
 # 对所有 .so / .dylib 签名
 find "$APP_PATH" -name "*.so" -o -name "*.dylib" | while read lib; do
-    codesign --force --sign - "$lib" 2>/dev/null || true
+    codesign --force --sign "$CODESIGN_IDENTITY" "$lib" 2>/dev/null || true
 done
 # 对 ffmpeg/ffprobe 签名
 find "$APP_PATH" -name "ffmpeg" -o -name "ffprobe" | while read bin; do
-    codesign --force --sign - "$bin" 2>/dev/null || true
+    codesign --force --sign "$CODESIGN_IDENTITY" "$bin" 2>/dev/null || true
 done
 # 对主可执行文件签名
 find "$APP_PATH/Contents/MacOS" -type f -perm +111 | while read exe; do
-    codesign --force --sign - "$exe" 2>/dev/null || true
+    codesign --force --sign "$CODESIGN_IDENTITY" "$exe" 2>/dev/null || true
 done
 # 对整个 .app 签名
-codesign --force --deep --sign - "$APP_PATH"
+codesign --force --deep --sign "$CODESIGN_IDENTITY" "$APP_PATH"
 echo "  签名完成"
 
 # 验证签名
-codesign --verify --deep "$APP_PATH" 2>&1 && echo "  签名验证: 通过" || echo "  签名验证: 部分警告（ad-hoc 正常）"
+codesign --verify --deep --strict "$APP_PATH"
+echo "  签名验证: 通过"
 
 # ── 第4步: 创建 DMG ──
 echo ""

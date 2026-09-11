@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.api import projects as projects_api
-from app.api import translate as translate_api
+from app.services import translation_tasks as translate_api
 import app.utils.project_store as project_store_module
 
 
@@ -44,7 +44,7 @@ def _seed_project(tmp_project_dir, pid, source_type="trailer", translated_text="
 
 
 def test_build_bilingual_tracks_returns_two_tracks(patched_projects_dir):
-    from app.api.translate import _build_bilingual_tracks
+    from app.services.translation_tasks import _build_bilingual_tracks
 
     _seed_project(patched_projects_dir, "t1", source_type="trailer")
     tracks = _build_bilingual_tracks("t1")
@@ -55,7 +55,7 @@ def test_build_bilingual_tracks_returns_two_tracks(patched_projects_dir):
 
 
 def test_build_bilingual_tracks_generates_zh_en_srt_files(patched_projects_dir):
-    from app.api.translate import _build_bilingual_tracks
+    from app.services.translation_tasks import _build_bilingual_tracks
 
     pdir = _seed_project(patched_projects_dir, "t2", source_type="trailer")
     _build_bilingual_tracks("t2")
@@ -68,7 +68,7 @@ def test_build_bilingual_tracks_generates_zh_en_srt_files(patched_projects_dir):
 
 
 def test_build_bilingual_tracks_only_returns_existing_tracks(patched_projects_dir):
-    from app.api.translate import _build_bilingual_tracks
+    from app.services.translation_tasks import _build_bilingual_tracks
 
     pdir = _seed_project(patched_projects_dir, "t2_partial", source_type="trailer")
     (pdir / "filtered.srt").unlink()
@@ -83,7 +83,7 @@ def test_build_bilingual_tracks_only_returns_existing_tracks(patched_projects_di
 
 def test_trailer_burn_uses_two_tracks(patched_projects_dir, monkeypatch):
     """_run_burn_pipeline on a trailer project calls burn_subtitles with 2 tracks."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     _seed_project(patched_projects_dir, "t3", source_type="trailer")
 
@@ -105,7 +105,7 @@ def test_trailer_burn_uses_two_tracks(patched_projects_dir, monkeypatch):
 
 def test_upload_burn_uses_single_track_with_legacy_style(patched_projects_dir, monkeypatch):
     """_run_burn_pipeline on an upload project uses 1 track with legacy style (Hiragino Sans GB / 22)."""
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     _seed_project(patched_projects_dir, "u1", source_type="upload")
 
@@ -128,7 +128,7 @@ def test_upload_burn_uses_single_track_with_legacy_style(patched_projects_dir, m
 
 
 def test_burn_pipeline_refuses_symlinked_output_path(patched_projects_dir, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
     from app.engines.workflow_state import load_workflow_state
 
     pid = "u_symlink_output"
@@ -157,7 +157,7 @@ def test_burn_pipeline_refuses_symlinked_output_path(patched_projects_dir, monke
 
 
 def test_start_burn_refuses_symlinked_output_path(patched_projects_dir, monkeypatch):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     pid = "start_symlink_output"
     pdir = _seed_project(patched_projects_dir, pid, source_type="upload")
@@ -191,7 +191,7 @@ def test_start_burn_refuses_symlinked_output_path(patched_projects_dir, monkeypa
 
 
 def test_burn_without_subtitles_records_visible_error(patched_projects_dir):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     pdir = _seed_project(patched_projects_dir, "u2", source_type="upload")
     (pdir / "translated.srt").unlink()
@@ -208,7 +208,7 @@ def test_burn_rejects_translation_artifacts_while_delivery_sentinel_exists(
     patched_projects_dir,
     monkeypatch,
 ):
-    from app.api import translate as api_translate
+    from app.services import translation_tasks as api_translate
 
     pid = "blockedburn"
     pdir = _seed_project(patched_projects_dir, pid, source_type="upload")

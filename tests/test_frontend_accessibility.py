@@ -209,12 +209,12 @@ def test_provider_key_test_buttons_have_disabled_and_loading_states():
     js = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
     css = (ROOT / "app/static/css/app.css").read_text(encoding="utf-8")
 
-    assert "keyStatus[provider]==='testing' || !settings.api_keys[provider]?.trim()" in html
+    assert "keyStatus[provider]==='testing' || (!settings.api_keys[provider]?.trim() && !credentialConfigured(provider))" in html
     assert "keyStatus[provider]==='testing' ? '测试中...' : '测试'" in html
     assert ':disabled="settingsSaving"' in html
     assert "settingsSaving ? '保存中...' : '保存设置'" in html
     assert "settingsApiKeyProviders()" in html
-    assert "settingsApiKeyProviders()" in js
+    assert "settingsApiKeyProviders()" in (ROOT / "app/static/js/model-settings.js").read_text()
     assert "modelErrors.primary" in html
     assert "modelErrors.polish" in html
     assert "settings-login-button" in html

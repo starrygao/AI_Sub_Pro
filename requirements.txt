@@ -6,3 +6,4 @@ python-multipart>=0.0.6
 websockets>=12.0
 yt-dlp
 guessit>=3.8.0
+keyring==25.7.0

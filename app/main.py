@@ -275,7 +275,7 @@ def _graceful_shutdown_timeout() -> int:
 def _uvicorn_run_kwargs(host: str, *, log_level: str = "info") -> dict:
     return {
         "host": host,
-        "port": 18090,
+        "port": int(os.environ.get("AISUBPRO_PORT", "18090")),
         "log_level": log_level,
         "ws": "websockets-sansio",
         "timeout_graceful_shutdown": _graceful_shutdown_timeout(),

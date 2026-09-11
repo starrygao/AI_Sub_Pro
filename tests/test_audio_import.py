@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 def _client(tmp_project_dir, monkeypatch):
     from app.api import projects as projects_api
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
     from app.utils import project_store
 
     monkeypatch.setattr(projects_api, "PROJECTS_DIR", tmp_project_dir)
@@ -68,7 +68,7 @@ def test_import_audio_rejects_non_audio_extension(client):
 
 
 def test_start_transcribe_translate_skips_burn_for_audio_project(tmp_project_dir, monkeypatch):
-    from app.api import translate as translate_api
+    from app.services import translation_tasks as translate_api
     from app.utils import project_store
 
     monkeypatch.setattr(translate_api, "PROJECTS_DIR", tmp_project_dir)

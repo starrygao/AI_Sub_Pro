@@ -35,7 +35,7 @@ def test_cleanup_intermediate_is_noop_when_absent(tmp_path):
 
 def test_burn_success_triggers_cleanup(tmp_project_dir, monkeypatch):
     """End-to-end: _run_burn_pipeline success removes audio intermediates."""
-    from app.api import translate as tr
+    from app.services import translation_tasks as tr
     from app.api import projects as projects_api
 
     pid = "burnok01"
@@ -68,7 +68,7 @@ def test_burn_success_triggers_cleanup(tmp_project_dir, monkeypatch):
 
 def test_burn_failure_preserves_intermediates(tmp_project_dir, monkeypatch):
     """Failure path: intermediates remain so user can debug / re-run ASR."""
-    from app.api import translate as tr
+    from app.services import translation_tasks as tr
     from app.api import projects as projects_api
 
     pid = "burnfail1"

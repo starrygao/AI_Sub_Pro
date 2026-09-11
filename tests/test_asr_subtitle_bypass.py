@@ -41,7 +41,7 @@ def _make_project(tmp_path, *, sub_idx, prefer=True, video_exists=True):
 def test_bypass_succeeds_when_track_selected(tmp_path):
     """Happy path: subtitle extracts cleanly → raw.srt + filtered.srt
     written, ASR skipped."""
-    from app.api import translate
+    from app.services import translation_tasks as translate
 
     pid, pdir, project = _make_project(tmp_path, sub_idx=0)
 
@@ -62,7 +62,7 @@ def test_bypass_succeeds_when_track_selected(tmp_path):
 
 def test_bypass_skipped_when_user_opts_out(tmp_path):
     """prefer_embedded_subtitle=False → return False without touching ffmpeg."""
-    from app.api import translate
+    from app.services import translation_tasks as translate
 
     pid, pdir, project = _make_project(tmp_path, sub_idx=0, prefer=False)
 
@@ -82,7 +82,7 @@ def test_bypass_skipped_when_user_opts_out(tmp_path):
 
 
 def test_bypass_skipped_when_no_track_selected(tmp_path):
-    from app.api import translate
+    from app.services import translation_tasks as translate
     pid, pdir, project = _make_project(tmp_path, sub_idx=None)
 
     with patch.object(translate, "_emit_progress"):
@@ -93,7 +93,7 @@ def test_bypass_skipped_when_no_track_selected(tmp_path):
 def test_bypass_falls_through_when_extraction_fails(tmp_path):
     """ffmpeg returns False (e.g. PGS bitmap codec) → return False so
     caller can fall back to ASR."""
-    from app.api import translate
+    from app.services import translation_tasks as translate
 
     pid, pdir, project = _make_project(tmp_path, sub_idx=0)
 
@@ -107,7 +107,7 @@ def test_bypass_falls_through_when_extraction_fails(tmp_path):
 def test_bypass_falls_through_when_extracted_srt_is_empty(tmp_path):
     """ffmpeg returns True but the extracted SRT parses to 0 blocks
     (corrupt / empty stream) → fall back to ASR."""
-    from app.api import translate
+    from app.services import translation_tasks as translate
 
     pid, pdir, project = _make_project(tmp_path, sub_idx=0)
 
@@ -126,7 +126,7 @@ def test_bypass_falls_through_when_extracted_srt_is_empty(tmp_path):
 def test_bypass_writes_both_raw_and_filtered_srt(tmp_path):
     """Translate pipeline reads filtered.srt first, then raw.srt — write
     both so the order in translate.py doesn't matter."""
-    from app.api import translate
+    from app.services import translation_tasks as translate
 
     pid, pdir, project = _make_project(tmp_path, sub_idx=2)
 
@@ -148,7 +148,7 @@ def test_bypass_writes_both_raw_and_filtered_srt(tmp_path):
 
 
 def test_bypass_switches_saved_forced_track_to_regular_track(tmp_path):
-    from app.api import translate
+    from app.services import translation_tasks as translate
 
     pid, pdir, project = _make_project(tmp_path, sub_idx=0)
     project["subtitle_tracks"] = [

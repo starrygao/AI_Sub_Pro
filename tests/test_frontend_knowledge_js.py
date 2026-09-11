@@ -41,7 +41,7 @@ def test_knowledge_view_loads_on_navigation_not_hidden_page_init():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8')));
         const context = {
           console,
           setTimeout,
@@ -107,7 +107,7 @@ def test_knowledge_list_loader_keeps_empty_state_out_of_loading_path():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8')));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -156,7 +156,7 @@ def test_project_quality_helpers_load_suggestions_and_report():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8')));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -276,7 +276,7 @@ def test_project_translation_strategy_helpers_load_and_format_status():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8')));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -332,7 +332,7 @@ def test_knowledge_navigation_closes_new_kb_prompt_without_dirty_editor():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8')));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -374,7 +374,7 @@ def test_open_project_respects_unsaved_knowledge_guard_before_fetching_detail():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8')));
         const context = { console, setTimeout, clearTimeout, WebSocket: function() {} };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -425,7 +425,7 @@ def test_knowledge_frontend_loads_usage_trace_for_current_project():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8')));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -519,7 +519,7 @@ def test_open_project_auto_loads_kb_suggestions_without_generating():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8')));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -585,7 +585,7 @@ def test_knowledge_frontend_ignores_stale_usage_trace_response():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8')));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -643,7 +643,7 @@ def test_open_project_loads_usage_trace_after_setting_current_project():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8')));
         const context = {
           console,
           setTimeout,
@@ -702,7 +702,7 @@ def test_knowledge_frontend_loads_and_accepts_suggestions():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8')));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -776,7 +776,7 @@ def test_knowledge_frontend_rejects_suggestion_and_refreshes():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8')));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -834,7 +834,7 @@ def test_knowledge_frontend_reject_ignores_stale_project_response():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8')));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);
@@ -896,7 +896,7 @@ def test_knowledge_frontend_ignores_stale_suggestions_and_accept_during_load():
         const fs = require('fs');
         const vm = require('vm');
 
-        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8'));
+        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8')));
         const context = { console, setTimeout, clearTimeout };
         vm.createContext(context);
         vm.runInContext(code, context);

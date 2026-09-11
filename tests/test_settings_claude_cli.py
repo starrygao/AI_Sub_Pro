@@ -1163,7 +1163,7 @@ def test_model_catalog_frontend_backend_parity_without_credentials():
     const fs = require('fs'), vm = require('vm');
     const ctx = {console, setTimeout, clearTimeout};
     vm.createContext(ctx);
-    vm.runInContext(('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + fs.readFileSync('app/static/js/app.js', 'utf8')), ctx);
+    vm.runInContext(('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'))), ctx);
     const state = ctx.app();
     console.log(JSON.stringify(Object.fromEntries(
       ['openai', 'deepseek', 'gemini', 'claude_cli', 'codex_cli'].map(

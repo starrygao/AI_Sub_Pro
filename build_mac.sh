@@ -10,6 +10,7 @@ echo "=== AI Sub Pro macOS Build ==="
 echo ""
 
 # Step 1: Check deps
+python3 tools/release/verify_environment.py
 echo "[1/4] Checking dependencies..."
 python3 -c "import PyInstaller" 2>/dev/null || { echo "ERROR: pip3 install pyinstaller"; exit 1; }
 python3 -c "import webview" 2>/dev/null || { echo "ERROR: pip3 install pywebview"; exit 1; }
@@ -37,6 +38,7 @@ if [ ! -x "$FFPROBE_PATH" ]; then
 fi
 echo "  ffmpeg:  $FFMPEG_PATH"
 echo "  ffprobe: $FFPROBE_PATH"
+python3 tools/release/verify_environment.py --ffmpeg "$FFMPEG_PATH" --output "$ROOT_DIR/.release-venv/release-environment.json"
 
 BUNDLE_LOCAL_ASR="${AISUBPRO_BUNDLE_LOCAL_ASR:-0}"
 BUNDLE_ASR_BACKENDS="${AISUBPRO_BUNDLE_ASR_BACKENDS:-1}"
@@ -270,3 +272,5 @@ echo ""
 echo "  Note: ASR backends are bundled by default when installed."
 echo "        Set AISUBPRO_BUNDLE_LOCAL_ASR=1 to bundle local ASR models."
 echo "  Data is stored at: ~/AI_Sub_Pro_Data/"
+
+cp "$ROOT_DIR/.release-venv/release-environment.json" dist/release-environment.json

@@ -42,3 +42,5 @@ models/asr/
 
 # Consolidated local runtime data and model caches (may contain secrets)
 .runtime/
+.release-venv/
+node_modules/
