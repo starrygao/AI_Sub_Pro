@@ -20,6 +20,7 @@ from .result_contract import (
 log = logging.getLogger(__name__)
 
 CODEX_CLI_MODELS = [
+    "gpt-6-astra",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
@@ -32,6 +33,7 @@ CODEX_CLI_MODELS = [
 DEFAULT_CODEX_CLI_MODEL = "gpt-5.5"
 ALLOWED_CODEX_CLI_EFFORTS = {"auto", "low", "medium", "high", "xhigh", "max", "ultra"}
 CODEX_CLI_MODEL_EFFORTS = {
+    "gpt-6-astra": {"low", "medium", "high", "xhigh", "max", "ultra"},
     "gpt-5.6-sol": {"low", "medium", "high", "xhigh", "max", "ultra"},
     "gpt-5.6-terra": {"low", "medium", "high", "xhigh", "max", "ultra"},
     "gpt-5.6-luna": {"low", "medium", "high", "xhigh", "max"},

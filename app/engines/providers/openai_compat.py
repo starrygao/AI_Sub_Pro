@@ -178,8 +178,10 @@ class OpenAICompatProvider(BaseProvider):
                 kwargs = {
                     "model": self.model,
                     "messages": messages,
-                    "temperature": 0.3,
                 }
+                # New OpenAI reasoning models reject custom sampling parameters.
+                if not self._uses_openai_reasoning_parameters:
+                    kwargs["temperature"] = 0.3
                 # DeepSeek supports json response format
                 if self.is_deepseek:
                     kwargs["response_format"] = {"type": "json_object"}
@@ -242,13 +244,20 @@ class OpenAICompatProvider(BaseProvider):
         log.error("translate_batch exhausted %d retries: %s", retries, err_msg)
         return [{"id": it.get("id"), "translation": "", "error": err_msg} for it in items]
 
+    @property
+    def _uses_openai_reasoning_parameters(self) -> bool:
+        return self.provider_name == "openai" and self.model.lower().startswith(
+            ("gpt-5", "gpt-6", "o1", "o3", "o4")
+        )
+
     def test_connection(self) -> bool:
         """Test if the provider is reachable."""
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": "Hi"}],
-                max_tokens=5,
+                **({"max_completion_tokens": 32} if self._uses_openai_reasoning_parameters
+                   else {"max_tokens": 5}),
             )
             return bool(response.choices)
         except Exception as e:

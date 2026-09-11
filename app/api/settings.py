@@ -744,15 +744,24 @@ def list_models(provider: str):
     from app.engines.translator import PROVIDER_URLS
     from openai import OpenAI
 
-    # Static fallback model lists (kept up-to-date)
+    # Text translation fallback catalog verified against official model docs on 2026-09-11.
     fallback = {
-        "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "o3-mini", "o4-mini"],
-        "deepseek": ["deepseek-chat", "deepseek-reasoner"],
+        "openai": [
+            "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra",
+            "gpt-5.6-luna", "gpt-5.5", "gpt-5.4",
+            "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5-mini",
+            "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini",
+            "gpt-4o", "gpt-4o-mini",
+        ],
+        "deepseek": [
+            "deepseek-flash", "deepseek-v4-pro", "deepseek-chat",
+            "deepseek-reasoner",
+        ],
         "gemini": [
-            "gemini-3.1-pro-preview", "gemini-3.1-flash-lite-preview",
-            "gemini-3-pro-preview", "gemini-3-flash-preview",
-            "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
-            "gemini-2.0-flash", "gemini-2.0-flash-lite",
+            "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash",
+            "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview",
+            "gemini-3.1-flash-lite", "gemini-3-flash-preview", "gemini-2.5-pro",
+            "gemini-2.5-flash", "gemini-2.5-flash-lite",
         ],
         "claude_cli": CLAUDE_CLI_MODELS,
         "codex_cli": CODEX_CLI_MODELS,
@@ -778,8 +787,9 @@ def list_models(provider: str):
         models = []
         for m in resp.data:
             mid = getattr(m, "id", None)
-            if not isinstance(mid, str) or not mid:
+            if not isinstance(mid, str) or not mid.strip():
                 continue
+            mid = mid.strip()
             # Strip "models/" prefix (Gemini returns this)
             if mid.startswith("models/"):
                 mid = mid[7:]
@@ -788,13 +798,13 @@ def list_models(provider: str):
             skip_keywords = ["embed", "tts", "whisper", "dall-e", "moderation",
                              "babbage", "davinci", "search", "similarity",
                              "realtime", "audio", "transcri", "imagen",
-                             "veo", "gemma", "aqa", "robotics", "nano",
+                             "veo", "gemma", "aqa", "robotics", "-live", "omni", "sora",
                              "customtools", "computer-use", "-image",
                              "lyria", "deep-research"]
             if any(k in lower for k in skip_keywords):
                 continue
             models.append(mid)
-        models.sort()
+        models = sorted(set(models))
         if not models:
             return {"models": fallback.get(provider, []), "fallback": True}
         return {"models": models}

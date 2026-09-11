@@ -701,7 +701,8 @@ def test_models_endpoint_returns_codex_cli_static_models_without_api_key():
     assert r.status_code == 200
     body = r.json()
     assert body["fallback"] is True
-    assert body["models"][:3] == [
+    assert body["models"][:4] == [
+        "gpt-6-astra",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
@@ -1151,3 +1152,44 @@ def test_system_check_reports_configured_bundled_asr_model(monkeypatch, tmp_path
     assert data["whisper_model"] is True
     assert data["model_name"] == "large-v3-turbo"
     assert data["whisper_model_source"] == "bundled"
+
+
+def test_model_catalog_frontend_backend_parity_without_credentials():
+    import json
+    import subprocess
+    from app.api.settings import list_models
+
+    script = """
+    const fs = require('fs'), vm = require('vm');
+    const ctx = {console, setTimeout, clearTimeout};
+    vm.createContext(ctx);
+    vm.runInContext(fs.readFileSync('app/static/js/app.js', 'utf8'), ctx);
+    const state = ctx.app();
+    console.log(JSON.stringify(Object.fromEntries(
+      ['openai', 'deepseek', 'gemini', 'claude_cli', 'codex_cli'].map(
+        p => [p, state.providerModelFallback(p)]))));
+    """
+    frontend = json.loads(subprocess.check_output(['node', '-e', script], text=True))
+    with patch('app.api.settings.Config.to_dict', return_value={'api_keys': {}}):
+        for provider, models in frontend.items():
+            assert list_models(provider)['models'] == models
+            assert len(models) == len(set(models))
+    assert frontend['openai'][0] == 'gpt-6-astra'
+    assert frontend['gemini'][0] == 'gemini-3.8-flash'
+    assert frontend['deepseek'][0] == 'deepseek-flash'
+    assert 'gemini-3-pro-preview' not in frontend['gemini']
+
+
+def test_remote_catalog_preserves_nano_and_filters_media_models():
+    from app.api.settings import list_models
+
+    ids = [' gpt-5-nano ', 'gpt-5-nano', 'gpt-6-astra', 'gpt-image-2',
+           'gpt-live-1', 'sora-2', 'models/gemini-3.8-flash',
+           'gemini-3.1-flash-live-preview', 'gemini-omni-1.1-flash',
+           'gemini-3.1-flash-lite-image', '', None]
+    with patch('app.api.settings.Config.to_dict', return_value={'api_keys': {'openai': 'sk-test'}}), \
+         patch('openai.OpenAI') as client:
+        client.return_value.models.list.return_value = SimpleNamespace(
+            data=[SimpleNamespace(id=model) for model in ids])
+        result = list_models('openai')
+    assert result == {'models': ['gemini-3.8-flash', 'gpt-5-nano', 'gpt-6-astra']}

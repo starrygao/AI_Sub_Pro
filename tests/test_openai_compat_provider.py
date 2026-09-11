@@ -176,3 +176,21 @@ def test_translation_provider_alias_legacy_constructor():
     # after the alias maps to OpenAICompatProvider(config_dict), this raises unless we provide a dual constructor
     assert p.model == "gpt-4o"
     assert p.provider_name == "openai"
+
+
+def test_new_openai_models_use_supported_translation_and_connection_parameters():
+    from types import SimpleNamespace
+    from app.engines.providers.openai_compat import OpenAICompatProvider
+
+    response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+        content='[{"id": 1, "translation": "你好"}]'))])
+    for model in ('gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5-nano', 'gpt-4o'):
+        provider = OpenAICompatProvider({'provider': 'openai', 'api_key': 'sk-test', 'model': model})
+        with patch.object(provider.client.chat.completions, 'create', return_value=response) as create:
+            result = provider.translate_batch([{'id': 1, 'original': 'hello'}], 'Translate', retries=1)
+            assert result[0]['translation'] == '你好'
+            assert ('temperature' in create.call_args.kwargs) == (model == 'gpt-4o')
+            assert provider.test_connection() is True
+            params = create.call_args.kwargs
+            assert ('max_tokens' in params) == (model == 'gpt-4o')
+            assert ('max_completion_tokens' in params) == (model != 'gpt-4o')

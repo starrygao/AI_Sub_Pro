@@ -927,8 +927,8 @@ def test_cli_settings_model_options_follow_shared_model_catalog():
         if (claudeFallback[0] !== 'claude-fable-5') {
           throw new Error(`missing Fable 5 fallback: ${JSON.stringify(claudeFallback)}`);
         }
-        if (JSON.stringify(codexFallback.slice(0, 3)) !== JSON.stringify([
-          'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'
+        if (JSON.stringify(codexFallback.slice(0, 4)) !== JSON.stringify([
+          'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'
         ])) {
           throw new Error(`missing GPT-5.6 fallback: ${JSON.stringify(codexFallback)}`);
         }
@@ -1152,11 +1152,11 @@ def test_frontend_model_loader_updates_selected_model_when_provider_changes():
 
           await state.fetchModels('deepseek', 'primary');
 
-          const expectedModels = ['deepseek-chat', 'deepseek-reasoner'];
+          const expectedModels = ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'];
           if (JSON.stringify(state.primaryModels) !== JSON.stringify(expectedModels)) {
             throw new Error(`expected DeepSeek fallback models, got ${JSON.stringify(state.primaryModels)}`);
           }
-          if (state.settings.translation.primary_model !== 'deepseek-chat') {
+          if (state.settings.translation.primary_model !== 'deepseek-flash') {
             throw new Error(`expected primary model to follow provider, got ${state.settings.translation.primary_model}`);
           }
 

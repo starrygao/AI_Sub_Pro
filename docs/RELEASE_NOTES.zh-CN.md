@@ -2,6 +2,12 @@
 
 语言：[English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.27 - 模型目录更新
+
+- 更新 OpenAI、Codex CLI、Gemini 和 DeepSeek 模型选项。
+- 修复 nano 文本模型被过滤，以及新 OpenAI 模型的请求参数兼容问题。
+- macOS 安装包：`AI_Sub_Pro_v1.3.27.dmg`。
+
 ## v1.3.26 - 专业翻译质量门
 
 主要内容：

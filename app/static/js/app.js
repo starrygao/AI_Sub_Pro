@@ -1937,7 +1937,7 @@ function app() {
           levels = ['low', 'medium', 'high', 'max'];
         }
       } else if (provider === 'codex_cli') {
-        if (model === 'gpt-5.6-sol' || model === 'gpt-5.6-terra') {
+        if (model === 'gpt-6-astra' || model === 'gpt-5.6-sol' || model === 'gpt-5.6-terra') {
           levels = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
         } else if (model === 'gpt-5.6-luna') {
           levels = ['low', 'medium', 'high', 'xhigh', 'max'];
@@ -4666,11 +4666,11 @@ function app() {
 
     providerModelFallback(provider) {
       const fallback = {
-        openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'o3-mini', 'o4-mini'],
-        deepseek: ['deepseek-chat', 'deepseek-reasoner'],
-        gemini: ['gemini-3.1-pro-preview', 'gemini-3.1-flash-lite-preview', 'gemini-3-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'],
+        openai: ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5-mini', 'gpt-5-nano', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'gpt-4o-mini'],
+        deepseek: ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
+        gemini: ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro-preview', 'gemini-3.1-flash-lite', 'gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'],
         claude_cli: ['claude-fable-5', 'claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
-        codex_cli: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark'],
+        codex_cli: ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark'],
       };
       return fallback[provider] || [];
     },
@@ -4764,7 +4764,7 @@ function app() {
       try {
         const testModel = {
           openai: 'gpt-4o-mini',
-          deepseek: 'deepseek-chat',
+          deepseek: 'deepseek-flash',
           gemini: 'gemini-2.5-flash',
           claude_cli: this.translationModelForProvider('claude_cli', 'claude-opus-4-7'),
           codex_cli: this.translationModelForProvider('codex_cli', 'gpt-5.5'),

@@ -2,6 +2,12 @@
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)
 
+## v1.3.27 - Model catalog refresh
+
+- Refresh OpenAI, Codex CLI, Gemini and DeepSeek model options.
+- Preserve nano text models and use compatible parameters for newer OpenAI models.
+- macOS package: `AI_Sub_Pro_v1.3.27.dmg`.
+
 ## v1.3.26 - Professional Translation Quality Gate
 
 Highlights:

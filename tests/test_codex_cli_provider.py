@@ -9,7 +9,8 @@ import pytest
 def test_codex_cli_models_include_gpt_5_6_family():
     from app.engines.providers.codex_cli import CODEX_CLI_MODELS
 
-    assert CODEX_CLI_MODELS[:3] == [
+    assert CODEX_CLI_MODELS[:4] == [
+        "gpt-6-astra",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
