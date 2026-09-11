@@ -1,3 +1,10 @@
+## v1.3.31
+
+Installer: `AI_Sub_Pro_v1.3.31.dmg`
+
+- Allow projects with unfinished strict translation runs to open their source subtitles before translated output exists.
+- Preserve certification checks for existing translations and export, with regression coverage for recognized and cancelled projects.
+
 ## v1.3.30
 
 Installer: `AI_Sub_Pro_v1.3.30.dmg`

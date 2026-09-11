@@ -1512,18 +1512,22 @@ def _get_subtitles_locked(pid: str):
     # Match by timestamp since indices may differ between files
     trans_path = pdir / "translated.srt"
     trans_blocks = []
-    validation = validate_translation_delivery(project, pdir)
-    if validation.expects_certification and not validation.valid:
-        raise HTTPException(409, validation.message)
-    if validation.valid and trans_path.exists():
-        try:
-            trans_blocks = parse_srt_file(str(trans_path))
-        except Exception as e:
-            log.warning(
-                "Could not parse translated subtitles for %s: %s",
-                pid,
-                e,
-            )
+    # Source subtitles remain readable before translation completes, including
+    # strict runs that have an ID but no delivery certificate yet. Only loading
+    # an existing translation requires certification; export keeps its own gate.
+    if trans_path.exists():
+        validation = validate_translation_delivery(project, pdir)
+        if validation.expects_certification and not validation.valid:
+            raise HTTPException(409, validation.message)
+        if validation.valid:
+            try:
+                trans_blocks = parse_srt_file(str(trans_path))
+            except Exception as e:
+                log.warning(
+                    "Could not parse translated subtitles for %s: %s",
+                    pid,
+                    e,
+                )
     if trans_blocks:
         trans_by_time = {}
         for tb in trans_blocks:

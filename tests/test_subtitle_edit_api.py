@@ -348,6 +348,40 @@ def test_get_subtitles_reports_actual_source_file(client, tmp_project_dir):
     assert data["blocks"][0]["text"] == "Hello"
 
 
+@pytest.mark.parametrize("status", ["asr_done", "cancelled"])
+@pytest.mark.parametrize("source_name", ["raw.srt", "filtered.srt"])
+def test_unfinished_strict_project_can_open_source_subtitles(
+    client, tmp_project_dir, status, source_name,
+):
+    pid = _seed_project(tmp_project_dir, "unfinished-strict")
+    pdir = tmp_project_dir / pid
+    project_path = pdir / "project.json"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    project.update(
+        status=status,
+        translation_quality_policy="strict",
+        translation_quality_run_id="unfinished-run",
+    )
+    project_path.write_text(json.dumps(project), encoding="utf-8")
+    (pdir / source_name).write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n", encoding="utf-8",
+    )
+    before = {path.name: path.read_bytes() for path in pdir.iterdir()}
+
+    response = client.get(f"/api/projects/{pid}/subtitles")
+
+    assert response.status_code == 200
+    assert response.json()["source"] == source_name
+    block = response.json()["blocks"][0]
+    assert block["text"] == "Hello"
+    assert not block.get("translation")
+    for export_format in ("translated", "bilingual"):
+        export = client.post(f"/api/projects/{pid}/export?format={export_format}")
+        assert export.status_code == 409
+        assert "quality gate" in export.json()["detail"].lower()
+    assert {path.name: path.read_bytes() for path in pdir.iterdir()} == before
+
+
 def test_get_subtitles_returns_conflict_while_delivery_snapshot_is_locked(
     client,
     tmp_project_dir,
