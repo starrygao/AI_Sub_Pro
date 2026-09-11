@@ -25,7 +25,7 @@
 </div>
 
 <!-- Layout -->
-<div class="app-shell flex h-screen overflow-hidden">
+<div class="app-shell flex h-screen overflow-hidden" :inert="tmdbChoicePrompt">
 
   <!-- Sidebar -->
   <aside class="app-sidebar w-[220px] flex-shrink-0 flex flex-col bg-white/30 backdrop-blur-xl border-r border-black/[0.06]"
@@ -656,6 +656,9 @@
         </div>
       </div>
 
+      <p x-show="isProjectBusy(currentProject) && (currentProject?.tmdb_id || currentProject?.tmdb_candidates?.length)"
+         class="mx-6 mt-3 text-[12px] text-surface-500" role="status">任务进行中，TMDB 关联暂不可更改；下次启动前可先确认影视信息。</p>
+
       <!-- TMDB association banner -->
       <div x-show="currentProject?.tmdb_id"
            class="flex-shrink-0 mx-6 mt-3 glass rounded-2xl p-3 flex items-center justify-between border-l-2 border-l-success">
@@ -676,7 +679,7 @@
           </div>
         </div>
         <button @click="unlinkTmdb()"
-                :disabled="isProjectMutationPending('tmdb', currentProject?.id)"
+                :disabled="isProjectBusy(currentProject) || isProjectMutationPending('tmdb', currentProject?.id)"
                 class="text-[11px] text-surface-400 hover:text-danger transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 x-text="isProjectMutationPending('tmdb', currentProject?.id) ? '处理中...' : '解除关联'"></button>
       </div>
@@ -694,7 +697,7 @@
         <div class="grid grid-cols-2 gap-2">
           <template x-for="c in (currentProject?.tmdb_candidates || [])" :key="c.tmdb_id">
             <button @click="pickTmdbCandidate(c)"
-                    :disabled="isProjectMutationPending('tmdb', currentProject?.id)"
+                    :disabled="isProjectBusy(currentProject) || isProjectMutationPending('tmdb', currentProject?.id)"
                     class="flex items-start gap-2 p-2 rounded-lg hover:bg-black/[0.04] text-left disabled:opacity-50 disabled:cursor-not-allowed">
               <template x-if="c.poster_path">
                 <img :src="`https://image.tmdb.org/t/p/w92${c.poster_path}`" class="w-10 h-14 rounded object-cover flex-shrink-0" />
@@ -1862,6 +1865,43 @@
               class="px-3 py-1.5 rounded-lg text-[12px] font-medium"
               :class="confirmIntent === 'danger' ? 'btn-danger' : 'btn-primary'"
               x-text="confirmConfirmText"></button>
+    </div>
+  </div>
+</div>
+
+<!-- Resolve ambiguous TMDB matches before creating a worker snapshot. -->
+<div x-show="tmdbChoicePrompt" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-4" x-cloak
+     @keydown.escape.window="if (tmdbChoicePrompt) finishTmdbChoice(null)">
+  <div x-ref="tmdbChoiceDialog" class="glass rounded-2xl p-5 overflow-y-auto" role="dialog" aria-modal="true"
+       aria-labelledby="tmdb-choice-title" aria-describedby="tmdb-choice-description" :aria-busy="tmdbChoiceBusy"
+       @keydown.tab="trapTmdbChoiceFocus($event)" style="width: min(30rem, calc(100vw - 2rem)); max-height: 85vh;">
+    <h3 id="tmdb-choice-title" class="text-[14px] font-semibold mb-2">开始前确认影视信息</h3>
+    <p class="text-[12px] text-surface-500 break-words mb-2" x-text="tmdbChoiceProject?.name"></p>
+    <p id="tmdb-choice-description" class="text-[13px] text-surface-500 mb-4">请选择匹配的电影或剧集。关联保存后才会继续启动任务，也可以暂不关联。</p>
+    <div class="space-y-2 mb-4">
+      <template x-for="candidate in (tmdbChoiceProject?.tmdb_candidates || [])" :key="candidate.tmdb_type + ':' + candidate.tmdb_id">
+        <button type="button" @click="finishTmdbChoice(candidate)" :disabled="tmdbChoiceBusy"
+                :aria-label="'关联并继续：' + candidate.title + (candidate.year ? '（' + candidate.year + '）' : '')"
+                class="btn-secondary w-full flex items-start gap-3 p-3 rounded-xl text-left disabled:opacity-50 disabled:cursor-not-allowed">
+          <template x-if="candidate.poster_path">
+            <img :src="'https://image.tmdb.org/t/p/w92' + candidate.poster_path" alt="" class="w-10 h-14 rounded object-cover flex-shrink-0">
+          </template>
+          <span class="min-w-0 flex-1">
+            <span class="block text-[13px] font-medium break-words" x-text="candidate.title"></span>
+            <span class="block text-[12px] text-surface-500 mt-0.5" x-text="(candidate.tmdb_type === 'tv' ? '剧集' : '电影') + ' · ' + (candidate.year || '年份未知') + (candidate.original_language ? ' · ' + candidate.original_language.toUpperCase() : '')"></span>
+            <span class="block text-[12px] text-surface-500 mt-1 break-words" x-text="candidate.overview || ''"></span>
+            <span class="block text-[12px] text-accent mt-2">关联并继续</span>
+          </span>
+        </button>
+      </template>
+    </div>
+    <p x-show="tmdbChoiceBusy" role="status" class="text-[12px] text-surface-500 mb-3">正在保存影视信息…</p>
+    <p x-show="tmdbChoiceError" x-text="tmdbChoiceError" role="alert" class="text-[12px] text-danger mb-3"></p>
+    <div class="flex flex-wrap justify-end gap-2">
+      <button type="button" x-ref="tmdbChoiceCancel" @click="finishTmdbChoice(null)" :disabled="tmdbChoiceBusy"
+              class="btn-secondary px-3 py-2 rounded-lg text-[12px] disabled:opacity-50">取消启动</button>
+      <button type="button" @click="finishTmdbChoice('skip')" :disabled="tmdbChoiceBusy"
+              class="btn-primary px-3 py-2 rounded-lg text-[12px] disabled:opacity-50">暂不关联，继续</button>
     </div>
   </div>
 </div>

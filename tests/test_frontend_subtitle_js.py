@@ -1383,7 +1383,8 @@ def test_project_start_actions_ignore_duplicate_submits_while_pending():
             }
 
             const second = state[methodName]();
-            await Promise.resolve();
+            // Let readiness, TMDB preflight and task settings settle before checking submission.
+            await new Promise(resolve => setImmediate(resolve));
             if (calls !== 1) {
               throw new Error(`${methodName} should ignore duplicate submits, got ${calls} calls`);
             }

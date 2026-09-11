@@ -1,11 +1,11 @@
 #!/bin/bash
 # 构建 AI Sub Pro macOS DMG 安装包
-# 产出: dist/AI_Sub_Pro_v1.3.29.dmg
+# 产出: dist/AI_Sub_Pro_v1.3.30.dmg
 set -e
 cd "$(dirname "$0")"
 
 APP_NAME="AI Sub Pro"
-VERSION="1.3.29"
+VERSION="1.3.30"
 DMG_NAME="AI_Sub_Pro_v${VERSION}"
 APP_PATH="dist/${APP_NAME}.app"
 DMG_STAGING=""

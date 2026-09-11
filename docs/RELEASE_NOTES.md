@@ -1,3 +1,11 @@
+## v1.3.30
+
+Installer: `AI_Sub_Pro_v1.3.30.dmg`
+
+- Resolve ambiguous TMDB matches before launching project tasks, with associate, skip and cancel options.
+- Keep failed association saves retryable without starting a worker; disable association changes during processing.
+- Cover local, batch, translation and resume entry points while retaining the backend context lock.
+
 # Release Notes
 
 Language: [English](RELEASE_NOTES.md) | [简体中文](RELEASE_NOTES.zh-CN.md)

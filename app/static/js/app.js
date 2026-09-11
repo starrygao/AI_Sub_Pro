@@ -88,6 +88,12 @@ function app() {
     taskSettingsAsrLanguage: 'auto',
     taskSettingsTargetLanguage: '简体中文',
     taskSettingsResolve: null,
+    tmdbChoicePrompt: false,
+    tmdbChoiceProject: null,
+    tmdbChoiceResolve: null,
+    tmdbChoiceBusy: false,
+    tmdbChoiceError: '',
+    tmdbChoiceReturnFocus: null,
     homeSourceMode: 'local',
     newVideoPath: '',
     fileImporting: false,
@@ -1433,6 +1439,7 @@ function app() {
         this.applyWorkflowDefaultsFromProject(p);
         await this.setView('detail');
         this.connectWS(p.id);
+        if (!await this.prepareTmdbBeforeStart(p)) return;
         await this.api(`/api/projects/${p.id}/start-translate`, 'POST', { target_language: this.targetLang });
         this.currentProject.status = 'processing';
       } catch(e) {
@@ -1466,6 +1473,7 @@ function app() {
         this.applyWorkflowDefaultsFromProject(p);
         await this.setView('detail');
         this.connectWS(p.id);
+        if (!await this.prepareTmdbBeforeStart(p)) return;
         await this.api(`/api/projects/${p.id}/start-transcribe-translate`, 'POST', {
           language: this.asrLanguage,
           target_language: this.targetLang,
@@ -3157,6 +3165,7 @@ function app() {
       let created = 0;
       let failed = 0;
       const createdProjects = [];
+      let stopped = false;
       for (const videoPath of paths) {
         try {
           const project = await this.api('/api/projects', 'POST', {
@@ -3164,6 +3173,11 @@ function app() {
             asr_language: asrLanguage,
             target_language: targetLanguage,
           });
+          if (!await this.prepareTmdbBeforeStart(project)) {
+            createdProjects.push(project);
+            stopped = true;
+            break;
+          }
           const startBody = {
             workflow_mode: this.normalizeWorkflowMode(taskSettings.workflow_mode, this.canBurnVideo(project)),
             language: asrLanguage,
@@ -3193,7 +3207,9 @@ function app() {
         await this.setView('projects');
       }
 
-      if (created === 0) {
+      if (stopped) {
+        this.toast('已取消后续批量启动，已创建的项目已保留');
+      } else if (created === 0) {
         this.toast(`批量任务未启动：${failed} 个视频创建失败`, 'error');
       } else {
         this.toast(`批量任务已启动：${created} 个${failed ? `，失败 ${failed} 个` : ''}`);
@@ -3268,6 +3284,10 @@ function app() {
         this.applyWorkflowDefaultsFromProject(p);
         await this.setView('detail');
         this.connectWS(p.id);
+        if (!await this.prepareTmdbBeforeStart(p)) {
+          this.toast('项目已创建，未开始处理');
+          return;
+        }
         const taskSettings = await this.openProjectTaskSettings(p, {
           title: '任务设置',
           message: '本地视频已识别完成。选择输出方式和本次任务语言；仅翻译会生成字幕文件，不烧录到视频。',
@@ -3537,8 +3557,79 @@ function app() {
       }
     },
 
+    prepareTmdbBeforeStart(project) {
+      if (!project?.id || project.tmdb_id || !project.tmdb_candidates?.length) return Promise.resolve(true);
+      if (this.tmdbChoiceResolve) return Promise.resolve(false);
+      this.tmdbChoiceProject = project;
+      this.tmdbChoiceError = '';
+      this.tmdbChoiceBusy = false;
+      this.tmdbChoiceReturnFocus = typeof document !== 'undefined' ? document.activeElement : null;
+      this.tmdbChoicePrompt = true;
+      return new Promise(resolve => {
+        this.tmdbChoiceResolve = resolve;
+        this.$nextTick?.(() => this.$refs.tmdbChoiceCancel?.focus());
+      });
+    },
+
+    tmdbAssociationPayload(candidate) {
+      return {
+        tmdb_id: candidate.tmdb_id,
+        tmdb_type: candidate.tmdb_type,
+        show_title: candidate.title,
+        poster_path: candidate.poster_path,
+        original_language: candidate.original_language,
+        clear: ['tmdb_candidates'],
+      };
+    },
+
+    tmdbAssociationError(error) {
+      if (String(error?.message || '').includes('Translation context cannot change while a task is active')) {
+        return '任务正在运行或停止中，请等待任务完全结束后再关联 TMDB。';
+      }
+      return error?.message || '关联保存失败，请重试。';
+    },
+
+    async finishTmdbChoice(choice) {
+      if (!this.tmdbChoiceResolve || this.tmdbChoiceBusy) return;
+      const project = this.tmdbChoiceProject;
+      this.tmdbChoiceBusy = true;
+      this.tmdbChoiceError = '';
+      try {
+        if (choice !== null) {
+          const updated = await this.api(`/api/projects/${project.id}`, 'PATCH',
+            choice === 'skip' ? {clear: ['tmdb_candidates']} : this.tmdbAssociationPayload(choice));
+          Object.assign(project, updated);
+          if (this.currentProject?.id === project.id) this.currentProject = updated;
+        }
+        const resolve = this.tmdbChoiceResolve;
+        this.tmdbChoiceResolve = null;
+        this.tmdbChoicePrompt = false;
+        this.tmdbChoiceProject = null;
+        const previousFocus = this.tmdbChoiceReturnFocus;
+        this.tmdbChoiceReturnFocus = null;
+        resolve(choice !== null);
+        this.$nextTick?.(() => previousFocus?.focus?.());
+      } catch (error) {
+        this.tmdbChoiceError = this.tmdbAssociationError(error);
+      } finally {
+        this.tmdbChoiceBusy = false;
+      }
+    },
+
+    trapTmdbChoiceFocus(event) {
+      const controls = Array.from(this.$refs.tmdbChoiceDialog.querySelectorAll('button:not([disabled]), [tabindex="0"]'));
+      if (!controls.length) { event.preventDefault(); return; }
+      const first = controls[0], last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    },
+
     async pickTmdbCandidate(c) {
       if (!this.currentProject || !c) return;
+      if (this.isProjectBusy(this.currentProject)) {
+        this.toast('任务进行中，请等待任务结束后再更改 TMDB 关联。', 'error');
+        return;
+      }
       const projectId = this.currentProject.id;
       if (this.isProjectMutationPending('tmdb', projectId)) return;
       this.setProjectMutationPending('tmdb', projectId, true);
@@ -3556,7 +3647,7 @@ function app() {
         if (this.currentProject?.id === projectId) this.currentProject = updated;
         this.toast(`已关联 TMDB: ${c.title}`);
       } catch(e) {
-        this.toast(e.message, 'error');
+        this.toast(this.tmdbAssociationError(e), 'error');
       } finally {
         this.setProjectMutationPending('tmdb', projectId, false);
       }
@@ -3582,6 +3673,10 @@ function app() {
 
     async unlinkTmdb() {
       if (!this.currentProject) return;
+      if (this.isProjectBusy(this.currentProject)) {
+        this.toast('任务进行中，请等待任务结束后再更改 TMDB 关联。', 'error');
+        return;
+      }
       const projectId = this.currentProject.id;
       if (this.isProjectMutationPending('tmdb', projectId)) return;
       this.setProjectMutationPending('tmdb', projectId, true);
@@ -3595,7 +3690,7 @@ function app() {
         if (this.currentProject?.id === projectId) this.currentProject = updated;
         this.toast('已解除 TMDB 关联');
       } catch(e) {
-        this.toast(e.message, 'error');
+        this.toast(this.tmdbAssociationError(e), 'error');
       } finally {
         this.setProjectMutationPending('tmdb', projectId, false);
       }
@@ -3692,6 +3787,7 @@ function app() {
       const action = `retry:${normalizedStage}`;
       this.workflowActionPending = action;
       try {
+        if (normalizedStage !== 'burn' && !await this.prepareTmdbBeforeStart(this.currentProject)) return;
         await this.api(`/api/projects/${projectId}/retry`, 'POST', { stage: normalizedStage });
         if (String(this.currentProject?.id || '') === projectId) {
           this.currentProject.status = 'processing';
@@ -3712,6 +3808,7 @@ function app() {
       const projectId = String(this.currentProject.id);
       this.workflowActionPending = 'resume';
       try {
+        if (!await this.prepareTmdbBeforeStart(this.currentProject)) return;
         const result = await this.api(`/api/projects/${projectId}/resume`, 'POST');
         if (String(this.currentProject?.id || '') === projectId) {
           const stage = typeof result?.stage === 'string' ? result.stage.trim() : '';
@@ -3735,6 +3832,7 @@ function app() {
       this.projectActionPending = action;
       try {
         if (options.requiresTranslation && !await this.ensureTranslationReadyForWorkflow()) return;
+        if (action !== 'burn' && !await this.prepareTmdbBeforeStart(this.currentProject)) return;
         await this.api(endpoint, 'POST', body);
         this.currentProject.status = 'processing';
         this.toast(message);
@@ -3797,6 +3895,7 @@ function app() {
         this.projectActionPending = action;
         try {
           if (!await this.ensureTranslationReadyForWorkflow()) return;
+          if (!await this.prepareTmdbBeforeStart(this.currentProject)) return;
           const taskSettings = await this.openProjectTaskSettings(this.currentProject, {
             title: '任务设置',
             message: '选择本次处理的输出方式和语言；仅翻译会生成字幕文件，不烧录到视频。',
