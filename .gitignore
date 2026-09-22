@@ -44,3 +44,6 @@ models/asr/
 .runtime/
 .release-venv/
 node_modules/
+
+# Project-local signing identity and unlock material (never distribute)
+.local-signing/

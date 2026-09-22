@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASE_VERSION = "1.3.32"
+RELEASE_VERSION = "1.3.42"
 
 
 def test_release_workflow_supports_pr_dry_run_tag_release_and_uploads():
@@ -181,8 +181,7 @@ def test_build_mac_stamps_bundle_version_from_app_version():
 
     assert "from app.version import APP_VERSION" in script
     assert 'BUNDLE_IDENTIFIER="com.aisubpro.app"' in script
-    assert 'CODESIGN_IDENTITY="${AISUBPRO_CODESIGN_IDENTITY:--}"' in script
-    assert 'CODESIGN_KEYCHAIN="${AISUBPRO_CODESIGN_KEYCHAIN:-}"' in script
+    assert "source tools/release/signing_env.sh" in script
     assert "CFBundleIdentifier" in script
     assert "CFBundleShortVersionString" in script
     assert "CFBundleVersion" in script

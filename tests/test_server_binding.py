@@ -141,3 +141,55 @@ def test_desktop_entrypoint_does_not_open_window_before_server_is_ready():
     assert "if not server_ready:" in source
     assert "sys.exit(1)" in source
     assert source.index("if not server_ready:") < source.index("webview.create_window")
+
+
+def test_server_logging_initializes_without_console_streams(tmp_path):
+    """Finder launches a windowed PyInstaller app with stdout/stderr set to None."""
+    import subprocess
+    import sys
+    import os
+
+    result = subprocess.run(
+        [sys.executable, '-c', '''
+import sys
+import traceback
+from app import main
+import uvicorn
+report = sys.stderr
+sys.stdout = None
+sys.stderr = None
+try:
+    uvicorn.Config(main.app, **main._uvicorn_run_kwargs('127.0.0.1'))
+except Exception:
+    traceback.print_exc(file=report)
+    raise SystemExit(1)
+'''], cwd=ROOT, capture_output=True, text=True,
+        env=dict(os.environ, AI_SUB_PRO_DATA_DIR=str(tmp_path)),
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_desktop_startup_waits_for_delayed_permission_response(monkeypatch):
+    from app import main
+    from types import SimpleNamespace
+
+    elapsed = [0.0]
+    monkeypatch.setattr('time.monotonic', lambda: elapsed[0])
+    monkeypatch.setattr('time.sleep', lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+    monkeypatch.setattr(main, '_local_server_ready', lambda timeout: elapsed[0] >= 45)
+    assert main._wait_for_local_server(SimpleNamespace(is_alive=lambda: True)) is True
+    assert elapsed[0] == 45
+
+
+def test_desktop_startup_stops_on_server_failure_or_deadline(monkeypatch):
+    from app import main
+    from types import SimpleNamespace
+
+    elapsed = [0.0]
+    monkeypatch.setattr('time.monotonic', lambda: elapsed[0])
+    monkeypatch.setattr('time.sleep', lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+    monkeypatch.setattr(main, '_local_server_ready', lambda timeout: False)
+    assert main._wait_for_local_server(SimpleNamespace(is_alive=lambda: False)) is False
+    assert elapsed[0] == 0
+    assert main._wait_for_local_server(SimpleNamespace(is_alive=lambda: True), timeout=2) is False
+    assert elapsed[0] == 2

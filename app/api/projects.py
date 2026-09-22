@@ -19,12 +19,14 @@ Project management API routes.
 import os
 import json
 import math
+import hashlib
 import uuid
 import shutil
 import re
 import logging
 import tempfile
 from datetime import datetime, timezone
+from dataclasses import replace
 from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlparse
@@ -206,7 +208,7 @@ def _write_editable_source_srt(
     path: Path,
     *,
     include_filtered: bool = False,
-) -> None:
+) -> list[SubtitleBlock]:
     """Write the source timeline used by the editor.
 
     User-inserted rows can legitimately have an empty source text because the
@@ -214,6 +216,7 @@ def _write_editable_source_srt(
     translation text for the source SRT entry.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    written = []
     with open(path, "w", encoding="utf-8") as f:
         seq = 1
         for block in blocks:
@@ -232,7 +235,10 @@ def _write_editable_source_srt(
             f.write(f"{seq}\n")
             f.write(f"{fmt_time(block.start)} --> {fmt_time(block.end)}\n")
             f.write(f"{text.strip()}\n\n")
+            written.append(replace(block, index=seq, text=text.strip(),
+                                   filter_reason=block.filter_reason if block.filtered else ""))
             seq += 1
+    return written
 
 
 def _write_filter_state(blocks: list[SubtitleBlock], path: Path) -> None:
@@ -747,6 +753,8 @@ async def create_project(req: CreateProjectReq):
         if not should_skip_tmdb_enrichment(project):
             from app.engines.tmdb_enrich import enrich_from_filename
             enrich = await enrich_from_filename(name)
+            if enrich.get("lookup"):
+                project["tmdb_lookup"] = enrich["lookup"]
             if enrich.get("auto_attached"):
                 project["tmdb_id"] = enrich["tmdb_id"]
                 project["tmdb_type"] = enrich["tmdb_type"]
@@ -1189,6 +1197,7 @@ _PATCHABLE_FIELDS = {
 }
 
 _CLEARABLE_FIELDS = {
+    "tmdb_lookup",
     "tmdb_id",
     "tmdb_type",
     "season_number",
@@ -1311,8 +1320,11 @@ async def tmdb_search_for_project(req: TmdbSearchReq, pid: str = PathParam(patte
         c for c in (_normalize_candidate(r, kind) for r in results[:10])
         if c.get("tmdb_id") is not None and c.get("title")
     ])
-    mutate_project(pid, lambda p: p.__setitem__("tmdb_candidates", candidates),
-                   normalize=_apply_safe_defaults)
+    def save_search(p):
+        p["tmdb_candidates"] = candidates
+        p.pop("tmdb_lookup", None)
+
+    mutate_project(pid, save_search, normalize=_apply_safe_defaults)
     return {"candidates": candidates}
 
 
@@ -1763,7 +1775,8 @@ def _save_subtitles_locked(
     final_paths = [source_path]
     if write_filter_state:
         final_paths.append(filter_path)
-    final_paths.extend([translated_path, bilingual_path, project_path])
+    checkpoint_path = pdir / "translation_checkpoint.json"
+    final_paths.extend([translated_path, bilingual_path, checkpoint_path, project_path])
     snapshots = _snapshot_subtitle_edit_paths(final_paths)
     stages = {
         path: _subtitle_edit_stage_path(pdir, path.name)
@@ -1772,19 +1785,27 @@ def _save_subtitles_locked(
     promoted: list[Path] = []
     sentinel = mark_translation_delivery_invalid(pdir)
     try:
-        _write_editable_source_srt(
+        written_blocks = _write_editable_source_srt(
             blocks,
             stages[source_path],
             include_filtered=source_keeps_filter_state,
         )
         if write_filter_state:
-            _write_filter_state(blocks, stages[filter_path])
+            _write_filter_state(written_blocks, stages[filter_path])
         write_srt(
             blocks,
             str(stages[translated_path]),
             use_translation=True,
         )
         write_bilingual_srt(blocks, str(stages[bilingual_path]))
+        from app.utils.translation_checkpoint import translation_checkpoint_payload
+        from app.utils.translation_configuration import translation_configuration_hash
+        source_bytes = stages[source_path].read_bytes()
+        if source_keeps_filter_state and write_filter_state:
+            source_bytes += b"\0filter_state.json\0" + stages[filter_path].read_bytes()
+        source_hash = f"sha256:{hashlib.sha256(source_bytes).hexdigest()}"
+        config_hash = translation_configuration_hash(updated_project, config=Config.to_dict(), project_path=pdir)
+        atomic_write_json(stages[checkpoint_path], translation_checkpoint_payload(written_blocks, source_hash, config_hash))
         atomic_write_json(stages[project_path], updated_project)
         _verify_subtitle_edit_stages(stages)
         promoted.extend(final_paths)

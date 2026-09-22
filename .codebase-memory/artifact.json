@@ -1,11 +1,11 @@
 {
-    "schema_version": 1,
-    "commit": "0e5e93140c67cfa5761a1b3dd16480c702215db4",
-    "indexed_at": "2026-07-02T13:18:52Z",
-    "project": "Users-gaopengxiang-Desktop-AI_Sub_Pro",
-    "nodes": 4402,
-    "edges": 17579,
-    "original_size": 18612224,
-    "compressed_size": 3369222,
+    "schema_version": 2,
+    "commit": "6cb24c9bea6e0f25d5cd2b254e36bf88d2051612",
+    "indexed_at": "2026-09-20T08:17:30Z",
+    "project": "Users-gaopengxiang-Downloads-e9a1b9e79bae-AI_Sub_Pro",
+    "nodes": 5759,
+    "edges": 26133,
+    "original_size": 34013184,
+    "compressed_size": 5074304,
     "compression_level": 3
 }

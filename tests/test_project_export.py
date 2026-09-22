@@ -709,6 +709,59 @@ def test_put_subtitles_invalidates_strict_certification_before_export(
     assert "quality" in response.json()["detail"].lower()
 
 
+def test_subtitle_edit_updates_recovery_draft_in_same_revision(client, tmp_project_dir):
+    from app.config import Config
+    from app.utils.srt import parse_srt_file
+    from app.utils.subtitle_generation import subtitle_source_generation_hash
+    from app.utils.translation_configuration import translation_configuration_hash
+    from app.utils.translation_checkpoint import save_translation_checkpoint, restore_translation_checkpoint
+    pid = _seed_project(tmp_project_dir, "editdraft")
+    pdir = tmp_project_dir / pid
+    (pdir / "filtered.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
+    project = json.loads((pdir / "project.json").read_text())
+    rows = parse_srt_file(str(pdir / "filtered.srt"))
+    rows[0].translation = "旧译文"
+    config_hash = translation_configuration_hash(project, config=Config.to_dict(), project_path=pdir)
+    save_translation_checkpoint(pdir, rows, subtitle_source_generation_hash(pdir), config_hash)
+    response = client.put(f"/api/projects/{pid}/subtitles", json={"blocks": [{
+        "index": 1, "start": "00:00:00,000", "end": "00:00:01,000",
+        "text": "Hello", "translation": "人工修订"}]})
+    assert response.status_code == 200
+    updated = json.loads((pdir / "project.json").read_text())
+    config_hash = translation_configuration_hash(updated, config=Config.to_dict(), project_path=pdir)
+    fresh = parse_srt_file(str(pdir / "filtered.srt"))
+    assert restore_translation_checkpoint(pdir, fresh, subtitle_source_generation_hash(pdir), config_hash) == 1
+    assert fresh[0].translation == "人工修订"
+
+
+@pytest.mark.parametrize("source_name", ["raw.srt", "filtered.srt"])
+def test_edit_checkpoint_uses_written_source_ids_and_inserted_text(client, tmp_project_dir, source_name):
+    from app.config import Config
+    from app.utils.srt import parse_srt_file
+    from app.utils.subtitle_generation import subtitle_source_generation_hash
+    from app.utils.translation_configuration import translation_configuration_hash
+    from app.utils.translation_checkpoint import restore_translation_checkpoint
+    pid = _seed_project(tmp_project_dir, "renumberdraft")
+    pdir = tmp_project_dir / pid
+    (pdir / source_name).write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
+    response = client.put(f"/api/projects/{pid}/subtitles", json={"blocks": [
+        {"index": 7, "start": "00:00:00,000", "end": "00:00:01,000", "text": "", "translation": "新增行"},
+        {"index": 10, "start": "00:00:02,000", "end": "00:00:03,000", "text": "Sound", "translation": "音效", "filtered": True, "filter_reason": "manual"},
+        {"index": 12, "start": "00:00:04,000", "end": "00:00:05,000", "text": "Bye", "translation": "再见"},
+    ]})
+    assert response.status_code == 200
+    project = json.loads((pdir / "project.json").read_text())
+    rows = parse_srt_file(str(pdir / source_name))
+    if source_name == "raw.srt":
+        filters = json.loads((pdir / "filter_state.json").read_text())
+        assert filters == {"2": {"filtered": True, "reason": "manual"}}
+        rows[1].filtered = True
+        rows[1].filter_reason = "manual"
+    config_hash = translation_configuration_hash(project, config=Config.to_dict(), project_path=pdir)
+    assert restore_translation_checkpoint(pdir, rows, subtitle_source_generation_hash(pdir), config_hash) == 2
+    assert [b.translation for b in rows if not b.filtered] == ["新增行", "再见"]
+
+
 def test_failed_bilingual_edit_write_restores_artifacts_and_stales_certificate(
     client,
     tmp_project_dir,
@@ -768,6 +821,7 @@ def test_failed_bilingual_edit_write_restores_artifacts_and_stales_certificate(
         "filter_state.json",
         "translated.srt",
         "bilingual.srt",
+        "translation_checkpoint.json",
         "project.json",
     ],
 )
@@ -784,6 +838,7 @@ def test_failed_edit_promotion_restores_old_artifacts_and_blocks_export(
         f"strict-edit-promote-{failed_name.replace('.', '-')}",
     )
     pdir = tmp_project_dir / pid
+    (pdir / "translation_checkpoint.json").write_text('{"previous_draft":true}')
     (pdir / "filter_state.json").write_text(
         json.dumps({"1": {"filtered": True, "reason": "old"}}),
         encoding="utf-8",
@@ -795,6 +850,7 @@ def test_failed_edit_promotion_restores_old_artifacts_and_blocks_export(
             "filter_state.json",
             "translated.srt",
             "bilingual.srt",
+            "translation_checkpoint.json",
         )
     }
     real_replace = projects_api.os.replace
@@ -1234,3 +1290,27 @@ def test_quality_report_keeps_valid_nonpassing_strict_findings_visible(
     assert response.json()["status"] == verdict
     assert response.json()["issues"]
     assert response.json()["summary"]["quality_gate"]["verdict"] == verdict
+
+
+@pytest.mark.parametrize('verdict', ['needs_review', 'failed'])
+@pytest.mark.parametrize('format', ['translated', 'bilingual'])
+def test_advisory_certificate_exports_complete_subtitles(client, tmp_project_dir, verdict, format):
+    from app.utils.translation_quality_gate import apply_advisory_delivery_policy
+    pid = _seed_hash_bound_strict_certification(tmp_project_dir, 'advisoryexport', verdict=verdict)
+    pdir = tmp_project_dir / pid
+    report_path = pdir / 'translation_qa_report.json'
+    report = json.loads(report_path.read_text())
+    original_issues = list(report['issues'])
+    apply_advisory_delivery_policy(report)
+    report_path.write_text(json.dumps(report))
+    project_path = pdir / 'project.json'
+    project = json.loads(project_path.read_text())
+    project['translation_quality_status'] = 'passed'
+    project_path.write_text(json.dumps(project))
+    response = client.post(f'/api/projects/{pid}/export?format={format}')
+    assert response.status_code == 200
+    assert '你好' in response.json()['content']
+    assert client.get(f'/api/projects/{pid}/quality-report').json()['issues'] == original_issues
+    # Advisory delivery never bypasses binding to the actual files.
+    (pdir / 'translated.srt').write_text('tampered')
+    assert client.post(f'/api/projects/{pid}/export?format={format}').status_code == 409

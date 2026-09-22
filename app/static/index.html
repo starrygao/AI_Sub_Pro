@@ -4,14 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI Sub Pro</title>
-<link rel="stylesheet" href="/static/css/tailwind.css?v=20260613-auto1">
-<link rel="stylesheet" href="/static/css/app.css?v=20260613-auto1">
+<link rel="stylesheet" href="/static/css/tailwind.css?v=20260919-diffusion1">
+<link rel="stylesheet" href="/static/css/app.css?v=20260919-diffusion1">
 <script defer src="/static/vendor/alpinejs/alpine.min.js?v=3.14.9"></script>
 </head>
 <body x-data="app()" x-init="init()" x-cloak>
 
 <!-- Toast Notifications -->
-<div class="fixed top-5 right-5 z-[100] space-y-2">
+<div class="toast-stack fixed top-5 right-5 z-[100] space-y-2">
   <template x-for="t in toasts" :key="t.id">
     <div class="toast-enter glass rounded-2xl px-4 py-3 flex items-center gap-3 shadow-lg max-w-sm"
          :role="t.type === 'error' ? 'alert' : 'status'"
@@ -31,7 +31,7 @@
   <aside class="app-sidebar w-[220px] flex-shrink-0 flex flex-col bg-white/30 backdrop-blur-xl border-r border-black/[0.06]"
          :class="sidebarAutoCollapsed ? 'app-sidebar--auto-collapsed' : ''"
          aria-label="主导航"
-         style="padding-top: env(titlebar-area-height, 38px);">
+         >
     <div class="titlebar-drag px-5 pt-2 pb-4">
       <h1 class="text-[15px] font-semibold flex items-center gap-2 mt-1">
         <span class="app-sidebar-logo no-drag">AI</span>
@@ -40,22 +40,22 @@
       <p class="app-sidebar-subtitle text-[11px] text-surface-400 mt-0.5">智能字幕翻译工具</p>
     </div>
     <nav class="flex-1 px-3 space-y-0.5">
-      <button @click="setView('home')" aria-label="首页" class="no-drag w-full text-left px-3 py-[7px] rounded-lg flex items-center gap-2.5 text-[13px] font-medium transition-colors"
+      <button @click="setView('home')" :aria-current="view === 'home' ? 'page' : null" aria-label="首页" class="no-drag w-full text-left px-3 py-[7px] rounded-lg flex items-center gap-2.5 text-[13px] font-medium transition-colors"
               :class="view==='home' ? 'bg-accent/10 text-accent' : 'text-surface-600 hover:bg-black/[0.04]'">
         <svg class="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" /></svg>
         <span class="nav-label">首页</span>
       </button>
-      <button @click="setView('projects')" aria-label="项目" class="no-drag w-full text-left px-3 py-[7px] rounded-lg flex items-center gap-2.5 text-[13px] font-medium transition-colors"
+      <button @click="setView('projects')" :aria-current="view === 'projects' ? 'page' : null" aria-label="项目" class="no-drag w-full text-left px-3 py-[7px] rounded-lg flex items-center gap-2.5 text-[13px] font-medium transition-colors"
               :class="view==='projects' ? 'bg-accent/10 text-accent' : 'text-surface-600 hover:bg-black/[0.04]'">
         <svg class="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>
         <span class="nav-label">项目</span>
       </button>
-      <button @click="setView('settings')" aria-label="设置" class="no-drag w-full text-left px-3 py-[7px] rounded-lg flex items-center gap-2.5 text-[13px] font-medium transition-colors"
+      <button @click="setView('settings')" :aria-current="view === 'settings' ? 'page' : null" aria-label="设置" class="no-drag w-full text-left px-3 py-[7px] rounded-lg flex items-center gap-2.5 text-[13px] font-medium transition-colors"
               :class="view==='settings' ? 'bg-accent/10 text-accent' : 'text-surface-600 hover:bg-black/[0.04]'">
         <svg class="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
         <span class="nav-label">设置</span>
       </button>
-      <button @click="setView('knowledge')" aria-label="知识库" class="no-drag w-full text-left px-3 py-[7px] rounded-lg flex items-center gap-2.5 text-[13px] font-medium transition-colors"
+      <button @click="setView('knowledge')" :aria-current="view === 'knowledge' ? 'page' : null" aria-label="知识库" class="no-drag w-full text-left px-3 py-[7px] rounded-lg flex items-center gap-2.5 text-[13px] font-medium transition-colors"
               :class="view==='knowledge' ? 'bg-accent/10 text-accent' : 'text-surface-600 hover:bg-black/[0.04]'">
         <svg class="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" /></svg>
         <span class="nav-label">知识库</span>
@@ -69,20 +69,27 @@
   <!-- Main Content -->
   <main class="app-main flex-1 overflow-y-auto"
         @scroll="handleAppMainScroll($event)"
-        style="padding-top: env(titlebar-area-height, 38px);">
+        >
+
+    <div x-show="backendUnavailable" role="alert" class="mx-6 mt-4 p-4 rounded-xl border border-danger text-sm" aria-live="polite">
+      <p x-text="backendUnavailableMessage"></p>
+      <p class="mt-1 text-surface-500">下方为上次获取的任务状态，连接恢复后会自动更新。</p>
+      <button type="button" class="btn-secondary mt-3 px-3 py-2 rounded-xl text-[13px] font-medium" @click="view === 'detail' ? pollProgress() : loadProjects()">重试连接</button>
+    </div>
 
     <!-- ========== HOME / DROP ZONE ========== -->
     <div x-show="view==='home'" class="home-view min-h-full p-6 lg:p-8 fade-up">
       <div class="home-workbench">
         <section class="home-primary">
           <div class="home-panel text-center">
-            <div class="w-16 h-16 mx-auto mb-5 rounded-3xl bg-gradient-to-br from-accent/20 to-accent/5 flex items-center justify-center">
+            <div class="workspace-emblem w-16 h-16 mx-auto mb-5 rounded-3xl flex items-center justify-center" aria-hidden="true">
               <svg class="w-9 h-9 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-1.5A1.125 1.125 0 0118 18.375M20.625 4.5H3.375m17.25 0c.621 0 1.125.504 1.125 1.125M20.625 4.5h-1.5C18.504 4.5 18 5.004 18 5.625m3.75 0v1.5c0 .621-.504 1.125-1.125 1.125M3.375 4.5c-.621 0-1.125.504-1.125 1.125M3.375 4.5h1.5C5.496 4.5 6 5.004 6 5.625m-3.75 0v1.5c0 .621.504 1.125 1.125 1.125m0 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m1.5-3.75C5.496 8.25 6 7.746 6 7.125v-1.5M4.875 8.25C5.496 8.25 6 8.754 6 9.375v1.5m0-5.25v5.25m0-5.25C6 5.004 6.504 4.5 7.125 4.5h9.75c.621 0 1.125.504 1.125 1.125m1.125 2.625h1.5m-1.5 0A1.125 1.125 0 0118 7.125v-1.5m1.125 2.625c-.621 0-1.125.504-1.125 1.125v1.5m2.625-2.625c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125M18 5.625v5.25M7.125 12h9.75m-9.75 0A1.125 1.125 0 016 10.875M7.125 12C6.504 12 6 12.504 6 13.125m0-2.25C6 11.496 5.496 12 4.875 12M18 10.875c0 .621-.504 1.125-1.125 1.125M18 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m-12 5.25v-5.25m0 5.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125m-12 0v-1.5c0-.621-.504-1.125-1.125-1.125M18 18.375v-5.25m0 5.25v-1.5c0-.621.504-1.125 1.125-1.125M18 13.125v1.5c0 .621.504 1.125 1.125 1.125M18 13.125c0-.621.504-1.125 1.125-1.125M6 13.125v1.5c0 .621-.504 1.125-1.125 1.125M6 13.125C6 12.504 5.496 12 4.875 12m-1.5 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M19.125 12h1.5m0 0c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h1.5m14.25 0h1.5" />
               </svg>
             </div>
-            <h2 class="text-[26px] font-semibold mb-2">拖入视频文件</h2>
-            <p class="text-[14px] text-surface-400 mb-5 leading-relaxed">拖入视频、粘贴网络地址，或选择后续开放的字幕和音频入口。网络视频会自动识别信息；系统会优先使用已有字幕和原生字幕，没有字幕再进入听写。</p>
+            <p class="workspace-eyebrow">字幕工作台</p>
+            <h2 class="text-[26px] font-semibold mb-2">开始制作字幕</h2>
+            <p class="text-[14px] text-surface-400 mb-5 leading-relaxed">选择视频、字幕或音频，也可以粘贴链接自动识别信息。优先使用已有字幕和平台原生字幕，没有字幕时自动听写。</p>
 
             <div class="home-source-selector text-left mb-5" role="group" aria-label="选择输入来源">
               <div class="flex items-center justify-between mb-2">
@@ -226,8 +233,8 @@
               <p class="text-[24px] font-semibold tabular-nums" x-text="homeProjectSummary().total"></p>
             </div>
             <div class="glass rounded-2xl p-4">
-              <p class="text-[11px] text-surface-400">处理中</p>
-              <p class="text-[24px] font-semibold tabular-nums text-accent" x-text="homeProjectSummary().running"></p>
+              <p class="text-[11px] text-surface-400" x-text="backendUnavailable ? '状态待确认' : '处理中'"></p>
+              <p class="text-[24px] font-semibold tabular-nums text-accent" x-text="backendUnavailable ? '--' : homeProjectSummary().running"></p>
             </div>
             <div class="glass rounded-2xl p-4">
               <p class="text-[11px] text-surface-400">已完成</p>
@@ -394,7 +401,7 @@
     </div>
 
     <!-- ========== PROJECTS LIST ========== -->
-    <div x-show="view==='projects'" class="p-6 fade-up">
+    <div x-show="view==='projects'" class="projects-view p-6 fade-up">
       <div class="projects-list-header flex justify-between items-center mb-6">
         <div>
           <h2 class="text-[22px] font-semibold">项目列表</h2>
@@ -435,7 +442,7 @@
           <p class="text-[12.5px] font-semibold">最近任务</p>
           <span class="text-[11px] text-surface-400" x-text="`${recentTaskProjects().length} 个`"></span>
         </div>
-        <div class="flex gap-2 overflow-x-auto">
+        <div class="projects-recent-grid flex gap-2 overflow-x-auto">
           <template x-for="p in recentTaskProjects()" :key="p.id">
             <button @click="openProject(p.id)"
                     class="projects-recent-task btn-secondary px-3 py-2 rounded-xl text-left min-w-48">
@@ -529,10 +536,10 @@
     </div>
 
     <!-- ========== PROJECT DETAIL ========== -->
-    <div x-show="view==='detail'" class="flex flex-col h-full fade-up">
+    <div x-show="view==='detail'" class="project-detail-view flex flex-col h-full fade-up">
       <!-- Header -->
       <div class="project-detail-header flex-shrink-0 px-6 py-3 glass-dark border-b border-black/[0.04] flex items-center justify-between gap-4">
-        <div class="flex items-center gap-3">
+        <div class="project-detail-identity flex items-center gap-3">
           <button @click="setView('projects')" aria-label="返回项目列表" title="返回项目列表" class="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-black/[0.04] transition-colors">
             <svg class="w-5 h-5 text-surface-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
           </button>
@@ -953,7 +960,7 @@
                         :title="issue.message || issue.translation || issue.source_text || ''"
                         class="w-full text-left px-2 py-1.5 rounded-lg bg-white/60 border border-surface-200 text-[11px] disabled:cursor-default">
                   <span class="font-medium text-surface-700" x-text="issue.label"></span>
-                  <span class="text-surface-400" x-text="` · ${issue.severity_label}${issue.block_id ? ' · #' + issue.block_id : ''}`"></span>
+                  <span class="text-surface-400" x-text="` · ${issue.severity_label}${qaIssueLocations(issue) ? ' · ' + qaIssueLocations(issue) : ''}`"></span>
                   <span class="block whitespace-pre-wrap break-words text-surface-500" x-text="issue.message || issue.translation || issue.source_text || ''"></span>
                 </button>
               </template>
@@ -1009,7 +1016,7 @@
       </div>
 
       <!-- Subtitle Table -->
-      <div class="flex-1 overflow-y-auto px-6 mt-3 mb-3">
+      <div class="subtitle-workspace flex-1 overflow-y-auto px-6 mt-3 mb-3">
         <div x-show="subtitles.length===0" class="text-center py-16">
           <div class="w-14 h-14 mx-auto mb-3 rounded-2xl bg-surface-100 flex items-center justify-center">
             <svg class="w-7 h-7 text-surface-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
@@ -1137,7 +1144,7 @@
       </div>
 
       <!-- Bottom Status Bar -->
-      <div class="flex-shrink-0 px-6 py-2.5 border-t border-black/[0.04] bg-white/30 backdrop-blur-xl flex items-center gap-5 text-[12px] text-surface-400">
+      <div class="subtitle-statusbar flex-shrink-0 px-6 py-2.5 border-t border-black/[0.04] bg-white/30 backdrop-blur-xl flex items-center gap-5 text-[12px] text-surface-400">
         <span x-text="progressMsg || ''"></span>
         <div class="flex-1"></div>
         <span>共 <strong class="text-surface-700" x-text="subtitles.length"></strong></span>
@@ -1895,9 +1902,13 @@
         </button>
       </template>
     </div>
-    <p x-show="tmdbChoiceBusy" role="status" class="text-[12px] text-surface-500 mb-3">正在保存影视信息…</p>
+    <p x-show="tmdbChoiceBusy" role="status" class="text-[12px] text-surface-500 mb-3">正在处理影视信息…</p>
     <p x-show="tmdbChoiceError" x-text="tmdbChoiceError" role="alert" class="text-[12px] text-danger mb-3"></p>
     <div class="flex flex-wrap justify-end gap-2">
+      <template x-if="tmdbChoiceProject?.tmdb_lookup">
+      <button type="button" @click="retryTmdbChoice()" :disabled="tmdbChoiceBusy"
+              class="btn-secondary px-3 py-2 rounded-lg text-[12px] disabled:opacity-50">重试搜索</button>
+      </template>
       <button type="button" x-ref="tmdbChoiceCancel" @click="finishTmdbChoice(null)" :disabled="tmdbChoiceBusy"
               class="btn-secondary px-3 py-2 rounded-lg text-[12px] disabled:opacity-50">取消启动</button>
       <button type="button" @click="finishTmdbChoice('skip')" :disabled="tmdbChoiceBusy"

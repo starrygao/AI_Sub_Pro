@@ -86,3 +86,10 @@ def test_tv_keys_only_present_for_tv():
     tv = parse_filename("Severance.S02E08.1080p.WEB-DL.mkv")
     assert tv["season"] == 2
     assert tv["episode"] == 8
+
+
+def test_series_identity_year_precedes_episode_special_year():
+    from app.engines.file_metadata import parse_filename
+    out = parse_filename('All.Creatures.Great.and.Small.2020.S06E07.Christmas.Special.2025.1080p.AMZN.WEB-DL.DDP2.0.H.264-RAWR.mkv')
+    assert out == {'title': 'All Creatures Great and Small', 'year': 2020,
+                   'type': 'tv', 'season': 6, 'episode': 7}

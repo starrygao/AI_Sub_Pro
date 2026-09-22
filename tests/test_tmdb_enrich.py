@@ -147,6 +147,9 @@ async def test_tmdb_search_error_log_redacts_api_key(caplog):
     assert out["auto_attached"] is False
     assert "secret123" not in caplog.text
     assert "api_key=<redacted>" in caplog.text
+    assert out["lookup"]["query"] == "Foo"
+    assert out["lookup"]["type"] == "movie"
+    assert "secret123" not in out["lookup"]["error"]
 
 
 @pytest.mark.asyncio
@@ -229,3 +232,17 @@ async def test_tmdb_candidate_bad_field_types_do_not_crash():
     assert out["auto_attached"] is True
     assert out["year"] is None
     assert out["candidates"][0]["overview"] == ""
+
+
+@pytest.mark.asyncio
+async def test_empty_tv_year_search_retries_without_first_air_year():
+    from app.engines import tmdb_enrich
+    search = AsyncMock(side_effect=[[], [TV_RESULT]])
+    with patch.object(tmdb_enrich, 'parse_filename', return_value={
+        'title': 'Black Mirror', 'year': 2025, 'type': 'tv', 'season': 7}), \
+         patch('app.engines.tmdb.search_tv', new=search):
+        out = await tmdb_enrich.enrich_from_filename('Black.Mirror.S07E01.2025.mkv')
+    assert search.await_args_list[0].kwargs == {'year': 2025}
+    assert search.await_args_list[1].kwargs == {'year': None}
+    assert out['candidates'][0]['tmdb_id'] == 7777
+    assert out['auto_attached'] is False  # Fallback is not proof of identity.

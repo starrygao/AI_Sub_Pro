@@ -1268,3 +1268,55 @@ def test_selected_audio_file_creates_project_and_starts_transcribe_translate():
         });
         """
     )
+
+
+def test_native_picker_cancellation_is_terminal_and_single_flight():
+    _run_node('''
+    const fs = require('fs'), vm = require('vm'), assert = require('assert');
+    const ctx = {console, setTimeout, clearTimeout, window: {}};
+    vm.createContext(ctx);
+    vm.runInContext(fs.readFileSync('app/static/js/model-settings.js','utf8')+';'+fs.readFileSync('app/static/js/app.js','utf8'),ctx);
+    (async () => {
+      for (const shell of ['pywebview','electronAPI']) {
+        for (const folder of [false,true]) {
+          let calls=0, fallback=0, starts=0, messages=0, cancel;
+          const picker=()=>{calls++;return new Promise(r=>{cancel=r});};
+          ctx.window = shell==='pywebview' ? {pywebview:{api:{select_video:picker,select_video_folder:picker}}} : {electronAPI:{selectVideo:picker,selectVideoFolder:picker}};
+          const state=ctx.app();
+          state.newVideoPath='/existing/path.mkv';
+          state.$refs={fileInput:{click:()=>fallback++}};
+          state.toast=()=>messages++;
+          state.quickStart=state.quickStartBatch=async()=>starts++;
+          const method=folder?'openFolderPicker':'openFilePicker';
+          const first=state[method](); const second=state[method]();
+          assert.equal(calls,1,'parallel gestures must open only one native dialog');
+          cancel(null); await Promise.all([first,second]);
+          assert.equal(fallback,0,'cancel must not reopen browser picker');
+          assert.equal(messages,0,'cancel is not an unsupported-folder error');
+          assert.equal(starts,0); assert.equal(state.newVideoPath,'/existing/path.mkv');
+          const next=state[method](); assert.equal(calls,2,'guard must reset');cancel(null);await next;
+        }
+      }
+      ctx.window={};const state=ctx.app();let calls=0;
+      state.$refs={fileInput:{click:()=>calls++}};
+      await state.openFilePicker();assert.equal(calls,1,'browser fallback remains available');
+    })().catch(e=>{console.error(e);process.exit(1)});
+    ''')
+
+
+def test_macos_drop_resolves_without_native_dom_event_or_upload():
+    _run_node('''
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+let calls=0, release;
+const ctx={console,setTimeout,clearTimeout,window:{pywebview:{api:{get_dropped_paths:async files=>{
+  calls++;assert.equal(files[0].size,12);await new Promise(r=>release=r);return ['/Movies/Example.mkv'];
+}}}}};
+vm.createContext(ctx);vm.runInContext(fs.readFileSync('app/static/js/model-settings.js','utf8')+';'+fs.readFileSync('app/static/js/app.js','utf8'),ctx);
+(async()=>{
+ const s=ctx.app(),paths=[];s.useSelectedVideoPath=async p=>paths.push(p);
+ s.uploadVideoFile=async()=>{throw Error('must not copy video')};s.toast=msg=>{throw Error(msg)};
+ const e={dataTransfer:{files:[{name:'Example.mkv',size:12}],getData:()=>''}};
+ const pending=s.handleDrop(e);await s.handleDrop(e);assert.equal(calls,1);
+ release();await pending;assert.deepEqual(paths,['/Movies/Example.mkv']);assert.equal(s.nativeDropResolving,false);
+})().catch(e=>{console.error(e);process.exit(1)});
+''')

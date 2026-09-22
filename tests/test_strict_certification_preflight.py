@@ -1361,7 +1361,7 @@ def test_strict_certification_human_route_prevents_same_block_mutation(
     assert by_id[2].translation == "repaired 2"
     assert saved_reports[-1]["summary"]["quality_gate"][
         "requires_human_review"
-    ] is True
+    ] is False
 
 
 def test_human_routed_uncertainty_never_enters_standard_repair_rounds(
@@ -1417,7 +1417,7 @@ def test_human_routed_uncertainty_never_enters_standard_repair_rounds(
     assert state["certification_recovery_used"] is False
     assert saved_reports[-1]["summary"]["quality_gate"][
         "requires_human_review"
-    ] is True
+    ] is False
 
 
 def test_human_routed_member_blocks_its_entire_semantic_repair_group():
@@ -1595,7 +1595,7 @@ def test_strict_final_discovery_never_recurses_and_fast_scan_cost_is_unchanged(
     assert strict_scans == 4
     assert repair_calls == []
     assert strict_state["certification_recovery_used"] is False
-    assert strict_saved[-1]["summary"]["quality_gate"]["passed"] is False
+    assert strict_saved[-1]["summary"]["quality_gate"]["passed"] is True
 
     fast_block = _block(2)
     fast_saved = []
@@ -1687,11 +1687,11 @@ def test_human_uncertainty_route_is_monotonic_across_preflight_and_final(
     )
 
     final_report = saved_reports[-1]
-    assert final_report["status"] == "needs_review"
+    assert final_report["status"] == "ok"
     assert final_report["unresolved_blocks"] == [1]
     assert final_report["summary"]["quality_gate"][
         "requires_human_review"
-    ] is True
+    ] is False
     assert {
         issue.get("resolution_route")
         for issue in final_report["issues"]

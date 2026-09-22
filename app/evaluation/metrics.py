@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from app.evaluation.corpus import CorpusCase
+from app.engines.entity_registry import aligned_name_span, build_entity_registry
 
 
 _TAG_RE = re.compile(r"</?[a-zA-Z][^>]*>")
@@ -14,6 +15,8 @@ _PROPER_NAME_RE = re.compile(
 _CJK_RE = re.compile(r"[\u3400-\u9fff]+")
 _LEADING_NAME_STOPWORDS = {"A", "An", "The", "This", "That", "These", "Those"}
 _LEADING_EVENT_STOPWORDS = {
+    "If",
+    "Unless",
     "After",
     "Before",
     "During",
@@ -32,6 +35,7 @@ _LEADING_CONTEXT_PREPOSITIONS = {
     "On",
     "Over",
     "To",
+    "Through",
 }
 _DIRECTIONAL_REGION_MODIFIERS = {
     "Central",
@@ -65,6 +69,9 @@ _BROAD_REGION_TERMS = {
     "Pacific",
 }
 _SOURCE_PERSON_TITLE_TOKENS = {
+    "Director",
+    "Chef",
+    "Secretary",
     "Admiral",
     "Captain",
     "Colonel",
@@ -80,6 +87,7 @@ _SOURCE_PERSON_TITLE_TOKENS = {
     "Officer",
     "Private",
     "Professor",
+    "Princess",
     "Prof",
     "Sergeant",
 }
@@ -140,6 +148,7 @@ _COMMON_TITLE_WORDS = {
     "welcome",
 }
 _SHORT_NAME_CONTEXT_CHARS = {
+    "的",
     "了",
     "到",
     "看",
@@ -413,6 +422,15 @@ def _has_source_person_title(proper_name: str) -> bool:
     return any(token.strip(".") in _SOURCE_PERSON_TITLE_TOKENS for token in proper_name.split())
 
 
+def _is_source_title_only(proper_name: str) -> bool:
+    tokens = proper_name.split()
+    qualifiers = {"Police", "Chief", "Deputy", "Assistant"}
+    return _has_source_person_title(proper_name) and all(
+        token in _SOURCE_PERSON_TITLE_TOKENS or token in qualifiers
+        for token in tokens
+    )
+
+
 def _has_source_org_unit(proper_name: str) -> bool:
     return any(token.strip(".") in _SOURCE_ORG_UNIT_TOKENS for token in proper_name.split())
 
@@ -434,6 +452,16 @@ def _extract_proper_names(source_text: str) -> list[str]:
     names = []
     for match in _PROPER_NAME_RE.finditer(_clean_text(source_text)):
         name, start = _strip_leading_context_preposition(match.group(0), match.start())
+        tokens = name.split()
+        if len(tokens) >= 3 and tokens[0] in {"A", "An", "The"}:
+            start += len(tokens[0]) + 1
+            name = " ".join(tokens[1:])
+            tokens = name.split()
+        if len(tokens) >= 3 and tokens[0] in {"Call", "Find", "Contact", "Ask"}:
+            start += len(tokens[0]) + 1
+            name = " ".join(tokens[1:])
+        # Possession belongs to the surrounding sentence, never to the name.
+        name = re.sub(r"['’]s$", "", name)
         if _looks_like_broad_region_phrase(name):
             continue
         if _is_supported_proper_name(source_text, start, name):
@@ -453,8 +481,8 @@ def _is_short_source_name(proper_name: str) -> bool:
     tokens = proper_name.split()
     return (
         len(tokens) == 2
-        and sum(len(token) for token in tokens) <= 6
-        and max((len(token) for token in tokens), default=0) <= 3
+        and sum(len(token) for token in tokens) <= 8
+        and max((len(token) for token in tokens), default=0) <= 4
     )
 
 
@@ -728,6 +756,23 @@ def _short_name_cjk_anchor(translations: list[str]) -> str:
     return ""
 
 
+def _explicit_book_title_anchor(translations: list[str]) -> str:
+    """Use visible title boundaries, never a short substring of another title."""
+    title_sets = [set(re.findall(r"《([\u3400-\u9fff]{2,12})》", text))
+                  for text in translations]
+    candidates = set().union(*title_sets)
+    anchors = []
+    for title in candidates:
+        if any(titles and titles != {title} for titles in title_sets):
+            continue
+        # Unquoted mentions must end at a visible boundary as well. This
+        # prevents a title prefix from hiding a longer, different rendering.
+        if all(re.search(re.escape(title) + r"(?![\u3400-\u9fff])", text)
+               for text in translations):
+            anchors.append(title)
+    return anchors[0] if len(anchors) == 1 else ""
+
+
 def _target_signature(translation: str, shared_anchor: str = "") -> str:
     cjk_text = _cjk_compact_text(translation)
     if shared_anchor and shared_anchor in cjk_text:
@@ -777,12 +822,21 @@ def _long_name_signature(
     - `哈德逊奥克斯` and `哈德逊橡树` -> different chunks (issue)
     """
     cjk_text = _cjk_compact_text(translation)
+    if _has_source_person_title(proper_name):
+        titles = re.findall(r"(?:副|代理|助理)?(?:警督|警长|局长|行政长官|上校|少校)", translation)
+        if len(set(titles)) == 1 and (not shared_anchor or len(shared_anchor) < 3):
+            span = aligned_name_span(proper_name, "", translation)
+            return (_cjk_compact_text(span[0]) if span and not _is_source_title_only(proper_name) else "") + titles[0]
     if not shared_anchor or shared_anchor not in cjk_text:
-        # No reliable shared anchor means we cannot isolate a common name core.
-        # In that case keep the compact CJK text so distinct renderings still
-        # separate, while same-rendering context cases continue to rely on the
-        # shared-anchor path above.
-        return cjk_text or _compact_whitespace(translation)
+        span = aligned_name_span(proper_name, "", translation)
+        return _cjk_compact_text(span[0]) if span else ""
+    if _is_source_title_only(proper_name):
+        # A rank such as Police Lieutenant may translate to just two CJK
+        # characters. Surrounding speaker names are not part of that rank.
+        start = cjk_text.find(shared_anchor)
+        prefix = cjk_text[:start]
+        qualifier = next((q for q in ("代理", "助理", "副") if prefix.endswith(q)), "")
+        return qualifier + shared_anchor
     if (has_title_context or _has_source_person_title(proper_name)) and len(shared_anchor) >= 3:
         # Rank/title-led names often appear as `克里克上校`, `克里克说的`,
         # or `克里克来不来` across subtitle context. Compare the stable
@@ -795,7 +849,8 @@ def _long_name_signature(
     if _has_source_org_unit(proper_name) and len(shared_anchor) >= 2:
         return shared_anchor
     if len(shared_anchor) < 4:
-        return cjk_text or _compact_whitespace(translation)
+        span = aligned_name_span(proper_name, "", translation)
+        return _cjk_compact_text(span[0]) if span else ""
     return cjk_text[start:end] or shared_anchor
 
 
@@ -883,6 +938,39 @@ def format_score(case: CorpusCase, candidate_by_id: dict[str, str]) -> dict[str,
     }
 
 
+def _single_word_speaker_name_issues(source_by_id, candidate_by_id):
+    """Use explicit label boundaries; never infer a name from its dialogue."""
+    label_re = re.compile(r"[\[［]([^\]］]+)[\]］]")
+    cue_labels = {
+        "Music", "Applause", "Laughing", "Laughter", "Groans", "Grunts",
+        "Sighs", "Cheering", "Screams", "Panting", "Radio", "Phone",
+        "News", "Voicemail",
+    }
+    observations = {}
+    for bid, source in source_by_id.items():
+        source_labels = label_re.findall(source)
+        target = candidate_by_id.get(bid, "")
+        target_labels = label_re.findall(target)
+        # Missing/removed cues make positional pairing ambiguous.
+        if len(source_labels) != len(target_labels):
+            continue
+        for name, translated_name in zip(source_labels, target_labels):
+            if (not re.fullmatch(r"[A-Z][a-z]+(?:['-][A-Za-z]+)*", name)
+                    or name in cue_labels or not _CJK_RE.search(translated_name)):
+                continue
+            observations.setdefault(name, []).append({
+                "block_id": bid, "source_text": source, "translation": target,
+                "target_signature": _cjk_compact_text(translated_name),
+                "target_anchor": "",
+            })
+    issues = []
+    for name, items in observations.items():
+        forms = list(dict.fromkeys(item["target_signature"] for item in items))
+        if len(forms) > 1:
+            issues.append({"source": name, "target_forms": forms, "observations": items})
+    return issues
+
+
 def proper_name_consistency_score(
     source_by_id: dict[str, str], candidate_by_id: dict[str, str]
 ) -> dict[str, Any]:
@@ -898,7 +986,8 @@ def proper_name_consistency_score(
     }
 
     issues = []
-    for proper_name in _repeated_proper_names(normalized_source_by_id):
+    repeated_names = _repeated_proper_names(normalized_source_by_id)
+    for proper_name in repeated_names:
         matcher = re.compile(rf"\b{re.escape(proper_name)}\b")
         observations = []
 
@@ -926,6 +1015,14 @@ def proper_name_consistency_score(
             for cjk_text in (_cjk_compact_text(item["translation"]) for item in observations)
             if cjk_text
         ]
+        # With multiple source entities a shared book title cannot identify
+        # which translated span belongs to the entity being checked.
+        explicit_title_anchor = ""
+        if all(not _extract_proper_names(matcher.sub("", item["source_text"]))
+               for item in observations):
+            explicit_title_anchor = _explicit_book_title_anchor(
+                [item["translation"] for item in observations]
+            )
         shared_anchor = ""
         if _is_short_source_name(proper_name):
             shared_anchor = _short_name_cjk_anchor(cjk_translations)
@@ -944,8 +1041,27 @@ def proper_name_consistency_score(
 
         target_forms = []
         for item in observations:
-            if _is_short_source_name(proper_name):
-                signature = _target_signature(item["translation"], shared_anchor)
+            aligned = aligned_name_span(proper_name, item["source_text"], item["translation"])
+            if aligned and "·" in aligned[0] and any(
+                name != proper_name and name.endswith(" " + proper_name)
+                for name in _extract_proper_names(item["source_text"])
+            ):
+                aligned = (aligned[0].split("·")[-1], aligned[1])
+            # Keep rank/place qualifier checks in the existing title path;
+            # a person's transliterated core must not include sentence text.
+            use_bounded = aligned and not has_title_context and (not _has_source_person_title(proper_name)
+                                      or "Agent" in proper_name.split())
+            book_titles = re.findall(r"《([^》]+)》", item["translation"])
+            if explicit_title_anchor:
+                signature = explicit_title_anchor
+            elif len(book_titles) == 1 and len(_extract_proper_names(item["source_text"])) == 1:
+                signature = book_titles[0]
+            elif use_bounded:
+                signature = _cjk_compact_text(aligned[0])
+                item["target_span"] = aligned[0]
+                item["evidence"] = aligned[1]
+            elif _is_short_source_name(proper_name):
+                signature = shared_anchor
             else:
                 signature = _long_name_signature(
                     item["translation"],
@@ -954,20 +1070,46 @@ def proper_name_consistency_score(
                     has_title_context,
                 )
             item["target_signature"] = signature
-            item["target_anchor"] = shared_anchor
-            if signature not in target_forms:
+            item["target_anchor"] = explicit_title_anchor or shared_anchor
+            if signature and signature not in target_forms:
                 target_forms.append(signature)
 
+        # An explicitly dotted full target licenses its surname address;
+        # different full names still remain distinct observations.
+        surnames = {t.split("·")[-1] for t in
+                    [o.get("target_span", "") for o in observations] if "·" in t}
+        if surnames:
+            target_forms = [f for f in target_forms if f not in surnames]
+            observations = [o for o in observations if o.get("target_signature") not in surnames]
         if len(target_forms) > 1:
             issues.append({
                 "source": proper_name,
                 "target_forms": target_forms,
-                "observations": observations,
+                "observations": [o for o in observations if o["target_signature"]],
             })
 
+    entities = build_entity_registry(normalized_source_by_id, normalized_candidate_by_id)
+    for entity in entities:
+        if len(entity["target_forms"]) < 2:
+            continue
+        if entity["aliases"] and re.fullmatch(r"(?:[A-Z]\.){2,}", entity["source"]):
+            # Initials, expanded given name and surname are address forms;
+            # this deterministic pass cannot declare one a wrong identity.
+            continue
+        parents = [name for name in repeated_names
+                   if re.search(r"(?<!\w)" + re.escape(entity["source"]) + r"(?!\w)", name, re.I)]
+        if parents and all(any(name.casefold() in o["source_text"].casefold() for name in parents)
+                           for o in entity["observations"]):
+            continue
+        # A reported full-name difference already includes its components.
+        if any(re.search(r"(?<!\w)" + re.escape(entity["source"]) + r"(?!\w)",
+                         issue["source"], re.I) for issue in issues):
+            continue
+        issues.append(entity)
     return {
         "issue_count": len(issues),
         "issues": issues,
+        "entities": entities,
     }
 
 

@@ -53,7 +53,7 @@ def _shared_majority_anchor(translations: list[str]) -> str:
         for length in range(2, max_length + 1):
             for start in range(0, len(compact) - length + 1):
                 chunk = compact[start:start + length]
-                if chunk in _BAD_ANCHORS:
+                if chunk in _BAD_ANCHORS or "的" in chunk:
                     continue
                 seen.setdefault(chunk, start)
         for chunk, start in seen.items():
@@ -116,7 +116,7 @@ def _canonical_span(spans: list[str]) -> str:
     return sorted(by_span, key=lambda item: (-by_span[item], len(item), item))[0]
 
 
-def normalize_inferred_proper_name_variants(blocks: Iterable) -> list[dict]:
+def normalize_inferred_proper_name_variants(blocks: Iterable, *, protected_terms: dict | None = None) -> list[dict]:
     """Normalize minority inferred proper-name variants when evidence is strong.
 
     This pass is intentionally narrow:
@@ -156,6 +156,14 @@ def normalize_inferred_proper_name_variants(blocks: Iterable) -> list[dict]:
         observations = issue.get("observations")
         if not isinstance(source, str) or not isinstance(observations, list):
             continue
+        from app.engines.entity_registry import entity_matcher
+        if any(entity_matcher(term).search(source) or entity_matcher(source).search(term)
+               for term in protected_terms or {}):
+            continue
+        if len(source.split()) < 2:
+            # Explicit single-word speaker labels are checked by the metric,
+            # but do not establish safe replacement spans in surrounding text.
+            continue
 
         translations = [
             item.get("translation", "")
@@ -174,7 +182,10 @@ def normalize_inferred_proper_name_variants(blocks: Iterable) -> list[dict]:
             translation = item.get("translation", "")
             if not block_id or not isinstance(translation, str):
                 continue
-            span = _span_for_anchor(translation, anchor, source)
+            bounded_span = item.get("target_span", "")
+            span = ((bounded_span, _cjk_compact(bounded_span))
+                    if bounded_span and bounded_span in translation
+                    else _span_for_anchor(translation, anchor, source))
             if span is None:
                 continue
             text_span, signature = span
@@ -204,7 +215,10 @@ def normalize_inferred_proper_name_variants(blocks: Iterable) -> list[dict]:
         for signature, items in spans_by_signature.items():
             if signature == canonical_signature:
                 continue
-            if signature.startswith(canonical_signature):
+            # Adding/removing a title is not a transliteration correction.
+            # A shorter existing name may already have its title on the left.
+            if (signature.startswith(canonical_signature)
+                    or canonical_signature.startswith(signature)):
                 continue
             for block_id, span in items:
                 block = by_id.get(block_id)

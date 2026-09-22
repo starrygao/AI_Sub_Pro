@@ -6,6 +6,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_grouped_quality_issue_shows_all_source_and_export_locations():
+    _run_node("""
+        const fs = require('fs'), vm = require('vm');
+        const context = {console, setTimeout, clearTimeout};
+        vm.createContext(context);
+        vm.runInContext(fs.readFileSync('app/static/js/model-settings.js', 'utf8') + ';' +
+                        fs.readFileSync('app/static/js/app.js', 'utf8'), context);
+        const state = context.app();
+        const text = state.qaIssueLocations({block_id: 4, related_block_ids: [1, 4, 9], related_output_ids: [1, 3, 7]});
+        if (!text.includes('#1、#4、#9') || !text.includes('#1、#3、#7')) throw new Error(text);
+        if (state.qaIssueLocations({block_id: 8}) !== '#8') throw new Error('single issue location');
+        if (state.qaIssueLocations({}) !== '') throw new Error('global issue location');
+    """)
+
+
 def _run_node(script: str):
     result = subprocess.run(
         ["node", "-e", textwrap.dedent(script)],
@@ -2970,6 +2985,23 @@ def test_warning_confirmation_is_required_every_time_and_review_states_block_dir
           if (!toasts.some((item) => /人工复核/.test(item.message))) {
             throw new Error(`expected review explanation, got ${JSON.stringify(toasts)}`);
           }
+          state.currentProject.translation_quality_status = 'passed';
+          state.qaReport.status = 'ok';
+          Object.assign(state.qaReport.summary.quality_gate, {
+            verdict: 'passed_with_warnings', passed: true,
+            requires_human_review: false, review_recommended: true,
+            delivery_mode: 'unattended_with_warnings', next_action: 'deliver',
+          });
+          state.qaReport.issues.push({type: 'semantic_mismatch', severity: 'error', block_id: 1, message: 'mismatch'});
+          if (!state.canExportSubtitle('translated') || !state.canExportSubtitle('bilingual')) {
+            throw new Error('advisory review and semantic errors must allow delivery');
+          }
+          await state.exportSubtitle('translated');
+          await state.exportSubtitle('bilingual');
+          if (calls !== 3 || confirms !== 2) throw new Error('advisory delivery must not require confirmation');
+          state.subtitles[0].translation = '';
+          if (state.canExportSubtitle('translated')) throw new Error('missing dialogue must still block export');
+
         })().catch((error) => {
           console.error(error.message);
           process.exit(1);

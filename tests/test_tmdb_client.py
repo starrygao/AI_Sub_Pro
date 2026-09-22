@@ -206,3 +206,13 @@ def test_tmdb_videos_drop_non_object_results(monkeypatch):
     videos = asyncio.run(tmdb.get_movie_videos(123))
 
     assert [v["key"] for v in videos] == ["ok"]
+
+
+def test_httpx_request_logs_redact_tmdb_query_credentials(caplog):
+    import logging
+    from app.engines import tmdb
+    caplog.set_level(logging.INFO, logger='httpx')
+    logging.getLogger('httpx').info('HTTP Request: GET %s "HTTP/1.1 200 OK"',
+                                  'https://api.themoviedb.org/3/search/tv?api_key=synthetic-test-key&query=Example')
+    assert 'synthetic-test-key' not in caplog.text
+    assert 'api_key=<redacted>&query=Example' in caplog.text

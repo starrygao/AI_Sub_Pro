@@ -755,3 +755,77 @@ def test_home_dashboard_summary_counts_active_projects_and_sorts_recent_items():
         }
         """
     )
+
+
+def test_backend_disconnect_explains_unopenable_project_and_recovers():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const assert = require('assert');
+        const context = { console, setTimeout: () => 1, clearTimeout,
+          fetch: async () => { throw new TypeError('Load failed'); } };
+        vm.createContext(context);
+        vm.runInContext(fs.readFileSync('app/static/js/model-settings.js', 'utf8') + ';'
+          + fs.readFileSync('app/static/js/app.js', 'utf8'), context);
+        (async () => {
+          const state = context.app();
+          const project = {id: 'stalled', status: 'processing'};
+          state.projects = [project];
+          state.prepareToLeaveKnowledge = async () => true;
+          await state.openProject('stalled');
+          assert.strictEqual(state.backendUnavailable, true);
+          assert.match(state.toasts[0].msg, /本地服务连接中断/);
+          assert.strictEqual(state.statusLabel(project), '状态待确认');
+          assert.strictEqual(project.status, 'processing', 'must not invent a terminal task status');
+          assert.strictEqual(state.currentProject, null);
+          await state.loadProjects();
+          await state.loadProjects();
+          assert.strictEqual(state.toasts.length, 1, 'background retries must not repeat disconnect toasts');
+          state.projects = [];
+          assert.strictEqual(state.shouldPollProjectList(), true, 'keep checking recovery without busy projects');
+          context.fetch = async () => ({ok: true, json: async () => [{id:'stalled', status:'error'}]});
+          await state.loadProjects();
+          assert.strictEqual(state.backendUnavailable, false);
+          assert.strictEqual(state.statusLabel(state.projects[0]), '失败');
+          assert.strictEqual(state.shouldPollProjectList(), false);
+          context.fetch = async () => ({ok: false, status: 409, json: async () => ({detail:'task conflict'})});
+          await assert.rejects(() => state.api('/api/projects/stalled'), /task conflict/);
+          assert.strictEqual(state.backendUnavailable, false, 'HTTP application errors are not disconnects');
+        })().catch(err => { console.error(err); process.exit(1); });
+        """
+    )
+
+
+def test_home_polls_active_tasks_to_detect_backend_exit():
+    _run_node(
+        """
+        const fs = require('fs');
+        const vm = require('vm');
+        const assert = require('assert');
+        let tick;
+        const context = { console, setTimeout: () => 1, clearTimeout,
+          setInterval: fn => { tick = fn; return 1; },
+          document: {addEventListener() {}} };
+        vm.createContext(context);
+        vm.runInContext(fs.readFileSync('app/static/js/model-settings.js', 'utf8') + ';'
+          + fs.readFileSync('app/static/js/app.js', 'utf8'), context);
+        (async () => {
+          const state = context.app();
+          let loads = 0;
+          state.loadSettings = async () => {};
+          state.refreshSystemCheck = async () => {};
+          state.loadProjects = async () => { loads++; };
+          state.projects = [{id:'active', status:'processing'}];
+          await state.init();
+          tick();
+          assert.strictEqual(loads, 2, 'home must refresh an active task after initial load');
+          state.projects = [];
+          tick();
+          assert.strictEqual(loads, 2, 'idle home need not poll');
+          state.backendUnavailable = true;
+          tick();
+          assert.strictEqual(loads, 3, 'disconnected home must check recovery');
+        })().catch(err => { console.error(err); process.exit(1); });
+        """
+    )

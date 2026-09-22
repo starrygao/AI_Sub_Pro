@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -25,6 +26,7 @@ from app.utils.project_store import atomic_write_json
 from app.utils.subtitle_structure import (
     classify_speaker_lines,
     preserves_speaker_line_structure,
+    visible_subtitle_text,
 )
 
 AUTO_RESOLVABLE = "auto_resolvable"
@@ -33,6 +35,31 @@ _SEMANTIC_RESOLUTION_ROUTES = frozenset({
     AUTO_RESOLVABLE,
     HUMAN_CONTEXT_REQUIRED,
 })
+
+
+def quality_issue_category(issue_type: str) -> str:
+    if issue_type == "semantic_uncertain":
+        return "needs_context"
+    if issue_type == "semantic_qa_failed":
+        return "check_failure"
+    if issue_type in {"reading_speed_too_fast", "line_too_long", "too_many_lines",
+                      "weak_semantic_line_break", "repetition_not_compressed", "punctuation_style"}:
+        return "readability"
+    if "name" in issue_type or "term" in issue_type:
+        return "consistency"
+    if "structure" in issue_type or "format" in issue_type or "id" in issue_type:
+        return "format"
+    return "content"
+
+
+def grouped_issue_summary(issues) -> dict:
+    categories = {}
+    ids = set()
+    for issue in issues:
+        category = quality_issue_category(issue.type)
+        categories[category] = categories.get(category, 0) + 1
+        ids.update(bid for bid in (getattr(issue, "related_block_ids", []) or [issue.block_id]) if isinstance(bid, int))
+    return {"issue_group_count": len(issues), "affected_block_count": len(ids), "by_category": categories}
 
 
 def normalize_semantic_resolution_route(issue_type: str, route: str = "") -> str:
@@ -60,6 +87,8 @@ class QualityIssue:
     translation: str = ""
     expected: str = ""
     resolution_route: str = ""
+    related_block_ids: list[int] = field(default_factory=list)
+    observations: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.resolution_route = normalize_semantic_resolution_route(
@@ -69,8 +98,12 @@ class QualityIssue:
 
     def to_dict(self) -> dict:
         payload = asdict(self)
+        payload["category"] = quality_issue_category(self.type)
         if not payload["resolution_route"]:
             payload.pop("resolution_route")
+        for key in ("related_block_ids", "observations"):
+            if not payload[key]:
+                payload.pop(key)
         return payload
 
 
@@ -119,7 +152,7 @@ class TranslationQaReport:
                 self.delivery_artifact_hashes
             ),
             "issues": [issue.to_dict() for issue in self.issues],
-            "summary": dict(self.summary),
+            "summary": {**self.summary, **grouped_issue_summary(self.issues)},
             "repaired_blocks": list(self.repaired_blocks),
             "unresolved_blocks": list(self.unresolved_blocks),
             "trace": dict(self.trace),
@@ -146,7 +179,8 @@ class TranslationQaReport:
             lines.append("")
             lines.append("## Issues")
             for issue in self.issues:
-                block = f"#{issue.block_id}" if issue.block_id is not None else "global"
+                block = ", ".join(f"#{bid}" for bid in issue.related_block_ids) if issue.related_block_ids else (
+                    f"#{issue.block_id}" if issue.block_id is not None else "global")
                 lines.append(f"- [{issue.severity}] {issue.type} {block}: {issue.message}")
         return "\n".join(lines) + "\n"
 
@@ -559,6 +593,35 @@ _SOUND_LABEL_EN_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+# Match complete bracketed action labels, not isolated verbs that can occur
+# in real dialogue (for example, "the gun fires only when I pull the trigger").
+_BRACKETED_ACTION_SOUND_EN_RE = re.compile(
+    r"(?:guns?\s+fir(?:e|es|ed|ing)|"
+    r"(?:foot|feet)\s+stamp(?:s|ed|ing)?|"
+    r"seagulls?\s+mew(?:s|ed|ing)?|"
+    r"hands?\s+rap(?:s|ped|ping)?|"
+    r"(?:cutters?|pliers)\s+snip(?:s|ped|ping)?|"
+    r"driver\s+vomit(?:s|ed|ing)?|"
+    r"motorbike\s+engines?\s+vroom(?:s|ed|ing)?|"
+    r"sirens?\s+blar(?:es|ing)|"
+    r"(?:train|traffic)\s+(?:faintly\s+)?whizz(?:es|ing)|"
+    r"(?:[A-Za-z]+\s+)?rummag(?:es|ing)|"
+    r"bonnet\s+slam(?:s|ming)|wings?\s+flap(?:s|ping)|"
+    r"(?:message|transition)\s+whoosh(?:es|ing)|"
+    r"wire\s+casing\s+tear(?:s|ing)|wire\s+snip(?:s|ping)|"
+    r"Geiger\s+counter\s+smack(?:s|ing)|"
+    r"(?:transition|device|room)\s+boom(?:s|ing)|"
+    r"(?:IED|tracker)\s+bleep(?:s|ing)|"
+    r"solution\s+slosh(?:es|ing)|dogs?\s+bark(?:s|ing)|"
+    r"(?:brakes|train\s+tracks)\s+squeal(?:s|ing)?|"
+    r"dramatic\s+(?:beat|chord)|harmonic\s+synth\s+tones|"
+    r"device\s+power(?:s|ing)\s+up|clippers\s+stab(?:s|bing)|"
+    r"(?:flesh|blood)\s+sp(?:at|lat)ter(?:s|ing)|guns?\s+cock(?:s|ing)|"
+    r"people\s+whack(?:s|ing)|audience\s+applaud(?:s|ing)|"
+    r"people\s+chatter(?:s|ing)|baby\s+yawn(?:s|ing)|"
+    r"back\s+pat(?:s|ting))",
+    re.IGNORECASE,
+)
 _MUSIC_DESCRIPTION_STYLE = (
     r"(?:instrumental|upbeat|latin|tense|gentle|soft|somber|dramatic|"
     r"ominous|distant|background|theme|orchestral)"
@@ -783,8 +846,13 @@ def _is_allowed_acronym_token(token: str) -> bool:
     return bool(token.isupper() and 3 <= len(token) <= 10)
 
 
-def _english_residue_match(translation: str, *, allow_technical_terms: bool = False):
-    for match in _ENGLISH_RE.finditer(translation or ""):
+def _english_residue_match(translation: str, *, source: str = "", allow_technical_terms: bool = False):
+    # Only exact source-backed addresses are exempt; surrounding English is
+    # still checked. Mask spans rather than allowing their individual words.
+    address_re = re.compile(r"(?<![\w.])(?:https?://)?(?:[\w-]+\.)+[A-Za-z]{2,}(?:/[^\s<>]*)?")
+    addresses = {m.group(0) for m in address_re.finditer(source)}
+    probe = address_re.sub(lambda m: " " if m.group(0) in addresses else m.group(0), translation or "")
+    for match in _ENGLISH_RE.finditer(probe):
         if _is_allowed_acronym_token(match.group(0)):
             continue
         if allow_technical_terms and _is_allowed_technical_token(match.group(0)):
@@ -889,7 +957,7 @@ def _is_sound_description_line(source: str) -> bool:
         remainder = _BRACKETED_TRANSLATION_SEGMENT_RE.sub("", probe)
         if (
             _is_translation_separator_only(remainder)
-            and all(_is_sound_translation_label(match.group(1)) for match in segments)
+            and all(_is_bracketed_sound_label(match.group(1)) for match in segments)
         ):
             return True
 
@@ -907,9 +975,13 @@ def _is_sound_description_line(source: str) -> bool:
     return _is_unbracketed_sound_description_label(probe)
 
 
-def _is_sound_description(source: str) -> bool:
+def _matches_sound_description(source: str) -> bool:
     multiline_probe = _HTML_TAG_RE.sub("", source or "")
     multiline_probe = _ASS_OVERRIDE_RE.sub("", multiline_probe)
+    # A quoted song title followed by "playing" is a playback annotation,
+    # including titles with parentheses/pronouns. Lyrics have no such frame.
+    if re.fullmatch(r'\s*\[\s*[♪♫♬]\s*["“][^"”]+["”]\s+playing\s*\]\s*', multiline_probe):
+        return True
     if (
         len(multiline_probe.splitlines()) > 1
         and _MULTILINE_BRACKETED_MUSIC_DESCRIPTION_EN_RE.fullmatch(
@@ -926,9 +998,102 @@ def _is_sound_description(source: str) -> bool:
     return bool(lines) and all(_is_sound_description_line(line) for line in lines)
 
 
+@dataclass(frozen=True)
+class SubtitleSourceDecision:
+    kind: str
+    dialogue_text: str
+    reason: str
+
+    @property
+    def requires_translation(self) -> bool:
+        return self.kind not in {"sound", "empty"}
+
+
+SUBTITLE_CLASSIFICATION_VERSION = 3
+
+
+@lru_cache(maxsize=16384)
+def classify_subtitle_source(source: str) -> SubtitleSourceDecision:
+    """One conservative source-only contract for translation, QA and export.
+
+    Unrecognized bracketed content remains translatable. Neither an empty
+    model result nor sound-like words in the target authorize omission.
+    """
+    if not source.strip():
+        return SubtitleSourceDecision("empty", "", "empty_source")
+    if _matches_sound_description(source):
+        return SubtitleSourceDecision("sound", "", "recognized_source_sound")
+    remaining = []
+    removed = False
+    for line in source.splitlines():
+        # Within a mixed cue a plain noun may continue on the next line
+        # ("Funeral bell\nmushrooms"). Only drop independently marked SDH
+        # lines; a sound keyword alone is not evidence of a cue boundary.
+        probe = _sound_description_probe_text(line)
+        marked_sound = bool(
+            _BRACKETED_TRANSLATION_SEGMENT_RE.search(probe)
+            or _MUSIC_MARK_RE.search(line)
+            or (probe.isascii() and probe.isupper())
+        )
+        if marked_sound and _is_sound_description_line(line):
+            removed = True
+            continue
+        def remove_known(match):
+            nonlocal removed
+            if _is_bracketed_sound_label(match.group(1)):
+                removed = True
+                return ""
+            return match.group(0)
+        remaining.append(_BRACKETED_TRANSLATION_SEGMENT_RE.sub(remove_known, line).strip())
+    dialogue = "\n".join(line for line in remaining if line).strip()
+    if removed and dialogue:
+        return SubtitleSourceDecision("mixed", dialogue, "sound_with_retained_content")
+    if any(not _looks_like_bracketed_dialogue(m.group(1))
+           for m in _BRACKETED_TRANSLATION_SEGMENT_RE.finditer(source)):
+        return SubtitleSourceDecision("uncertain", source, "unrecognized_bracketed_content")
+    return SubtitleSourceDecision("dialogue", source, "dialogue_or_lyrics")
+
+
+def _is_sound_description(source: str) -> bool:
+    return classify_subtitle_source(source).kind == "sound"
+
+
+def _looks_like_bracketed_dialogue(label: str) -> bool:
+    # Do not let a sound keyword (radio/music/phone) swallow a sentence.
+    return bool(re.search(r"[.!?。！？]|(?:你|我|他们|她们|这是|那是|吗|呢)", label) or re.search(
+        r"\b(?:I|you|we|they|he|she|my|your|our|their|is|are|was|were|"
+        r"will|would|should|could|must|don't|doesn't)\b", label, re.I))
+
+
 def is_sound_description_source(source: str) -> bool:
     """Return True when a source cue is a non-dialogue sound/music description."""
     return _is_sound_description(source)
+
+
+def _is_bracketed_sound_label(label: str) -> bool:
+    # These additions are whole SDH predicates, not keywords in sentences.
+    if re.fullmatch(
+        r"(?:(?:(?:[A-Z][A-Za-z'’.-]*\s+){1,3})?"
+        r"(?:sigh(?:s|ing)?|chuckl(?:e|es|ing)|yelp(?:s|ing)?|squeal(?:s|ing)?|"
+        r"belch(?:es|ing)?|cackl(?:e|es|ing)|whin(?:e|es|ing)|bark(?:s|ing)?|huff(?:s|ing)?)"
+        r"(?:\s+(?:softly|quietly|loudly|heavily))?|"
+        r"phasers?\s+charging|whooshing\s+impacts?|alerts?\s+sounding|"
+        r"guns?\s+cock(?:s|ing)?|metal\s+scrap(?:es|ing))",
+        label.strip(),
+    ):
+        return True
+    # SDH also uses pronoun subjects: "he breathes heavily". Require the
+    # whole clause to be a known sound predicate with adverbs, not dialogue.
+    action = re.fullmatch(
+        r"(?:he|she|they)\s+([a-z]+)(?:\s+[a-z]+ly){0,2}", label.strip(), re.I,
+    )
+    if action and _SOUND_LABEL_EN_RE.fullmatch(action.group(1)):
+        return True
+    return not _looks_like_bracketed_dialogue(label) and (
+        _is_sound_translation_label(label) or bool(
+            _BRACKETED_ACTION_SOUND_EN_RE.fullmatch(label.strip())
+        )
+    )
 
 
 def _is_sound_translation_label(label: str) -> bool:
@@ -945,7 +1110,7 @@ def _is_sound_translation_label(label: str) -> bool:
 
 def _is_unbracketed_sound_description_label(value: str) -> bool:
     text = _clean_text(value)
-    if not _is_sound_translation_label(text):
+    if _looks_like_bracketed_dialogue(text) or not _is_sound_translation_label(text):
         return False
     if find_domain_terms(text) or find_scientific_terms(text):
         return False
@@ -1000,7 +1165,7 @@ def _source_has_corresponding_sound_label(source_text: str, target_label: str) -
     for match in _BRACKETED_TRANSLATION_SEGMENT_RE.finditer(source_text or ""):
         source_label = match.group(1)
         if (
-            _is_sound_translation_label(source_label)
+            _is_bracketed_sound_label(source_label)
             and _sound_description_label_match_key(source_label) == target_key
         ):
             return True
@@ -1068,7 +1233,7 @@ def clean_sound_description_translation_text(
         def replace_sound_label(match) -> str:
             nonlocal changed
             label = match.group(1)
-            if _is_sound_translation_label(label):
+            if _is_bracketed_sound_label(label):
                 changed = True
                 return ""
             return match.group(0)
@@ -1085,21 +1250,9 @@ def clean_sound_description_translation_text(
 
 def dialogue_only_qa_source_text(source: str) -> str:
     """Return the dialogue-bearing source text under the sound-omission policy."""
-    if not isinstance(source, str) or not source.strip():
+    if not isinstance(source, str):
         return ""
-    if _is_sound_description(source):
-        return ""
-    dialogue_lines: list[str] = []
-    for line in source.splitlines():
-        if _is_sound_description_line(line):
-            continue
-        cleaned = clean_sound_description_translation_text(
-            line,
-            source_text=line,
-        )
-        if cleaned:
-            dialogue_lines.append(cleaned)
-    return "\n".join(dialogue_lines).strip()
+    return classify_subtitle_source(source).dialogue_text
 
 
 def normalize_sound_description_translations(blocks: Iterable) -> list[dict]:
@@ -1122,11 +1275,13 @@ def normalize_sound_description_translations(blocks: Iterable) -> list[dict]:
                 "reason": "sound_description_blank",
             })
             continue
+        if classify_subtitle_source(source).kind == "uncertain":
+            continue
         cleaned_translation = clean_sound_description_translation_text(
             translation,
             source_text=source,
         )
-        if cleaned_translation != translation:
+        if cleaned_translation and cleaned_translation != translation:
             block.translation = cleaned_translation
             applied.append({
                 "id": getattr(block, "index", None),
@@ -1599,7 +1754,7 @@ def normalize_curated_domain_term_translations(
 
 
 def _compact_subtitle_text(value: str) -> str:
-    return re.sub(r"\s+", "", _HTML_TAG_RE.sub("", value or ""))
+    return re.sub(r"\s+", "", visible_subtitle_text(value))
 
 
 def _subtitle_lines(value: str) -> list[str]:
@@ -1641,6 +1796,7 @@ def run_quality_checks(
     meta_info: Optional[dict] = None,
     style_profile: Optional[SubtitleStyleProfile] = None,
     trace: Optional[dict] = None,
+    export_layout: bool = False,
 ) -> TranslationQaReport:
     issues: list[QualityIssue] = []
     seen_ids = set()
@@ -1655,6 +1811,7 @@ def run_quality_checks(
         effective_max_chars = min(max_chars, active_style_profile.max_line_chars) if max_chars > 0 else active_style_profile.max_line_chars
     source_by_id: dict[str, str] = {}
     translation_by_id: dict[str, str] = {}
+    unclassified_source_ids = []
 
     for block in blocks or []:
         if getattr(block, "filtered", False):
@@ -1662,6 +1819,8 @@ def run_quality_checks(
         block_id = getattr(block, "index", None)
         source = _clean_text(getattr(block, "text", ""))
         translation = _clean_text(getattr(block, "translation", ""))
+        if classify_subtitle_source(source).kind == "uncertain" and isinstance(block_id, int):
+            unclassified_source_ids.append(block_id)
         sound_description = _is_sound_description(source)
         qa_source = dialogue_only_qa_source_text(source)
 
@@ -1750,6 +1909,7 @@ def run_quality_checks(
             and translation
             and _english_residue_match(
                 translation,
+                source=qa_source,
                 allow_technical_terms=technical_tutorial_context,
             )
         ):
@@ -1762,8 +1922,14 @@ def run_quality_checks(
                 translation=translation,
             ))
 
-        lines = _subtitle_lines(translation) or ([translation] if translation else [])
-        compact_translation = _compact_subtitle_text(translation)
+        layout_translation = translation
+        if export_layout:
+            from app.utils.srt import _subtitle_text
+            layout_translation = _subtitle_text(
+                translation, single_line=True, is_translation=True,
+            )
+        lines = _subtitle_lines(layout_translation) or ([layout_translation] if layout_translation else [])
+        compact_translation = _compact_subtitle_text(layout_translation)
         if not sound_description and effective_max_chars > 0 and any(
             len(_compact_subtitle_text(line)) > effective_max_chars for line in lines
         ):
@@ -1773,7 +1939,7 @@ def run_quality_checks(
                 block_id=block_id if isinstance(block_id, int) else None,
                 message=f"translation line exceeds {effective_max_chars}",
                 source_text=source,
-                translation=translation,
+                translation=layout_translation,
                 expected=str(effective_max_chars),
             ))
 
@@ -1785,7 +1951,7 @@ def run_quality_checks(
                     block_id=block_id if isinstance(block_id, int) else None,
                     message=f"subtitle has {len(lines)} lines; expected at most {active_style_profile.max_lines}",
                     source_text=source,
-                    translation=translation,
+                    translation=layout_translation,
                     expected=str(active_style_profile.max_lines),
                 ))
 
@@ -1802,18 +1968,20 @@ def run_quality_checks(
                             f"{active_style_profile.max_chars_per_second:.1f}"
                         ),
                         source_text=source,
-                        translation=translation,
+                        translation=layout_translation,
                         expected=f"{active_style_profile.max_chars_per_second:.1f}",
                     ))
 
-            if _weak_semantic_break(lines):
+            if _weak_semantic_break(lines) and not (
+                export_layout and classify_speaker_lines(lines) is not None
+            ):
                 issues.append(QualityIssue(
                     type="weak_semantic_line_break",
                     severity="warning",
                     block_id=block_id if isinstance(block_id, int) else None,
                     message="line break splits a very short fragment; prefer phrase or punctuation boundaries",
                     source_text=source,
-                    translation=translation,
+                    translation=layout_translation,
                 ))
 
             if _REPEATED_CJK_RE.search(translation):
@@ -1924,21 +2092,22 @@ def run_quality_checks(
                 for observation in observations
             )
             expected = _majority_target_signature(observations) if has_shared_anchor else ""
-            for observation in observations:
-                block_value = observation.get("block_id")
-                block_id = int(block_value) if str(block_value).isdigit() else None
+            if observations:
+                related_ids = sorted({int(o["block_id"]) for o in observations
+                                      if str(o.get("block_id", "")).isdigit()})
+                representative = next((o for o in observations
+                    if expected and o.get("target_signature") != expected), observations[0])
+                representative_id = representative.get("block_id")
                 issues.append(QualityIssue(
                     type="proper_name_inconsistent",
                     severity="warning",
-                    block_id=block_id,
+                    block_id=int(representative_id) if str(representative_id).isdigit() else None,
                     message=message,
                     source_text=item["source"],
-                    translation=_clean_text(observation.get("translation", "")),
-                    expected=(
-                        expected
-                        if expected and observation.get("target_signature") != expected
-                        else ""
-                    ),
+                    translation=_clean_text(representative.get("translation", "")),
+                    expected=expected if representative.get("target_signature") != expected else "",
+                    related_block_ids=related_ids,
+                    observations=observations,
                 ))
 
     blocking_issues = [issue for issue in issues if _is_blocking_issue(issue)]
@@ -1949,6 +2118,7 @@ def run_quality_checks(
         issues=issues,
         summary={
             "issue_count": len(issues),
+            **grouped_issue_summary(issues),
             "blocking_issue_count": len(blocking_issues),
             "report_only_warning_count": report_only_count,
             "by_type": _issue_counts(issues),
@@ -1960,6 +2130,11 @@ def run_quality_checks(
         }),
         trace=trace or {},
     )
+    report.trace["source_classification"] = {
+        "version": SUBTITLE_CLASSIFICATION_VERSION,
+        "unrecognized_bracketed_block_ids": unclassified_source_ids,
+        "policy": "preserve_unrecognized_content",
+    }
     return report
 
 
@@ -2426,6 +2601,7 @@ def build_repair_prompt(
     issues: list[QualityIssue],
     *,
     kb_terms: Optional[dict[str, str]] = None,
+    entity_registry: Optional[list[dict]] = None,
 ) -> str:
     by_id = {}
     for issue in issues:
@@ -2439,6 +2615,11 @@ def build_repair_prompt(
         "original 含多个说话人行时，每位说话人独占一行并保持原顺序和 -/–/— 或“姓名:”标记；"
         "不得合并说话人行，JSON 字符串中的换行写为 \\n。",
     ]
+    from app.engines.entity_registry import entity_context_json, ENTITY_CONTEXT_RULE
+    entity_context = entity_context_json(entity_registry or [],
+        relevant_source="\n".join(str(item.get("original", "")) for item in items))
+    if entity_context:
+        parts.extend([ENTITY_CONTEXT_RULE, entity_context])
     if kb_terms:
         parts.append("必须遵守术语:")
         for source, target in kb_terms.items():
@@ -2458,6 +2639,10 @@ def build_repair_prompt(
             "称谓或职衔密集时优先保留姓名/姓氏和必要头衔，删除可省略的重复头衔；"
             "争吵、追问等双人对话优先改成短句。"
         )
+        parts.append(
+            "语义优先于读速：否定、可能/或许等情态、人物身份、数字、行动主体和时间关系必须保留。"
+            "无法在预算内忠实表达时保留完整含义并留下读速提示，不得为达标把可能性改成确定性。"
+        )
     if "line_too_long" in issue_types:
         parts.append(
             "行长超标时优先压缩成自然单行；确实过长才在语义边界换成两行，"
@@ -2467,8 +2652,9 @@ def build_repair_prompt(
         parts.append("核心术语不一致时必须使用 Issue 中 expected 指定的译法，并统一同一源术语。")
     if issue_types & {"semantic_mismatch", "semantic_uncertain"}:
         parts.append(
-            "语义错位时必须抛弃 draft，严格按 original 重新翻译；"
-            "不要沿用与原文无关的旧译文，不要合并相邻 id。"
+            "先结合 preceding_context 和 following_context 核实问题；确认语义错位才按 original 修复。"
+            "semantic_uncertain 不是确认错译；上下文支持原译时保留 draft，不得猜测后反转动作关系。"
+            "连续字幕因中文语序调整而在相邻条目间移动的完整信息，不算漏译；不要合并相邻 id。"
         )
         parts.append(
             "preceding_context 和 following_context 只用于理解上下文，不得输出这些上下文 id；"

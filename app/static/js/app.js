@@ -6,6 +6,8 @@ function app() {
     ...globalThis.AISubProModelSettings(),
     view: 'home',
     projects: [],
+    backendUnavailable: false,
+    backendUnavailableMessage: '本地服务连接中断，无法获取任务详情或确认任务是否完成。请重新打开应用后重试。',
     showArchived: false,
     projectSearch: '',
     projectStatusFilter: 'all',
@@ -97,6 +99,8 @@ function app() {
     homeSourceMode: 'local',
     newVideoPath: '',
     fileImporting: false,
+    nativePickerOpen: false,
+    nativeDropResolving: false,
     dropClickSuppressUntil: 0,
     nativeDropFallbackTimer: null,
     projectCreating: false,
@@ -181,7 +185,7 @@ function app() {
       await this.loadProjects();
       await this.refreshSystemCheck();
       this.refreshTimer = setInterval(() => {
-        if (this.view === 'projects' && this.shouldPollProjectList()) this.loadProjects();
+        if (['home', 'projects'].includes(this.view) && this.shouldPollProjectList()) this.loadProjects();
         else if (this.view === 'detail' && this.currentProject) this.pollProgress();
       }, 3000);
 
@@ -495,7 +499,7 @@ function app() {
     },
 
     shouldPollProjectList() {
-      return Array.isArray(this.projects) && this.projects.some((project) => this.isProjectBusy(project));
+      return this.backendUnavailable || (Array.isArray(this.projects) && this.projects.some((project) => this.isProjectBusy(project)));
     },
 
     workflowStageLabel(stage) {
@@ -671,6 +675,7 @@ function app() {
     },
 
     statusLabel(p) {
+      if (this.backendUnavailable && this.isProjectBusy(p)) return '状态待确认';
       const stage = p.pipeline_stage;
       const status = p.status;
       const qualityStatus = typeof p.translation_quality_status === 'string'
@@ -825,7 +830,14 @@ function app() {
     async api(url, method='GET', body=null) {
       const opts = { method, headers: { 'Content-Type': 'application/json' } };
       if (body) opts.body = JSON.stringify(body);
-      const r = await fetch(url, opts);
+      let r;
+      try {
+        r = await fetch(url, opts);
+      } catch (cause) {
+        this.backendUnavailable = true;
+        throw new Error(this.backendUnavailableMessage);
+      }
+      this.backendUnavailable = false;
       if (!r.ok) {
         const error = await this.buildApiError(r);
         throw error;
@@ -1542,7 +1554,7 @@ function app() {
         if (this.projectListRequestSeq !== requestId || !!this.showArchived !== includeArchived) return;
         this.projects = Array.isArray(data) ? data.filter(p => this.isPlainObject(p)) : [];
       } catch(e) {
-        if (this.projectListRequestSeq === requestId && !!this.showArchived === includeArchived) {
+        if (this.projectListRequestSeq === requestId && !!this.showArchived === includeArchived && !this.backendUnavailable) {
           this.toast('加载项目失败: ' + e.message, 'error');
         }
       }
@@ -2211,6 +2223,10 @@ function app() {
         : '';
       const verdict = gate.verdict;
       const expected = {
+        passed_with_warnings: {
+          projectStatus: 'passed', reportStatus: 'ok', passed: true,
+          review: false, deliveryMode: 'unattended_with_warnings', nextAction: 'deliver',
+        },
         passed: {
           projectStatus: 'passed',
           reportStatus: 'ok',
@@ -2245,6 +2261,7 @@ function app() {
         && expected
         && report.status === expected.reportStatus
         && project.translation_quality_status === expected.projectStatus
+        && (verdict !== 'passed_with_warnings' || gate.review_recommended === true)
         && gate.passed === expected.passed
         && gate.requires_human_review === expected.review
         && gate.delivery_mode === expected.deliveryMode
@@ -2313,7 +2330,13 @@ function app() {
             || certificate.status === 'loading'
             || certificate.status === 'missing'
           );
-        if (gateBlocked || reportUnavailable || errorCount) status = 'blocked';
+        const advisoryDelivery = gate.verdict === 'passed_with_warnings'
+          && gate.passed === true && gate.review_recommended === true
+          && gate.delivery_mode === 'unattended_with_warnings';
+        const structuralErrors = issues.some(issue =>
+          ['missing_translation', 'duplicate_id', 'empty_source', 'non_positive_duration', 'invalid_duration', 'invalid_timestamp'].includes(issue.type));
+        if (gateBlocked || reportUnavailable || structuralErrors || (errorCount && !advisoryDelivery)) status = 'blocked';
+        else if (advisoryDelivery) status = 'passed-with-warnings';
         else if (reviewRequired) status = 'needs-review';
       }
 
@@ -2341,7 +2364,7 @@ function app() {
       const conclusion = {
         blocked: '未达标：仍有阻塞问题，需要修正并重新运行质量检查。',
         'needs-review': '需要人工复核，复核完成前不能交付。',
-        'passed-with-warnings': '达标：质量检查通过，但仍有非阻塞警告。',
+        'passed-with-warnings': '字幕可交付，质量提示已保留；可直接下载，无需先审核。',
         passed: '达标：质量检查通过。',
       }[status];
       const qualityGate = {
@@ -2379,6 +2402,18 @@ function app() {
       return '提示';
     },
 
+    qaIssueLocations(issue) {
+      const ids = Array.isArray(issue?.related_block_ids)
+        ? issue.related_block_ids.filter(id => Number.isInteger(id) && id > 0)
+        : [];
+      if (!ids.length) return Number.isInteger(issue?.block_id) ? `#${issue.block_id}` : '';
+      const source = ids.map(id => `#${id}`).join('、');
+      const output = Array.isArray(issue?.related_output_ids)
+        ? issue.related_output_ids.filter(id => Number.isInteger(id) && id > 0).map(id => `#${id}`).join('、')
+        : '';
+      return `原字幕 ${source}${output ? ` · 导出 ${output}` : ''}`;
+    },
+
     qaReportTopIssues(limit = null) {
       const view = this.subtitleQualityView('translated');
       const issues = limit !== null && Number.isFinite(Number(limit))
@@ -2411,7 +2446,7 @@ function app() {
         return `需要人工复核 · 问题 ${issueCount} 个`;
       }
       if (view.status === 'passed-with-warnings') {
-        return `通过但有警告 · 警告 ${warnings} 个`;
+        return `字幕可交付 · 质量提示 ${issueCount} 个${errors ? ` · 建议复核 ${errors} 个错误项` : ''}`;
       }
       return '质量检查通过';
     },
@@ -2423,7 +2458,7 @@ function app() {
       }
       if (view.status === 'blocked') return '仍有阻塞问题，修正并重新质检后才能导出或烧录。';
       if (view.status === 'needs-review') return '需要人工复核，复核完成前不能导出或烧录。';
-      if (view.status === 'passed-with-warnings') return '质量检查已通过但仍有警告；导出时需要逐次确认。';
+      if (view.status === 'passed-with-warnings') return '可直接导出或烧录；质量提示供后续参考，不要求先人工审核。';
       return '质量检查通过，可继续导出或烧录。';
     },
 
@@ -3009,10 +3044,25 @@ function app() {
     async handleDrop(event) {
       event?.preventDefault?.();
       this.dropClickSuppressUntil = Date.now() + 800;
+      if (this.fileImporting || this.projectCreating || this.nativeDropResolving) return;
 
       const files = event?.dataTransfer?.files;
       const droppedFiles = Array.from(files || []);
-      const localPaths = this.droppedLocalPaths(event);
+      let localPaths = this.droppedLocalPaths(event);
+      const resolveNative = typeof window !== 'undefined' ? window.pywebview?.api?.get_dropped_paths : null;
+      if (!localPaths.length && droppedFiles.length && typeof resolveNative === 'function') {
+        this.nativeDropResolving = true;
+        try {
+          const paths = await resolveNative(droppedFiles.map(file => ({name: file.name, size: file.size})));
+          localPaths = Array.isArray(paths) ? paths.filter(path => typeof path === 'string' && path.startsWith('/')) : [];
+          if (!localPaths.length) throw new Error('系统拖拽路径与文件不一致，请重新拖入或选择文件。');
+        } catch (error) {
+          this.toast('无法读取拖拽文件：' + (error?.message || '请使用选择文件导入'), 'error');
+          return;
+        } finally {
+          this.nativeDropResolving = false;
+        }
+      }
       if (droppedFiles.length === 0 && localPaths.length === 0) return;
       if (this.homeSourceMode === 'batch') {
         const videoPaths = localPaths.filter((path) => this.isVideoPath(path));
@@ -3041,42 +3091,47 @@ function app() {
     },
 
     async openFilePicker() {
-      if (this.fileImporting || this.projectCreating) return;
-      // Try pywebview native API first, then Electron, then browser fallback
+      if (this.fileImporting || this.projectCreating || this.nativePickerOpen) return;
+      this.nativePickerOpen = true;
       try {
-        if (window.pywebview && window.pywebview.api) {
+        if (window.pywebview?.api?.select_video) {
           const p = await window.pywebview.api.select_video();
-          if (p) { this.newVideoPath = p; await this.quickStart(); return; }
-        } else if (window.electronAPI) {
+          if (p) { this.newVideoPath = p; await this.quickStart(); }
+          return; // A successful native call also handles cancellation.
+        } else if (window.electronAPI?.selectVideo) {
           const p = await window.electronAPI.selectVideo();
-          if (p) { this.newVideoPath = p; await this.quickStart(); return; }
+          if (p) { this.newVideoPath = p; await this.quickStart(); }
+          return;
         }
       } catch(e) {
         console.warn('native file picker failed', e);
+        this.toast('无法打开文件选择窗口，请重试或粘贴视频路径', 'error');
+        return;
+      } finally {
+        this.nativePickerOpen = false;
       }
       this.$refs.fileInput?.click();
     },
 
     async openFolderPicker() {
-      if (this.fileImporting || this.projectCreating) return;
+      if (this.fileImporting || this.projectCreating || this.nativePickerOpen) return;
+      this.nativePickerOpen = true;
       try {
-        if (window.pywebview && window.pywebview.api?.select_video_folder) {
+        if (window.pywebview?.api?.select_video_folder) {
           const p = await window.pywebview.api.select_video_folder();
-          if (p) {
-            this.newVideoPath = p;
-            await this.quickStartBatch();
-            return;
-          }
+          if (p) { this.newVideoPath = p; await this.quickStartBatch(); }
+          return;
         } else if (window.electronAPI?.selectVideoFolder) {
           const p = await window.electronAPI.selectVideoFolder();
-          if (p) {
-            this.newVideoPath = p;
-            await this.quickStartBatch();
-            return;
-          }
+          if (p) { this.newVideoPath = p; await this.quickStartBatch(); }
+          return;
         }
       } catch(e) {
         console.warn('native folder picker failed', e);
+        this.toast('无法打开文件夹选择窗口，请重试或粘贴文件夹路径', 'error');
+        return;
+      } finally {
+        this.nativePickerOpen = false;
       }
       this.toast('当前环境不支持直接选择文件夹，请粘贴文件夹路径后批量开始', 'error');
     },
@@ -3558,10 +3613,10 @@ function app() {
     },
 
     prepareTmdbBeforeStart(project) {
-      if (!project?.id || project.tmdb_id || !project.tmdb_candidates?.length) return Promise.resolve(true);
+      if (!project?.id || project.tmdb_id || (!project.tmdb_candidates?.length && !project.tmdb_lookup?.error)) return Promise.resolve(true);
       if (this.tmdbChoiceResolve) return Promise.resolve(false);
       this.tmdbChoiceProject = project;
-      this.tmdbChoiceError = '';
+      this.tmdbChoiceError = project.tmdb_lookup?.error ? 'TMDB 搜索失败：' + project.tmdb_lookup.error : '';
       this.tmdbChoiceBusy = false;
       this.tmdbChoiceReturnFocus = typeof document !== 'undefined' ? document.activeElement : null;
       this.tmdbChoicePrompt = true;
@@ -3569,6 +3624,24 @@ function app() {
         this.tmdbChoiceResolve = resolve;
         this.$nextTick?.(() => this.$refs.tmdbChoiceCancel?.focus());
       });
+    },
+
+    async retryTmdbChoice() {
+      const project = this.tmdbChoiceProject;
+      if (!project?.tmdb_lookup || this.tmdbChoiceBusy) return;
+      this.tmdbChoiceBusy = true;
+      this.tmdbChoiceError = '';
+      try {
+        const {query, type, year} = project.tmdb_lookup;
+        const result = await this.api(`/api/projects/${project.id}/tmdb-search`, 'POST', {query, type, year});
+        project.tmdb_candidates = result.candidates || [];
+        project.tmdb_lookup.error = '';
+        if (!project.tmdb_candidates.length) this.tmdbChoiceError = '未找到匹配结果。可取消启动后在项目详情中手动搜索，或暂不关联继续。';
+      } catch (error) {
+        this.tmdbChoiceError = this.tmdbAssociationError(error);
+      } finally {
+        this.tmdbChoiceBusy = false;
+      }
     },
 
     tmdbAssociationPayload(candidate) {
@@ -3597,7 +3670,9 @@ function app() {
       try {
         if (choice !== null) {
           const updated = await this.api(`/api/projects/${project.id}`, 'PATCH',
-            choice === 'skip' ? {clear: ['tmdb_candidates']} : this.tmdbAssociationPayload(choice));
+            choice === 'skip'
+              ? {clear: project.tmdb_lookup ? ['tmdb_candidates', 'tmdb_lookup'] : ['tmdb_candidates']}
+              : {...this.tmdbAssociationPayload(choice), clear: ['tmdb_candidates', 'tmdb_lookup']});
           Object.assign(project, updated);
           if (this.currentProject?.id === project.id) this.currentProject = updated;
         }
@@ -4524,7 +4599,8 @@ function app() {
         return;
       }
       const warningMessage = this.subtitleExportWarningMessage(format);
-      if (warningMessage) {
+      const advisoryDelivery = this.qaReport?.summary?.quality_gate?.verdict === 'passed_with_warnings';
+      if (warningMessage && !advisoryDelivery) {
         const confirmed = await this.askConfirm({
           title: '继续导出字幕？',
           message: warningMessage,

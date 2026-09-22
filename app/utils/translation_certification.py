@@ -118,6 +118,7 @@ def validate_translation_delivery(
     report_verdict = report.get("summary", {}).get("quality_gate", {}).get("verdict")
     expected_status = {
         "passed": "passed",
+        "passed_with_warnings": "passed",
         "failed": "failed",
         "needs_review": "needs_review",
     }.get(report_verdict)

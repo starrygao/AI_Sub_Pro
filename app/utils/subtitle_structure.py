@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from html import unescape
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -11,6 +12,12 @@ _DIALOGUE_MARKER_RE = re.compile(
     rf"^\s*[{_DASH_CHARS}](?![{_DASH_CHARS}])\s*\S"
 )
 _SPEAKER_LABEL_RE = re.compile(r"^\s*[^:：\r\n]{1,48}[:：]\s*\S")
+_BRACKET_LABEL_RE = re.compile(r"^\s*[\[［【][^\]］】\r\n]{1,48}[\]］】]\s*\S")
+
+
+def visible_subtitle_text(text: str) -> str:
+    """Text for inspection only; never change the exported rich text."""
+    return unescape(re.sub(r"<[^>]+>|\{\\[^}]+\}", "", text or ""))
 
 
 @dataclass(frozen=True)
@@ -31,9 +38,8 @@ class SpeakerLineStructure:
 def _clean_lines(value: str | Iterable[str]) -> list[str]:
     raw_lines = value.splitlines() if isinstance(value, str) else value
     return [
-        line.strip()
-        for line in (raw_lines or [])
-        if isinstance(line, str) and line.strip()
+        clean for line in (raw_lines or []) if isinstance(line, str)
+        if (clean := visible_subtitle_text(line).strip())
     ]
 
 
@@ -48,7 +54,7 @@ def classify_speaker_lines(
     for line in lines:
         if _DIALOGUE_MARKER_RE.match(line):
             kinds.append("dialogue-marker")
-        elif _SPEAKER_LABEL_RE.match(line):
+        elif _SPEAKER_LABEL_RE.match(line) or _BRACKET_LABEL_RE.match(line):
             kinds.append("speaker-label")
         else:
             return None

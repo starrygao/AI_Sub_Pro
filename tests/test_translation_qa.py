@@ -2318,13 +2318,13 @@ def test_quality_checks_flag_inferred_proper_name_inconsistency():
 
     report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)
 
-    assert report.summary["by_type"]["proper_name_inconsistent"] == 2
+    assert report.summary["by_type"]["proper_name_inconsistent"] == 1
     flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
-    assert {issue.block_id for issue in flagged} == {1, 2}
+    assert {bid for issue in flagged for bid in issue.related_block_ids} == {1, 2}
     assert report.status == "ok"
     assert report.unresolved_blocks == []
     assert report.summary["blocking_issue_count"] == 0
-    assert report.summary["report_only_warning_count"] == 2
+    assert report.summary["report_only_warning_count"] == 1
     assert all(issue.severity == "warning" for issue in flagged)
     assert all(issue.source_text == "Hudson Oaks" for issue in flagged)
 
@@ -2346,7 +2346,7 @@ def test_quality_checks_mark_majority_proper_name_variant_as_repairable():
 
     assert report.status == "ok"
     assert report.summary["blocking_issue_count"] == 0
-    assert report.summary["report_only_warning_count"] == 3
+    assert report.summary["report_only_warning_count"] == 1
     assert report.unresolved_blocks == []
     assert [(issue.block_id, issue.expected) for issue in repairable] == [
         (3, "哈德逊奥克斯")
@@ -2367,7 +2367,7 @@ def test_quality_checks_do_not_block_when_expected_name_ends_question_phrase():
     report = run_quality_checks(blocks, target_language="简体中文", max_chars=40)
     flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
 
-    assert flagged
+    assert not flagged  # Same name in question context is not a conflict.
     assert report.status == "ok"
     assert report.summary["blocking_issue_count"] == 0
     assert report.unresolved_blocks == []
@@ -2413,9 +2413,9 @@ def test_quality_checks_flag_divergent_long_names_without_shared_anchor():
 
     report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)
 
-    assert report.summary["by_type"]["proper_name_inconsistent"] == 2
+    assert report.summary["by_type"]["proper_name_inconsistent"] == 1
     flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
-    assert {issue.block_id for issue in flagged} == {1, 2}
+    assert {bid for issue in flagged for bid in issue.related_block_ids} == {1, 2}
 
 
 def test_quality_checks_run_proper_name_metric_for_traditional_chinese_targets():
@@ -2428,9 +2428,9 @@ def test_quality_checks_run_proper_name_metric_for_traditional_chinese_targets()
 
     report = run_quality_checks(blocks, target_language="繁體中文", max_chars=18)
 
-    assert report.summary["by_type"]["proper_name_inconsistent"] == 2
+    assert report.summary["by_type"]["proper_name_inconsistent"] == 1
     flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
-    assert {issue.block_id for issue in flagged} == {1, 2}
+    assert {bid for issue in flagged for bid in issue.related_block_ids} == {1, 2}
 
 
 def test_quality_checks_run_proper_name_metric_for_common_chinese_aliases():
@@ -2444,9 +2444,9 @@ def test_quality_checks_run_proper_name_metric_for_common_chinese_aliases():
     for target_language in ("Simplified Chinese", "zh-Hant-TW"):
         report = run_quality_checks(blocks, target_language=target_language, max_chars=18)
 
-        assert report.summary["by_type"]["proper_name_inconsistent"] == 2
+        assert report.summary["by_type"]["proper_name_inconsistent"] == 1
         flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
-        assert {issue.block_id for issue in flagged} == {1, 2}
+        assert {bid for issue in flagged for bid in issue.related_block_ids} == {1, 2}
 
 
 def test_normalize_inferred_proper_name_variants_uses_majority_form():
@@ -2559,9 +2559,9 @@ def test_quality_checks_flag_inconsistent_short_cjk_names_with_shared_context():
 
     report = run_quality_checks(blocks, target_language="简体中文", max_chars=18)
 
-    assert report.summary["by_type"]["proper_name_inconsistent"] == 2
+    assert report.summary["by_type"]["proper_name_inconsistent"] == 1
     flagged = [issue for issue in report.issues if issue.type == "proper_name_inconsistent"]
-    assert {issue.block_id for issue in flagged} == {1, 2}
+    assert {bid for issue in flagged for bid in issue.related_block_ids} == {1, 2}
 
 
 def test_quality_checks_skip_proper_name_metric_for_non_chinese_targets():

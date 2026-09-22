@@ -37,6 +37,20 @@ def public_error_message(exc: Exception, limit: int = 200) -> str:
     return text[:limit]
 
 
+class _RedactRequestCredentials(logging.Filter):
+    def filter(self, record):
+        message = record.getMessage()
+        redacted = public_error_message(Exception(message), limit=len(message))
+        if redacted != message:
+            record.msg = redacted
+            record.args = ()
+        return True
+
+
+# httpx logs the complete request URL, including TMDB's query-string key.
+logging.getLogger("httpx").addFilter(_RedactRequestCredentials())
+
+
 def _get_api_key() -> str:
     configured = Config.get("tmdb", "api_key")
     if isinstance(configured, str) and configured.strip():

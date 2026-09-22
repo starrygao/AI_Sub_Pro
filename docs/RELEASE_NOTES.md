@@ -1,3 +1,84 @@
+## v1.3.42
+
+`AI_Sub_Pro_v1.3.42.dmg`
+
+- Resolve macOS file drops directly from the current native drag, validating file names and sizes without relying on DOM callback delivery.
+- Show failed TMDB lookups before task launch, with retry, cancel, and explicit skip actions.
+
+## v1.3.41
+
+Package: `AI_Sub_Pro_v1.3.41.dmg`
+
+- Introduce a self-rendered HTML/CSS diffusion-glass interface shared by desktop and browser.
+- Reflow project actions, language selectors, settings, and recent tasks according to workspace width.
+- Reduce the desktop minimum size to 560 × 480 and retain mobile layouts, keyboard operation, and reduced-motion support.
+
+## v1.3.40
+
+Package: `AI_Sub_Pro_v1.3.40.dmg`
+
+- Treat native file/folder cancellation as terminal and prevent duplicate dialogs.
+- Distinguish series identity years from special-episode years; retry empty year-filtered TV searches while retaining candidate confirmation.
+- Redact TMDB query credentials in HTTP request logs.
+
+## v1.3.39
+
+Package: `AI_Sub_Pro_v1.3.39.dmg`
+
+- Fix missed sound cues and quality false positives from formatting tags and URLs.
+- Improve document-wide name consistency checks and group entity findings while preserving every subtitle location.
+- Share entity context with translation and semantic repair, protecting possibility wording and curated terms.
+- Prevent stale checkpoints from overwriting subtitle edits and keep filtered source IDs aligned after renumbering.
+
+## v1.3.38
+
+Package: `AI_Sub_Pro_v1.3.38.dmg`
+
+- Preserve wrapped dialogue containing sound-like words in quality-check inputs.
+- Reduce false name inconsistencies for unchanged ranks and explicitly delimited work titles across dialogue contexts while retaining genuine differences.
+
+## v1.3.37
+
+Package: `AI_Sub_Pro_v1.3.37.dmg`
+
+- Prevent inferred-name normalization from replacing ordinary possessive context or duplicating titles.
+- Reduce false positives for short Chinese names, titles, and conditional phrases; check single-word speaker labels for name drift.
+- Supply read-only neighboring subtitles to semantic QA and evaluate natural Chinese word order across continuous cues.
+- Check the rendered export layout and retire stale execution failures only after a fresh check of the same content.
+
+## v1.3.36
+
+Installer: `AI_Sub_Pro_v1.3.36.dmg`
+
+- Translation, retries, QA and export share a source classification contract. Known sound cues are skipped before translation; unknown bracketed content requires a nonempty translation, while dialogue and lyrics are retained.
+- Save source-, timeline- and configuration-bound drafts between batches. Retry only missing content, then run fresh QA before download or burn.
+- Migrate verifiable legacy partial subtitles before invalidating old reports. Reject incompatible source, configuration or draft identities.
+- Resolve the project directory before creating burn transaction files, preventing commit failures when the data root is a symlink.
+
+## v1.3.35
+
+Installer: `AI_Sub_Pro_v1.3.35.dmg`
+
+- Deliver complete translated and bilingual subtitles after automatic repair, retaining unresolved semantic and quality findings as optional review notes.
+- Downloads and automatic burning no longer require human review for these advisory findings.
+- Keep missing-dialogue, timing, artifact integrity and run identity checks, including rollback of unverified repair candidates.
+
+## v1.3.34
+
+Installer: `AI_Sub_Pro_v1.3.34.dmg`
+
+- Recognize bracketed action cues such as gunfire, hand rapping, and seagulls mewing so omitted sound descriptions no longer cause repeated missing-translation retries and task failure.
+- Keep sound omission consistent across completion counts, quality checks, and export while preserving dialogue checks and other review requirements.
+
+## v1.3.33
+
+Installer: `AI_Sub_Pro_v1.3.33.dmg`
+
+- Allow up to two minutes for desktop startup permission prompts, while stopping immediately if the server thread exits.
+- Fix local server startup from Finder when the windowed bundle has no console streams; reuse file logging instead of the console formatter.
+- Refresh active tasks on the home page to avoid stale processing indicators.
+- Show a persistent notice when the local service disconnects, explain why details and completion status are unavailable, and refresh task state after reconnection.
+
 ## v1.3.32
 
 Installer: `AI_Sub_Pro_v1.3.32.dmg`

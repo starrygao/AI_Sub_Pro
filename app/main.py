@@ -277,6 +277,9 @@ def _uvicorn_run_kwargs(host: str, *, log_level: str = "info") -> dict:
         "host": host,
         "port": int(os.environ.get("AISUBPRO_PORT", "18090")),
         "log_level": log_level,
+        # Finder launches windowed bundles without stdout/stderr. Reuse our
+        # file logging instead of Uvicorn's console-only color formatter.
+        "log_config": None,
         "ws": "websockets-sansio",
         "timeout_graceful_shutdown": _graceful_shutdown_timeout(),
     }
@@ -304,6 +307,20 @@ def _local_server_ready(timeout: float = 1.0) -> bool:
             response.close()
     except Exception:
         return False
+
+
+def _wait_for_local_server(server_thread, timeout: float = 120.0) -> bool:
+    """Allow time for macOS file/Keychain prompts during desktop startup."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _local_server_ready(timeout=0.5):
+            return True
+        if not server_thread.is_alive():
+            return False
+        time.sleep(0.5)
+    return False
 
 
 def _drop_event_paths(event) -> list[str]:
@@ -379,11 +396,7 @@ if __name__ == "__main__":
             server_thread.start()
 
             # Wait for server to be ready before opening a native window.
-            for _ in range(30):
-                if _local_server_ready(timeout=0.5):
-                    server_ready = True
-                    break
-                time.sleep(0.5)
+            server_ready = _wait_for_local_server(server_thread)
 
         if not server_ready:
             log.error("AI Sub Pro server did not become ready at http://127.0.0.1:18090")
@@ -421,6 +434,11 @@ if __name__ == "__main__":
                         ),
                     )
                     return self._dialog_path(result)
+
+                if sys.platform == "darwin":
+                    def get_dropped_paths(self, files):
+                        from app.utils.native_drop import macos_dropped_paths
+                        return macos_dropped_paths(files)
 
                 def select_video_folder(self):
                     """Open native folder picker for batch video imports."""
@@ -510,11 +528,12 @@ if __name__ == "__main__":
                 url="http://127.0.0.1:18090",
                 width=1280,
                 height=820,
-                min_size=(900, 600),
+                min_size=(560, 480),
                 js_api=api,
                 text_select=True,
             )
-            _install_native_file_drop_bridge(window)
+            if sys.platform != "darwin":
+                _install_native_file_drop_bridge(window)
             webview.start(debug=False)
         except ImportError:
             # pywebview not available, fall back to browser

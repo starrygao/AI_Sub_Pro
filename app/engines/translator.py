@@ -45,7 +45,9 @@ from app.engines.domain_terms import (
 from app.engines.project_metadata import build_project_metadata_prompt_snippet
 from app.engines.subtitle_style_profiles import build_subtitle_style_prompt_snippet
 from app.engines.terminology_conflicts import collect_terminology_conflicts
-from app.engines.translation_qa import translation_candidate_contract_error
+from app.engines.translation_qa import (
+    translation_candidate_contract_error, classify_subtitle_source,
+)
 from app.engines.discourse_links import (
     build_discourse_link_contexts,
     detect_possessive_echo_links,
@@ -69,10 +71,9 @@ except Exception as _e:  # pragma: no cover — best-effort load
 # but we need to fall back to the batched path (e.g. document too large for
 # the primary provider's context window).
 _FULL_DOC_FALLBACK_BATCH_SIZE = 10
-_SOUND_DESCRIPTION_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
 _MISSING_TRANSLATION_RETRY_NOTE = (
     "补翻要求: 上一轮这些字幕缺失或格式无效。本轮只翻译当前输入 JSON 中的条目，"
-    "普通对白必须为每个 id 返回一个非空 translation；环境音/纯声音描述可按规则留空但仍必须返回 id。"
+    "每个输入 id 都必须返回非空译文；未识别的括号内容也要翻译，不得擅自留空。"
 )
 _SPEAKER_LINE_PROMPT_RULE = (
     "原文含两个或更多说话人行（每行以 -/–/— 开头，或以“姓名:”标注）时，"
@@ -323,6 +324,9 @@ def _build_auto_kb_candidate_snippet(kb_data: Dict, limit: int = 30) -> tuple[st
 
 
 def _is_retryable_translation_result(result: dict, item: dict) -> bool:
+    original = item.get("original") if isinstance(item, dict) else ""
+    if isinstance(original, str) and not classify_subtitle_source(original).requires_translation:
+        return False
     if not isinstance(result, dict):
         return False
     translation = result.get("translation")
@@ -340,7 +344,7 @@ def _is_retryable_translation_result(result: dict, item: dict) -> bool:
         and translation == ""
         and isinstance(original, str)
         and original.strip()
-        and not _SOUND_DESCRIPTION_RE.match(original)
+        and classify_subtitle_source(original).requires_translation
     )
 
 
@@ -349,6 +353,7 @@ class SubtitleTranslator:
 
     def __init__(self, config: dict):
         self.config = config
+        self.resume_existing = False
         self._kb_usage_trace = {"project": {}, "matches": []}
         trans_cfg = _dict_section(config, "translation")
         api_keys = _dict_section(config, "api_keys")
@@ -518,6 +523,12 @@ class SubtitleTranslator:
             within ~80% of its context window.
           * batched mode — the historical windowed-context path.
         """
+        # A recovery is a sparse edit. Use contextual batches so retained
+        # neighbors remain visible without sending their drafts for replacement.
+        from app.engines.entity_registry import registry_for_blocks
+        self._document_entity_registry = registry_for_blocks(blocks)
+        if self.resume_existing and any(b.translation.strip() for b in blocks):
+            return self._translate_batched(blocks, target_lang, meta_info, kb_data, callback)
         if self.full_doc_mode and getattr(self.primary, "supports_full_document_mode", False):
             if self._fits_full_doc(blocks):
                 return self._translate_full_document(
@@ -530,6 +541,11 @@ class SubtitleTranslator:
                 _provider_full_document_max_items(self.primary) or "unbounded",
             )
         return self._translate_batched(blocks, target_lang, meta_info, kb_data, callback)
+
+    def _needs_translation(self, block) -> bool:
+        return (not block.filtered and bool(block.text.strip())
+                and classify_subtitle_source(block.text).requires_translation
+                and not (self.resume_existing and block.translation.strip()))
 
     def _quality_trace_for_prompt(self) -> TranslationContextTrace:
         if self._accumulate_quality_trace:
@@ -559,7 +575,7 @@ class SubtitleTranslator:
         We size batches so each batch's estimated tokens stay under ~40% of
         the provider's context window, bounded to [1, _FULL_DOC_FALLBACK_BATCH_SIZE].
         """
-        active = [b for b in blocks if not b.filtered and b.text.strip()]
+        active = [b for b in blocks if self._needs_translation(b)]
         if not active:
             return _FULL_DOC_FALLBACK_BATCH_SIZE
         window = _provider_context_window(self.primary)
@@ -570,7 +586,7 @@ class SubtitleTranslator:
         return max(1, min(_FULL_DOC_FALLBACK_BATCH_SIZE, per_batch))
 
     def _fits_full_doc(self, blocks: List[SubtitleBlock]) -> bool:
-        active = [b for b in blocks if not b.filtered and b.text.strip()]
+        active = [b for b in blocks if self._needs_translation(b)]
         max_items = _provider_full_document_max_items(self.primary)
         if max_items is not None and len(active) > max_items:
             return False
@@ -604,7 +620,7 @@ class SubtitleTranslator:
         meta_info = meta_info if isinstance(meta_info, dict) else {}
         kb_data = kb_data if isinstance(kb_data, dict) else {}
 
-        active = [b for b in blocks if not b.filtered and b.text.strip()]
+        active = [b for b in blocks if self._needs_translation(b)]
         if not active:
             log.warning("No blocks to translate")
             return blocks
@@ -756,8 +772,12 @@ class SubtitleTranslator:
             effective_batch_size = self._fallback_batch_size(blocks)
 
         # Collect translatable blocks
-        active_indices = [i for i, b in enumerate(blocks) if not b.filtered and b.text.strip()]
+        active_indices = [i for i, b in enumerate(blocks) if self._needs_translation(b)]
         total = len(active_indices)
+        context_indices = [i for i, b in enumerate(blocks)
+                           if not b.filtered and b.text.strip()
+                           and classify_subtitle_source(b.text).requires_translation]
+        context_positions = {index: position for position, index in enumerate(context_indices)}
 
         if total == 0:
             log.warning("No blocks to translate")
@@ -783,17 +803,19 @@ class SubtitleTranslator:
 
                 # Build context
                 context_before = []
-                if batch_start > 0:
-                    ctx_start = max(0, batch_start - self.context_window)
-                    for ci in active_indices[ctx_start:batch_start]:
+                context_start = context_positions[batch_indices[0]]
+                if context_start > 0:
+                    ctx_start = max(0, context_start - self.context_window)
+                    for ci in context_indices[ctx_start:context_start]:
                         b = blocks[ci]
                         if b.translation:
                             context_before.append({"original": b.text, "translated": b.translation})
 
                 context_after = []
-                if batch_end < total:
-                    ctx_end = min(total, batch_end + self.context_window)
-                    for ci in active_indices[batch_end:ctx_end]:
+                context_end = context_positions[batch_indices[-1]] + 1
+                if context_end < len(context_indices):
+                    ctx_end = min(len(context_indices), context_end + self.context_window)
+                    for ci in context_indices[context_end:ctx_end]:
                         context_after.append(blocks[ci].text)
 
                 # Build batch items
@@ -1149,6 +1171,11 @@ class SubtitleTranslator:
             f"你是一位精通{target_lang}的专业字幕翻译。请将以下字幕翻译为{target_lang}。",
             "",
         ]
+        from app.engines.entity_registry import entity_context_json, ENTITY_CONTEXT_RULE
+        entity_context = entity_context_json(getattr(self, "_document_entity_registry", []),
+            relevant_source="\n".join(str(item.get("original", "")) for item in items or []))
+        if entity_context:
+            parts.extend([ENTITY_CONTEXT_RULE, entity_context])
 
         # Meta info
         if meta_info.get("plot"):
@@ -1294,7 +1321,7 @@ class SubtitleTranslator:
             "id 必须原样照抄输入条目的 id,不得重新编号;每个输入条目都必须有且仅有一个对应输出",
             "2. 保持译文简洁自然,符合字幕表达习惯",
             "3. 不要保留原文语言,完全翻译为目标语言",
-            "4. [sound]等环境音标记不翻译,留空",
+            "4. 已确认的纯音效已由程序排除。每个输入 id 必须返回非空译文；未知括号内容保留并翻译，混合内容必须保留对白和歌词。",
             "5. 保持上下文语气连贯",
             "6. 删除音乐装饰符号,不要输出 ♪、♫、♬、🎵、🎶",
             f"7. {_SPEAKER_LINE_PROMPT_RULE}",

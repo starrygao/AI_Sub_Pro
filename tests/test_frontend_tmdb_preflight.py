@@ -139,3 +139,31 @@ assert.equal(state.tmdbChoicePrompt,true); release(); await save; await pending;
 assert.equal(calls.filter(c=>c.method==='PATCH').length,1);
 assert.equal(calls.filter(c=>c.url.endsWith('/start-full')).length,1);
 """)
+
+
+def test_lookup_failure_requires_explicit_choice_and_retry_does_not_start():
+    run_js("""
+const {state,calls}=setup();
+const p={...project(),tmdb_candidates:[],tmdb_lookup:{query:'American Hostage',type:'tv',year:null,error:'503 Service Unavailable'}};
+state.currentProject=p;
+const pending=state.prepareTmdbBeforeStart(p); await tick();
+assert.equal(state.tmdbChoicePrompt,true);
+assert.match(state.tmdbChoiceError,/503/);
+state.api=async (url,method,body)=>{calls.push({url,method,body});return {candidates:[candidate]};};
+await state.retryTmdbChoice();
+assert.equal(state.tmdbChoicePrompt,true);
+assert.equal(state.tmdbChoiceProject.tmdb_candidates[0].tmdb_id,42);
+assert.equal(calls[0].url,'/api/projects/preflight/tmdb-search');
+assert.equal(calls[0].body.query,'American Hostage');
+await state.finishTmdbChoice(null); assert.equal(await pending,false);
+""")
+
+
+def test_skip_failed_lookup_clears_persisted_failure():
+    run_js("""
+const {state,calls}=setup();
+const p={...project(),tmdb_candidates:[],tmdb_lookup:{query:'Example',type:'tv',error:'503'}};
+const pending=state.prepareTmdbBeforeStart(p); await tick();
+await state.finishTmdbChoice('skip'); assert.equal(await pending,true);
+assert.ok(calls[0].body.clear.includes('tmdb_lookup'));
+""")

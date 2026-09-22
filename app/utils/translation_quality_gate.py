@@ -4,6 +4,41 @@ import json
 from pathlib import Path
 
 
+DELIVERY_BLOCKING_ISSUE_TYPES = frozenset({
+    "missing_translation", "duplicate_id", "empty_source",
+    "non_positive_duration", "invalid_duration", "invalid_timestamp",
+})
+
+
+def apply_advisory_delivery_policy(report: dict) -> None:
+    """Retain QA evidence while allowing complete subtitles to be delivered.
+
+    This is a final delivery decision, after automatic repair. It does not
+    change repair eligibility, issue severity, or certificate identities.
+    """
+    summary = report["summary"]
+    gate = summary["quality_gate"]
+    if gate["passed"] or any(
+        issue.get("type") in DELIVERY_BLOCKING_ISSUE_TYPES
+        for issue in report["issues"]
+    ):
+        return
+    gate.update({
+        "verdict": "passed_with_warnings",
+        "passed": True,
+        "delivery_mode": "unattended_with_warnings",
+        "requires_human_review": False,
+        "review_recommended": True,
+        "next_action": "deliver",
+    })
+    report["status"] = "ok"
+    summary["conclusion"] = (
+        f"字幕已可交付：保留 {summary['issue_count']} 个质量提示，"
+        f"其中 {summary['unresolved_blocks']} 个位置建议复核；"
+        "无需先审核，可直接下载字幕。"
+    )
+
+
 @dataclass(frozen=True)
 class TranslationQualityGateDecision:
     passed: bool
@@ -178,7 +213,7 @@ def validate_quality_report(
     if (
         status not in {"ok", "failed", "needs_review"}
         or policy not in {"fast", "strict"}
-        or verdict not in {"passed", "failed", "needs_review"}
+        or verdict not in {"passed", "passed_with_warnings", "failed", "needs_review"}
         or not isinstance(passed, bool)
         or not isinstance(requires_human_review, bool)
     ):
@@ -188,7 +223,21 @@ def validate_quality_report(
     if policy == "strict" and trace["semantic_qa"].get("enabled") is not True:
         return _invalid("翻译质量检查报告无效或自相矛盾，已停止交付。")
 
-    if passed:
+    advisory = verdict == "passed_with_warnings"
+    if advisory:
+        gate_consistent = (
+            passed is True
+            and status == "ok"
+            and requires_human_review is False
+            and gate.get("review_recommended") is True
+            and delivery_mode == "unattended_with_warnings"
+            and next_action == "deliver"
+            and not any(
+                issue.get("type") in DELIVERY_BLOCKING_ISSUE_TYPES
+                for issue in issues
+            )
+        )
+    elif passed:
         gate_consistent = (
             status == "ok"
             and verdict == "passed"
@@ -253,19 +302,17 @@ def validate_quality_report(
         and semantic_trace.get("enabled") is True
         and semantic_trace.get("coverage_complete") is False
     )
-    review_classification_consistent = (
-        not semantic_uncertainty_requires_review
-        or requires_human_review is True
-    ) and (
-        not incomplete_fast_semantics_requires_review
-        or requires_human_review is True
+    review_classification_consistent = advisory or (
+        (not semantic_uncertainty_requires_review or requires_human_review is True)
+        and (not incomplete_fast_semantics_requires_review or requires_human_review is True)
     )
     coverage_allows_delivery = (
-        semantic_trace.get("enabled") is False
+        advisory
+        or semantic_trace.get("enabled") is False
         or semantic_trace.get("coverage_complete") is True
         or passed is False
     )
-    passed_issue_consistent = not passed or (
+    passed_issue_consistent = advisory or not passed or (
         actual_error_count == 0
         and not any(
             (

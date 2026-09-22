@@ -278,3 +278,24 @@ def test_patch_project_persists_manual_content_metadata(tmp_path, monkeypatch):
     assert cleared["content_notes"] == ""
     assert cleared["manual_terms"] == ""
     assert cleared["metadata_source"] == ""
+
+
+@pytest.mark.asyncio
+async def test_create_project_retains_failed_tmdb_lookup_for_confirmation(tmp_path, monkeypatch):
+    import httpx
+    from unittest.mock import AsyncMock
+    from app.api import projects as api
+    from app.engines import tmdb
+
+    video = tmp_path / 'American.Hostage.S01E01.My.Town.Indy.1080p.mkv'
+    video.write_bytes(b'video')
+    monkeypatch.setattr(api, 'PROJECTS_DIR', tmp_path / 'projects')
+    monkeypatch.setattr(api, 'get_tracks', lambda *a, **kw: [])
+    monkeypatch.setattr(api, 'get_duration', lambda *a, **kw: 12.3)
+    monkeypatch.setattr(tmdb, 'search_tv', AsyncMock(side_effect=httpx.ProxyError('503 Service Unavailable')))
+    project = await api.create_project(api.CreateProjectReq(video_path=str(video)))
+    saved = json.loads((tmp_path / 'projects' / project['id'] / 'project.json').read_text())
+    assert not project.get('tmdb_id')
+    assert saved['tmdb_lookup'] == project['tmdb_lookup']
+    assert project['tmdb_lookup']['query'] == 'American Hostage'
+    assert '503' in project['tmdb_lookup']['error']

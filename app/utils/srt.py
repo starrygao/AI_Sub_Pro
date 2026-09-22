@@ -549,6 +549,12 @@ def _single_line_translation(lines: list[str]) -> list[str]:
         return lines
     if _has_structural_line_break(lines):
         return lines
+    # Credit/contact addresses have a meaningful boundary of their own.
+    # Joining them onto a CJK credit both hurts legibility and can corrupt
+    # the apparent address when a player makes it clickable.
+    if any(re.fullmatch(r"(?:https?://)?(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?:/\S*)?", line)
+           for line in lines):
+        return lines
     joined = _join_subtitle_lines(lines)
     if _compact_subtitle_chars(joined) > _TRANSLATION_SINGLE_LINE_MAX_CHARS:
         return lines

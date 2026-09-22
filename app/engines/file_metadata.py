@@ -19,6 +19,7 @@ skip the TMDB step rather than search for garbage).
 from __future__ import annotations
 
 import os
+import re
 from typing import Optional, Dict
 
 
@@ -57,6 +58,21 @@ def parse_filename(name: str) -> Optional[Dict]:
     else:
         # guessit defaults to "movie" when ambiguous; mirror that.
         norm_type = "movie"
+
+    # Some releases contain both the series identity year before SxxExx
+    # and an episode/special year afterwards. Guessit may retain the former
+    # in the title and use the latter as the series first-air year.
+    if norm_type == "tv" and g.get("year") is not None:
+        marker = re.search(r"(?i)(?:^|[. _-])s\d{1,2}e\d{1,3}(?!\d)", base)
+        if marker and re.search(r"\s(?:19|20)\d{2}$", title):
+            identity = dict(guessit(base[:marker.start()], {"type": "episode"}))
+            identity_title = identity.get("title")
+            identity_year = _coerce_int(identity.get("year"))
+            if (isinstance(identity_title, str) and identity_title.strip()
+                    and identity_year is not None
+                    and title == f"{identity_title} {identity_year}"):
+                title = identity_title.strip()
+                g["year"] = identity_year
 
     out = {
         "title": title,

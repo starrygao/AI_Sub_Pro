@@ -19,9 +19,9 @@ module.exports = {
           900: '#0f172a',
         },
         accent: {
-          DEFAULT: '#007aff',
-          light: '#5ac8fa',
-          dark: '#0057d8',
+          DEFAULT: '#146e79',
+          light: '#68adb5',
+          dark: '#105560',
           glow: 'rgba(0,122,255,0.16)',
         },
         success: {

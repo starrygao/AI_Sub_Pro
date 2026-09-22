@@ -619,3 +619,24 @@ def test_tmdb_project_search_sanitizes_non_finite_candidate_values(client, monke
     assert r.status_code == 200
     assert r.json()["candidates"][0]["vote_average"] is None
     assert client.get(f"/api/projects/{pid}").json()["tmdb_candidates"][0]["vote_average"] is None
+
+
+@pytest.mark.parametrize('action', ['skip', 'retry', 'retry_failure'])
+def test_failed_tmdb_lookup_survives_until_explicit_skip_or_successful_retry(client, monkeypatch, action):
+    from unittest.mock import AsyncMock
+    from app.api import projects
+    from app.engines import tmdb
+    pid = _make_project(client)
+    path = projects.PROJECTS_DIR / pid / 'project.json'
+    project = json.loads(path.read_text())
+    project['tmdb_lookup'] = {'query': 'Example', 'type': 'tv', 'year': None, 'error': '503'}
+    path.write_text(json.dumps(project))
+    if action == 'skip':
+        response = client.patch(f'/api/projects/{pid}', json={'clear': ['tmdb_candidates', 'tmdb_lookup']})
+    else:
+        search = AsyncMock(return_value=[]) if action == 'retry' else AsyncMock(side_effect=RuntimeError('503'))
+        monkeypatch.setattr(tmdb, 'search_tv', search)
+        response = client.post(f'/api/projects/{pid}/tmdb-search', json={'query': 'Example', 'type': 'tv'})
+    assert response.status_code == (502 if action == 'retry_failure' else 200)
+    saved = json.loads(path.read_text())
+    assert bool(saved.get('tmdb_lookup')) == (action == 'retry_failure')

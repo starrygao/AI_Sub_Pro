@@ -3316,10 +3316,12 @@ def test_burn_replace_after_effect_exception_restores_prior_video(
 
 
 @pytest.mark.parametrize("existing_output", [None, b"previous-burn"])
+@pytest.mark.parametrize("symlink_root", [False, True])
 def test_successful_burn_commits_video_and_cleans_transaction_files(
     tmp_path,
     monkeypatch,
     existing_output,
+    symlink_root,
 ):
     pid = (
         "burntransactionsuccess-first"
@@ -3333,6 +3335,12 @@ def test_successful_burn_commits_video_and_cleans_transaction_files(
             pid=pid,
         )
     )
+    if symlink_root:
+        from app.utils import project_store
+        alias = tmp_path / "root-alias"
+        alias.symlink_to(tmp_path, target_is_directory=True)
+        monkeypatch.setattr(api_translate, "PROJECTS_DIR", alias)
+        monkeypatch.setattr(project_store, "PROJECTS_DIR", alias)
     final_path = pdir / "original_subtitled.mp4"
     if existing_output is not None:
         final_path.write_bytes(existing_output)
@@ -4294,7 +4302,7 @@ def test_translate_pipeline_marks_contextual_background_speakers(tmp_path, monke
     ]
 
 
-def test_full_pipeline_stops_before_burn_when_quality_gate_fails(tmp_path, monkeypatch):
+def test_full_pipeline_continues_to_burn_with_advisory_quality_issues(tmp_path, monkeypatch):
     from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
@@ -4348,22 +4356,22 @@ def test_full_pipeline_stops_before_burn_when_quality_gate_fails(tmp_path, monke
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
-    assert burn_called == []
-    assert project["status"] == "error"
-    assert "翻译质量未达标" in project["error"]
-    assert project["translation_quality_status"] == "failed"
-    assert "翻译质量未达标" in project["progress_msg"]
-    assert api_translate._resume_stage_for_project(pid, project) == "translate"
-    assert report["summary"]["quality_gate"]["passed"] is False
+    assert burn_called == [pid]
+    assert project["status"] == "translated"
+    assert project["error"] is None
+    assert project["translation_quality_status"] == "passed"
+    assert "翻译完成" in project["progress_msg"]
+    assert api_translate._resume_stage_for_project(pid, project) == "burn"
+    assert report["summary"]["quality_gate"]["passed"] is True
     assert report["summary"]["quality_gate"]["requires_human_review"] is False
     progress = json.loads((pdir / "progress.json").read_text(encoding="utf-8"))
-    assert project["progress"] == 100
-    assert progress["progress"] == 100
-    assert progress["stage"] == ""
-    assert not (pdir / "translated.srt").exists()
-    assert not (pdir / "bilingual.srt").exists()
-    assert (pdir / "partial_translated.srt").exists()
-    assert (pdir / "partial_bilingual.srt").exists()
+    assert project["progress"] == 75
+    assert progress["progress"] == 75
+    assert progress["stage"] == "translate"
+    assert (pdir / "translated.srt").exists()
+    assert (pdir / "bilingual.srt").exists()
+    assert not (pdir / "partial_translated.srt").exists()
+    assert not (pdir / "partial_bilingual.srt").exists()
 
 
 def test_translate_done_message_ignores_blank_sound_descriptions(tmp_path, monkeypatch):
@@ -4539,7 +4547,7 @@ def test_translate_pipeline_blocks_export_when_cleaned_translation_is_empty(tmp_
     assert (pdir / "partial_bilingual.srt").exists()
 
 
-def test_translate_pipeline_professional_semantic_mismatch_blocks_delivery(tmp_path, monkeypatch):
+def test_translate_pipeline_delivers_with_semantic_mismatch_report(tmp_path, monkeypatch):
     from app.services import translation_tasks as api_translate
     from app.utils import project_store
 
@@ -4599,23 +4607,23 @@ def test_translate_pipeline_professional_semantic_mismatch_blocks_delivery(tmp_p
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
-    assert project["status"] == "error"
-    assert project["translation_quality_status"] == "failed"
+    assert project["status"] == "translated"
+    assert project["translation_quality_status"] == "passed"
     assert project["translation_quality_policy"] == "strict"
     assert project["translation_quality_run_id"] == report["run_id"]
     assert project["translation_quality_content_hash"] == report["content_hash"]
     assert project["translation_quality_content_hash"]
-    assert "翻译质量未达标" in project["error"]
+    assert project["error"] is None
     assert report["summary"]["by_type"]["semantic_mismatch"] == 1
     assert report["issues"][0]["severity"] == "error"
-    assert report["summary"]["quality_gate"]["passed"] is False
+    assert report["summary"]["quality_gate"]["passed"] is True
     assert report["summary"]["quality_gate"]["requires_human_review"] is False
-    assert not (pdir / "translated.srt").exists()
-    assert not (pdir / "bilingual.srt").exists()
-    assert (pdir / "partial_translated.srt").exists()
+    assert (pdir / "translated.srt").exists()
+    assert (pdir / "bilingual.srt").exists()
+    assert not (pdir / "partial_translated.srt").exists()
 
 
-def test_professional_semantic_uncertainty_requires_human_review():
+def test_professional_semantic_uncertainty_recommends_optional_review():
     from app.services.translation_tasks import (
         _finalize_quality_conclusion,
         _refresh_quality_report_issue_summary,
@@ -4662,10 +4670,10 @@ def test_professional_semantic_uncertainty_requires_human_review():
     assert trace["checked_block_ids"] == [7]
     assert trace["failed_block_ids"] == []
     assert trace["skipped_block_ids"] == []
-    assert report.summary["quality_gate"]["passed"] is False
-    assert report.summary["quality_gate"]["verdict"] == "needs_review"
-    assert report.summary["quality_gate"]["requires_human_review"] is True
-    assert report.summary["quality_gate"]["delivery_mode"] == "human_review"
+    assert report.summary["quality_gate"]["passed"] is True
+    assert report.summary["quality_gate"]["verdict"] == "passed_with_warnings"
+    assert report.summary["quality_gate"]["requires_human_review"] is False
+    assert report.summary["quality_gate"]["delivery_mode"] == "unattended_with_warnings"
     assert report.unresolved_blocks == [7]
     assert report.summary["quality_gate"]["unresolved_blocks"] == 1
 
@@ -4881,7 +4889,10 @@ def test_semantic_qa_uses_dialogue_only_items_and_bounded_authoritative_context(
         82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94,
     ]
     assert trace["coverage_complete"] is True
-    assert captured["items"] == [
+    assert [
+        {key: item[key] for key in ("id", "original", "draft")}
+        for item in captured["items"]
+    ] == [
         {
             "id": 82,
             "original": "-[Maggie] Here.",
@@ -5048,20 +5059,20 @@ def test_professional_pipeline_latches_uncertainty_after_auto_repair(tmp_path, m
     )
 
     gate = report["summary"]["quality_gate"]
-    assert project["status"] == "error"
-    assert project["translation_quality_status"] == "needs_review"
+    assert project["status"] == "translated"
+    assert project["translation_quality_status"] == "passed"
     assert project["translation_quality_policy"] == "strict"
     assert project["translation_quality_run_id"] == report["run_id"]
     assert project["translation_quality_content_hash"] == report["content_hash"]
     assert project["translation_quality_content_hash"]
-    assert gate["passed"] is False
-    assert gate["verdict"] == "needs_review"
-    assert gate["requires_human_review"] is True
+    assert gate["passed"] is True
+    assert gate["verdict"] == "passed_with_warnings"
+    assert gate["requires_human_review"] is False
     assert gate["policy"] == "strict"
     assert gate["observed_semantic_uncertain_block_ids"] == [1, 2]
     assert report["trace"]["semantic_uncertain_observed_block_ids"] == [1, 2]
-    assert not (pdir / "translated.srt").exists()
-    assert (pdir / "partial_translated.srt").exists()
+    assert (pdir / "translated.srt").exists()
+    assert not (pdir / "partial_translated.srt").exists()
 
 
 def test_professional_pipeline_keeps_uncertainty_across_second_quality_persistence(
@@ -5141,14 +5152,14 @@ def test_professional_pipeline_keeps_uncertainty_across_second_quality_persisten
 
     assert len(persisted_reports) == 2
     assert persisted_reports[0]["status"] == "needs_review"
-    assert persisted_reports[1]["status"] == "needs_review"
+    assert persisted_reports[1]["status"] == "ok"
     assert primary.semantic_round == 8
-    assert project["status"] == "error"
-    assert project["translation_quality_status"] == "needs_review"
+    assert project["status"] == "translated"
+    assert project["translation_quality_status"] == "passed"
     assert report["trace"]["semantic_uncertain_observed_block_ids"] == [1]
-    assert report["summary"]["quality_gate"]["requires_human_review"] is True
-    assert not (pdir / "translated.srt").exists()
-    assert (pdir / "partial_translated.srt").exists()
+    assert report["summary"]["quality_gate"]["requires_human_review"] is False
+    assert (pdir / "translated.srt").exists()
+    assert not (pdir / "partial_translated.srt").exists()
 
 
 def test_professional_semantic_provider_unavailable_fails_closed():
@@ -5189,7 +5200,7 @@ def test_professional_semantic_provider_unavailable_fails_closed():
     "provider_behavior",
     ["provider_unavailable", "batch_failure", "partial_coverage"],
 )
-def test_fast_pipeline_incomplete_semantic_coverage_requires_manual_review(
+def test_fast_pipeline_incomplete_semantic_coverage_is_advisory(
     tmp_path,
     monkeypatch,
     provider_behavior,
@@ -5217,16 +5228,16 @@ def test_fast_pipeline_incomplete_semantic_coverage_requires_manual_review(
     )
 
     gate = report["summary"]["quality_gate"]
-    assert project["status"] == "error"
-    assert project["translation_quality_status"] == "needs_review"
-    assert gate["passed"] is False
-    assert gate["verdict"] == "needs_review"
-    assert gate["requires_human_review"] is True
-    assert gate["delivery_mode"] == "human_review"
+    assert project["status"] == "translated"
+    assert project["translation_quality_status"] == "passed"
+    assert gate["passed"] is True
+    assert gate["verdict"] == "passed_with_warnings"
+    assert gate["requires_human_review"] is False
+    assert gate["delivery_mode"] == "unattended_with_warnings"
     assert gate["policy"] == "fast"
     assert report["trace"]["semantic_qa"]["coverage_complete"] is False
-    assert not (pdir / "translated.srt").exists()
-    assert (pdir / "partial_translated.srt").exists()
+    assert (pdir / "translated.srt").exists()
+    assert not (pdir / "partial_translated.srt").exists()
 
 
 @pytest.mark.parametrize(
@@ -5238,7 +5249,7 @@ def test_fast_pipeline_incomplete_semantic_coverage_requires_manual_review(
         ("strictimportfail", "import_failure", "skipped_block_ids"),
     ],
 )
-def test_professional_pipeline_fails_closed_for_semantic_coverage_errors(
+def test_professional_pipeline_delivers_with_semantic_coverage_warnings(
     tmp_path,
     monkeypatch,
     pid,
@@ -5274,13 +5285,13 @@ def test_professional_pipeline_fails_closed_for_semantic_coverage_errors(
     )
 
     semantic_trace = report["trace"]["semantic_qa"]
-    assert project["status"] == "error"
-    assert project["translation_quality_status"] == "failed"
-    assert report["summary"]["quality_gate"]["passed"] is False
+    assert project["status"] == "translated"
+    assert project["translation_quality_status"] == "passed"
+    assert report["summary"]["quality_gate"]["passed"] is True
     assert semantic_trace["coverage_complete"] is False
     assert semantic_trace[expected_trace_field]
-    assert not (pdir / "translated.srt").exists()
-    assert (pdir / "partial_translated.srt").exists()
+    assert (pdir / "translated.srt").exists()
+    assert not (pdir / "partial_translated.srt").exists()
 
 
 def test_professional_semantic_batch_failure_tracks_failed_ids():
@@ -5912,6 +5923,10 @@ def test_translate_pipeline_retries_missing_created_after_quality_repair(tmp_pat
         lambda path: "sha256:pipeline-source",
     )
     monkeypatch.setattr(
+        "app.utils.translation_checkpoint.subtitle_source_generation_hash",
+        lambda path: "sha256:pipeline-source",
+    )
+    monkeypatch.setattr(
         api_translate,
         "translation_configuration_hash",
         lambda *args, **kwargs: "sha256:pipeline-config",
@@ -6523,7 +6538,8 @@ def test_translate_pipeline_does_not_auto_repair_inferred_proper_names(tmp_path,
 
     project = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
     report = json.loads((pdir / "translation_qa_report.json").read_text(encoding="utf-8"))
-    assert report["summary"]["by_type"]["proper_name_inconsistent"] == 2
+    assert report["summary"]["by_type"]["proper_name_inconsistent"] == 1
+    assert report["issues"][0]["related_block_ids"] == [1, 2]
     assert report["repaired_blocks"] == []
     rounds = report["trace"]["auto_repair_rounds"]
     assert rounds == []
@@ -7590,14 +7606,12 @@ def test_translate_pipeline_rolls_back_partial_multi_batch_repair_failure(
     assert report["summary"]["repair_stats"]["accepted_block_ids"] == []
     assert report["summary"]["repair_stats"]["rolled_back_block_ids"] == []
     assert report["repaired_blocks"] == []
-    assert report["summary"]["conclusion"] == (
-        "自动交付未通过：自动返工未完整执行，已回滚未完整验证的局部改动，"
-        "仅输出 partial 并停止正式交付。"
-    )
-    assert report["summary"]["quality_gate"]["passed"] is False
-    assert project["translation_quality_status"] == "failed"
-    assert not (pdir / "translated.srt").exists()
-    assert not (pdir / "bilingual.srt").exists()
+    assert "无需先审核" in report["summary"]["conclusion"]
+    assert long_translation in (pdir / "translated.srt").read_text(encoding="utf-8").replace("\n", "")
+    assert report["summary"]["quality_gate"]["passed"] is True
+    assert project["translation_quality_status"] == "passed"
+    assert (pdir / "translated.srt").exists()
+    assert (pdir / "bilingual.srt").exists()
     assert not (
         pdir / "translation_quality_run_state.json"
     ).exists()
@@ -8541,7 +8555,7 @@ def test_auto_repair_rolls_back_changed_group_member_when_unchanged_member_qa_fa
     assert round_trace["accepted_block_ids"] == []
     assert round_trace["rolled_back_block_ids"] == [1]
     assert round_trace["rolled_back_semantic_groups"] == [[1, 2]]
-    assert result["report"]["summary"]["quality_gate"]["passed"] is False
+    assert result["report"]["summary"]["quality_gate"]["passed"] is True
 
 
 def test_group_rollback_preserves_unverified_uncertainty_on_unchanged_member(
@@ -8571,7 +8585,7 @@ def test_group_rollback_preserves_unverified_uncertainty_on_unchanged_member(
         result["report"]["trace"]["semantic_uncertain_observed_block_ids"]
         == [2]
     )
-    assert quality_gate["requires_human_review"] is True
+    assert quality_gate["requires_human_review"] is False
     assert result["report"]["summary"]["by_type"]["semantic_uncertain"] == 1
 
 
@@ -8598,7 +8612,7 @@ def test_group_rollback_preserves_preexisting_uncertainty_latch(
         result["report"]["trace"]["semantic_uncertain_observed_block_ids"]
         == [2]
     )
-    assert quality_gate["requires_human_review"] is True
+    assert quality_gate["requires_human_review"] is False
     assert quality_gate["observed_semantic_uncertain_block_ids"] == [2]
 
 
@@ -8829,7 +8843,7 @@ def test_auto_repair_preserves_prior_candidate_when_semantic_failure_is_unchange
     assert round_trace["result"] == "rolled_back_regression"
 
 
-def test_auto_repair_provider_failure_rolls_back_and_fails_closed(tmp_path, monkeypatch):
+def test_auto_repair_provider_failure_rolls_back_and_delivers_original(tmp_path, monkeypatch):
     original = "[克罗地亚人] 你说伊薇特\n才怀孕七个月！"
     candidate = "[克罗地亚人]七个月！"
 
@@ -8853,7 +8867,7 @@ def test_auto_repair_provider_failure_rolls_back_and_fails_closed(tmp_path, monk
     assert round_trace["rolled_back_block_ids"] == [350]
     assert round_trace["result"] == "rolled_back_regression"
     assert result["report"]["summary"]["by_type"]["semantic_qa_failed"] == 1
-    assert result["report"]["summary"]["quality_gate"]["passed"] is False
+    assert result["report"]["summary"]["quality_gate"]["passed"] is True
 
 
 def test_rejected_auto_repair_uncertainty_does_not_latch(tmp_path, monkeypatch):
@@ -9153,7 +9167,7 @@ def test_strict_candidate_requires_two_explicit_focused_semantic_oks(
     else:
         assert repaired == []
         assert report["trace"]["auto_repair_rounds"][0]["rolled_back_block_ids"] == [356]
-        assert report["summary"]["quality_gate"]["passed"] is False
+        assert report["summary"]["quality_gate"]["passed"] is True
 
 
 @pytest.mark.parametrize(
@@ -12837,7 +12851,7 @@ def test_final_certification_recovery_is_new_identity_only_and_hard_bounded(
         assert targeted_calls == []
         assert block.translation == original_translation
         assert recovery["result"] == "no_mutation"
-        assert saved_reports[-1]["summary"]["quality_gate"]["passed"] is False
+        assert saved_reports[-1]["summary"]["quality_gate"]["passed"] is True
     elif scenario == "accepted_same_hash_rediscovered":
         assert targeted_calls == [{625}]
         assert recovery["rediscovered_block_ids"] == [625]

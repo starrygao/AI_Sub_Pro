@@ -4,8 +4,8 @@ Bridges `app.engines.file_metadata.parse_filename` → `app.engines.tmdb`
 search, picks a high-confidence match when one exists, and otherwise
 returns a small list of candidates for the UI to disambiguate.
 
-Returned shape (always a dict, never raises on network errors — silent
-degradation is preferable to blocking project creation on TMDB outage):
+Returned shape (always a dict; network errors preserve retry information
+so project creation succeeds while the UI asks before proceeding):
 
     {
         "auto_attached": bool,          # True iff the caller should
@@ -87,7 +87,7 @@ def _normalize_candidate(c: dict, kind: str) -> dict:
 async def enrich_from_filename(name: str) -> dict:
     """Parse `name` (filename or path), search TMDB, and pick a match.
 
-    Network or parse failures are swallowed and return the empty result.
+    Network failures return a safe error and search parameters for retry.
     """
     parsed = parse_filename(name)
     if not isinstance(parsed, dict) or not parsed:
@@ -106,6 +106,10 @@ async def enrich_from_filename(name: str) -> dict:
         from app.engines import tmdb
         if kind == "tv":
             results = await tmdb.search_tv(title, year=year)
+            if not results and year is not None:
+                # An episode release year need not equal the series premiere.
+                # Preserve the original year for conservative candidate scoring.
+                results = await tmdb.search_tv(title, year=None)
         else:
             results = await tmdb.search_movie(title, year=year)
     except Exception as e:
@@ -114,7 +118,10 @@ async def enrich_from_filename(name: str) -> dict:
         except Exception:
             safe_error = str(e)[:200]
         log.info("TMDB search failed for %r: %s", name, safe_error)
-        return dict(_EMPTY)
+        return dict(_EMPTY, lookup={
+            "error": safe_error or "TMDB 服务暂时不可用",
+            "query": title, "type": kind, "year": year,
+        })
 
     if not results:
         return dict(_EMPTY)
