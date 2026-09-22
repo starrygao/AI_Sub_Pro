@@ -19,7 +19,7 @@ for(const m of fs.readFileSync('app/static/library.html','utf8').matchAll(/<(\w+
 const el=(tag,text)=>{const e=new Element(tag);e.textContent=text||'';return e;};
 const $=id=>{assert(elements[id],'Unknown DOM id '+id);return elements[id];};
 const handlers={},intervals=[],saved=[];
-const config={translation:{primary_provider:'codex_cli',primary_model:'gpt-5.5',primary_effort:'medium',batch_size:20,semantic_qa_batch_size:40,full_doc_mode:true,polish_provider:'unchanged'},asr:{backend:'faster_whisper',model_size:'small',beam_size:3},credentials_configured:{tmdb:true}};
+const config={translation:{primary_provider:'codex_cli',primary_model:'gpt-5.5',primary_effort:'medium',batch_size:20,semantic_qa_batch_size:40,full_doc_mode:true,polish_provider:'',polish_model:'',polish_effort:'auto'},asr:{backend:'faster_whisper',model_size:'small',beam_size:3},credentials_configured:{tmdb:true}};
 let state={enabled:false,counts:{}},failSave=false,failModels=false;
 const window={addEventListener:(name,fn)=>handlers[name]=fn};
 const context={$,el,window,document:{title:'',hidden:false},location:{hash:'#settings'},setInterval:fn=>intervals.push(fn),
@@ -80,6 +80,66 @@ assert.equal($('settings-form').hidden,true);assert.equal($('settings-reload').h
 failModels=false;await $('settings-reload').onclick();
 assert.equal($('settings-form').hidden,false);assert.equal($('setting-model').value,'gpt-5.5');
 assert.equal($('settings-save').disabled,true);
+''')
+
+
+def test_polish_can_be_enabled_edited_reset_and_disabled_without_changing_primary():
+    run_js(r'''
+config.providers={claude_cli:{enabled:true}}; // A default flag does not prove the CLI is configured.
+vm.runInContext(code,context);await flush();
+assert.equal($('setting-polish-provider').value,'');
+assert.deepEqual($('setting-polish-provider').options.map(option=>option.value),['','codex_cli']);
+assert.equal($('polish-model-fields').hidden,true);
+assert.equal($('settings-save').disabled,true);
+$('setting-polish-provider').value='codex_cli';await $('setting-polish-provider').onchange();
+assert.equal($('polish-model-fields').hidden,false);
+$('setting-polish-model').value='fixture-model';$('setting-polish-model').onchange();
+$('setting-polish-effort').value='low';$('settings-form').handlers.change();
+assert.equal($('setting-model').value,'gpt-5.5');
+await submit();
+assert.deepEqual(saved,[{translation:{polish_provider:'codex_cli',polish_model:'fixture-model',polish_effort:'low'}}]);
+$('setting-polish-model').value='gpt-5.5';$('setting-polish-model').onchange();
+assert.equal($('setting-polish-effort').value,'auto');
+$('settings-reset').onclick();await flush();
+assert.equal($('setting-polish-model').value,'fixture-model');
+assert.equal($('setting-polish-effort').value,'low');
+$('setting-polish-provider').value='';await $('setting-polish-provider').onchange();await submit();
+assert.deepEqual(saved[1],{translation:{polish_provider:'',polish_model:'',polish_effort:'auto'}});
+assert.equal($('polish-model-fields').hidden,true);
+''')
+
+
+def test_polish_catalog_failure_blocks_save_and_stale_response_cannot_enable_it():
+    run_js(r'''
+config.credentials_configured.deepseek=true;
+const originalRequest=context.request;let rejectCatalog,resolveCatalog;
+context.request=path=>path==='models/deepseek' ? new Promise((resolve,reject)=>{resolveCatalog=resolve;rejectCatalog=reject;}) : originalRequest(path);
+vm.runInContext(code,context);await flush();
+$('setting-polish-provider').value='deepseek';let loading=$('setting-polish-provider').onchange();
+assert.equal($('settings-save').disabled,true);await submit();assert.equal(saved.length,0);
+rejectCatalog(Error('Catalog unavailable'));await loading;
+assert.equal($('polish-reload').hidden,false);assert.match($('polish-error').textContent,/Catalog unavailable/);
+assert.equal($('settings-save').disabled,true);
+loading=$('polish-reload').onclick();
+$('setting-polish-provider').value='';await $('setting-polish-provider').onchange();
+resolveCatalog({models:['deepseek-chat'],capabilities:{}});await loading;
+assert.equal($('setting-polish-provider').value,'');assert.equal($('setting-polish-model').value,'');
+assert.equal($('polish-model-fields').hidden,true);assert.equal($('polish-error').hidden,true);
+assert.equal($('settings-save').disabled,true); // Switching off restores the original settings.
+''')
+
+
+def test_existing_polish_provider_uses_its_own_catalog_and_preserves_saved_values():
+    run_js(r'''
+Object.assign(config.translation,{polish_provider:'deepseek',polish_model:'deepseek-chat',polish_effort:'auto'});
+const originalRequest=context.request;
+context.request=async path=>path==='models/deepseek' ? {models:['deepseek-chat'],capabilities:{}} : originalRequest(path);
+vm.runInContext(code,context);await flush();
+assert.equal($('setting-polish-provider').value,'deepseek');
+assert.equal($('setting-polish-model').value,'deepseek-chat');
+assert.equal($('setting-polish-effort').disabled,true);
+assert.equal($('settings-save').disabled,true);
+assert.equal($('setting-model').value,'gpt-5.5');
 ''')
 
 

@@ -41,6 +41,28 @@ def test_registered_task_blocks_apply_even_before_discovery_row_is_updated(worke
     assert worker.apply_pending_settings()
 
 
+def test_polish_settings_are_independent_durable_and_wait_until_idle(worker):
+    original = Config.get('translation', 'primary_model')
+    tasks.active_tasks['deadbeef'] = object()
+    polish = {'polish_provider': 'codex_cli', 'polish_model': 'gpt-5.5', 'polish_effort': 'high'}
+    result = worker.model_settings.queue({'translation': polish})
+    assert result['settings']['translation']['polish_model'] == 'gpt-5.5'
+    assert result['state']['current_polish_provider'] == ''
+    assert not worker.apply_pending_settings()
+    restored = LibraryWorker({'enabled': True}, Path(worker.store.path).parent)
+    assert restored.model_settings.read()['settings']['translation']['polish_effort'] == 'high'
+    tasks.active_tasks.clear()
+    assert restored.apply_pending_settings()
+    assert Config.get('translation', 'primary_model') == original
+    assert restored.model_settings.state()['current_polish_model'] == 'gpt-5.5'
+    assert restored.model_settings.state()['current_polish_effort'] == 'high'
+    restored.model_settings.queue({'translation': {'polish_provider': '', 'polish_model': '', 'polish_effort': 'auto'}})
+    assert restored.apply_pending_settings()
+    assert Config.get('translation', 'polish_provider') == ''
+    with pytest.raises(HTTPException):
+        restored.model_settings.queue({'translation': {'polish_provider': 'unknown-provider'}})
+
+
 def test_pending_edits_merge_validate_and_can_be_reverted(worker):
     original=Config.get('translation','primary_model')
     worker.model_settings.queue({'translation':{'primary_model':'gpt-5.5'}})

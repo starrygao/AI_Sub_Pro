@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>媒体库字幕 · AI Sub Pro</title>
 <meta name="theme-color" content="#153f42">
-<link rel="stylesheet" href="/static/css/library.css?v=console-4"><script defer src="/static/js/library.js?v=console-4"></script><script defer src="/static/js/library-knowledge.js?v=console-4"></script><script defer src="/static/js/library-panels.js?v=console-4"></script></head>
+<link rel="stylesheet" href="/static/css/library.css?v=console-4"><script defer src="/static/js/library.js?v=console-4"></script><script defer src="/static/js/library-knowledge.js?v=console-4"></script><script defer src="/static/js/library-panels.js?v=console-5"></script></head>
 <body><header><a class="brand" href="#tasks">AI Sub Pro <span>媒体库控制台</span></a><nav class="console-nav" aria-label="主导航"><a id="nav-tasks" href="#tasks" aria-current="page">字幕任务</a><a id="nav-settings" href="#settings">模型设置</a><a id="nav-knowledge" href="#knowledge">知识库</a></nav><div class="header-actions"><button id="logout" class="secondary">退出登录</button></div></header>
 <main><div id="error" role="alert" hidden></div>
 <div id="panel-tasks"><section class="intro"><div><p class="eyebrow">媒体库自动翻译</p><h1 id="tasks-title" tabindex="-1">字幕任务</h1><p>缺少中文字幕时，将中外文对照 SRT 保存到视频所在文件夹，与视频同名。</p></div><div class="actions"><button id="scan" class="secondary">检查新文件</button><button id="toggle" disabled>读取状态…</button></div></section>
@@ -29,6 +29,20 @@
           <label class="form-field">主翻译模型<select id="setting-model" required></select></label>
           <label class="form-field">思考强度<select id="setting-effort"></select></label>
           <p id="model-hint" class="field-hint wide">模型是否可用取决于当前账号权限。</p>
+        </div>
+      </section>
+      <section class="settings-section" aria-labelledby="polish-heading">
+        <div><h2 id="polish-heading">字幕润色</h2><p>初译后对照原文调整表达，再进入质量复核。</p></div>
+        <div class="form-grid">
+          <label class="form-field wide">润色服务<select id="setting-polish-provider" aria-describedby="polish-hint"></select></label>
+          <div id="polish-model-fields" class="form-grid wide" hidden>
+            <label class="form-field">润色模型<select id="setting-polish-model"></select></label>
+            <label class="form-field">润色思考强度<select id="setting-polish-effort"></select></label>
+          </div>
+          <p id="polish-hint" class="field-hint wide">未启用独立润色，翻译后仍会进行质量复核。</p>
+          <p id="polish-loading" class="field-hint wide" role="status" hidden>正在读取润色模型…</p>
+          <p id="polish-error" class="notice failure wide" role="alert" hidden></p>
+          <button id="polish-reload" type="button" class="secondary" hidden>重新读取润色模型</button>
         </div>
       </section>
       <section class="settings-section" aria-labelledby="asr-heading">

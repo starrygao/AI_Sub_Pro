@@ -5,6 +5,9 @@
   const fields = {
     'setting-model':['translation','primary_model'],
     'setting-effort':['translation','primary_effort'],
+    'setting-polish-provider':['translation','polish_provider'],
+    'setting-polish-model':['translation','polish_model'],
+    'setting-polish-effort':['translation','polish_effort'],
     'setting-asr-model':['asr','model_size'],
     'setting-beam':['asr','beam_size'],
     'setting-batch':['translation','batch_size'],
@@ -13,18 +16,52 @@
   };
   let panel = 'tasks', pid = '', settings = null, catalog = {}, serverStatus = null;
   let saving = false, settingsLoading = false, detailRequest = 0, previewKey = '', blocks = [], shown = 0;
+  let polishCatalog = {}, modelCatalogs = {}, polishLoading = false, polishError = '', polishRequest = 0;
 
   function notice(id, message) { $(id).textContent = message; $(id).hidden = !message; }
   function options(id, values, selected, labels = {}) {
-    const all = [...new Set([...values, selected].filter(value => value !== undefined && value !== ''))];
+    const all = [...new Set([...values, selected].filter(value => value !== undefined && (value !== '' || Object.hasOwn(labels, ''))))];
     $(id).replaceChildren(...all.map(value => { const option = el('option', labels[value] || value); option.value = value; return option; }));
     $(id).value = selected;
   }
-  function modelEfforts(selected) {
-    const efforts = catalog.capabilities?.[$('setting-model').value]?.reasoning_efforts || [];
+  function modelEfforts(selected, target = 'primary') {
+    const prefix = target === 'polish' ? 'setting-polish-' : 'setting-';
+    const info = target === 'polish' ? polishCatalog : catalog;
+    const efforts = info.capabilities?.[$(prefix + 'model').value]?.reasoning_efforts || [];
     const values = ['auto', ...efforts];
-    options('setting-effort', values, selected, effortNames);
-    $('setting-effort').disabled = efforts.length === 0 && selected === 'auto';
+    options(prefix + 'effort', values, selected, effortNames);
+    $(prefix + 'effort').disabled = efforts.length === 0 && selected === 'auto';
+  }
+  async function loadPolishModels(model = '', effort = 'auto') {
+    const ticket = ++polishRequest, provider = $('setting-polish-provider').value;
+    polishError = ''; polishLoading = !!provider;
+    $('polish-model-fields').hidden = !provider;
+    $('setting-polish-model').required = !!provider;
+    $('setting-polish-model').disabled = true; $('setting-polish-effort').disabled = true;
+    $('polish-loading').hidden = !provider; $('polish-reload').hidden = true; notice('polish-error', '');
+    $('polish-hint').textContent = provider ? '可独立选择润色模型。每篇或每批字幕会增加一次模型调用和处理时间；保存后用于后续任务。' : '未启用独立润色，翻译后仍会进行质量复核。';
+    options('setting-polish-model', [], model, {'':'请选择模型'});
+    options('setting-polish-effort', ['auto'], effort, effortNames);
+    settingsState();
+    try {
+      if (!provider) return;
+      const info = modelCatalogs[provider] || await request('models/' + encodeURIComponent(provider));
+      if (ticket !== polishRequest) return;
+      modelCatalogs[provider] = info; polishCatalog = info;
+      const selected = model || info.models?.[0] || '';
+      if (!selected) throw Error('暂无可用润色模型，请重试或选择其他服务。');
+      options('setting-polish-model', info.models || [], selected);
+      modelEfforts(effort, 'polish');
+    } catch (e) {
+      if (ticket === polishRequest) { polishError = e.message; notice('polish-error', e.message); $('polish-reload').hidden = false; }
+    } finally {
+      if (ticket === polishRequest) {
+        polishLoading = false; $('polish-loading').hidden = true;
+        $('setting-polish-model').disabled = !provider || !!polishError;
+        if (!provider || polishError) $('setting-polish-effort').disabled = true;
+        settingsState();
+      }
+    }
   }
   function changes() {
     const patch = {};
@@ -40,17 +77,18 @@
   function settingsState(s = serverStatus) {
     serverStatus = s;
     $('settings-fields').disabled = saving || !settings;
-    $('settings-save').disabled = saving || !settings || !dirty();
+    $('settings-save').disabled = saving || !settings || polishLoading || !!polishError || !dirty();
     $('settings-reset').disabled = saving || !settings || !dirty();
     const update = s?.model_settings;
     const current = [update?.current_model, effortNames[update?.current_effort]].filter(Boolean).join(' · ');
-    notice('settings-availability', update?.error || (update?.pending ? '新设置已保存，等待生效。当前使用：' + current + '；正在处理的任务完成并保存字幕后，自动应用新设置。' : '可以随时修改并保存。正在处理的任务继续使用原设置，新设置用于后续任务。'));
+    const currentPolish = update?.current_polish_provider ? [providerNames[update.current_polish_provider] || update.current_polish_provider, update.current_polish_model || update.current_model, effortNames[update.current_polish_effort]].filter(Boolean).join(' · ') : '未启用';
+    notice('settings-availability', update?.error || (update?.pending ? '新设置已保存，等待生效。当前翻译：' + current + '；当前润色：' + currentPolish + '。正在处理的任务完成并保存字幕后，自动应用新设置。' : '可以随时修改并保存。正在处理的任务继续使用原设置，新设置用于后续任务。'));
     if (update && !update.pending && !dirty() && $('settings-feedback').textContent.startsWith('已保存')) $('settings-feedback').textContent = '设置已生效';
   }
   function populate() {
     for (const [id, [section, key]] of Object.entries(fields)) {
       const input = $(id), value = settings[section]?.[key];
-      if (id === 'setting-model' || id === 'setting-effort') continue;
+      if (id === 'setting-model' || id === 'setting-effort' || id.startsWith('setting-polish-')) continue;
       if (input.type === 'checkbox') input.checked = !!value;
       else if (input.tagName === 'SELECT') options(id, [...input.options].map(o => o.value), value);
       else input.value = value;
@@ -58,6 +96,10 @@
     options('setting-model', catalog.models || [], settings.translation.primary_model);
     modelEfforts(settings.translation.primary_effort);
     const provider = settings.translation.primary_provider;
+    const polishProvider = settings.translation.polish_provider || '';
+    const providers = Object.keys(providerNames).filter(name => name === provider || name === polishProvider || settings.credentials_configured?.[name]);
+    options('setting-polish-provider', ['', ...providers], polishProvider, {'':'不启用', ...providerNames});
+    loadPolishModels(settings.translation.polish_model || '', settings.translation.polish_effort || 'auto');
     $('provider-label').textContent = providerNames[provider] || provider;
     $('asr-backend').textContent = settings.asr.backend;
     $('settings-feedback').textContent = '尚未修改';
@@ -70,7 +112,7 @@
     try {
       const result = await api('settings'), config = result.settings;
       const models = await request('models/' + encodeURIComponent(config.translation.primary_provider));
-      settings = config; catalog = models; serverStatus = {...serverStatus, model_settings:result.state};
+      settings = config; catalog = models; modelCatalogs = {[config.translation.primary_provider]:models}; serverStatus = {...serverStatus, model_settings:result.state};
       populate(); $('settings-form').hidden = false;
     } catch (e) { notice('settings-error', e.message); $('settings-reload').hidden = false; }
     finally { settingsLoading = false; $('settings-loading').hidden = true; }
@@ -80,13 +122,25 @@
     const current = $('setting-effort').value;
     modelEfforts(current === 'auto' || efforts.includes(current) ? current : 'auto');
   };
+  $('setting-polish-provider').onchange = () => {
+    const provider = $('setting-polish-provider').value;
+    const current = provider && provider === settings.translation.polish_provider;
+    const primary = provider && provider === settings.translation.primary_provider;
+    return loadPolishModels(current ? settings.translation.polish_model : primary ? $('setting-model').value : '', current ? settings.translation.polish_effort : primary ? $('setting-effort').value : 'auto');
+  };
+  $('setting-polish-model').onchange = () => {
+    const efforts = polishCatalog.capabilities?.[$('setting-polish-model').value]?.reasoning_efforts || [];
+    const current = $('setting-polish-effort').value;
+    modelEfforts(current === 'auto' || efforts.includes(current) ? current : 'auto', 'polish');
+  };
+  $('polish-reload').onclick = () => loadPolishModels($('setting-polish-model').value, $('setting-polish-effort').value);
   $('settings-form').addEventListener('input', () => { $('settings-feedback').textContent = dirty() ? '有未保存的更改' : '尚未修改'; settingsState(); });
   $('settings-form').addEventListener('change', () => { $('settings-feedback').textContent = dirty() ? '有未保存的更改' : '尚未修改'; settingsState(); });
   $('settings-reset').onclick = () => { populate(); notice('settings-error', ''); };
   $('settings-reload').onclick = loadSettings;
   $('settings-form').onsubmit = async event => {
     event.preventDefault();
-    if (saving || !settings || !dirty() || !$('settings-form').reportValidity()) return;
+    if (saving || !settings || polishLoading || polishError || !dirty() || !$('settings-form').reportValidity()) return;
     saving = true; settingsState(); notice('settings-error', ''); $('settings-save').textContent = '正在保存…';
     try {
       const patch = changes();
