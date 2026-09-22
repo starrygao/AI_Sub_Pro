@@ -5,8 +5,63 @@ import re
 VIDEO_EXTENSIONS = {'.mkv', '.mp4', '.avi', '.mov', '.m4v', '.ts', '.m2ts', '.webm'}
 SUBTITLE_EXTENSIONS = {'.srt', '.ass', '.ssa', '.vtt', '.sub', '.idx', '.sup'}
 TEMP_MARKERS = {'.parts', '.partial', '.part', '.tmp', '.!qb', '.crdownload', '.download'}
-CHINESE = re.compile(r'(?:^|[._\s-])(?:zh(?:-cn|-tw|-hans|-hant)?|zho|chi|cmn|chs|cht)(?:$|[._\s-])|中文|简体|繁体|簡體|繁體|chinese', re.I)
+CHINESE = re.compile(r'(?<![a-z0-9])(?:zh(?:[-_](?:cn|tw|hans|hant))?|zho|chi|cmn|yue|wuu|nan|hak|chs|cht|chinese)(?![a-z0-9])|中文|简体|繁体|簡體|繁體', re.I)
 CHINESE_LANGUAGES = {'zh', 'zho', 'chi', 'cmn', 'yue', 'wuu', 'nan', 'hak'}
+PARTIAL_SUBTITLE = re.compile(r'(?<![a-z0-9])(?:forced|foreign|commentary)(?![a-z0-9])|强制|強制|导评|導評', re.I)
+COMMENTARY = re.compile(r'(?<![a-z0-9])commentary(?![a-z0-9])|导评|導評', re.I)
+UNKNOWN_LANGUAGES = {'', 'und', 'unknown', 'mul'}
+
+
+def stream_tags(stream):
+    return {str(k).lower(): str(v) for k, v in (stream.get('tags') or {}).items()}
+
+
+def language_code(stream):
+    return re.split('[-_]', stream_tags(stream).get('language', '').lower())[0]
+
+
+def subtitle_label(value, video=None, *, filename=False):
+    """Classify subtitle labels, never words belonging to the video's own title."""
+    value = Path(value).stem if filename else str(value).strip()
+    if video is not None:
+        stem = Path(video).stem
+        if value.casefold() == stem.casefold():
+            return ''
+        if value.casefold().startswith(stem.casefold()) and value[len(stem):len(stem)+1] in '._ []()-':
+            return value[len(stem):].lstrip('._ []()-')
+    return value
+
+
+def complete_subtitle_stream(stream, video=None):
+    disposition = stream.get('disposition') or {}
+    return (stream.get('codec_type') == 'subtitle'
+            and not disposition.get('forced') and not disposition.get('comment')
+            and not PARTIAL_SUBTITLE.search(subtitle_label(stream_tags(stream).get('title', ''), video)))
+
+
+def complete_sidecar(path, video=None):
+    return not PARTIAL_SUBTITLE.search(subtitle_label(Path(path).name, video, filename=True))
+
+
+def dialogue_audio(stream):
+    return (stream.get('codec_type') == 'audio'
+            and not (stream.get('disposition') or {}).get('comment')
+            and not COMMENTARY.search(stream_tags(stream).get('title', '')))
+
+
+def select_audio_track(streams):
+    """Return an AUDIO-relative index for ffmpeg's 0:a:N, not a global stream index."""
+    audio = [stream for stream in streams if stream.get('codec_type') == 'audio']
+    usable = [(index, stream) for index, stream in enumerate(audio) if dialogue_audio(stream)]
+    if not usable:
+        return None
+    def priority(item):
+        index, stream = item
+        language = language_code(stream)
+        disposition = stream.get('disposition') or {}
+        return (language in CHINESE_LANGUAGES, not disposition.get('original'),
+                language in UNKNOWN_LANGUAGES, not disposition.get('default'), index)
+    return min(usable, key=priority)[0]
 
 
 def map_path(path, mappings):
@@ -36,26 +91,43 @@ def ready_file(path, previous, *, now, quiet_seconds):
     return True, ''
 
 
-def chinese_track(stream):
-    tags = stream.get('tags') or {}
-    return (stream.get('codec_type') == 'subtitle'
-            and not (stream.get('disposition') or {}).get('forced')
-            and bool(CHINESE.search(str(tags.get('language','')) + ' ' + str(tags.get('title','')))))
+def chinese_track(stream, video=None):
+    tags = stream_tags(stream)
+    return (complete_subtitle_stream(stream, video)
+            and bool(CHINESE.search(tags.get('language', '') + ' ' + subtitle_label(tags.get('title', ''), video))))
+
+
+def chinese_subtitle_attachment(stream, video=None):
+    """Recognize explicitly labelled text-subtitle attachments without extracting them."""
+    if stream.get('codec_type') != 'attachment':
+        return False
+    tags = stream_tags(stream)
+    filename = tags.get('filename', '')
+    if Path(filename).suffix.lower() not in {'.srt', '.ass', '.ssa', '.vtt'}:
+        return False
+    if tags.get('mimetype', '').lower() not in {
+        'application/x-subrip', 'application/x-srt', 'text/srt', 'text/plain',
+        'application/x-ass', 'application/x-ssa', 'text/x-ass', 'text/x-ssa', 'text/vtt',
+    }:
+        return False
+    if not stream.get('extradata_size') or (stream.get('disposition') or {}).get('forced'):
+        return False
+    label = subtitle_label(filename, video, filename=True) + ' ' + subtitle_label(tags.get('title', ''), video)
+    return not PARTIAL_SUBTITLE.search(label) and bool(CHINESE.search(tags.get('language', '') + ' ' + label))
 
 
 def chinese_audio_only(streams):
     """Skip only unambiguous Chinese audio; unknown or multilingual audio needs checking."""
-    audio = [s for s in streams if s.get('codec_type') == 'audio']
+    audio = [s for s in streams if dialogue_audio(s)]
     return bool(audio) and all(
-        str((s.get('tags') or {}).get('language', '')).lower().split('-')[0] in CHINESE_LANGUAGES
+        language_code(s) in CHINESE_LANGUAGES
         for s in audio
     )
 
 
 def has_foreign_audio(streams):
-    return any(str((s.get('tags') or {}).get('language','')).lower().split('-')[0]
-               not in CHINESE_LANGUAGES | {'', 'und', 'unknown', 'mul'}
-               for s in streams if s.get('codec_type')=='audio')
+    return any(language_code(s) not in CHINESE_LANGUAGES | UNKNOWN_LANGUAGES
+               for s in streams if dialogue_audio(s))
 
 
 def subtitle_files(video):
@@ -65,13 +137,13 @@ def subtitle_files(video):
             and (p.stem == video.stem or p.name.startswith(video.stem + '.'))]
 
 
-def chinese_sidecar(path):
+def chinese_sidecar(path, video=None):
     path = Path(path)
-    if re.search(r'(?:^|[. _-])(?:forced|foreign)(?:$|[. _-])', path.name, re.I):
+    if not complete_sidecar(path, video):
         return False
     if not path.stat().st_size:
         return False
-    if CHINESE.search(path.name):
+    if CHINESE.search(subtitle_label(path.name, video, filename=True)):
         return True
     if path.suffix.lower() in {'.srt','.ass','.ssa','.vtt'}:
         raw = path.read_bytes()[:131072]

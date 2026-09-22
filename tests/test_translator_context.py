@@ -585,6 +585,7 @@ def test_candidate_contract_allows_exact_multiword_entities_from_source(entity):
 
 
 def test_batched_translate_allows_empty_sound_description(monkeypatch):
+    """Pure sound cues stay local; only dialogue is sent once to the provider."""
     from app.engines.translator import SubtitleTranslator
     from app.utils.srt import SubtitleBlock
 
@@ -607,8 +608,7 @@ def test_batched_translate_allows_empty_sound_description(monkeypatch):
     def fake_translate_batch(items, system_prompt, retries=3):
         calls.append([item["id"] for item in items])
         return [
-            {"id": 1, "translation": ""},
-            {"id": 2, "translation": "二"},
+            {"id": item["id"], "translation": "二"} for item in items
         ]
 
     t = SubtitleTranslator(config)
@@ -620,6 +620,6 @@ def test_batched_translate_allows_empty_sound_description(monkeypatch):
 
     t.translate(blocks, target_lang="简体中文")
 
-    assert calls == [[1, 2]]
+    assert calls == [[2]]
     assert [block.translation for block in blocks] == ["", "二"]
     assert [block.translation_error for block in blocks] == ["", ""]

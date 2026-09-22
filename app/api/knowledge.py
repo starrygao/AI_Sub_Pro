@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, StrictInt
 
 from app.engines.knowledge import KnowledgeBase, _get_singleton, invalidate_translator_kb
+from app.library.settings import preserve_delivered_knowledge
 from app.engines.kb_models import ProjectKb, TermEntry, StyleNotes
 from app.engines.kb_suggestions import (
     extract_kb_suggestions,
@@ -359,6 +360,7 @@ def get_kb_project_suggestions(pid: str):
 
 
 @router.post("/projects/{pid}/suggestions/generate")
+@preserve_delivered_knowledge
 def generate_kb_project_suggestions(pid: str):
     pdir, project = _load_project_or_http(pid)
     subtitles = _subtitle_dicts_for_project(pdir)
@@ -372,6 +374,7 @@ def generate_kb_project_suggestions(pid: str):
 
 
 @router.post("/projects/{pid}/suggestions/{suggestion_id}/status")
+@preserve_delivered_knowledge
 def update_kb_project_suggestion_status(pid: str, suggestion_id: str, body: SuggestionStatusIn):
     pdir, project = _load_project_or_http(pid)
     path = _project_suggestions_path(pdir)
@@ -434,6 +437,7 @@ def get_kb_project_usage_trace(pid: str):
 
 
 @router.post("/projects/{pid}/suggestions/accept")
+@preserve_delivered_knowledge
 def accept_kb_project_suggestions(pid: str, body: SuggestionAcceptIn):
     _,project=_load_project_or_http(pid)
     key = _validate_kb_key_or_http(_clean_text(body.key))
@@ -471,6 +475,7 @@ def accept_kb_project_suggestions(pid: str, body: SuggestionAcceptIn):
 
 
 @router.post("/projects/{pid}/suggestions/reject")
+@preserve_delivered_knowledge
 def reject_kb_project_suggestions(pid: str, body: SuggestionRejectIn):
     pdir, _project = _load_project_or_http(pid)
     rejected_sources = _merge_rejected_sources(
@@ -493,6 +498,7 @@ def get_kb_project(key: str):
 
 
 @router.put("/projects/{key}")
+@preserve_delivered_knowledge
 def put_kb_project(key: str, body: ProjectKbIn):
     if not _clean_text(key) or key != key.strip():
         raise HTTPException(status_code=400, detail="key must not be empty")
@@ -522,6 +528,7 @@ def put_kb_project(key: str, body: ProjectKbIn):
 
 
 @router.delete("/projects/{key}")
+@preserve_delivered_knowledge
 def delete_kb_project(key: str):
     removed = _get_kb().delete_project_and_save(key)
     if not removed:

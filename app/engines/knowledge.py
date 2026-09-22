@@ -123,8 +123,9 @@ class KnowledgeBase:
 
         Matching precedence:
           1. exact `tmdb_id` match
-          2. `show_title` (case-insensitive) appears as substring of project name
-          3. None
+          2. exact `show_title` match when the project has a known title
+          3. title in filename only when no show title is known
+          4. None
         """
         if not isinstance(project, dict):
             return None
@@ -146,18 +147,19 @@ class KnowledgeBase:
                 if kb.tmdb_id is not None and kb.tmdb_id == tmdb_id and (not kb.tmdb_type or not kind or kb.tmdb_type == kind):
                     return kb
 
+        if title:
+            for kb in projects:
+                if tmdb_id and kb.tmdb_id and tmdb_id != kb.tmdb_id:continue
+                if kb.tmdb_type and kind and kb.tmdb_type != kind:continue
+                if kb.show_title.casefold() == title:return kb
+            return None
+
         if name:
             for kb in projects:
                 if tmdb_id and kb.tmdb_id and tmdb_id != kb.tmdb_id:continue
                 if kb.tmdb_type and kind and kb.tmdb_type != kind:continue
                 if kb.show_title and kb.show_title.lower() in name:
                     return kb
-
-        if title:
-            for kb in projects:
-                if tmdb_id and kb.tmdb_id and tmdb_id != kb.tmdb_id:continue
-                if kb.tmdb_type and kind and kb.tmdb_type != kind:continue
-                if kb.show_title.casefold() == title:return kb
 
         return None
 

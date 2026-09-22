@@ -1,4 +1,5 @@
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -75,3 +76,50 @@ def test_authenticated_directory_api_validates_paths_and_preserves_configuration
     assert response.status_code == 200 and response.json()['pending']
     assert worker.storage.state()['current']['data'] == '/vol2/aisub/data'
     assert client.post('/api/library/directories/storage', json=desired, headers={'Origin': 'https://other.test'}).status_code == 403
+
+
+@pytest.mark.parametrize('replacements', [('third',), ('first',), ('third', 'second')])
+def test_newer_directory_save_or_cancel_survives_an_inflight_baseline(tmp_path, monkeypatch, replacements):
+    from app import server
+    from fastapi.testclient import TestClient
+    worker, media, first = make_worker(tmp_path)
+    for name in ['second', 'third']:
+        folder = media / name; folder.mkdir()
+        (folder / 'existing.mkv').write_bytes(b'existing')
+    monkeypatch.setattr(server, 'worker', worker)
+    monkeypatch.setattr(server.app.state, 'operator_token', 'fixture-token', raising=False)
+    client = TestClient(server.app, headers={'X-AISub-Key': 'fixture-token'})
+    entered, release = threading.Event(), threading.Event()
+    filesystem = worker.filesystem
+
+    def paused_scan(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        yield from filesystem(*args, **kwargs)
+
+    monkeypatch.setattr(worker, 'filesystem', paused_scan)
+    assert client.post('/api/library/directories/watch', json={'roots': ['/vol2/media/second']}).status_code == 200
+    results = []
+    thread = threading.Thread(target=lambda: results.append(worker.directories.apply()))
+    thread.start()
+    try:
+        assert entered.wait(5)
+        for name in replacements:
+            saved = client.post('/api/library/directories/watch', json={'roots': ['/vol2/media/' + name]})
+            assert saved.status_code == 200
+            assert saved.json()['desired'] == ['/vol2/media/' + name]
+    finally:
+        release.set(); thread.join(5)
+    assert not thread.is_alive()
+    assert results == [False], 'An obsolete inventory must not commit or clear a newer request'
+    state = client.get('/api/library/directories').json()['watch']
+    assert state['current'] == ['/vol2/media/first']
+    assert state['desired'] == ['/vol2/media/' + replacements[-1]]
+    assert worker.store.setting('baseline')['count'] == 0
+    should_apply = replacements[-1] != 'first'
+    assert state['pending'] is should_apply
+    assert worker.directories.apply() is should_apply
+    assert worker.roots == [str(media / replacements[-1])]
+    assert not worker.directories.read()['pending']
+    restored = LibraryWorker(worker.config, tmp_path / 'data')
+    assert restored.roots == worker.roots

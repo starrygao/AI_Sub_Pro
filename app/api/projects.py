@@ -1300,7 +1300,7 @@ async def tmdb_search_for_project(req: TmdbSearchReq, pid: str = PathParam(patte
     based on the filename was wrong or empty."""
     project = _load_project(pid)
     from app.engines import tmdb
-    from app.engines.tmdb_enrich import _normalize_candidate
+    from app.engines.tmdb_enrich import _normalize_candidate, search_with_year_fallback
 
     if req.type not in {"movie", "tv"}:
         raise HTTPException(400, "invalid type")
@@ -1309,10 +1309,7 @@ async def tmdb_search_for_project(req: TmdbSearchReq, pid: str = PathParam(patte
 
     kind = req.type
     try:
-        if kind == "tv":
-            results = await tmdb.search_tv(req.query, year=req.year)
-        else:
-            results = await tmdb.search_movie(req.query, year=req.year)
+        results = await search_with_year_fallback(req.query, kind, req.year)
     except Exception as e:
         raise HTTPException(502, f"TMDB search failed: {tmdb.public_error_message(e)}")
 

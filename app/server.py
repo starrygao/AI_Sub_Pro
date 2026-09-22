@@ -191,7 +191,7 @@ def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
         row['server_source_path']=map_path(row['path'],mappings)
         row['server_output_path']=map_path(row.get('output_path',''),mappings)
         if row.get('project_id'):
-            from app.services.translation_tasks import get_progress
+            from app.engines.scheduler import get_progress
             row['progress']=get_progress(row['project_id'])
     return {'items':rows,'counts':counts,'total':total,
             'view_counts':{name:sum(counts.get(s,0) for s in states) for name,states in views.items()}}

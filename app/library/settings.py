@@ -1,6 +1,7 @@
 """Durable settings edits applied between library jobs, after subtitle publication."""
 import copy
 import threading
+import functools
 from fastapi import HTTPException
 from app.config import Config
 
@@ -16,7 +17,7 @@ def seal_completed_delivery(pid):
     from app.utils.project_store import load_project, mutate_project, project_dir
     from app.utils.translation_delivery import translation_delivery_lock
     from app.utils.translation_certification import validate_translation_delivery
-    from app.utils.translation_configuration import translation_configuration_snapshot
+    from app.utils.translation_configuration import capture_knowledge_context, translation_configuration_snapshot
     with translation_delivery_lock(pid, blocking=False) as acquired:
         if not acquired:
             return False
@@ -26,16 +27,48 @@ def seal_completed_delivery(pid):
             return True
         if project.get('library_status') != 'done' or not project.get('library_source_path'):
             return True
-        if project.get('library_delivery_config') and project.get('library_delivery_run_id') == project.get('translation_quality_run_id'):
+        has_config = bool(project.get('library_delivery_config') and project.get('library_delivery_run_id') == project.get('translation_quality_run_id'))
+        if has_config and project.get('translation_knowledge_context'):
             return True
         pdir = project_dir(pid)
-        if not validate_translation_delivery(project, pdir).valid:
+        delivery = validate_translation_delivery(project, pdir)
+        if not (delivery.valid and delivery.expects_certification and delivery.passed):
             return True  # Never certify or repair an invalid historical result here.
-        snapshot = translation_configuration_snapshot(project, config=Config.to_dict(), project_path=pdir)
+        config = project['library_delivery_config'] if has_config else Config.to_dict()
+        snapshot = translation_configuration_snapshot(project, config=config, project_path=pdir)
         frozen = {key: snapshot[key] for key in ('translation', 'providers')}
+        context = project.get('translation_knowledge_context') or capture_knowledge_context(project, pdir)
         mutate_project(pid, lambda p: p.update(library_delivery_config=frozen,
+                                              translation_knowledge_context=context,
                                               library_delivery_run_id=project.get('translation_quality_run_id')))
         return True
+
+
+def preserve_delivered_knowledge(handler):
+    """Upgrade valid historical deliveries before any KB or candidate edit.
+
+    The global lock only covers capture and local edits. Delivery locks are tried
+    non-blocking, so a reader/publisher can never deadlock waiting on this lock.
+    Invalid historical deliveries remain invalid and are never re-certified.
+    """
+    @functools.wraps(handler)
+    def guarded(*args, **kwargs):
+        from app.utils import project_store
+        from app.utils.translation_configuration import KNOWLEDGE_CONTEXT_LOCK
+        with KNOWLEDGE_CONTEXT_LOCK:
+            for path in project_store.PROJECTS_DIR.glob('*/project.json'):
+                if path.parent.is_symlink() or path.is_symlink():
+                    continue
+                try:
+                    project = project_store.load_project(path.parent.name)
+                except (FileNotFoundError, ValueError):
+                    continue
+                if project.get('library_status') != 'done' or not project.get('library_source_path'):
+                    continue
+                if not seal_completed_delivery(path.parent.name):
+                    raise HTTPException(409, '已完成字幕正在读取或保存，请稍后重试知识库修改')
+            return handler(*args, **kwargs)
+    return guarded
 
 
 class LibrarySettings:

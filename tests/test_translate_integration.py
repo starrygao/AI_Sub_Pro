@@ -3356,7 +3356,10 @@ def test_successful_burn_commits_video_and_cleans_transaction_files(
     assert final_path.read_bytes() == b"new-burn"
     project = json.loads(project_path.read_text(encoding="utf-8"))
     assert project["status"] == "completed"
-    assert project["output_video"] == str(final_path)
+    assert Path(project["output_video"]).resolve() == final_path.resolve()
+    if symlink_root:
+        # Managed storage keeps its stable alias in persisted project paths.
+        assert Path(project["output_video"]).is_relative_to(alias)
     _assert_no_burn_transaction_files(pdir)
 
 

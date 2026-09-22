@@ -5,12 +5,58 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
 
 _AUTO = object()
 _SECRET_KEY_PARTS = ("api_key", "apikey", "token", "secret", "password")
+KNOWLEDGE_CONTEXT_LOCK = threading.RLock()
+
+
+def _knowledge_identity(project: dict) -> dict:
+    return {key: project.get(key) for key in ("id", "tmdb_id", "tmdb_type", "show_title", "name")}
+
+
+def frozen_knowledge_context(project: dict) -> Optional[dict]:
+    """Return the run's immutable inputs; reject a snapshot rebound to other metadata."""
+    context = project.get("translation_knowledge_context")
+    if context is None:
+        return None
+    if (not isinstance(context, dict) or context.get("schema_version") != 1
+            or not context.get("run_id")
+            or context.get("run_id") != project.get("translation_quality_run_id")
+            or context.get("project") != _knowledge_identity(project)
+            or not isinstance(context.get("effective_kb"), dict)
+            or not isinstance(context.get("candidate_terms"), list)
+            or len(context["candidate_terms"]) != 2):
+        raise ValueError("Translation knowledge snapshot identity is invalid")
+    return context
+
+
+def capture_knowledge_context(project: dict, project_path: Path) -> dict:
+    """Called before translation, under KNOWLEDGE_CONTEXT_LOCK with candidate generation."""
+    return {
+        "schema_version": 1,
+        "run_id": project.get("translation_quality_run_id"),
+        "project": _knowledge_identity(project),
+        "effective_kb": _selected_kb(project),
+        "candidate_terms": _candidate_terms(project_path),
+    }
+
+
+def project_knowledge(project: dict, store=None):
+    """Resolve the same KB for translation, polishing and QA within a run."""
+    context = frozen_knowledge_context(project)
+    if context is not None:
+        from app.engines.kb_models import ProjectKb
+        selected = context["effective_kb"].get("selection")
+        return ProjectKb.from_dict(selected) if isinstance(selected, dict) else None
+    if store is None:
+        from app.engines.knowledge import _get_singleton
+        store = _get_singleton()
+    return store.select_for_project(project)
 
 
 def _clean_text(value: Any) -> str:
@@ -116,16 +162,19 @@ def translation_configuration_snapshot(
         or _clean_text(translation_cfg.get("target_language"))
         or "简体中文"
     )
-    kb_snapshot = (
-        _selected_kb(source)
-        if effective_kb is _AUTO
-        else _safe_json(effective_kb)
-    )
-    candidates = (
-        _candidate_terms(project_path)
-        if candidate_terms is _AUTO
-        else _safe_json(candidate_terms)
-    )
+    try:
+        context = frozen_knowledge_context(source)
+    except ValueError:
+        # Invalid identity must fail the existing hash check, never fall back to live KB.
+        context = {"effective_kb": {"invalid_snapshot": True}, "candidate_terms": [{"invalid_snapshot": True}]}
+    if effective_kb is _AUTO:
+        kb_snapshot = context["effective_kb"] if context is not None else _selected_kb(source)
+    else:
+        kb_snapshot = _safe_json(effective_kb)
+    if candidate_terms is _AUTO:
+        candidates = context["candidate_terms"] if context is not None else _candidate_terms(project_path)
+    else:
+        candidates = _safe_json(candidate_terms)
     return {
         "schema_version": 1,
         "target_language": target_language,
@@ -178,4 +227,3 @@ def translation_configuration_hash(
         allow_nan=False,
     ).encode("utf-8")
     return f"sha256:{hashlib.sha256(payload).hexdigest()}"
-

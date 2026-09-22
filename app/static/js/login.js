@@ -15,7 +15,7 @@ function destination(){
   if(url.pathname==='/library'){
     // An unauthenticated hash URL keeps its fragment across the server redirect.
     const hash=url.hash||location.hash||'';
-    return '/library'+(/^#(?:tasks|settings|project\/[a-f0-9]{8})$/.test(hash)?hash:'');
+    return '/library'+(/^#(?:tasks|settings|knowledge|project\/[a-f0-9]{8})$/.test(hash)?hash:'');
   }
   if(url.pathname==='/desktop'){
     const project=url.searchParams.get('project');

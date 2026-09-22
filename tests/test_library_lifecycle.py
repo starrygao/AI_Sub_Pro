@@ -120,7 +120,9 @@ def test_existing_same_name_foreign_srt_is_preserved_before_any_model_work(tmp_p
     worker.observe(video,{})
     monkeypatch.setattr(CodexCliProvider,'check_logged_in',lambda:True)
     monkeypatch.setattr(module.os,'getloadavg',lambda:(0,0,0))
-    monkeypatch.setattr(worker,'probe',Mock(side_effect=AssertionError('collision must be checked first')))
+    monkeypatch.setattr(worker,'probe',lambda path:{'streams':[{'codec_type':'audio','tags':{'language':'eng'}}]})
+    prepare=Mock();monkeypatch.setattr(worker,'prepare',prepare)
     worker.process_one()
     assert worker.store.get(video)['state']=='error'
     assert source.read_text()=='Original foreign subtitle'
+    prepare.assert_not_called()

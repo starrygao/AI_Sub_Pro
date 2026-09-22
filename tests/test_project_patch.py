@@ -621,6 +621,44 @@ def test_tmdb_project_search_sanitizes_non_finite_candidate_values(client, monke
     assert client.get(f"/api/projects/{pid}").json()["tmdb_candidates"][0]["vote_average"] is None
 
 
+@pytest.mark.parametrize("fallback_fails", [False, True])
+def test_tmdb_retry_repeats_tv_year_fallback_and_preserves_failure(client, monkeypatch, fallback_fails):
+    """A season release year must not hide a show with an earlier premiere."""
+    from app.api import projects
+
+    pid = _make_project(client, name="Black.Mirror.S07E01.2025.mkv")
+    path = projects.PROJECTS_DIR / pid / "project.json"
+    project = json.loads(path.read_text())
+    lookup = {"query": "Black Mirror", "type": "tv", "year": 2025, "error": "503"}
+    project["tmdb_lookup"] = lookup
+    path.write_text(json.dumps(project))
+    calls = []
+
+    async def search(query, year=None):
+        calls.append((query, year))
+        if year is not None:
+            return []
+        if fallback_fails:
+            raise RuntimeError("service still unavailable")
+        return [{"id": 7777, "name": "Black Mirror", "first_air_date": "2011-12-04"}]
+
+    monkeypatch.setattr("app.engines.tmdb.search_tv", search)
+    response = client.post(f"/api/projects/{pid}/tmdb-search", json={
+        key: lookup[key] for key in ("query", "type", "year")
+    })
+
+    assert response.status_code == (502 if fallback_fails else 200)
+    assert calls == [("Black Mirror", 2025), ("Black Mirror", None)]
+    saved = json.loads(path.read_text())
+    if fallback_fails:
+        assert saved["tmdb_lookup"] == lookup
+    else:
+        assert [c["tmdb_id"] for c in response.json()["candidates"]] == [7777]
+        assert saved["tmdb_candidates"] == response.json()["candidates"]
+        assert not saved.get("tmdb_lookup")
+        assert not saved.get("tmdb_id")  # Retry still requires an explicit choice.
+
+
 @pytest.mark.parametrize('action', ['skip', 'retry', 'retry_failure'])
 def test_failed_tmdb_lookup_survives_until_explicit_skip_or_successful_retry(client, monkeypatch, action):
     from unittest.mock import AsyncMock

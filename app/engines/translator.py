@@ -60,6 +60,7 @@ log = logging.getLogger(__name__)
 # KB v2 singleton (loaded once at translator module import). Tests may
 # monkey-patch `_shared_kb` to inject a controlled KnowledgeBase instance.
 from app.engines.knowledge import KnowledgeBase, build_prompt_snippet as _kb_build_snippet
+from app.utils.translation_configuration import project_knowledge
 
 _shared_kb = KnowledgeBase()
 try:
@@ -1202,7 +1203,7 @@ class SubtitleTranslator:
         kb_snippet = ""
         project_kb = None
         try:
-            project_kb = _shared_kb.select_for_project(meta_info)
+            project_kb = project_knowledge(meta_info, _shared_kb)
             self._kb_usage_trace = trace_for_project_kb(project_kb)
             if project_kb is not None:
                 kb_snippet = _kb_build_snippet(project_kb)
@@ -1504,7 +1505,7 @@ class SubtitleTranslator:
         # v2 KB injection — same contract as _build_prompt
         kb_snippet = ""
         try:
-            project_kb = _shared_kb.select_for_project(meta_info)
+            project_kb = project_knowledge(meta_info, _shared_kb)
             self._kb_usage_trace = trace_for_project_kb(project_kb)
             if project_kb is not None:
                 kb_snippet = _kb_build_snippet(project_kb)

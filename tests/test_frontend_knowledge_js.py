@@ -254,11 +254,11 @@ def test_project_quality_helpers_load_suggestions_and_report():
           state.qaReport.summary.conclusion = '达标：已自动重点返工 2 条并复检通过。';
           state.qaReport.summary.quality_gate = {passed: true, auto_repair_enabled: true, auto_repaired_blocks: 2};
           state.qaReport.status = 'ok';
-          if (!state.qaReportSummaryText().includes('通过但有警告')) {
+          if (!state.qaReportSummaryText().includes('字幕可交付')) {
             throw new Error(`expected merged warning status, got ${state.qaReportSummaryText()}`);
           }
-          if (!state.qaReportNextAction().includes('逐次确认')) {
-            throw new Error(`expected warning export confirmation guidance, got ${state.qaReportNextAction()}`);
+          if (!state.qaReportNextAction().includes('可直接导出')) {
+            throw new Error(`expected nonblocking warning delivery guidance, got ${state.qaReportNextAction()}`);
           }
         })().catch((err) => {
           console.error(err.message);

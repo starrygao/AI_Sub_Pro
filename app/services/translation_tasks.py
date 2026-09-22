@@ -66,7 +66,10 @@ from app.utils.subtitle_generation import (
     subtitle_source_generation_hash,
 )
 from app.utils.translation_certification import validate_translation_delivery
-from app.utils.translation_configuration import translation_configuration_hash
+from app.utils.translation_configuration import (
+    KNOWLEDGE_CONTEXT_LOCK, capture_knowledge_context, frozen_knowledge_context,
+    project_knowledge, translation_configuration_hash,
+)
 from app.utils.burn_transaction import (
     BURN_RECOVERY_BLOCKED,
     BURN_RECOVERY_COMMITTED,
@@ -2181,7 +2184,7 @@ def _ensure_kb_review_ready(
     raise RuntimeError(detail["message"])
 
 
-def _auto_kb_candidate_terms(pid: str, limit: int = 40) -> list[dict]:
+def _auto_kb_candidate_terms(pid: str, limit: int = 40, *, project=None) -> list[dict]:
     """Return generated KB suggestions as soft translation context.
 
     These are not hard terminology constraints. Accepted project KB entries
@@ -2189,14 +2192,25 @@ def _auto_kb_candidate_terms(pid: str, limit: int = 40) -> list[dict]:
     translator keep likely names/places consistent during the current run.
     """
     try:
-        from app.engines.kb_suggestions import load_suggestions
-
-        suggestions = load_suggestions(_kb_suggestions_path(pid))
+        from app.engines.kb_suggestions import (
+            KbSuggestion, load_suggestions, _is_legacy_pending_subtitle_noise_suggestion,
+        )
+        context = frozen_knowledge_context(project) if project is not None else None
+        if context is None:
+            suggestions = load_suggestions(_kb_suggestions_path(pid))
+            rejected = _load_rejected_kb_suggestion_sources(pid)
+        else:
+            raw, decisions = context['candidate_terms']
+            rows = raw.get('suggestions', []) if isinstance(raw, dict) else []
+            suggestions = [KbSuggestion(**row) for row in rows if isinstance(row, dict)]
+            suggestions = [item for item in suggestions if not _is_legacy_pending_subtitle_noise_suggestion(item)]
+            rejected = {source.strip().casefold() for source in
+                        (decisions.get('rejected_sources', []) if isinstance(decisions, dict) else [])
+                        if isinstance(source, str) and source.strip()}
     except Exception as exc:
         log.warning("failed to load auto KB candidates for %s: %s", pid, exc)
         return []
 
-    rejected = _load_rejected_kb_suggestion_sources(pid)
     rows: list[dict] = []
     seen: set[str] = set()
     for item in suggestions:
@@ -6309,6 +6323,7 @@ def _begin_translation_quality_run(pid: str, *, expected_policy: str) -> str:
             "translation_quality_content_hash": "",
             "translation_quality_source_generation_hash": "",
             "translation_quality_configuration_hash": "",
+            "translation_knowledge_context": None,
         }),
         normalize=_apply_safe_defaults,
     )
@@ -6952,14 +6967,13 @@ def _persist_translation_quality_report(
 ) -> list[dict]:
     """Run deterministic QA and persist the report for this translation run."""
     try:
-        from app.engines.knowledge import _get_singleton
         from app.engines.translation_qa import (
             quality_content_hash,
             save_quality_report,
         )
 
         strict_policy = _strict_quality_policy(cfg, strict_quality_gate)
-        project_kb = _get_singleton().select_for_project(project)
+        project_kb = project_knowledge(project)
         trace_obj = getattr(translator, "last_quality_trace", None)
         trace = trace_obj.to_dict() if hasattr(trace_obj, "to_dict") else {}
         if not isinstance(trace, dict):
@@ -8457,7 +8471,15 @@ def _run_translate_pipeline(
             if not blocks:
                 raise RuntimeError("No subtitle file found. Run ASR first.")
 
-            _ensure_kb_review_ready(pid, project, as_http=False, config=cfg)
+            # Candidate generation and context capture are one short local operation.
+            # UI edits may proceed during model calls without changing this run.
+            with KNOWLEDGE_CONTEXT_LOCK:
+                _ensure_kb_review_ready(pid, project, as_http=False, config=cfg)
+                def freeze_knowledge(current):
+                    if current.get('translation_quality_run_id') != quality_run_id:
+                        raise RuntimeError('translation run changed before knowledge capture')
+                    current['translation_knowledge_context'] = capture_knowledge_context(current, Path(pdir))
+                project = mutate_project(pid, freeze_knowledge, normalize=_apply_safe_defaults)
             configuration_hash = translation_configuration_hash(
                 project,
                 config=cfg,
@@ -8513,7 +8535,7 @@ def _run_translate_pipeline(
             # KB v2 still supplies hard constraints from the shared project KB.
             # Generated suggestions are passed as soft session hints so the
             # automatic path can use likely names/places before manual review.
-            candidate_terms = _auto_kb_candidate_terms(pid)
+            candidate_terms = _auto_kb_candidate_terms(pid, project=project)
             kb_data = {"candidate_terms": candidate_terms} if candidate_terms else None
 
             # Initialize translator

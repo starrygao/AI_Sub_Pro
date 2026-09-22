@@ -47,7 +47,12 @@ class Store:
             return json.loads(row[0]) if row else default
 
     def set_setting(self,key,value):
-        with self.db() as db:db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key,json.dumps(value)))
+        self.set_settings({key:value})
+
+    def set_settings(self,values):
+        with self.db() as db:
+            db.executemany('INSERT OR REPLACE INTO settings VALUES(?,?)',
+                           [(key,json.dumps(value)) for key,value in values.items()])
 
     def baseline_contains(self,path,current=None):
         identity=json.dumps(current) if current else ''

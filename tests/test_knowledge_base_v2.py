@@ -110,3 +110,23 @@ def test_knowledge_base_select_returns_none_when_no_match(tmp_path, monkeypatch)
 
     selected = kb.select_for_project({"tmdb_id": 999, "name": "Something unrelated"})
     assert selected is None
+
+
+def test_exact_show_title_wins_over_earlier_substring():
+    from app.engines.knowledge import KnowledgeBase
+    from app.engines.kb_models import ProjectKb
+    kb = KnowledgeBase()
+    kb.set_project('alien', ProjectKb(show_title='Alien'))
+    kb.set_project('aliens', ProjectKb(show_title='Aliens'))
+    selected = kb.select_for_project({'name': 'Aliens (1986).mkv',
+        'show_title': 'Aliens', 'tmdb_id': 679, 'tmdb_type': 'movie'})
+    assert selected.show_title == 'Aliens'
+
+
+def test_known_title_does_not_fall_back_to_a_different_film_name():
+    from app.engines.knowledge import KnowledgeBase
+    from app.engines.kb_models import ProjectKb
+    kb = KnowledgeBase()
+    kb.set_project('alien', ProjectKb(show_title='Alien'))
+    assert kb.select_for_project({'name': 'Aliens (1986).mkv',
+        'show_title': 'Aliens', 'tmdb_id': 679, 'tmdb_type': 'movie'}) is None

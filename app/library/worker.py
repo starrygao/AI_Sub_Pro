@@ -11,7 +11,10 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from .guard import VIDEO_EXTENSIONS, fingerprint, ready_file, chinese_track, chinese_sidecar, subtitle_files, chinese_audio_only, has_foreign_audio, CHINESE_LANGUAGES, map_path
+from .guard import (VIDEO_EXTENSIONS, fingerprint, ready_file, chinese_track, chinese_sidecar,
+                    subtitle_files, chinese_audio_only, has_foreign_audio, CHINESE_LANGUAGES, map_path,
+                    complete_subtitle_stream, complete_sidecar, select_audio_track, language_code,
+                    chinese_subtitle_attachment)
 from .publish import publish_sidecar, archive_stale_sidecar
 from .sources import Sources
 from .store import Store
@@ -209,7 +212,7 @@ class LibraryWorker:
                     # Existing export gate validates source generation, report and delivery hashes.
                     export_srt(pid,format='bilingual',container='srt')
                     source=tasks.PROJECTS_DIR/pid/'bilingual.srt'
-                    other=[p for p in subtitle_files(path) if p!=path.with_suffix('.srt') and chinese_sidecar(p)]
+                    other=[p for p in subtitle_files(path) if p!=path.with_suffix('.srt') and chinese_sidecar(p,path)]
                     if other:
                         self.save(row,state='skipped',reason='翻译期间出现中文字幕，保留现有文件',
                                   existing_subtitles=[{'path':str(p),'fingerprint':fingerprint(p)} for p in other]);continue
@@ -239,20 +242,20 @@ class LibraryWorker:
         metadata={**self.sources.metadata(path),**row.get('metadata',{})}
         streams=info['streams'];audio=[s for s in streams if s.get('codec_type')=='audio']
         subs=[s for s in streams if s.get('codec_type')=='subtitle']
+        selected_audio=select_audio_track(streams)
         project=_apply_safe_defaults({'id':pid,'name':path.name,'video_path':str(path),
             'created_at':datetime.now(timezone.utc).isoformat(),'status':'created','progress':0,
             'duration':float(info['format']['duration']),'target_language':'简体中文','asr_language':'auto',
             'audio_tracks':[{'index':s['index'],'codec':s.get('codec_name',''),'lang':s.get('tags',{}).get('language','und')} for s in audio],
-            'subtitle_tracks':[],'prefer_embedded_subtitle':False,'selected_audio_track':audio[0]['index'] if audio else 0,
+            'subtitle_tracks':[],'prefer_embedded_subtitle':False,'selected_audio_track':selected_audio if selected_audio is not None else 0,
             'library_source_path':str(path),'library_output_path':row['output_path'],'library_status':'translating',
             'library_fingerprint':row['fingerprint'],'workflow_mode':'translate_only',
             **{k:v for k,v in metadata.items() if k not in {'name','overview','emby_id'}},
             'content_notes':metadata.get('overview',''),'auto_run':True})
         # Prefer full foreign subtitles; forced/commentary tracks cannot cover all dialogue.
-        usable=[s for s in subs if s.get('codec_name') in TEXT_CODECS and not s.get('disposition',{}).get('forced')
-                and not any(w in s.get('tags',{}).get('title','').lower() for w in ['commentary','forced'])]
-        usable.sort(key=lambda s:s.get('tags',{}).get('language') not in {'eng','en'})
-        sidecars=[p for p in sidecars if p.suffix.lower() in {'.srt','.ass','.ssa','.vtt'} and 'forced' not in p.name.lower()]
+        usable=[s for s in subs if s.get('codec_name') in TEXT_CODECS and complete_subtitle_stream(s,path)]
+        usable.sort(key=lambda s:language_code(s) not in {'eng','en'})
+        sidecars=[p for p in sidecars if p.suffix.lower() in {'.srt','.ass','.ssa','.vtt'} and complete_sidecar(p,path)]
         source_label='语音识别'
         if sidecars or usable:
             source=sidecars[0] if sidecars else path
@@ -264,6 +267,8 @@ class LibraryWorker:
             (pdir/'filtered.srt').write_bytes((pdir/'raw.srt').read_bytes())
             project['status']='asr_done'
             source_label=str(source) if sidecars else '内嵌字幕 #'+str(usable[0]['index'])
+        elif selected_audio is None:
+            raise RuntimeError('未找到可用于完整对白识别的音轨')
         if fingerprint(path)!=row['fingerprint'] or self.block_reason(path):raise RuntimeError('提取期间视频状态变化')
         project['library_subtitle_source']=source_label
         atomic_write_json(pdir/'project.json',project)
@@ -298,15 +303,17 @@ class LibraryWorker:
                     backup=archive_stale_sidecar(row.get('stale_output_path') or path.with_suffix('.srt'),row['stale_output_hash'])
                     self.save(row,previous_subtitle_backup=str(backup) if backup else '',stale_output_hash=None,stale_output_path=None)
                 sidecars=subtitle_files(path)
-                chinese=[p for p in sidecars if chinese_sidecar(p)]
+                chinese=[p for p in sidecars if chinese_sidecar(p,path)]
                 if chinese:
                     self.save(row,state='skipped',reason='已有同目录中文字幕',
                               existing_subtitles=[{'path':str(p),'fingerprint':fingerprint(p)} for p in chinese]);continue
+                info=self.probe(path)
+                if any(chinese_track(s,path) for s in info['streams']):
+                    self.save(row,state='skipped',reason='已有内嵌中文字幕');return
+                if any(chinese_subtitle_attachment(s,path) for s in info['streams']):
+                    self.save(row,state='skipped',reason='已有中文字幕附件');return
                 if path.with_suffix('.srt').exists():
                     self.save(row,state='error',reason='同名 SRT 已存在，保留原文件；请先另存已有字幕后重新检查');continue
-                info=self.probe(path)
-                if any(chinese_track(s) for s in info['streams']):
-                    self.save(row,state='skipped',reason='已有内嵌中文字幕');return
                 if self.config.get('skip_chinese_audio',True) and chinese_audio_only(info['streams']):
                     self.save(row,state='native_language',reason='中文原声，无需翻译');return
                 if self.config.get('skip_chinese_audio',True) and not has_foreign_audio(info['streams']):
@@ -317,8 +324,12 @@ class LibraryWorker:
                     if language in CHINESE_LANGUAGES:
                         self.save(row,state='native_language',reason='TMDB 确认为中文原声，无需翻译',metadata=metadata);return
                 # Re-read external readiness immediately before extraction / model work.
-                self.refresh_readiness()
-                if self.block_reason(path):self.save(row,reason=self.block_reason(path));return
+                try:
+                    self.refresh_readiness()
+                    reason=self.block_reason(path)
+                except Exception as exc:
+                    self.save(row,state='waiting',reason='等待上游就绪状态恢复：'+self.safe_error(exc));return
+                if reason:self.save(row,reason=reason);return
                 self.prepare(row,info,sidecars)
             except Exception as exc:
                 self.save(row,state='error',reason=self.safe_error(exc))

@@ -19,6 +19,7 @@ from typing import Optional
 
 from app.config import Config
 from app.version import APP_VERSION
+from app.library.settings import preserve_delivered_knowledge
 from app.engines.model_catalog import CATALOG, model_ids, catalog_response
 import app.engines.providers  # noqa: F401  (load provider modules before concurrent requests)
 from app.engines.asr_capabilities import ASR_BACKENDS, ASR_MODES, detect_asr_capabilities, recommend_asr_settings
@@ -688,6 +689,7 @@ def get_knowledge():
 
 
 @router.post("/knowledge")
+@preserve_delivered_knowledge
 def update_knowledge(data: dict):
     """Update knowledge base."""
     _kb_singleton().update_all(data)

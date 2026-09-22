@@ -90,3 +90,19 @@ def test_login_cross_site_and_attempt_limit(monkeypatch):
     for _ in range(10):assert client.post('/api/auth/login',json=body).status_code==401
     response=client.post('/api/auth/login',json=body)
     assert response.status_code==429 and response.headers['retry-after']=='60'
+
+
+def test_task_list_distinguishes_missing_progress_from_recorded_zero(tmp_path, tmp_project_dir, monkeypatch):
+    import json
+    from app.library.store import Store
+    store = Store(tmp_path / 'library.sqlite3')
+    for pid in ['deadbeef', 'c0ffee42']:
+        store.put({'path': '/video/' + pid + '.mkv', 'state': 'cancelled', 'updated': 1, 'project_id': pid})
+    known = tmp_project_dir / 'deadbeef'; known.mkdir()
+    (known / 'progress.json').write_text(json.dumps({'progress': 0, 'message': '尚未开始识别'}))
+    monkeypatch.setattr(server, 'worker', SimpleNamespace(store=store, config={}))
+    monkeypatch.setattr(server.app.state, 'operator_token', 'fixture-token', raising=False)
+    client = TestClient(server.app, headers={'X-AISub-Key': 'fixture-token'})
+    rows = {row['project_id']: row for row in client.get('/api/library/tasks?view=processed').json()['items']}
+    assert rows['deadbeef']['progress']['progress'] == 0
+    assert rows['c0ffee42']['progress'] is None

@@ -84,6 +84,21 @@ def _normalize_candidate(c: dict, kind: str) -> dict:
     }
 
 
+async def search_with_year_fallback(title: str, kind: str, year: Optional[int] = None) -> list[dict]:
+    """Use the same TV premiere-year fallback for initial searches and retries."""
+    from app.engines import tmdb
+
+    if kind == "tv":
+        results = await tmdb.search_tv(title, year=year)
+        if not results and year is not None:
+            # An episode release year need not equal the series premiere.
+            results = await tmdb.search_tv(title, year=None)
+        return results
+    if kind == "movie":
+        return await tmdb.search_movie(title, year=year)
+    raise ValueError("invalid TMDB media type")
+
+
 async def enrich_from_filename(name: str) -> dict:
     """Parse `name` (filename or path), search TMDB, and pick a match.
 
@@ -104,14 +119,7 @@ async def enrich_from_filename(name: str) -> dict:
 
     try:
         from app.engines import tmdb
-        if kind == "tv":
-            results = await tmdb.search_tv(title, year=year)
-            if not results and year is not None:
-                # An episode release year need not equal the series premiere.
-                # Preserve the original year for conservative candidate scoring.
-                results = await tmdb.search_tv(title, year=None)
-        else:
-            results = await tmdb.search_movie(title, year=year)
+        results = await search_with_year_fallback(title, kind, year)
     except Exception as e:
         try:
             safe_error = tmdb.public_error_message(e)
