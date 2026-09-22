@@ -133,19 +133,31 @@ class KnowledgeBase:
             tmdb_id = None
         raw_name = project.get("name")
         name = raw_name.lower() if isinstance(raw_name, str) else ""
+        kind = project.get("tmdb_type")
+        title = project.get("show_title")
+        title = title.strip().casefold() if isinstance(title,str) else ""
 
         with self._lock:
             projects = list(self._projects.values())
+        if kind:projects.sort(key=lambda kb:kb.tmdb_type==kind,reverse=True)
 
         if tmdb_id is not None:
             for kb in projects:
-                if kb.tmdb_id is not None and kb.tmdb_id == tmdb_id:
+                if kb.tmdb_id is not None and kb.tmdb_id == tmdb_id and (not kb.tmdb_type or not kind or kb.tmdb_type == kind):
                     return kb
 
         if name:
             for kb in projects:
+                if tmdb_id and kb.tmdb_id and tmdb_id != kb.tmdb_id:continue
+                if kb.tmdb_type and kind and kb.tmdb_type != kind:continue
                 if kb.show_title and kb.show_title.lower() in name:
                     return kb
+
+        if title:
+            for kb in projects:
+                if tmdb_id and kb.tmdb_id and tmdb_id != kb.tmdb_id:continue
+                if kb.tmdb_type and kind and kb.tmdb_type != kind:continue
+                if kb.show_title.casefold() == title:return kb
 
         return None
 

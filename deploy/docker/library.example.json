@@ -1,5 +1,6 @@
 {
   "enabled": false,
+  "new_only": true,
   "skip_chinese_audio": true,
   "quiet_seconds": 300,
   "scan_interval": 60,

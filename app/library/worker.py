@@ -11,7 +11,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from .guard import VIDEO_EXTENSIONS, fingerprint, ready_file, chinese_track, chinese_sidecar, subtitle_files, chinese_audio_only, has_foreign_audio, CHINESE_LANGUAGES
+from .guard import VIDEO_EXTENSIONS, fingerprint, ready_file, chinese_track, chinese_sidecar, subtitle_files, chinese_audio_only, has_foreign_audio, CHINESE_LANGUAGES, map_path
 from .publish import publish_sidecar, archive_stale_sidecar
 from .sources import Sources
 from .store import Store
@@ -49,6 +49,7 @@ class LibraryWorker:
         if path.suffix.lower() not in VIDEO_EXTENSIONS or not self.allowed(path):return
         try:current=fingerprint(path)
         except OSError:return
+        if not self.eligible_new_path(path,current):return
         now=time.time();old=self.store.get(path)
         try:
             created=datetime.fromisoformat(metadata.get('date_created','').replace('Z','+00:00')).timestamp()
@@ -107,9 +108,33 @@ class LibraryWorker:
         self.stop_event.set();self.wake.set()
         if self.thread:self.thread.join(timeout=5)
 
-    def filesystem(self):
-        for root in self.roots:
-            for folder,dirs,files in os.walk(root,followlinks=False):
+    def eligible_new_path(self,path,current=None):
+        if not self.config.get('new_only',False):return True
+        baseline=self.store.setting('baseline',{})
+        return (bool(baseline.get('completed_at')) and set(self.roots)<=set(baseline.get('roots',[]))
+                and any(Path(path).is_relative_to(root) for root in self.roots)
+                and not self.store.baseline_contains(path,current))
+
+    def establish_baseline(self):
+        if not self.config.get('new_only',False):return
+        if not self.roots:self.roots=self.sources.libraries()
+        if not self.roots:raise RuntimeError('尚未读取到监控文件夹，暂不启动任务')
+        baseline=self.store.setting('baseline',{})
+        new_roots=sorted(set(self.roots)-set(baseline.get('roots',[])))
+        if new_roots:
+            entries=[]
+            for path in self.filesystem(new_roots,strict=True):
+                try:entries.append((str(path),fingerprint(path)))
+                except FileNotFoundError:entries.append((str(path),None))
+            self.store.install_baseline(entries,new_roots)
+        from app.services.translation_tasks import cancel_task
+        for pid in self.store.exclude_baseline_rows():cancel_task(pid)
+
+    def filesystem(self,roots=None,strict=False):
+        def failed(exc):raise exc
+        for root in self.roots if roots is None else roots:
+            if strict and not Path(root).is_dir():raise FileNotFoundError('监控文件夹不可读：'+str(root))
+            for folder,dirs,files in os.walk(root,followlinks=False,onerror=failed if strict else None):
                 dirs[:]=[d for d in dirs if not d.startswith('.') and d.lower() not in {'tmp','temp','incomplete','vtrans-staging','@eadir'}]
                 for name in files:
                     if Path(name).suffix.lower() in VIDEO_EXTENSIONS:yield Path(folder)/name
@@ -117,7 +142,9 @@ class LibraryWorker:
     def discover(self):
         now=time.time()
         if not self.roots:self.roots=self.sources.libraries()
-        # Recent arrivals every cycle, plus a rotating inventory so old missing subtitles are found too.
+        self.establish_baseline()
+        # The baseline filters existing videos even when Emby inventories them again.
+        for path,meta in self.sources.recent_transfers():self.observe(path,meta)
         rows,total=self.sources.recent(0,100)
         for path,meta in rows:self.observe(path,meta)
         if total>100:
@@ -247,6 +274,7 @@ class LibraryWorker:
         rows=self.store.rows(['waiting'],limit=100,oldest=True)
         for row in rows:
             path=Path(row['path'])
+            if not self.eligible_new_path(path,row.get('fingerprint')):continue
             if not path.exists():self.save(row,state='missing',reason='视频已移动或删除');continue
             current=fingerprint(path)
             if current!=row['fingerprint']:self.observe(path,row.get('metadata',{}));continue
@@ -290,6 +318,7 @@ class LibraryWorker:
     def tick(self):
         from app.engines.providers.codex_cli import CodexCliProvider
         self.authenticated=CodexCliProvider.check_logged_in()
+        self.establish_baseline()
         self.refresh_readiness()
         self.finish()
         self.apply_pending_settings()
@@ -321,5 +350,7 @@ class LibraryWorker:
         return {'enabled':self.store.setting('enabled',self.config.get('enabled',False)),
                 'last_scan':self.last_scan,'error':self.last_error,'connections':self.health,
                 'codex_logged_in':self.authenticated,'counts':self.store.counts(),'roots':self.roots,
+                'server_roots':[map_path(p,self.config.get('host_path_maps',{})) for p in self.roots],
+                'new_only':self.config.get('new_only',False),'baseline':self.store.setting('baseline',{}),
                 'quiet_seconds':self.config.get('quiet_seconds',300),'scan_interval':self.config.get('scan_interval',60),
                 'model_settings':self.model_settings.state()}

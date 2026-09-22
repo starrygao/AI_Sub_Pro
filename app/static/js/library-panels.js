@@ -106,9 +106,9 @@
   function renderProject(project, progress, workflow) {
     $('project-title').textContent = project.name || '翻译详情';
     $('project-meta').textContent = [project.show_title, project.tmdb_id ? 'TMDB ' + project.tmdb_id : '', project.target_language].filter(Boolean).join(' · ');
-    const states = {created:'待处理', ready:'已就绪', processing:'处理中', asr_done:'识别完成', completed:'已完成', translated:'翻译完成', error:'需要处理', cancelled:'已暂停'};
+    const states = {created:'待处理', ready:'已就绪', processing:'处理中', asr_done:'识别完成', completed:'已完成', translated:'翻译完成', error:'需要处理', cancelled:'已停止'};
     $('project-state').textContent = states[project.status] || project.status || '待处理';
-    $('project-progress-text').textContent = progress.message || '暂无进度信息';
+    $('project-progress-text').textContent = project.status === 'cancelled' ? '任务已停止，保留上次进度' : progress.message || '暂无进度信息';
     $('project-progress').value = Math.max(0, Math.min(100, Number(progress.progress) || 0));
     $('project-facts').replaceChildren();
     fact('视频路径', project.video_path); fact('目标语言', project.target_language);
@@ -167,17 +167,18 @@
   $('project-reload').onclick = () => { previewKey = ''; loadProject(true); };
   function route(focus = true) {
     const match = /^#project\/([a-f0-9]{8})$/.exec(location.hash);
-    panel = match ? 'project' : location.hash === '#settings' ? 'settings' : 'tasks';
+    panel = match ? 'project' : location.hash === '#settings' ? 'settings' : location.hash === '#knowledge' ? 'knowledge' : 'tasks';
     pid = match ? match[1] : ''; detailRequest++;
-    for (const name of ['tasks', 'settings', 'project']) $('panel-' + name).hidden = name !== panel;
-    for (const name of ['tasks', 'settings']) {
-      if (name === (panel === 'settings' ? 'settings' : 'tasks')) $('nav-' + name).setAttribute('aria-current', 'page');
+    for (const name of ['tasks', 'settings', 'project', 'knowledge']) $('panel-' + name).hidden = name !== panel;
+    for (const name of ['tasks', 'settings', 'knowledge']) {
+      if (name === (panel === 'project' ? 'tasks' : panel)) $('nav-' + name).setAttribute('aria-current', 'page');
       else $('nav-' + name).removeAttribute('aria-current');
     }
-    document.title = (panel === 'settings' ? '模型设置' : panel === 'project' ? '翻译详情' : '字幕任务') + ' · AI Sub Pro';
+    document.title = (panel === 'settings' ? '模型设置' : panel === 'project' ? '翻译详情' : panel === 'knowledge' ? '知识库' : '字幕任务') + ' · AI Sub Pro';
     if (focus) $(panel + '-title').focus({preventScroll:true});
     if (panel === 'settings' && !settings) loadSettings();
-    if (panel === 'project') { previewKey = ''; loadProject(true); }
+    if (panel === 'knowledge') window.LibraryKnowledge?.open();
+    if (panel === 'project') { previewKey = ''; loadProject(true); window.LibraryKnowledge?.project(pid); }
   }
   window.LibraryPanels = {statusChanged:settingsState};
   window.addEventListener('hashchange', () => route());

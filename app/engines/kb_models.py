@@ -67,9 +67,11 @@ class ProjectKb:
     slang: List[TermEntry] = field(default_factory=list)
     style_notes: StyleNotes = field(default_factory=StyleNotes)
     legacy_keywords: List[str] = field(default_factory=list)
+    tmdb_type: str = ""
 
     def to_dict(self) -> dict:
         return {
+            **({"tmdb_type": self.tmdb_type} if self.tmdb_type else {}),
             "show_title": self.show_title,
             "tmdb_id": self.tmdb_id,
             "characters": [t.to_dict() for t in self.characters],
@@ -101,6 +103,7 @@ class ProjectKb:
         return cls(
             show_title=_clean_text(d.get("show_title")),
             tmdb_id=tmdb_id,
+            tmdb_type=d.get("tmdb_type") if d.get("tmdb_type") in ("tv", "movie") else "",
             characters=terms("characters"),
             places=terms("places"),
             brands=terms("brands"),

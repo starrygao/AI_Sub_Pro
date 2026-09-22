@@ -40,6 +40,49 @@ def test_kb_list_projects_empty(patched_kb_file):
     assert r.json() == {"projects": []}
 
 
+def test_accepted_terms_from_chinese_named_episodes_share_the_same_show_kb(tmp_project_dir,patched_kb_file):
+    from app.engines.kb_suggestions import KbSuggestion,save_suggestions
+    from app.engines.knowledge import _get_singleton
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+    client=TestClient(app)
+    for pid,source,target in [('episode_one','Maya','玛雅'),('episode_two','Alex','亚历克斯')]:
+        pdir=tmp_project_dir/pid
+        atomic_write_json(pdir/'project.json',{'id':pid,'name':pid,'show_title':'世界在起舞','tmdb_id':312020,'tmdb_type':'tv'})
+        suggestion=KbSuggestion(source=source,category='characters')
+        save_suggestions(pdir/'kb_suggestions.json',[suggestion])
+        response=client.post(f'/api/knowledge/projects/{pid}/suggestions/{suggestion.id}/status',json={'status':'accepted','target':target})
+        assert response.status_code==200
+    entries=client.get('/api/knowledge/projects').json()['projects']
+    assert len(entries)==1
+    kb=_get_singleton().select_for_project({'tmdb_id':312020,'tmdb_type':'tv'})
+    assert {t.source for t in kb.characters}=={'Maya','Alex'}
+
+
+def test_same_tmdb_number_in_movie_and_tv_does_not_share_terminology(patched_kb_file):
+    from app.main import app
+    from app.engines.knowledge import _get_singleton
+    client=TestClient(app)
+    for kind,target in [('movie','电影译名'),('tv','剧集译名')]:
+        response=client.put('/api/knowledge/projects/'+kind,json={'key':kind,'show_title':kind,'tmdb_id':42,'tmdb_type':kind,'characters':[{'source':'Hero','target':target}]})
+        assert response.status_code==200
+    store=_get_singleton()
+    assert store.select_for_project({'tmdb_id':42,'tmdb_type':'tv'}).characters[0].target=='剧集译名'
+
+
+def test_previewed_unsaved_candidate_can_be_accepted(tmp_project_dir,patched_kb_file):
+    from app.main import app
+    from app.utils.project_store import atomic_write_json
+    client=TestClient(app);pid='previewed_candidate';pdir=tmp_project_dir/pid
+    atomic_write_json(pdir/'project.json',{'id':pid,'name':'Example','characters':['Maya Chen']})
+    (pdir/'raw.srt').write_text('1\n00:00:00,000 --> 00:00:01,000\nMaya Chen visited New York.\n')
+    suggestions=client.get(f'/api/knowledge/projects/{pid}/suggestions').json()['suggestions']
+    assert suggestions
+    item=suggestions[0]
+    response=client.post(f'/api/knowledge/projects/{pid}/suggestions/{item["id"]}/status',json={'status':'accepted','target':'审定测试译文'})
+    assert response.status_code==200
+
+
 def test_kb_clean_text_rejects_non_string_values():
     from app.api.knowledge import _clean_text
 

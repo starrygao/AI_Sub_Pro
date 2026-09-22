@@ -126,6 +126,12 @@ def desktop_page():return FileResponse(Path(__file__).parent/'static'/'index.htm
 def library_status():return worker.status()
 
 
+@app.get('/api/library/knowledge')
+def library_knowledge():
+    from app.library.knowledge import summary
+    return summary(worker.store)
+
+
 @app.get('/api/library/settings')
 def library_settings():return worker.model_settings.read()
 
@@ -140,7 +146,7 @@ def library_settings_update(data:dict):
 @app.get('/api/library/tasks')
 def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
     if not 1<=limit<=200 or offset<0:raise HTTPException(400,'分页参数无效')
-    views={'processed':['translating','publishing','done','error','changed','missing'],
+    views={'processed':['translating','publishing','done','error','changed','missing','cancelled'],
            'waiting':['waiting'],'skipped':['skipped','native_language']}
     if view not in {'all',*views}:raise HTTPException(400,'列表类型无效')
     states=views.get(view)
@@ -153,7 +159,7 @@ def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
         total=sum(counts.get(s,0) for s in states) if states else sum(counts.values())
     for row in rows:
         mappings=worker.config.get('host_path_maps',{})
-        if row['state'] not in {'done','skipped','native_language'}:
+        if row['state'] not in {'done','skipped','native_language','cancelled'}:
             row['output_path']=str(Path(row['path']).with_suffix('.srt'))
         row['server_source_path']=map_path(row['path'],mappings)
         row['server_output_path']=map_path(row.get('output_path',''),mappings)
@@ -185,6 +191,7 @@ class Retry(BaseModel):
 def library_retry(body:Retry):
     row=worker.store.get(body.path)
     if not row:raise HTTPException(404,'记录不存在')
+    if not worker.eligible_new_path(body.path,row.get('fingerprint')):raise HTTPException(409,'现有视频不补翻译')
     if row['state'] not in {'error','changed','missing','skipped','native_language'}:raise HTTPException(409,'当前任务不能重试')
     worker.save(row,state='waiting',reason='等待重新检查')
     worker.wake.set();return {'scheduled':True}

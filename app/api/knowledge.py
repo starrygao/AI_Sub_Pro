@@ -1,7 +1,7 @@
 """Per-project KB CRUD endpoints (v2). Legacy /api/knowledge GET/POST remains in settings.py."""
 import json
 import logging
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, StrictInt
@@ -49,6 +49,7 @@ class ProjectKbIn(BaseModel):
     key: str
     show_title: str = ""
     tmdb_id: Optional[StrictInt] = None
+    tmdb_type: Literal["", "tv", "movie"] = ""
     characters: List[TermEntryIn] = Field(default_factory=list)
     places: List[TermEntryIn] = Field(default_factory=list)
     brands: List[TermEntryIn] = Field(default_factory=list)
@@ -67,6 +68,7 @@ class SuggestionAcceptIn(BaseModel):
     key: str
     show_title: str = ""
     tmdb_id: Optional[StrictInt] = None
+    tmdb_type: Literal["", "tv", "movie"] = ""
     entries: List[SuggestionAcceptEntryIn] = Field(default_factory=list)
 
 
@@ -267,13 +269,24 @@ def _project_suggestions_path(pdir) -> object:
 
 def _kb_key_for_project(pid: str, project: dict) -> str:
     import re
+    import hashlib
+
+    store=_get_kb()
+    matched=store.select_for_project(project)
+    if matched is not None:
+        for key,value in store.list_projects().items():
+            if value is matched:return key
+    tmdb_id=project.get('tmdb_id')
+    if isinstance(tmdb_id,int) and not isinstance(tmdb_id,bool) and tmdb_id>0:
+        kind=project.get('tmdb_type') if project.get('tmdb_type') in {'tv','movie'} else 'title'
+        return f'tmdb-{kind}-{tmdb_id}'
 
     raw = project.get("show_title") or project.get("name") or pid
     key = _clean_text(raw) if isinstance(raw, str) else ""
     if not key:
         return pid
-    key = re.sub(r"[^A-Za-z0-9_-]+", "-", key).strip("-").lower()
-    return key[:64] or pid
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "-", key).strip("-").lower()
+    return slug[:64] or 'title-'+hashlib.sha256(key.casefold().encode()).hexdigest()[:16]
 
 
 def _append_term_once(entries: list[TermEntry], source: str, target: str, notes: str = "") -> None:
@@ -296,6 +309,7 @@ def _accept_status_suggestion_into_kb(pid: str, project: dict, suggestion) -> No
         proj = ProjectKb(
             show_title=_clean_text(project.get("show_title") or project.get("name") or ""),
             tmdb_id=project.get("tmdb_id") if isinstance(project.get("tmdb_id"), int) else None,
+            tmdb_type=project.get('tmdb_type') if project.get('tmdb_type') in {'tv','movie'} else '',
         )
 
     category = _clean_text(getattr(suggestion, "category", "")).casefold()
@@ -315,7 +329,7 @@ def _accept_status_suggestion_into_kb(pid: str, project: dict, suggestion) -> No
 @router.get("/projects")
 def list_kb_projects():
     return {"projects": [
-        {"key": k, "show_title": p.show_title, "tmdb_id": p.tmdb_id}
+        {"key": k, "show_title": p.show_title, "tmdb_id": p.tmdb_id, **({'tmdb_type':p.tmdb_type} if p.tmdb_type else {})}
         for k, p in _get_kb().list_projects().items()
     ]}
 
@@ -362,6 +376,11 @@ def update_kb_project_suggestion_status(pid: str, suggestion_id: str, body: Sugg
     pdir, project = _load_project_or_http(pid)
     path = _project_suggestions_path(pdir)
     cleaned_status = _clean_text(body.status).casefold()
+    if not path.is_file():
+        # GET can preview locally extracted candidates before a translation has run.
+        # Persist that same candidate set when the user first confirms or rejects one.
+        candidates=suggest_kb_entries(project,_subtitle_dicts_for_project(pdir),_get_kb().select_for_project(project))
+        if any(item.id==suggestion_id for item in candidates):save_suggestions(path,candidates)
     existing = next(
         (item for item in load_suggestions(path) if item.id == suggestion_id),
         None,
@@ -416,7 +435,7 @@ def get_kb_project_usage_trace(pid: str):
 
 @router.post("/projects/{pid}/suggestions/accept")
 def accept_kb_project_suggestions(pid: str, body: SuggestionAcceptIn):
-    _load_project_or_http(pid)
+    _,project=_load_project_or_http(pid)
     key = _validate_kb_key_or_http(_clean_text(body.key))
     if body.tmdb_id is not None and body.tmdb_id < 1:
         raise HTTPException(status_code=400, detail="tmdb_id must be positive")
@@ -428,6 +447,8 @@ def accept_kb_project_suggestions(pid: str, body: SuggestionAcceptIn):
         proj.show_title = show_title
     if body.tmdb_id is not None:
         proj.tmdb_id = body.tmdb_id
+    if body.tmdb_type:proj.tmdb_type=body.tmdb_type
+    elif project.get('tmdb_type') in {'tv','movie'} and project.get('tmdb_id')==proj.tmdb_id:proj.tmdb_type=project['tmdb_type']
 
     categories = {
         "characters": proj.characters,
@@ -483,6 +504,7 @@ def put_kb_project(key: str, body: ProjectKbIn):
     proj = ProjectKb(
         show_title=_clean_text(body.show_title),
         tmdb_id=body.tmdb_id,
+        tmdb_type=body.tmdb_type,
         characters=_clean_terms(body.characters),
         places=_clean_terms(body.places),
         brands=_clean_terms(body.brands),
@@ -492,6 +514,7 @@ def put_kb_project(key: str, body: ProjectKbIn):
             perspective=_clean_text(body.style_notes.perspective),
             rules=[r for r in (_clean_text(rule) for rule in body.style_notes.rules) if r],
         ),
+        legacy_keywords=list(getattr(_get_kb().get_project(key),'legacy_keywords',[])),
     )
     _get_kb().put_project(key, proj)
     _invalidate_translator_kb()

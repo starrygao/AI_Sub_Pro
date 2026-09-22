@@ -71,6 +71,23 @@ class Sources:
                 results.append((map_path(item['Path'],self.config.get('path_maps',{})),emby_metadata(item,self.item)))
         return results,int(payload.get('TotalRecordCount',0))
 
+    def recent_transfers(self):
+        """MoviePilot arrivals can precede Emby import; status is still checked by readiness."""
+        conf=self.config.get('moviepilot')
+        if not conf:return []
+        db=sqlite3.connect('file:'+conf['database']+'?mode=ro',uri=True,timeout=3)
+        try:
+            rows=db.execute('SELECT dest,media_id,type,title,media_source FROM transferhistory WHERE status=1 AND dest IS NOT NULL ORDER BY id DESC LIMIT 200').fetchall()
+            result=[]
+            for path,identity,kind,title,source in rows:
+                if not isinstance(path,str) or not path.startswith('/'):continue
+                meta={'show_title':title,'metadata_source':'moviepilot'}
+                if source in {'tmdb','themoviedb'} and str(identity).isdigit():
+                    meta.update(tmdb_id=int(identity),tmdb_type='tv' if kind in {'电视剧','tv','TV'} else 'movie')
+                result.append((map_path(path,conf.get('path_maps',{})),meta))
+            return result
+        finally:db.close()
+
     def readiness(self):
         blocked={}
         self.health={}
