@@ -21,3 +21,26 @@ def test_account_verification_and_authenticated_server_routes(monkeypatch):
     assert client.get('/api/library/status',headers=headers).status_code==200
     assert client.post('/api/library/control',headers={**headers,'Origin':'https://unrelated.example'},json={'enabled':True}).status_code==403
     assert client.get('/api/library/tasks?limit=201',headers=headers).status_code==400
+
+
+def test_lists_separate_waiting_and_skipped_before_pagination(tmp_path,monkeypatch):
+    from app.library.store import Store
+    store=Store(tmp_path/'library.sqlite3')
+    for i,state in enumerate(['done','error','waiting','native_language','waiting','skipped']):
+        store.put({'path':f'/video/{i}.mkv','state':state,'updated':i})
+    monkeypatch.setattr(server,'worker',SimpleNamespace(store=store,config={}))
+    monkeypatch.setattr(server.app.state,'operator_token','fixture-token',raising=False)
+    client=TestClient(server.app,headers={'X-AISub-Key':'fixture-token'})
+    page=client.get('/api/library/tasks?view=processed&limit=1').json()
+    assert [r['state'] for r in page['items']]==['error']
+    assert page['total']==2
+    assert page['view_counts']=={'processed':2,'waiting':2,'skipped':2}
+    page=client.get('/api/library/tasks?view=processed&limit=1&offset=1').json()
+    assert [r['state'] for r in page['items']]==['done']
+    for view,states in [('waiting',{'waiting'}),('skipped',{'skipped','native_language'})]:
+        page=client.get('/api/library/tasks?view='+view).json()
+        assert {r['state'] for r in page['items']}==states
+        assert page['total']==2
+    assert client.get('/api/library/tasks?view=processed&state=waiting').json()['items']==[]
+    assert len(client.get('/api/library/tasks').json()['items'])==6  # existing API clients retain all-view behavior
+    assert client.get('/api/library/tasks?view=invalid').status_code==400

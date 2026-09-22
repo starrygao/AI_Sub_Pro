@@ -84,9 +84,19 @@ def library_status():return worker.status()
 
 
 @app.get('/api/library/tasks')
-def library_tasks(state:str='',limit:int=100,offset:int=0):
+def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
     if not 1<=limit<=200 or offset<0:raise HTTPException(400,'分页参数无效')
-    rows=worker.store.rows([state] if state else None,limit,offset)
+    views={'processed':['translating','publishing','done','error','changed','missing'],
+           'waiting':['waiting'],'skipped':['skipped','native_language']}
+    if view not in {'all',*views}:raise HTTPException(400,'列表类型无效')
+    states=views.get(view)
+    counts=worker.store.counts()
+    if state and states is not None and state not in states:
+        rows=[];total=0
+    else:
+        states=[state] if state else states
+        rows=worker.store.rows(states,limit,offset)
+        total=sum(counts.get(s,0) for s in states) if states else sum(counts.values())
     for row in rows:
         mappings=worker.config.get('host_path_maps',{})
         row['server_source_path']=map_path(row['path'],mappings)
@@ -94,7 +104,8 @@ def library_tasks(state:str='',limit:int=100,offset:int=0):
         if row.get('project_id') and row['state']=='translating':
             from app.services.translation_tasks import get_progress
             row['progress']=get_progress(row['project_id'])
-    return {'items':rows,'counts':worker.store.counts()}
+    return {'items':rows,'counts':counts,'total':total,
+            'view_counts':{name:sum(counts.get(s,0) for s in states) for name,states in views.items()}}
 
 
 class Control(BaseModel):
