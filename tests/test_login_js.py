@@ -14,6 +14,14 @@ for(const next of ['https://evil.test','//evil.test','/\\evil.test','/\\','/api/
  const expected=next==='/desktop?project=deadbeef'?next:next==='/desktop?project=invalid'?'/desktop':'/library';
  if(context.destination()!==expected)throw Error('Unsafe or incorrect destination: '+next);
 }
+for(const hash of ['#settings','#tasks','#project/deadbeef','#project/invalid','#https://evil.test']){
+ context.location.search='?next='+encodeURIComponent('/library'+hash);
+ const expected=['#settings','#tasks','#project/deadbeef'].includes(hash)?'/library'+hash:'/library';
+ if(context.destination()!==expected)throw Error('Incorrect console deep link: '+hash);
+ context.location.search='?next=%2Flibrary';context.location.hash=hash;
+ if(context.destination()!==expected)throw Error('Incorrect inherited login fragment: '+hash);
+ context.location.hash='';
+}
 '''
     result=subprocess.run(['node','-e',script],cwd=Path(__file__).resolve().parents[1],capture_output=True,text=True)
     assert result.returncode==0,result.stderr

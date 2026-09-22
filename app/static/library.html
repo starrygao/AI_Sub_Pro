@@ -1,10 +1,11 @@
 <!doctype html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>媒体库字幕 · AI Sub Pro</title>
-<link rel="stylesheet" href="/static/css/library.css"><script defer src="/static/js/library.js"></script></head>
-<body><header><a class="brand" href="/library">AI Sub Pro <span>服务器</span></a><nav class="header-actions" aria-label="账户与设置"><a href="/desktop">模型与高级设置 ↗</a><button id="logout" class="secondary">退出登录</button></nav></header>
-<main><section class="intro"><div><p class="eyebrow">媒体库自动翻译</p><h1>让新视频带上中文字幕</h1><p>检查 Emby、MoviePilot、下载器与 VTrans。仅翻译，字幕保存在视频所在文件夹。</p></div><div class="actions"><button id="scan" class="secondary">检查新文件</button><button id="toggle" disabled>读取状态…</button></div></section>
-<div id="error" role="alert" hidden></div>
+<meta name="theme-color" content="#153f42">
+<link rel="stylesheet" href="/static/css/library.css?v=console-2"><script defer src="/static/js/library.js?v=console-2"></script><script defer src="/static/js/library-panels.js?v=console-2"></script></head>
+<body><header><a class="brand" href="#tasks">AI Sub Pro <span>媒体库控制台</span></a><nav class="console-nav" aria-label="主导航"><a id="nav-tasks" href="#tasks" aria-current="page">字幕任务</a><a id="nav-settings" href="#settings">模型设置</a></nav><div class="header-actions"><button id="logout" class="secondary">退出登录</button></div></header>
+<main><div id="error" role="alert" hidden></div>
+<div id="panel-tasks"><section class="intro"><div><p class="eyebrow">媒体库自动翻译</p><h1 id="tasks-title" tabindex="-1">字幕任务</h1><p>检查媒体库，自动翻译，并将中文字幕保存到视频所在文件夹。</p></div><div class="actions"><button id="scan" class="secondary">检查新文件</button><button id="toggle" disabled>读取状态…</button></div></section>
 <section class="monitor" aria-label="运行状态"><div><span class="label">自动翻译</span><strong id="enabled">载入中</strong></div><div><span class="label">Codex CLI</span><strong id="auth">检查中</strong></div><div><span class="label">等待 / 处理中</span><strong id="pending">—</strong></div><div><span class="label">已保存字幕</span><strong id="done">—</strong></div><div><span class="label">最近检查</span><strong id="last">—</strong></div></section>
 <p id="explanation" class="hint">文件稳定后才开始；每次只处理一个视频，Emby 转码繁忙时延后。</p>
 <details><summary>连接状态与监控目录</summary><div id="connections" class="connections"></div><ul id="roots"></ul><p class="hint">自动翻译暂停时，正在处理的任务会继续完成。CLI 登录状态保存在独立数据卷，容器重建后保留。</p></details>
@@ -12,4 +13,54 @@
 <div class="list-switch" role="group" aria-label="任务列表"><button id="view-processed" aria-pressed="true">处理记录 <span id="count-processed">—</span></button><button id="view-waiting" aria-pressed="false">待处理 <span id="count-waiting">—</span></button><button id="view-skipped" aria-pressed="false">已跳过 <span id="count-skipped">—</span></button></div>
 <p id="list-hint" class="hint">正在处理、已完成及异常的记录。尚未处理的视频在“待处理”列表。</p>
 <p id="empty" class="empty">正在读取媒体库任务…</p><div id="tasks" aria-live="polite"></div><div class="pagination"><button id="prev" class="secondary" hidden>上一页</button><span id="page"></span><button id="more" class="secondary" hidden>下一页</button></div></section>
+</div>
+<section id="panel-settings" hidden aria-labelledby="settings-title">
+  <div class="intro"><div><p class="eyebrow">控制台 / 设置</p><h1 id="settings-title" tabindex="-1">模型与高级设置</h1><p>管理翻译模型与字幕处理参数。保存后用于后续任务。</p></div></div>
+  <p id="settings-loading" class="notice" role="status">正在读取设置…</p>
+  <p id="settings-error" class="notice failure" role="alert" hidden></p>
+  <button id="settings-reload" class="secondary" hidden>重新读取设置</button>
+  <form id="settings-form" hidden>
+    <p id="settings-availability" class="notice" role="status"></p>
+    <fieldset id="settings-fields" disabled>
+      <section class="settings-section" aria-labelledby="model-heading">
+        <div><h2 id="model-heading">翻译模型</h2><p>使用服务器已配置的翻译服务。</p><span id="provider-label" class="status">—</span></div>
+        <div class="form-grid">
+          <label class="form-field">主翻译模型<select id="setting-model" required></select></label>
+          <label class="form-field">思考强度<select id="setting-effort"></select></label>
+          <p id="model-hint" class="field-hint wide">模型是否可用取决于当前账号权限。</p>
+        </div>
+      </section>
+      <section class="settings-section" aria-labelledby="asr-heading">
+        <div><h2 id="asr-heading">语音识别</h2><p>没有可用文本字幕时，从音轨识别对白。</p><span id="asr-backend" class="status">—</span></div>
+        <div class="form-grid">
+          <label class="form-field">识别模型<select id="setting-asr-model"><option>tiny</option><option>base</option><option>small</option><option>medium</option><option>large-v3</option><option>large-v3-turbo</option></select></label>
+          <label class="form-field">搜索宽度<input id="setting-beam" type="number" min="1" max="20" step="1" required></label>
+          <p class="field-hint wide">较大的模型和搜索宽度会增加内存占用与处理时间。首次使用新模型需要下载。</p>
+        </div>
+      </section>
+      <details class="advanced-settings"><summary>高级翻译参数</summary>
+        <div class="form-grid">
+          <label class="form-field">每批字幕条数<input id="setting-batch" type="number" min="0" max="200" step="1" required><span class="field-hint">0 表示自动选择。</span></label>
+          <label class="form-field">语义复核每批条数<input id="setting-qa-batch" type="number" min="5" max="80" step="1" required></label>
+          <label class="check-field wide"><input id="setting-full-doc" type="checkbox"><span>优先整篇翻译<span class="field-hint">结合整篇上下文，过长时自动分批。</span></span></label>
+          <p class="field-hint wide">自动字幕任务保留质量检查，通过后才会保存到媒体库。</p>
+        </div>
+      </details>
+    </fieldset>
+    <div class="settings-footer"><div class="actions"><button id="settings-save" type="submit" disabled>保存设置</button><button id="settings-reset" type="button" class="secondary" disabled>撤销更改</button></div><p id="settings-feedback" role="status">尚未修改</p></div>
+  </form>
+</section>
+<section id="panel-project" hidden aria-labelledby="project-title">
+  <a class="back-link" href="#tasks">← 返回字幕任务</a>
+  <div class="intro"><div><p class="eyebrow">控制台 / 字幕任务 / 详情</p><h1 id="project-title" tabindex="-1">翻译详情</h1><p id="project-meta"></p></div></div>
+  <p id="project-error" class="notice failure" role="alert" hidden></p>
+  <p id="project-loading" class="notice" role="status">正在读取任务…</p>
+  <button id="project-reload" class="secondary" hidden>重新读取任务</button>
+  <div id="project-content" hidden>
+    <div class="project-progress"><div><span id="project-state" class="status"></span><strong id="project-progress-text" role="status"></strong></div><progress id="project-progress" max="100" value="0" aria-label="任务进度"></progress></div>
+    <dl id="project-facts" class="project-facts"></dl>
+    <section class="detail-section"><h2>处理流程</h2><ol id="project-stages" class="stage-list"></ol></section>
+    <section class="detail-section"><div class="task-heading"><h2>字幕预览</h2><span id="subtitle-count" class="hint"></span></div><p id="subtitle-message" class="notice" role="status"></p><div id="subtitle-preview"></div><div class="pagination"><button id="subtitle-more" class="secondary" hidden>继续显示</button></div></section>
+  </div>
+</section>
 </main><footer>视频保持原样 · 简体中文 SRT · 同目录 .chi.srt · 不覆盖已有字幕</footer></body></html>
