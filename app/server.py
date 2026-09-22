@@ -6,18 +6,21 @@ import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.main import app as desktop_app, lifespan as desktop_lifespan
 from starlette.routing import WebSocketRoute
 from app.config import DATA_DIR
 from app.library.worker import LibraryWorker
 from app.library.guard import map_path
+from app.library.auth import COOKIE_NAME, SESSION_SECONDS, Sessions, LoginAttempts
 
 CONFIG_PATH=Path(os.environ.get('AISUBPRO_LIBRARY_CONFIG','/config/library.json'))
 worker=None
+login_attempts=LoginAttempts()
 app=FastAPI(title='AI Sub Pro Server',version=desktop_app.version)
 # Reuse endpoints without mutating the desktop app's middleware, routes or lifespan.
 app.router.routes.extend(route for route in desktop_app.router.routes
@@ -40,6 +43,7 @@ async def lifespan(instance):
     if account_path.stat().st_mode & 0o077:raise RuntimeError('账号文件必须设置为 600 权限')
     instance.state.server_account=json.loads(account_path.read_text())
     instance.state.operator_token=Path(config['operator_token_file']).read_text().strip()
+    instance.state.sessions=Sessions(DATA_DIR/'server-sessions.sqlite3')
     async with desktop_lifespan(instance):
         worker=LibraryWorker(config,DATA_DIR)
         worker.start()
@@ -52,23 +56,62 @@ app.router.lifespan_context=lifespan
 @app.middleware('http')
 async def authenticate(request:Request,call_next):
     if request.url.path=='/healthz':return JSONResponse({'status':'ok','server':True})
+    if request.method not in {'GET','HEAD','OPTIONS'}:
+        origin=request.headers.get('origin')
+        if (origin and origin.rstrip('/')!=str(request.base_url).rstrip('/')) or request.headers.get('sec-fetch-site')=='cross-site':
+            return JSONResponse({'detail':'跨站请求已拒绝'},status_code=403)
+    if request.url.path in {'/login','/api/auth/login','/static/css/login.css','/static/js/login.js'}:
+        return await call_next(request)
     token=getattr(app.state,'operator_token','')
     supplied=request.headers.get('x-aisub-key','')
     authorized=bool(token and supplied and hmac.compare_digest(token,supplied))
     if not authorized:
-        try:
-            scheme,encoded=request.headers.get('authorization','').split(' ',1)
-            name,password=base64.b64decode(encoded,validate=True).decode().split(':',1)
-            authorized=scheme.lower()=='basic' and password_matches(app.state.server_account,name,password)
-        except (ValueError,KeyError,AttributeError):authorized=False
-    if not authorized:return JSONResponse({'detail':'请使用服务器账户登录'},status_code=401,headers={'WWW-Authenticate':'Basic realm="AI Sub Pro Server", charset="UTF-8"'})
-    # Basic credentials are sent automatically by browsers: require same-origin mutations.
-    if request.method not in {'GET','HEAD','OPTIONS'}:
-        origin=request.headers.get('origin')
-        if origin and origin.rstrip('/')!=str(request.base_url).rstrip('/'):
-            return JSONResponse({'detail':'跨站请求已拒绝'},status_code=403)
+        sessions=getattr(app.state,'sessions',None)
+        authorized=bool(sessions and sessions.valid(request.cookies.get(COOKIE_NAME),app.state.server_account))
+    if not authorized:
+        if request.method=='GET' and request.url.path in {'/','/library','/desktop'}:
+            destination=request.url.path+('?' + request.url.query if request.url.query else '')
+            return RedirectResponse('/login?'+urlencode({'next':destination}),status_code=303)
+        return JSONResponse({'detail':'登录已失效，请重新登录'},status_code=401,headers={'X-AISub-Login':'/login'})
     if request.url.path=='/':return RedirectResponse('/library')
-    return await call_next(request)
+    response=await call_next(request)
+    if not request.url.path.startswith('/static/'):
+        response.headers['Cache-Control']='no-store'
+    return response
+
+
+@app.get('/login')
+def login_page():
+    return FileResponse(Path(__file__).parent/'static'/'login.html',headers={'Cache-Control':'no-store'})
+
+
+class Login(BaseModel):
+    username:str=Field(min_length=1,max_length=64)
+    password:str=Field(min_length=1,max_length=256)
+
+
+@app.post('/api/auth/login')
+def login(body:Login,request:Request):
+    address=request.client.host if request.client else 'unknown'
+    if not login_attempts.allow(address):
+        return JSONResponse({'detail':'尝试次数较多，请一分钟后再试。'},status_code=429,headers={'Retry-After':'60','Cache-Control':'no-store'})
+    if not password_matches(app.state.server_account,body.username,body.password):
+        return JSONResponse({'detail':'账号或密码不正确，请重新输入。'},status_code=401,headers={'Cache-Control':'no-store'})
+    sessions=app.state.sessions
+    sessions.revoke(request.cookies.get(COOKIE_NAME))
+    token=sessions.create(app.state.server_account)
+    response=JSONResponse({'ok':True},headers={'Cache-Control':'no-store'})
+    response.set_cookie(COOKIE_NAME,token,max_age=SESSION_SECONDS,httponly=True,
+                        secure=request.url.scheme=='https',samesite='lax',path='/')
+    return response
+
+
+@app.post('/api/auth/logout')
+def logout(request:Request):
+    app.state.sessions.revoke(request.cookies.get(COOKIE_NAME))
+    response=JSONResponse({'ok':True},headers={'Cache-Control':'no-store'})
+    response.delete_cookie(COOKIE_NAME,path='/',httponly=True,samesite='lax',secure=request.url.scheme=='https')
+    return response
 
 
 @app.get('/library')

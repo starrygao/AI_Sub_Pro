@@ -70,3 +70,10 @@ Codex 登录可用 `docker exec -it ai-sub-pro codex login --device-auth`，或�
 中文原声补充验证：实际《吞噬星空》S01E242 音轨未标语言，TMDB 系列 101172 的 `original_language=zh`。新增 TMDB 原始语言兜底；显式外语配音优先于作品原始语言。TMDB 凭证复用 NAS 上 MoviePilot 的已有设置，以 600 权限存放在只读挂载的 `/config/tmdb-api-key`，入口加载到进程环境。不要把服务器 TMDB 密钥写入桌面 `config.json`，其系统钥匙串存储不适用于无 Secret Service 的容器。原 MoviePilot 配置与桌面凭证机制均保持不变。
 
 任务页默认显示“处理记录”（正在翻译、等待保存、已完成与异常）；未开始处理的视频归入“待处理”，已有字幕/中文原声归入“已跳过”。三组独立计数、筛选与分页，不把扫描总量作为已执行的字幕任务展示。
+
+
+## 登录入口
+
+`/login` 为独立登录页，使用原 `config/account.json` 中的账号与 PBKDF2 密码哈希，不修改账号或密码。浏览器登录后使用 7 天有效的 HttpOnly / SameSite=Lax 会话 Cookie；HTTPS 时设置 Secure。会话仅保存令牌摘要，持久化在 `data/server-sessions.sqlite3`（600），重建容器后保留，退出登录会撤销当前会话。账户哈希变更会使原会话失效。
+
+未登录访问后台会进入登录页，API 返回 401；不再弹出 HTTP Basic 认证框。原运维 `X-AISub-Key` 认证保留。登录接口限制每地址每分钟 10 次尝试，并拒绝跨站写入。桌面/移动端登录、密码错误、密码显隐、刷新保持登录、退出与保护页跳转使用隔离测试账号验证；部署前后核对实际账户文件哈希保持一致，不读取用户密码。

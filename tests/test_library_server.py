@@ -5,18 +5,37 @@ from fastapi.testclient import TestClient
 from app import server
 
 
-def test_account_verification_and_authenticated_server_routes(monkeypatch):
+def test_account_verification_and_authenticated_server_routes(monkeypatch,tmp_path):
     salt=b'fixture-salt-16b!'
     account={'algorithm':'PBKDF2WithHmacSHA256','iterations':600000,'salt':base64.b64encode(salt).decode(),
              'hash':base64.b64encode(hashlib.pbkdf2_hmac('sha256',b'fixture-password',salt,600000,32)).decode(),'username':'fixture'}
     monkeypatch.setattr(server.app.state,'server_account',account,raising=False)
     monkeypatch.setattr(server.app.state,'operator_token','fixture-token',raising=False)
     monkeypatch.setattr(server,'worker',SimpleNamespace(status=lambda:{'enabled':False}))
+    from app.library.auth import Sessions,LoginAttempts
+    monkeypatch.setattr(server.app.state,'sessions',Sessions(tmp_path/'sessions.sqlite3'),raising=False)
+    monkeypatch.setattr(server,'login_attempts',LoginAttempts())
     client=TestClient(server.app)
     assert client.get('/healthz').status_code==200
     assert client.get('/api/library/status').status_code==401
     assert client.get('/api/library/status',auth=('fixture','wrong')).status_code==401
-    assert client.get('/api/library/status',auth=('fixture','fixture-password')).json()=={'enabled':False}
+    assert client.get('/api/library/status',auth=('fixture','fixture-password')).status_code==401
+    assert 'WWW-Authenticate' not in client.get('/api/library/status').headers
+    assert client.get('/library',follow_redirects=False).headers['location'].startswith('/login?')
+    assert client.get('/login').status_code==200
+    assert client.get('/static/css/login.css').status_code==200
+    assert client.post('/api/auth/login',json={'username':'fixture','password':'wrong'}).status_code==401
+    before=dict(account)
+    response=client.post('/api/auth/login',json={'username':'fixture','password':'fixture-password'})
+    assert response.status_code==200
+    assert 'HttpOnly' in response.headers['set-cookie'] and 'SameSite=lax' in response.headers['set-cookie']
+    assert account==before
+    assert client.get('/api/library/status').json()=={'enabled':False}
+    token=client.cookies.get('aisub_session')
+    assert Sessions(tmp_path/'sessions.sqlite3').valid(token,account)
+    assert client.post('/api/auth/logout').status_code==200
+    assert not server.app.state.sessions.valid(token,account)
+    assert client.get('/api/library/status').status_code==401
     headers={'X-AISub-Key':'fixture-token'}
     assert client.get('/api/library/status',headers=headers).status_code==200
     assert client.post('/api/library/control',headers={**headers,'Origin':'https://unrelated.example'},json={'enabled':True}).status_code==403
@@ -44,3 +63,30 @@ def test_lists_separate_waiting_and_skipped_before_pagination(tmp_path,monkeypat
     assert client.get('/api/library/tasks?view=processed&state=waiting').json()['items']==[]
     assert len(client.get('/api/library/tasks').json()['items'])==6  # existing API clients retain all-view behavior
     assert client.get('/api/library/tasks?view=invalid').status_code==400
+
+
+def test_session_expiry_tampering_and_account_change(tmp_path):
+    import sqlite3
+    from app.library.auth import Sessions
+    path=tmp_path/'sessions.sqlite3';sessions=Sessions(path)
+    account={'username':'fixture','hash':'one'}
+    token=sessions.create(account)
+    assert sessions.valid(token,account)
+    assert not sessions.valid(token+'changed',account)
+    assert not sessions.valid(token,{'username':'fixture','hash':'two'})
+    assert path.stat().st_mode & 0o777==0o600
+    with sqlite3.connect(path) as db:db.execute('UPDATE sessions SET expires=0')
+    assert not sessions.valid(token,account)
+
+
+def test_login_cross_site_and_attempt_limit(monkeypatch):
+    from app.library.auth import LoginAttempts
+    monkeypatch.setattr(server,'login_attempts',LoginAttempts())
+    monkeypatch.setattr(server,'password_matches',lambda *args:False)
+    monkeypatch.setattr(server.app.state,'server_account',{},raising=False)
+    client=TestClient(server.app)
+    body={'username':'fixture','password':'invalid'}
+    assert client.post('/api/auth/login',json=body,headers={'Origin':'http://other.example'}).status_code==403
+    for _ in range(10):assert client.post('/api/auth/login',json=body).status_code==401
+    response=client.post('/api/auth/login',json=body)
+    assert response.status_code==429 and response.headers['retry-after']=='60'

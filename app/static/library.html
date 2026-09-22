@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>媒体库字幕 · AI Sub Pro</title>
 <link rel="stylesheet" href="/static/css/library.css"><script defer src="/static/js/library.js"></script></head>
-<body><header><a class="brand" href="/library">AI Sub Pro <span>服务器</span></a><a href="/desktop">模型与高级设置 ↗</a></header>
+<body><header><a class="brand" href="/library">AI Sub Pro <span>服务器</span></a><nav class="header-actions" aria-label="账户与设置"><a href="/desktop">模型与高级设置 ↗</a><button id="logout" class="secondary">退出登录</button></nav></header>
 <main><section class="intro"><div><p class="eyebrow">媒体库自动翻译</p><h1>让新视频带上中文字幕</h1><p>检查 Emby、MoviePilot、下载器与 VTrans。仅翻译，字幕保存在视频所在文件夹。</p></div><div class="actions"><button id="scan" class="secondary">检查新文件</button><button id="toggle" disabled>读取状态…</button></div></section>
 <div id="error" role="alert" hidden></div>
 <section class="monitor" aria-label="运行状态"><div><span class="label">自动翻译</span><strong id="enabled">载入中</strong></div><div><span class="label">Codex CLI</span><strong id="auth">检查中</strong></div><div><span class="label">等待 / 处理中</span><strong id="pending">—</strong></div><div><span class="label">已保存字幕</span><strong id="done">—</strong></div><div><span class="label">最近检查</span><strong id="last">—</strong></div></section>

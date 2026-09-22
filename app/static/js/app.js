@@ -841,6 +841,10 @@ function app() {
       }
       this.backendUnavailable = false;
       if (!r.ok) {
+        if (r.status === 401 && r.headers?.get('X-AISub-Login') === '/login') {
+          const next = globalThis.location?.pathname + (globalThis.location?.search || '');
+          globalThis.location?.replace('/login?next=' + encodeURIComponent(next));
+        }
         const error = await this.buildApiError(r);
         throw error;
       }

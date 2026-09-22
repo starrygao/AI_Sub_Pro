@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#153f42"><title>登录 · AI Sub Pro</title>
+  <link rel="stylesheet" href="/static/css/login.css"><script defer src="/static/js/login.js"></script>
+</head>
+<body>
+  <main class="entrance">
+    <section class="story" aria-label="AI Sub Pro 媒体库字幕">
+      <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="5" width="26" height="22" rx="6"/><path d="M9 13h6m3 0h5M9 19h10m3 0h1"/></svg><span>AI Sub Pro</span></div>
+      <div class="story-copy"><p class="eyebrow">你的媒体库 · 你的字幕</p><h1>好故事，<br>没有语言距离。</h1><p class="description">从一句对白，到完整的故事。<br>让中文字幕，自然出现在你的媒体库。</p></div>
+      <div class="film" aria-label="配有中英文字幕的山川插画">
+        <svg class="landscape" viewBox="0 0 640 370" role="img" aria-label="月光下安静的山川">
+          <rect width="640" height="370" fill="#255659"/>
+          <circle cx="462" cy="83" r="32" fill="#e5ddbf"/>
+          <path d="M0 217 83 160 146 192 257 100 350 182 423 146 520 212 640 126V370H0Z" fill="#497274"/>
+          <path d="m225 129 32-29 44 39-32-11-15 10-13-17Z" fill="#91aaa1"/>
+          <path d="M0 256 111 210 173 242 272 206 352 239 448 192 542 248 640 224V370H0Z" fill="#1e4549"/>
+          <path d="M0 301c112-52 171 37 308-12 114-41 163 19 332-30v111H0Z" fill="#153438"/>
+          <path d="M400 240c-94 37 123 38-1 70-43 12-61 25-64 60h119c-59-36 89-54 32-91-17-11-103-14-86-39" fill="#799d97" opacity=".45"/>
+        </svg>
+        <div class="film-top"><span class="film-dot"></span> 故事正在继续 <span class="frame-mark">01 / 01</span></div>
+        <div class="subtitles"><p class="original">There is a world beyond words.</p><p>语言之外，还有整个世界。</p></div>
+      </div>
+      <p class="story-footer"><span>只翻译，不改变原视频</span><span>AI SUB PRO</span></p>
+    </section>
+    <section class="signin" aria-labelledby="login-title">
+      <div class="form-wrap">
+        <p class="section-label"><span></span> 媒体库控制台</p>
+        <h2 id="login-title">欢迎回来</h2>
+        <p class="welcome">登录，继续管理你的字幕。</p>
+        <form id="login-form">
+          <div class="field"><label for="username">账号</label><input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="64" placeholder="请输入账号" required></div>
+          <div class="field"><label for="password">密码</label><div class="password-field"><input id="password" name="password" type="password" autocomplete="current-password" maxlength="256" placeholder="请输入密码" required><button id="show-password" type="button" aria-label="显示密码" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path id="eye-slash" d="m4 3 16 18" hidden/></svg></button></div></div>
+          <p id="login-error" class="error" role="alert" hidden></p>
+          <button id="submit" class="submit" type="submit"><span id="submit-label">进入媒体库</span><span class="arrow" aria-hidden="true">→</span></button>
+          <p id="login-status" class="sr-only" role="status"></p>
+        </form>
+        <p class="account-note">使用现有账号和密码即可登录。</p>
+      </div>
+      <footer class="signin-footer">自动发现 · 智能翻译 · 同目录保存</footer>
+    </section>
+  </main>
+</body>
+</html>
