@@ -2,13 +2,13 @@
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>媒体库字幕 · AI Sub Pro</title>
 <meta name="theme-color" content="#153f42">
-<link rel="stylesheet" href="/static/css/library.css?v=console-4"><script defer src="/static/js/library.js?v=console-4"></script><script defer src="/static/js/library-knowledge.js?v=console-4"></script><script defer src="/static/js/library-panels.js?v=console-5"></script></head>
+<link rel="stylesheet" href="/static/css/library.css?v=console-7"><script defer src="/static/js/library.js?v=console-6"></script><script defer src="/static/js/library-knowledge.js?v=console-4"></script><script defer src="/static/js/library-panels.js?v=console-5"></script><script defer src="/static/js/library-directories.js?v=console-6"></script></head>
 <body><header><a class="brand" href="#tasks">AI Sub Pro <span>媒体库控制台</span></a><nav class="console-nav" aria-label="主导航"><a id="nav-tasks" href="#tasks" aria-current="page">字幕任务</a><a id="nav-settings" href="#settings">模型设置</a><a id="nav-knowledge" href="#knowledge">知识库</a></nav><div class="header-actions"><button id="logout" class="secondary">退出登录</button></div></header>
 <main><div id="error" role="alert" hidden></div>
 <div id="panel-tasks"><section class="intro"><div><p class="eyebrow">媒体库自动翻译</p><h1 id="tasks-title" tabindex="-1">字幕任务</h1><p>缺少中文字幕时，将中外文对照 SRT 保存到视频所在文件夹，与视频同名。</p></div><div class="actions"><button id="scan" class="secondary">检查新文件</button><button id="toggle" disabled>读取状态…</button></div></section>
 <section class="monitor" aria-label="运行状态"><div><span class="label">自动翻译</span><strong id="enabled">载入中</strong></div><div><span class="label">Codex CLI</span><strong id="auth">检查中</strong></div><div><span class="label">等待 / 处理中</span><strong id="pending">—</strong></div><div><span class="label">已保存字幕</span><strong id="done">—</strong></div><div><span class="label">最近检查</span><strong id="last">—</strong></div></section>
 <p id="explanation" class="hint">文件稳定后才开始；每次只处理一个视频，Emby 转码繁忙时延后。</p>
-<section class="watch-section" aria-labelledby="watch-title"><div class="task-heading"><h2 id="watch-title">监控文件夹</h2><span id="root-count" class="hint">正在读取…</span></div><p id="scope" class="watch-scope" role="status">正在读取处理范围…</p><div id="roots" class="watch-roots"></div></section>
+<section class="watch-section" aria-labelledby="watch-title"><div class="task-heading"><h2 id="watch-title">监控文件夹</h2><span id="root-count" class="hint">正在读取…</span><button id="watch-edit" class="secondary">编辑文件夹</button></div><p id="scope" class="watch-scope" role="status">正在读取处理范围…</p><div id="roots" class="watch-roots"></div></section>
 <details class="connection-details"><summary>连接状态</summary><div id="connections" class="connections"></div><p class="hint">自动翻译暂停时，正在处理的任务会继续完成。CLI 登录状态保存在独立数据卷，容器重建后保留。</p></details>
 <section class="task-section"><div class="task-heading"><h2>字幕任务</h2><label>筛选 <select id="filter"><option value="">全部处理记录</option><option value="translating">正在翻译</option><option value="publishing">等待保存</option><option value="done">已保存</option><option value="error">需要处理</option><option value="changed">视频已变化</option><option value="missing">文件已移走</option><option value="cancelled">已停止</option></select></label></div>
 <div class="list-switch" role="group" aria-label="任务列表"><button id="view-processed" aria-pressed="true">处理记录 <span id="count-processed">—</span></button><button id="view-waiting" aria-pressed="false">待处理 <span id="count-waiting">—</span></button><button id="view-skipped" aria-pressed="false">已跳过 <span id="count-skipped">—</span></button></div>
@@ -78,7 +78,7 @@
     </fieldset><div class="settings-footer"><div class="actions"><button id="kb-save" type="submit">保存知识库</button><button id="kb-reset" type="button" class="secondary">撤销更改</button></div><p id="kb-feedback" role="status"></p></div></form>
   </div>
   <section class="detail-section"><h2>自动候选待确认</h2><p class="hint">翻译过程中自动提取，进入任务详情查看原文、补充译文并确认。未确认的候选不会自动写入审定术语。</p><div id="kb-pending"></div></section>
-  <section class="detail-section"><h2>保存位置</h2><dl id="kb-storage" class="project-facts"></dl><p class="hint">目录由 Docker 部署配置指定，可改为其他服务器文件夹。切换前需暂停任务、迁移数据并重建容器；本页显示当前实际挂载位置。</p></section>
+  <section class="detail-section"><div class="task-heading"><h2>保存位置</h2><button id="storage-edit" class="secondary">编辑保存位置</button></div><dl id="kb-storage" class="project-facts"></dl><p class="hint">可以更改数据、临时文件和模型目录。切换时会等待任务结束，校验复制的数据并重启服务；原目录保留。字幕仍保存到视频所在文件夹。</p></section>
 </section>
 <section id="panel-project" hidden aria-labelledby="project-title">
   <a class="back-link" href="#tasks">← 返回字幕任务</a>
@@ -94,4 +94,19 @@
     <section class="detail-section"><div class="task-heading"><h2>字幕预览</h2><span id="subtitle-count" class="hint"></span></div><p id="subtitle-message" class="notice" role="status"></p><div id="subtitle-preview"></div><div class="pagination"><button id="subtitle-more" class="secondary" hidden>继续显示</button></div></section>
   </div>
 </section>
-</main><footer>不烧录 · 中文在上、原文在下 · 同目录同名 .srt · 不覆盖已有字幕</footer></body></html>
+</main>
+<dialog id="directory-dialog" aria-labelledby="directory-title">
+  <form id="directory-form"><div class="task-heading"><h2 id="directory-title" tabindex="-1">目录设置</h2><button id="directory-close" type="button" class="secondary">关闭</button></div>
+    <p id="directory-description" class="hint"></p><p id="directory-allowed" class="notice"></p>
+    <p id="directory-error" class="notice failure" role="alert" hidden></p>
+    <fieldset id="watch-fields" disabled><label class="form-field">监控文件夹<textarea id="watch-paths" rows="9" spellcheck="false" placeholder="每行填写一个服务器文件夹路径"></textarea><span class="field-hint">每行一个路径，自动包含子目录。清空并保存会停止监控。</span></label></fieldset>
+    <fieldset id="storage-fields" disabled hidden><div class="form-grid">
+      <label class="form-field wide">知识库与任务数据<input id="storage-data" required spellcheck="false"><span class="field-hint">包含审定术语、翻译记忆、短语库和任务文件。</span></label>
+      <label class="form-field wide">临时文件<input id="storage-temporary" required spellcheck="false"></label>
+      <label class="form-field wide">模型缓存<input id="storage-models" required spellcheck="false"></label>
+    </div></fieldset>
+    <p id="directory-feedback" role="status">正在读取…</p>
+    <div class="actions"><button id="directory-save" type="submit" disabled>保存</button><button id="directory-reset" type="button" class="secondary" disabled>撤销更改</button><button id="directory-reload" type="button" class="secondary" hidden>重新读取</button></div>
+  </form>
+</dialog>
+<footer>不烧录 · 中文在上、原文在下 · 同目录同名 .srt · 不覆盖已有字幕</footer></body></html>

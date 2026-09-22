@@ -25,17 +25,17 @@ services:
       HTTPS_PROXY: ${AISUB_PROXY:-}
       NO_PROXY: localhost,127.0.0.1,192.168.31.4,host.docker.internal
       TMPDIR: /tmp
-      AISUBPRO_HOST_DATA_DIR: ${AISUB_DATA_DIR:-${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/data}
-      AISUBPRO_HOST_TEMP_DIR: ${AISUB_TEMP_DIR:-${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/tmp}
-      AISUBPRO_HOST_MODEL_DIR: ${AISUB_MODEL_DIR:-${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/models}
+      AISUBPRO_STORAGE_ROOT: /storage
+      AISUBPRO_HOST_STORAGE_ROOT: ${AISUB_STORAGE_ROOT:-/vol2/1000/docker/ai-sub-pro}
+      AISUBPRO_HOST_DATA_DIR: ${AISUB_DATA_DIR:-${AISUB_STORAGE_ROOT:-/vol2/1000/docker/ai-sub-pro}/data}
+      AISUBPRO_HOST_TEMP_DIR: ${AISUB_TEMP_DIR:-${AISUB_STORAGE_ROOT:-/vol2/1000/docker/ai-sub-pro}/tmp}
+      AISUBPRO_HOST_MODEL_DIR: ${AISUB_MODEL_DIR:-${AISUB_STORAGE_ROOT:-/vol2/1000/docker/ai-sub-pro}/models}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/config:/config:ro
-      - ${AISUB_DATA_DIR:-${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/data}:/data
-      - ${AISUB_TEMP_DIR:-${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/tmp}:/tmp
+      - ${AISUB_STORAGE_ROOT:-/vol2/1000/docker/ai-sub-pro}:/storage
       - ${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/codex:/codex
-      - ${AISUB_MODEL_DIR:-${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/models}:/models
       - ${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/readiness:/readiness:ro
       - /vol2/1000/video:/video
       - /vol2/1000/备份:/备份

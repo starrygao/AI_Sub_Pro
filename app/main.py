@@ -214,7 +214,7 @@ def download_video(pid: str = PathParam(pattern=PID_PATTERN)):
         raw_output_path = Path(output_video)
         output_path = (pdir / raw_output_path if not raw_output_path.is_absolute() else raw_output_path).resolve()
         try:
-            output_path.relative_to(pdir)
+            output_path.relative_to(pdir.resolve())
         except ValueError:
             log.warning("Blocked download outside project dir for %s: %s", pid, output_path)
             output_path = None

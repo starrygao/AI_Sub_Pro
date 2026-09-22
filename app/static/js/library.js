@@ -9,20 +9,23 @@ function el(tag,text,cls){const e=document.createElement(tag);if(text!==undefine
 async function request(path,body,method=body?'POST':'GET'){
   const r=await fetch('/api/'+path,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
   if(r.status===401){location.replace('/login?next='+encodeURIComponent('/library'+location.hash));throw Error('请重新登录');}
-  if(!r.ok){const e=Error(r.status===404?'记录不存在，可能已被移除。':'请求失败（'+r.status+'），请稍后重试。');e.status=r.status;throw e;}
+  if(!r.ok){let detail;try{detail=(await r.json()).detail;}catch{}const e=Error(typeof detail==='string'?detail:r.status===404?'记录不存在，可能已被移除。':'请求失败（'+r.status+'），请稍后重试。');e.status=r.status;throw e;}
   return r.json();
 }
 function api(path,body){return request('library/'+path,body);}
 function error(message){$('error').textContent=message;$('error').hidden=!message;}
 
 function renderProgress(row,body){
-  if(!['translating','publishing'].includes(row.state))return;
+  if(!['translating','publishing','done','cancelled','error','changed','missing'].includes(row.state))return;
   const stages={asr:'语音识别',translate:'翻译与复核',subtitle_extract:'提取字幕',filter:'整理字幕',export:'保存字幕'};
   const data=row.progress||{},hasValue=typeof data.progress==='number'&&Number.isFinite(data.progress);
-  const value=hasValue?Math.max(0,Math.min(100,data.progress)):null;
+  const value=row.state==='done'?100:hasValue?Math.max(0,Math.min(100,data.progress)):null;
   const box=el('div',undefined,'task-progress'),line=el('div'),bar=el('progress');
-  line.append(el('span',row.state==='publishing'?'等待保存双语字幕':stages[data.stage]||'正在处理'),el('strong',hasValue?Math.round(value)+'%':'等待进度更新'));
-  bar.max=100;bar.setAttribute('aria-label','任务进度');if(hasValue)bar.value=value;
+  const stopped=['cancelled','error','changed','missing'].includes(row.state);
+  const label=row.state==='done'?'字幕已保存':stopped?(names[row.state]+' · 最后进度'):row.state==='publishing'?'等待保存双语字幕':stages[data.stage]||'正在处理';
+  line.append(el('span',label),el('strong',value!==null?Math.round(value)+'%':stopped?'暂无记录':'等待进度更新'));
+  bar.max=100;bar.setAttribute('aria-label',label);if(value!==null||stopped)bar.value=value??0;
+  if(stopped)box.setAttribute('data-state','stopped');
   box.append(line,bar);body.append(box);
 }
 function renderRoots(s){

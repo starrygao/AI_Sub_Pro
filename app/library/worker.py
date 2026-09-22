@@ -16,6 +16,8 @@ from .publish import publish_sidecar, archive_stale_sidecar
 from .sources import Sources
 from .store import Store
 from .settings import LibrarySettings
+from .directories import DirectorySettings
+from .storage import StoragePaths
 
 log=logging.getLogger(__name__)
 TEXT_CODECS={'subrip','srt','ass','ssa','mov_text','webvtt','text'}
@@ -33,7 +35,12 @@ class LibraryWorker:
         self.thread=None
         self.blocked={};self.blocked_inodes={}
         self.health={};self.last_scan=0;self.last_error='';self.authenticated=False
-        self.roots=config.get('roots',[])
+        saved_roots=self.store.setting('watch_roots')
+        self.manual_roots=saved_roots is not None
+        self.roots=saved_roots if self.manual_roots else config.get('roots',[])
+        self.directories=DirectorySettings(self)
+        self.storage=StoragePaths.from_env()
+        self.restarting=False
         self.walker=None
         self.emby_cursor=0
         self.last_recent=0
@@ -109,6 +116,7 @@ class LibraryWorker:
         if self.thread:self.thread.join(timeout=5)
 
     def eligible_new_path(self,path,current=None):
+        if self.manual_roots and not any(Path(path).is_relative_to(root) for root in self.roots):return False
         if not self.config.get('new_only',False):return True
         baseline=self.store.setting('baseline',{})
         return (bool(baseline.get('completed_at')) and set(self.roots)<=set(baseline.get('roots',[]))
@@ -117,6 +125,7 @@ class LibraryWorker:
 
     def establish_baseline(self):
         if not self.config.get('new_only',False):return
+        if not self.roots and self.manual_roots:return
         if not self.roots:self.roots=self.sources.libraries()
         if not self.roots:raise RuntimeError('尚未读取到监控文件夹，暂不启动任务')
         baseline=self.store.setting('baseline',{})
@@ -141,6 +150,7 @@ class LibraryWorker:
 
     def discover(self):
         now=time.time()
+        if not self.roots and self.manual_roots:return
         if not self.roots:self.roots=self.sources.libraries()
         self.establish_baseline()
         # The baseline filters existing videos even when Emby inventories them again.
@@ -316,6 +326,8 @@ class LibraryWorker:
             return  # At most one media probe/start per cycle.
 
     def tick(self):
+        if self.apply_storage_settings():return
+        self.directories.apply()
         from app.engines.providers.codex_cli import CodexCliProvider
         self.authenticated=CodexCliProvider.check_logged_in()
         self.establish_baseline()
@@ -329,8 +341,22 @@ class LibraryWorker:
                     self.save(row,refresh_pending=False,reason='翻译完成，Emby 已刷新')
                 except Exception:pass
         self.discover()
-        if self.store.setting('enabled',self.config.get('enabled',False)) and not self.model_settings.state()['pending']:
+        if (self.store.setting('enabled',self.config.get('enabled',False)) and not self.model_settings.state()['pending']
+                and not self.directories.read()['pending'] and not (self.storage and self.storage.state()['pending'])):
             self.process_one()
+
+    def apply_storage_settings(self):
+        if not self.storage or not self.storage.state()['pending']:return False
+        from app.services.translation_tasks import run_when_tasks_idle
+        def restart():
+            if self.store.rows(['translating','publishing'],limit=1):return False
+            if not self.restarting and self.storage.mark_restarting():
+                import signal
+                self.restarting=True
+                timer=threading.Timer(1,lambda:os.kill(os.getpid(),signal.SIGTERM))
+                timer.daemon=True;timer.start()
+            return self.restarting
+        return run_when_tasks_idle(restart)
 
     def apply_pending_settings(self):
         try:return self.model_settings.apply()

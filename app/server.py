@@ -74,6 +74,8 @@ async def authenticate(request:Request,call_next):
             return RedirectResponse('/login?'+urlencode({'next':destination}),status_code=303)
         return JSONResponse({'detail':'登录已失效，请重新登录'},status_code=401,headers={'X-AISub-Login':'/login'})
     if request.url.path=='/':return RedirectResponse('/library')
+    if request.method not in {'GET','HEAD','OPTIONS'} and getattr(worker,'restarting',False):
+        return JSONResponse({'detail':'正在切换保存目录，请等待服务恢复。'},status_code=503)
     response=await call_next(request)
     if not request.url.path.startswith('/static/'):
         response.headers['Cache-Control']='no-store'
@@ -143,6 +145,31 @@ def library_settings_update(data:dict):
     return result
 
 
+@app.get('/api/library/directories')
+def library_directories():
+    return {'watch': worker.directories.read(),
+            'storage': worker.storage.state() if worker.storage else {'supported': False, 'error': '当前部署尚未启用网页目录管理。'}}
+
+
+class WatchFolders(BaseModel):
+    roots:list[str]
+
+
+@app.post('/api/library/directories/watch')
+def library_watch_update(body:WatchFolders):
+    try:return worker.directories.queue(body.roots)
+    except ValueError as exc:raise HTTPException(400,str(exc)) from exc
+
+
+@app.post('/api/library/directories/storage')
+def library_storage_update(data:dict):
+    if not worker.storage:raise HTTPException(400,'当前部署尚未启用网页目录管理。')
+    try:result=worker.storage.queue(data)
+    except ValueError as exc:raise HTTPException(400,str(exc)) from exc
+    worker.wake.set()
+    return result
+
+
 @app.get('/api/library/tasks')
 def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
     if not 1<=limit<=200 or offset<0:raise HTTPException(400,'分页参数无效')
@@ -163,7 +190,7 @@ def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
             row['output_path']=str(Path(row['path']).with_suffix('.srt'))
         row['server_source_path']=map_path(row['path'],mappings)
         row['server_output_path']=map_path(row.get('output_path',''),mappings)
-        if row.get('project_id') and row['state']=='translating':
+        if row.get('project_id'):
             from app.services.translation_tasks import get_progress
             row['progress']=get_progress(row['project_id'])
     return {'items':rows,'counts':counts,'total':total,

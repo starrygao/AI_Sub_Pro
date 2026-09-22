@@ -515,9 +515,9 @@ def _safe_project_artifact_path(pid: str, filename: str) -> Optional[Path]:
         resolved = candidate.resolve(strict=True)
     except (OSError, ValueError):
         return None
-    if not resolved.is_relative_to(pdir) or not resolved.is_file():
+    if not resolved.is_relative_to(pdir.resolve()) or not resolved.is_file():
         return None
-    return resolved
+    return candidate
 
 
 def _first_safe_project_artifact(pid: str, filenames: list[str]) -> tuple[Optional[str], Optional[Path]]:
@@ -577,7 +577,7 @@ def _safe_generated_project_output_path(pid: str, filename: str) -> Optional[Pat
     try:
         pdir = project_dir(pid)
         path = pdir / rel
-        if not path.parent.resolve(strict=True).is_relative_to(pdir):
+        if not path.parent.resolve(strict=True).is_relative_to(pdir.resolve()):
             return None
         if path.is_symlink():
             log.warning(
@@ -625,7 +625,7 @@ def _write_generated_project_artifact(
                 filename,
             )
             return None
-        if not path.parent.resolve().is_relative_to(pdir):
+        if not path.parent.resolve().is_relative_to(pdir.resolve()):
             return None
         with tempfile.NamedTemporaryFile(
             "wb",

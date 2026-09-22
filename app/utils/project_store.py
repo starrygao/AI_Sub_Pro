@@ -119,7 +119,9 @@ def project_dir(pid: str) -> Path:
     pdir = raw_pdir.resolve()
     if not pdir.is_relative_to(root):
         raise ValueError(f"project id escapes projects dir: {pid!r}")
-    return pdir
+    # Keep the trusted root alias stable when managed Docker storage is moved.
+    # The resolved path and per-project symlink checks above still enforce containment.
+    return Path(PROJECTS_DIR) / pid
 
 
 def atomic_write_json(path: Path, data: dict) -> None:

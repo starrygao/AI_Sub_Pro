@@ -20,6 +20,10 @@ assert.match($('scope').textContent,/仅处理新增/);
 rows[0].progress.progress=83;await context.refresh();
 progress=descendants($('tasks')).find(e=>e.tagName==='PROGRESS');assert.equal(progress.value,83);
 rows[0].state='cancelled';await context.refresh();
-assert(!descendants($('tasks')).some(e=>e.tagName==='PROGRESS'));
+assert.equal(descendants($('tasks')).find(e=>e.tagName==='PROGRESS').value,83);
+assert(descendants($('tasks')).some(e=>String(e.textContent).includes('已停止')));
 assert(!descendants($('tasks')).some(e=>e.textContent==='重新检查'));
+rows[0].state='done';await context.refresh();
+assert.equal(descendants($('tasks')).find(e=>e.tagName==='PROGRESS').value,100);
+assert(descendants($('tasks')).some(e=>e.textContent==='100%'));
 ''')

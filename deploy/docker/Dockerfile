@@ -13,6 +13,9 @@ RUN pip install --no-cache-dir -r requirements.txt 'faster-whisper==1.2.1'
 COPY app /app/app
 RUN chmod -R a+rX /app/app
 COPY deploy/docker/entrypoint.py /app/entrypoint.py
+RUN chmod a+r /app/entrypoint.py && mkdir -p /run/aisub-storage && chmod 1777 /run/aisub-storage && \
+    ln -s /run/aisub-storage/data /data && ln -s /run/aisub-storage/models /models && \
+    rm -rf /tmp && ln -s /run/aisub-storage/temporary /tmp
 ENV AI_SUB_PRO_DATA_DIR=/data AISUBPRO_LIBRARY_CONFIG=/config/library.json CODEX_HOME=/codex \
     HF_HOME=/models HF_HUB_DISABLE_TELEMETRY=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
     AISUBPRO_ASR_CPU_THREADS=1 AISUBPRO_FFMPEG=/usr/bin/ffmpeg AISUBPRO_FFPROBE=/usr/bin/ffprobe \

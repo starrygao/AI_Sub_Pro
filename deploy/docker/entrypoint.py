@@ -2,6 +2,9 @@
 import json
 import os
 from pathlib import Path
+from app.library.storage import bootstrap_storage
+
+bootstrap_storage()
 
 tmdb_secret=Path(os.environ.get('AISUBPRO_TMDB_KEY_FILE','/config/tmdb-api-key'))
 if tmdb_secret.is_file():

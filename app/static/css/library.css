@@ -23,6 +23,10 @@ header{padding-top:0;padding-bottom:0;min-height:76px;gap:32px}
 .form-field input:disabled,.form-field select:disabled{opacity:1;color:var(--muted);background:#edf1f0;border-color:var(--line);cursor:not-allowed}
 .field-hint{display:block;color:var(--muted);font-size:12px;font-weight:400;line-height:1.65;margin:0}
 .wide{grid-column:1/-1}.check-field{display:flex;align-items:flex-start;gap:10px;font-size:14px}.check-field input{width:18px;height:18px;margin:3px 0 0;accent-color:var(--accent);flex-shrink:0}
+.task-progress[data-state=stopped] progress{accent-color:#6d7e80}.task-progress[data-state=stopped] progress::-webkit-progress-value{background:#6d7e80}
+#directory-dialog{width:min(680px,calc(100vw - 32px));max-height:calc(100dvh - 32px);padding:28px;border:1px solid var(--line);border-radius:10px;background:var(--paper);color:var(--ink)}
+#directory-dialog::backdrop{background:rgb(15 35 38 / .4)}#directory-dialog fieldset{border:0;margin:20px 0;padding:0;min-width:0}#directory-dialog .notice{overflow-wrap:anywhere}#directory-dialog .actions{flex-wrap:wrap}#directory-feedback{font-size:13px;color:var(--muted)}
+@media(max-width:560px){#directory-dialog{padding:20px}#directory-dialog .task-heading{align-items:center}}
 .advanced-settings{margin:0;border-bottom:1px solid var(--line);padding:24px 0}.advanced-settings summary{font-size:14px;font-weight:600}.advanced-settings .form-grid{padding-top:24px;max-width:645px;margin-left:auto}
 .settings-footer{display:flex;align-items:center;gap:20px;padding:24px 0}.settings-footer p{font-size:13px;color:var(--muted);margin:0}
 button:disabled{cursor:not-allowed}.back-link{display:inline-block;margin-bottom:20px;text-decoration:none;font-size:13px}

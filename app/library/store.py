@@ -54,13 +54,13 @@ class Store:
         with self.db() as db:
             return db.execute('SELECT 1 FROM baseline_media WHERE path=? OR identity=? LIMIT 1',(str(path),identity)).fetchone() is not None
 
-    def install_baseline(self,entries,roots):
+    def install_baseline(self,entries,roots,preserve_roots=()):
         """Commit a complete inventory atomically; a failed walk never seals a partial baseline."""
         now=time.time()
         with self.db() as db:
             entries=dict(entries)
             for path,payload in db.execute('SELECT path,payload FROM media'):
-                if any(Path(path).is_relative_to(root) for root in roots):
+                if any(Path(path).is_relative_to(root) for root in roots) and not any(Path(path).is_relative_to(root) for root in preserve_roots):
                     entries.setdefault(path,json.loads(payload).get('fingerprint'))
             db.executemany('INSERT OR IGNORE INTO baseline_media VALUES(?,?)',
                            [(path,json.dumps(value) if value else None) for path,value in entries.items()])
@@ -69,6 +69,12 @@ class Store:
             meta.update(completed_at=now,roots=sorted(set(meta['roots'])|set(roots)),
                         count=db.execute('SELECT count(*) FROM baseline_media').fetchone()[0])
             db.execute("INSERT OR REPLACE INTO settings VALUES('baseline',?)",(json.dumps(meta),))
+
+    def exclude_unstarted_outside_roots(self, roots):
+        with self.db() as db:
+            for path, payload in db.execute('SELECT path,payload FROM media').fetchall():
+                if not json.loads(payload).get('project_id') and not any(Path(path).is_relative_to(root) for root in roots):
+                    db.execute('DELETE FROM media WHERE path=?', (path,))
 
     def exclude_baseline_rows(self):
         """Keep genuine project history, removing only old discovery queue entries."""

@@ -225,7 +225,7 @@ def _workflow_log_dir(pid: str) -> Path:
     if log_dir.is_symlink():
         raise ValueError(f"workflow log directory is a symlink: {pid!r}")
     resolved = log_dir.resolve()
-    if not resolved.is_relative_to(pdir):
+    if not resolved.is_relative_to(pdir.resolve()):
         raise ValueError(f"workflow log directory escapes project dir: {pid!r}")
     return log_dir
 
