@@ -399,6 +399,14 @@ def is_task_registered(pid: str) -> bool:
         return pid in active_tasks
 
 
+def run_when_tasks_idle(action):
+    """Apply server defaults without racing registration of another pipeline."""
+    with _tasks_lock:
+        if active_tasks:
+            return False
+        return action()
+
+
 def is_task_launch_pending(pid: str) -> bool:
     """Return whether task startup may still need snapshot rollback."""
     return bool(_registered_task_launch_stage(pid))

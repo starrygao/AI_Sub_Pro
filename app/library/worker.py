@@ -15,6 +15,7 @@ from .guard import VIDEO_EXTENSIONS, fingerprint, ready_file, chinese_track, chi
 from .publish import publish_sidecar, archive_stale_sidecar
 from .sources import Sources
 from .store import Store
+from .settings import LibrarySettings
 
 log=logging.getLogger(__name__)
 TEXT_CODECS={'subrip','srt','ass','ssa','mov_text','webvtt','text'}
@@ -25,6 +26,7 @@ class LibraryWorker:
         self.config=config
         data_dir=Path(data_dir);data_dir.mkdir(parents=True,exist_ok=True)
         self.store=Store(data_dir/'library.sqlite3')
+        self.model_settings=LibrarySettings(self.store)
         self.sources=Sources(config)
         self.stop_event=threading.Event()
         self.wake=threading.Event()
@@ -54,9 +56,10 @@ class LibraryWorker:
         except (ValueError,TypeError):priority=0
         if not old or old.get('fingerprint')!=current:
             row={'path':str(path),'state':'waiting','reason':'等待文件稳定','fingerprint':current,
-                 'stable_since':now,'updated':now,'priority':priority,'metadata':metadata,'output_path':str(path.with_suffix('.chi.srt'))}
+                 'stable_since':now,'updated':now,'priority':priority,'metadata':metadata,'output_path':str(path.with_suffix('.srt'))}
             if old and old.get('output_hash'):
                 row['stale_output_hash']=old['output_hash']
+                row['stale_output_path']=old.get('output_path',str(path.with_suffix('.srt')))
             if old and old.get('project_id'):
                 row['previous_project_id']=old['project_id']
                 if old['state']=='translating':
@@ -167,15 +170,15 @@ class LibraryWorker:
                     if not acquired:
                         self.save(row,state='publishing',reason='等待字幕交付完成');continue
                     # Existing export gate validates source generation, report and delivery hashes.
-                    export_srt(pid,format='translated',container='srt')
-                    source=tasks.PROJECTS_DIR/pid/'translated.srt'
-                    other=[p for p in subtitle_files(path) if p!=path.with_suffix('.chi.srt') and chinese_sidecar(p)]
+                    export_srt(pid,format='bilingual',container='srt')
+                    source=tasks.PROJECTS_DIR/pid/'bilingual.srt'
+                    other=[p for p in subtitle_files(path) if p!=path.with_suffix('.srt') and chinese_sidecar(p)]
                     if other:
                         self.save(row,state='skipped',reason='翻译期间出现中文字幕，保留现有文件',
                                   existing_subtitles=[{'path':str(p),'fingerprint':fingerprint(p)} for p in other]);continue
                     output=publish_sidecar(path,source,row['fingerprint'])
                 mutate_project(pid,lambda p:p.update(library_output_path=str(output),library_status='done'))
-                self.save(row,state='done',reason='翻译完成，中文字幕已保存',output_path=str(output),completed_at=time.time(),output_hash=hashlib.sha256(output.read_bytes()).hexdigest())
+                self.save(row,state='done',reason='翻译完成，同名双语字幕已保存',output_path=str(output),completed_at=time.time(),output_hash=hashlib.sha256(output.read_bytes()).hexdigest())
                 try:self.sources.refresh_subtitles(row.get('metadata',{}).get('emby_id',''))
                 except Exception:self.save(row,reason='字幕已保存，Emby 刷新待重试',refresh_pending=True)
             except Exception as exc:
@@ -195,6 +198,7 @@ class LibraryWorker:
         from app.utils.media import get_ffmpeg_path
         from app.utils.srt import parse_srt_file
         path=Path(row['path']);pid=uuid.uuid4().hex[:8];pdir=tasks.PROJECTS_DIR/pid;pdir.mkdir()
+        row['output_path']=str(path.with_suffix('.srt'))
         metadata={**self.sources.metadata(path),**row.get('metadata',{})}
         streams=info['streams'];audio=[s for s in streams if s.get('codec_type')=='audio']
         subs=[s for s in streams if s.get('codec_type')=='subtitle']
@@ -253,13 +257,15 @@ class LibraryWorker:
                 continue
             try:
                 if row.get('stale_output_hash'):
-                    backup=archive_stale_sidecar(path.with_suffix('.chi.srt'),row['stale_output_hash'])
-                    self.save(row,previous_subtitle_backup=str(backup) if backup else '',stale_output_hash=None)
+                    backup=archive_stale_sidecar(row.get('stale_output_path') or path.with_suffix('.srt'),row['stale_output_hash'])
+                    self.save(row,previous_subtitle_backup=str(backup) if backup else '',stale_output_hash=None,stale_output_path=None)
                 sidecars=subtitle_files(path)
                 chinese=[p for p in sidecars if chinese_sidecar(p)]
                 if chinese:
                     self.save(row,state='skipped',reason='已有同目录中文字幕',
                               existing_subtitles=[{'path':str(p),'fingerprint':fingerprint(p)} for p in chinese]);continue
+                if path.with_suffix('.srt').exists():
+                    self.save(row,state='error',reason='同名 SRT 已存在，保留原文件；请先另存已有字幕后重新检查');continue
                 info=self.probe(path)
                 if any(chinese_track(s) for s in info['streams']):
                     self.save(row,state='skipped',reason='已有内嵌中文字幕');return
@@ -286,6 +292,7 @@ class LibraryWorker:
         self.authenticated=CodexCliProvider.check_logged_in()
         self.refresh_readiness()
         self.finish()
+        self.apply_pending_settings()
         for row in self.store.rows(['done'],limit=50):
             if row.get('refresh_pending'):
                 try:
@@ -293,7 +300,14 @@ class LibraryWorker:
                     self.save(row,refresh_pending=False,reason='翻译完成，Emby 已刷新')
                 except Exception:pass
         self.discover()
-        if self.store.setting('enabled',self.config.get('enabled',False)):self.process_one()
+        if self.store.setting('enabled',self.config.get('enabled',False)) and not self.model_settings.state()['pending']:
+            self.process_one()
+
+    def apply_pending_settings(self):
+        try:return self.model_settings.apply()
+        except Exception as exc:
+            self.store.set_setting('model_settings_error','设置暂未应用：'+self.safe_error(exc))
+            raise  # Do not start the next job after a failed configuration write.
 
     def run(self):
         while not self.stop_event.is_set():
@@ -307,4 +321,5 @@ class LibraryWorker:
         return {'enabled':self.store.setting('enabled',self.config.get('enabled',False)),
                 'last_scan':self.last_scan,'error':self.last_error,'connections':self.health,
                 'codex_logged_in':self.authenticated,'counts':self.store.counts(),'roots':self.roots,
-                'quiet_seconds':self.config.get('quiet_seconds',300),'scan_interval':self.config.get('scan_interval',60)}
+                'quiet_seconds':self.config.get('quiet_seconds',300),'scan_interval':self.config.get('scan_interval',60),
+                'model_settings':self.model_settings.state()}

@@ -80,3 +80,47 @@ def test_unknown_audio_uses_tmdb_original_language_before_asr(tmp_path,monkeypat
     monkeypatch.setattr(worker.sources,'original_language',language)
     worker.process_one()
     language.assert_not_called();prepare.assert_called_once()
+
+
+def test_finish_publishes_certified_bilingual_srt_without_changing_video(tmp_path, tmp_project_dir, monkeypatch):
+    import hashlib
+    from tests.test_project_export import _seed_hash_bound_strict_certification, _sha256_identity
+    from app.utils.srt import SubtitleBlock, write_bilingual_srt
+    from datetime import timedelta
+    from app.services import translation_tasks as tasks
+    pid = _seed_hash_bound_strict_certification(tmp_project_dir, 'acde1234')
+    pdir = tmp_project_dir / pid
+    write_bilingual_srt([SubtitleBlock(1, timedelta(), timedelta(seconds=1), 'Hello', '你好')], str(pdir/'bilingual.srt'))
+    report = json.loads((pdir/'translation_qa_report.json').read_text())
+    report['delivery_artifact_hashes']['bilingual.srt'] = _sha256_identity((pdir/'bilingual.srt').read_bytes())
+    (pdir/'translation_qa_report.json').write_text(json.dumps(report))
+    video = tmp_path/'Episode.mkv'; video.write_bytes(b'original video unchanged')
+    before = hashlib.sha256(video.read_bytes()).hexdigest()
+    project = json.loads((pdir/'project.json').read_text())
+    project.update(video_path=str(video), library_source_path=str(video), library_status='translating')
+    (pdir/'project.json').write_text(json.dumps(project))
+    worker = LibraryWorker({'allowed_roots':[str(tmp_path)]}, tmp_path/'state')
+    worker.observe(video, {})
+    row = worker.store.get(video); worker.save(row, state='translating', project_id=pid)
+    monkeypatch.setattr(tasks, 'is_task_registered', lambda pid:False)
+    monkeypatch.setattr(worker.sources, 'refresh_subtitles', lambda pid:None)
+    worker.finish()
+    assert worker.store.get(video)['state']=='done'
+    assert video.with_suffix('.srt').read_text().splitlines()[2:4] == ['你好','Hello']
+    assert hashlib.sha256(video.read_bytes()).hexdigest()==before
+    assert not video.with_suffix('.chi.srt').exists()
+
+
+def test_existing_same_name_foreign_srt_is_preserved_before_any_model_work(tmp_path, monkeypatch):
+    from app.engines.providers.codex_cli import CodexCliProvider
+    from app.library import worker as module
+    video=tmp_path/'Episode.mkv'; video.write_bytes(b'video')
+    source=video.with_suffix('.srt'); source.write_text('Original foreign subtitle')
+    worker=LibraryWorker({'allowed_roots':[str(tmp_path)],'quiet_seconds':0}, tmp_path/'state')
+    worker.observe(video,{})
+    monkeypatch.setattr(CodexCliProvider,'check_logged_in',lambda:True)
+    monkeypatch.setattr(module.os,'getloadavg',lambda:(0,0,0))
+    monkeypatch.setattr(worker,'probe',Mock(side_effect=AssertionError('collision must be checked first')))
+    worker.process_one()
+    assert worker.store.get(video)['state']=='error'
+    assert source.read_text()=='Original foreign subtitle'

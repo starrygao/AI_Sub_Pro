@@ -473,7 +473,7 @@ def write_mono_srt(blocks, out_path: str, use_translation: bool = True) -> int:
 
 
 def write_bilingual_srt(blocks: List[SubtitleBlock], path: str):
-    """Write bilingual SRT (original on top, translation below)."""
+    """Write bilingual SRT (translation on top, original below)."""
     with open(path, "w", encoding="utf-8") as f:
         idx = 1
         for b in blocks:

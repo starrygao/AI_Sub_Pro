@@ -126,6 +126,17 @@ def desktop_page():return FileResponse(Path(__file__).parent/'static'/'index.htm
 def library_status():return worker.status()
 
 
+@app.get('/api/library/settings')
+def library_settings():return worker.model_settings.read()
+
+
+@app.post('/api/library/settings')
+def library_settings_update(data:dict):
+    result=worker.model_settings.queue(data)
+    worker.wake.set()
+    return result
+
+
 @app.get('/api/library/tasks')
 def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
     if not 1<=limit<=200 or offset<0:raise HTTPException(400,'分页参数无效')
@@ -142,6 +153,8 @@ def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
         total=sum(counts.get(s,0) for s in states) if states else sum(counts.values())
     for row in rows:
         mappings=worker.config.get('host_path_maps',{})
+        if row['state'] not in {'done','skipped','native_language'}:
+            row['output_path']=str(Path(row['path']).with_suffix('.srt'))
         row['server_source_path']=map_path(row['path'],mappings)
         row['server_output_path']=map_path(row.get('output_path',''),mappings)
         if row.get('project_id') and row['state']=='translating':

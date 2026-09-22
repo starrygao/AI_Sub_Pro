@@ -160,9 +160,17 @@ def validate_translation_delivery(
         "translation_quality_configuration_hash"
     )
     report_configuration_hash = report.get("configuration_hash")
+    config = Config.to_dict()
+    if (
+        project.get('library_status') == 'done'
+        and project.get('library_source_path')
+        and project.get('library_delivery_run_id') == run_id
+        and isinstance(project.get('library_delivery_config'), dict)
+    ):
+        config = project['library_delivery_config']
     current_configuration_hash = translation_configuration_hash(
         project,
-        config=Config.to_dict(),
+        config=config,
         project_path=project_path,
     )
     if (

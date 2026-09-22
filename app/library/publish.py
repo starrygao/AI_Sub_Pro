@@ -9,7 +9,7 @@ def publish_sidecar(video, source, expected):
     video,source=Path(video),Path(source)
     if fingerprint(video)!=expected:
         raise RuntimeError('视频已变化，旧版本译文不能发布')
-    output=video.with_suffix('.chi.srt')
+    output=video.with_suffix('.srt')
     content=source.read_bytes()
     if not content:raise ValueError('译文为空')
     fd,temporary=tempfile.mkstemp(prefix='.aisub-',suffix='.tmp',dir=video.parent)

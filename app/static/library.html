@@ -2,10 +2,10 @@
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>媒体库字幕 · AI Sub Pro</title>
 <meta name="theme-color" content="#153f42">
-<link rel="stylesheet" href="/static/css/library.css?v=console-2"><script defer src="/static/js/library.js?v=console-2"></script><script defer src="/static/js/library-panels.js?v=console-2"></script></head>
+<link rel="stylesheet" href="/static/css/library.css?v=console-3"><script defer src="/static/js/library.js?v=console-3"></script><script defer src="/static/js/library-panels.js?v=console-3"></script></head>
 <body><header><a class="brand" href="#tasks">AI Sub Pro <span>媒体库控制台</span></a><nav class="console-nav" aria-label="主导航"><a id="nav-tasks" href="#tasks" aria-current="page">字幕任务</a><a id="nav-settings" href="#settings">模型设置</a></nav><div class="header-actions"><button id="logout" class="secondary">退出登录</button></div></header>
 <main><div id="error" role="alert" hidden></div>
-<div id="panel-tasks"><section class="intro"><div><p class="eyebrow">媒体库自动翻译</p><h1 id="tasks-title" tabindex="-1">字幕任务</h1><p>检查媒体库，自动翻译，并将中文字幕保存到视频所在文件夹。</p></div><div class="actions"><button id="scan" class="secondary">检查新文件</button><button id="toggle" disabled>读取状态…</button></div></section>
+<div id="panel-tasks"><section class="intro"><div><p class="eyebrow">媒体库自动翻译</p><h1 id="tasks-title" tabindex="-1">字幕任务</h1><p>自动翻译，将中外文对照 SRT 保存到视频所在文件夹，与视频同名。</p></div><div class="actions"><button id="scan" class="secondary">检查新文件</button><button id="toggle" disabled>读取状态…</button></div></section>
 <section class="monitor" aria-label="运行状态"><div><span class="label">自动翻译</span><strong id="enabled">载入中</strong></div><div><span class="label">Codex CLI</span><strong id="auth">检查中</strong></div><div><span class="label">等待 / 处理中</span><strong id="pending">—</strong></div><div><span class="label">已保存字幕</span><strong id="done">—</strong></div><div><span class="label">最近检查</span><strong id="last">—</strong></div></section>
 <p id="explanation" class="hint">文件稳定后才开始；每次只处理一个视频，Emby 转码繁忙时延后。</p>
 <details><summary>连接状态与监控目录</summary><div id="connections" class="connections"></div><ul id="roots"></ul><p class="hint">自动翻译暂停时，正在处理的任务会继续完成。CLI 登录状态保存在独立数据卷，容器重建后保留。</p></details>
@@ -63,4 +63,4 @@
     <section class="detail-section"><div class="task-heading"><h2>字幕预览</h2><span id="subtitle-count" class="hint"></span></div><p id="subtitle-message" class="notice" role="status"></p><div id="subtitle-preview"></div><div class="pagination"><button id="subtitle-more" class="secondary" hidden>继续显示</button></div></section>
   </div>
 </section>
-</main><footer>视频保持原样 · 简体中文 SRT · 同目录 .chi.srt · 不覆盖已有字幕</footer></body></html>
+</main><footer>不烧录 · 中文在上、原文在下 · 同目录同名 .srt · 不覆盖已有字幕</footer></body></html>

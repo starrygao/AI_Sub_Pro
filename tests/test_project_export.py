@@ -1095,6 +1095,30 @@ def test_certified_delivery_is_stale_after_translation_configuration_changes(
     assert "configuration" in response.json()["detail"].lower()
 
 
+def test_published_library_delivery_survives_new_model_but_rejects_metadata_tampering(
+    client, tmp_project_dir, monkeypatch,
+):
+    import copy
+    from app.config import Config
+    from app.library.settings import seal_completed_delivery
+    pid = _seed_hash_bound_strict_certification(tmp_project_dir, 'abcdef12')
+    path = tmp_project_dir / pid / 'project.json'
+    project = json.loads(path.read_text())
+    project.update(library_status='done', library_source_path='/video/Episode.mkv')
+    path.write_text(json.dumps(project))
+    assert seal_completed_delivery(pid)
+    sealed = json.loads(path.read_text())['library_delivery_config']
+    assert set(sealed) == {'translation', 'providers'}
+    config = copy.deepcopy(Config.to_dict())
+    config.setdefault('translation', {})['primary_model'] = 'another-model'
+    monkeypatch.setattr(Config, '_data', config)
+    assert client.post(f'/api/projects/{pid}/export?format=bilingual').status_code == 200
+    assert client.get(f'/api/projects/{pid}/subtitles').status_code == 200
+    project = json.loads(path.read_text()); project['manual_terms'] = 'Hello=您好'
+    path.write_text(json.dumps(project))
+    assert client.post(f'/api/projects/{pid}/export?format=bilingual').status_code == 409
+
+
 @pytest.mark.parametrize("verdict", ["failed", "needs_review"])
 def test_nonpassing_quality_report_is_stale_after_source_generation_changes(
     client,

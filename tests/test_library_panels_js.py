@@ -23,7 +23,11 @@ const config={translation:{primary_provider:'codex_cli',primary_model:'gpt-5.5',
 let state={enabled:false,counts:{}},failSave=false,failModels=false;
 const window={addEventListener:(name,fn)=>handlers[name]=fn};
 const context={$,el,window,document:{title:'',hidden:false},location:{hash:'#settings'},setInterval:fn=>intervals.push(fn),
- api:async()=>state,
+ api:async(path,body)=>{
+  if(path!=='settings')return state;
+  if(body){if(failSave)throw Error('Save failed');saved.push(JSON.parse(JSON.stringify(body)));for(const [section,values] of Object.entries(body))Object.assign(config[section],values);state.model_settings={pending:true,current_model:'gpt-5.5',current_effort:'medium'};}
+  return {settings:structuredClone(config),state:state.model_settings||{pending:false,current_model:'gpt-5.5'}};
+ },
  request:async(path,body)=>{
   if(path==='settings'&&body){if(failSave)throw Error('Save failed');saved.push(JSON.parse(JSON.stringify(body)));return {status:'ok'};}
   if(path==='settings')return structuredClone(config);
@@ -45,8 +49,9 @@ def run_js(script):
     assert result.returncode == 0, result.stderr
 
 
-def test_settings_preserve_drafts_recheck_running_tasks_and_save_only_changed_fields():
+def test_settings_remain_editable_during_automatic_tasks_and_queue_only_changed_fields():
     run_js(r'''
+state={enabled:true,counts:{translating:1}};
 vm.runInContext(code,context);await flush();
 assert.equal($('settings-fields').disabled,false);
 assert.equal($('settings-save').disabled,true);
@@ -55,15 +60,16 @@ assert.equal($('setting-effort').value,'auto'); // Unsupported effort must not f
 assert.equal($('settings-save').disabled,false);
 navigate('#tasks');navigate('#settings');await flush();
 assert.equal($('setting-model').value,'fixture-model'); // Internal navigation retains draft.
-state={enabled:false,counts:{translating:1}};await submit();
-assert.equal(saved.length,0);assert.equal($('settings-fields').disabled,true);
-assert.match($('settings-error').textContent,/任务状态已变化/);
-state={enabled:false,counts:{}};window.LibraryPanels.statusChanged(state);
+window.LibraryPanels.statusChanged(state);
+assert.equal($('settings-fields').disabled,false);
 failSave=true;await submit();assert.equal(saved.length,0);assert.equal($('setting-model').value,'fixture-model');
 failSave=false;await submit();
 assert.deepEqual(saved,[{translation:{primary_model:'fixture-model',primary_effort:'auto'}}]);
 assert.equal($('settings-save').disabled,true);assert.match($('settings-feedback').textContent,/已保存/);
-window.LibraryPanels.statusChanged(null);assert.equal($('settings-fields').disabled,true);
+assert.match($('settings-availability').textContent,/当前任务|生效/);
+assert.equal($('settings-fields').disabled,false);
+window.LibraryPanels.statusChanged({...state,model_settings:{pending:false}});
+assert.match($('settings-feedback').textContent,/生效/);
 ''')
 
 

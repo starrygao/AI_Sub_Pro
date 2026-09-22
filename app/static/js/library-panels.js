@@ -37,14 +37,15 @@
     return patch;
   }
   function dirty() { return Object.keys(changes()).length > 0; }
-  function available(s) { return !!s && !s.enabled && !(s.counts?.translating || s.counts?.publishing); }
   function settingsState(s = serverStatus) {
     serverStatus = s;
-    const editable = available(s);
-    $('settings-fields').disabled = !editable || saving || !settings;
-    $('settings-save').disabled = !editable || saving || !settings || !dirty();
+    $('settings-fields').disabled = saving || !settings;
+    $('settings-save').disabled = saving || !settings || !dirty();
     $('settings-reset').disabled = saving || !settings || !dirty();
-    notice('settings-availability', !s ? '暂时无法确认任务状态，请等待连接恢复。' : editable ? '自动翻译已暂停，当前没有运行中的任务。可以修改设置。' : '当前仅查看设置。请在“字幕任务”暂停自动翻译，并等待正在处理的任务完成后再修改。');
+    const update = s?.model_settings;
+    const current = [update?.current_model, effortNames[update?.current_effort]].filter(Boolean).join(' · ');
+    notice('settings-availability', update?.error || (update?.pending ? '新设置已保存，等待生效。当前使用：' + current + '；正在处理的任务完成并保存字幕后，自动应用新设置。' : '可以随时修改并保存。正在处理的任务继续使用原设置，新设置用于后续任务。'));
+    if (update && !update.pending && !dirty() && $('settings-feedback').textContent.startsWith('已保存')) $('settings-feedback').textContent = '设置已生效';
   }
   function populate() {
     for (const [id, [section, key]] of Object.entries(fields)) {
@@ -67,9 +68,9 @@
     settingsLoading = true;
     notice('settings-error', ''); $('settings-reload').hidden = true; $('settings-loading').hidden = false;
     try {
-      const [config, state] = await Promise.all([request('settings'), api('status')]);
+      const result = await api('settings'), config = result.settings;
       const models = await request('models/' + encodeURIComponent(config.translation.primary_provider));
-      settings = config; catalog = models; serverStatus = state;
+      settings = config; catalog = models; serverStatus = {...serverStatus, model_settings:result.state};
       populate(); $('settings-form').hidden = false;
     } catch (e) { notice('settings-error', e.message); $('settings-reload').hidden = false; }
     finally { settingsLoading = false; $('settings-loading').hidden = true; }
@@ -88,12 +89,12 @@
     if (saving || !settings || !dirty() || !$('settings-form').reportValidity()) return;
     saving = true; settingsState(); notice('settings-error', ''); $('settings-save').textContent = '正在保存…';
     try {
-      const state = await api('status'); settingsState(state);
-      if (!available(state)) throw Error('任务状态已变化，请暂停自动翻译并等待当前任务完成。');
       const patch = changes();
-      await request('settings', patch);
-      for (const [section, values] of Object.entries(patch)) Object.assign(settings[section], values);
-      $('settings-feedback').textContent = '已保存，将用于后续任务';
+      const result = await api('settings', patch);
+      settings = result.settings;
+      serverStatus = {...serverStatus, model_settings:result.state};
+      populate();
+      $('settings-feedback').textContent = result.state.pending ? '已保存，等待当前任务结束后生效' : '设置已生效';
     } catch (e) { notice('settings-error', e.message); }
     finally { saving = false; $('settings-save').textContent = '保存设置'; settingsState(); }
   };
