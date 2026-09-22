@@ -88,6 +88,9 @@ def _copy_tracks_to_filter_safe_paths(tracks: List[SubtitleTrack], temp_dir: str
 
 def get_ffmpeg_path() -> str:
     """Get ffmpeg binary path - checks bundled first, then system."""
+    override = os.environ.get("AISUBPRO_FFMPEG")
+    if override:
+        return override
     if getattr(sys, '_MEIPASS', None):
         for candidate in [
             os.path.join(sys._MEIPASS, 'bin', 'ffmpeg'),
@@ -109,6 +112,9 @@ def get_ffmpeg_path() -> str:
 
 def get_ffprobe_path() -> str:
     """Get ffprobe binary path - checks bundled first, then system."""
+    override = os.environ.get("AISUBPRO_FFPROBE")
+    if override:
+        return override
     if getattr(sys, '_MEIPASS', None):
         for candidate in [
             os.path.join(sys._MEIPASS, 'bin', 'ffprobe'),

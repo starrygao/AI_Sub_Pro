@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>媒体库字幕 · AI Sub Pro</title>
+<link rel="stylesheet" href="/static/css/library.css"><script defer src="/static/js/library.js"></script></head>
+<body><header><a class="brand" href="/library">AI Sub Pro <span>服务器</span></a><a href="/desktop">模型与高级设置 ↗</a></header>
+<main><section class="intro"><div><p class="eyebrow">媒体库自动翻译</p><h1>让新视频带上中文字幕</h1><p>检查 Emby、MoviePilot、下载器与 VTrans。仅翻译，字幕保存在视频所在文件夹。</p></div><div class="actions"><button id="scan" class="secondary">检查新文件</button><button id="toggle" disabled>读取状态…</button></div></section>
+<div id="error" role="alert" hidden></div>
+<section class="monitor" aria-label="运行状态"><div><span class="label">自动翻译</span><strong id="enabled">载入中</strong></div><div><span class="label">Codex CLI</span><strong id="auth">检查中</strong></div><div><span class="label">等待 / 处理中</span><strong id="pending">—</strong></div><div><span class="label">已保存字幕</span><strong id="done">—</strong></div><div><span class="label">最近检查</span><strong id="last">—</strong></div></section>
+<p id="explanation" class="hint">文件稳定后才开始；每次只处理一个视频，Emby 转码繁忙时延后。</p>
+<details><summary>连接状态与监控目录</summary><div id="connections" class="connections"></div><ul id="roots"></ul><p class="hint">自动翻译暂停时，正在处理的任务会继续完成。CLI 登录状态保存在独立数据卷，容器重建后保留。</p></details>
+<section class="task-section"><div class="task-heading"><h2>字幕任务</h2><label>筛选 <select id="filter"><option value="">全部</option><option value="translating">正在翻译</option><option value="waiting">等待就绪</option><option value="publishing">等待保存</option><option value="done">已保存</option><option value="skipped">已有字幕</option><option value="native_language">中文原声</option><option value="error">需要处理</option><option value="changed">视频已变化</option></select></label></div>
+<p id="empty" class="empty">正在读取媒体库任务…</p><div id="tasks" aria-live="polite"></div><div class="pagination"><button id="prev" class="secondary" hidden>上一页</button><span id="page"></span><button id="more" class="secondary" hidden>下一页</button></div></section>
+</main><footer>视频保持原样 · 简体中文 SRT · 同目录 .chi.srt · 不覆盖已有字幕</footer></body></html>

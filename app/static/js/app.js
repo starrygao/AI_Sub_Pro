@@ -184,6 +184,8 @@ function app() {
       await this.loadSettings();
       await this.loadProjects();
       await this.refreshSystemCheck();
+      const initialProject = typeof URLSearchParams !== 'undefined' ? new URLSearchParams(globalThis.location?.search || '').get('project') : null;
+      if (/^[a-f0-9]{8}$/.test(initialProject || '')) await this.openProject(initialProject);
       this.refreshTimer = setInterval(() => {
         if (['home', 'projects'].includes(this.view) && this.shouldPollProjectList()) this.loadProjects();
         else if (this.view === 'detail' && this.currentProject) this.pollProgress();

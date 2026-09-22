@@ -1,0 +1,21 @@
+{
+  "enabled": false,
+  "skip_chinese_audio": true,
+  "quiet_seconds": 300,
+  "scan_interval": 60,
+  "files_per_scan": 200,
+  "max_emby_transcodes": 0,
+  "max_load": 24,
+  "roots": ["/video/link/电视剧", "/备份/video/link/电影"],
+  "allowed_roots": ["/video", "/备份"],
+  "path_maps": {},
+  "host_path_maps": {"/video": "/vol2/1000/video", "/备份": "/vol2/1000/备份"},
+  "account_file": "/config/account.json",
+  "operator_token_file": "/config/operator-token",
+  "emby": {"url": "http://127.0.0.1:8096", "token": "REPLACE_ME"},
+  "open_writes": {"file": "/readiness/open-writes.json", "path_maps": {"/vol2/1000/video": "/video", "/vol2/1000/备份": "/备份", "/media": "/video"}},
+  "qbittorrent": [{"name": "qbittorrent", "url": "http://127.0.0.1:8085", "username": "REPLACE_ME", "password": "REPLACE_ME", "path_maps": {"/downloads": "/video"}}],
+  "transmission": {"url": "http://127.0.0.1:9091/transmission/rpc", "username": "REPLACE_ME", "password": "REPLACE_ME", "path_maps": {"/downloads": "/video"}},
+  "moviepilot": {"database": "/integrations/moviepilot/user.db", "path_maps": {"/media": "/video"}},
+  "vtrans": {"queue": "/integrations/vtrans/queue.json", "path_maps": {"/media": "/video"}}
+}

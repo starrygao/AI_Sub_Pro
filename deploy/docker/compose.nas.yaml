@@ -1,0 +1,11 @@
+# Apply on the verified NAS: throttle reads from the media array, not Emby's container.
+services:
+  ai-sub-pro:
+    blkio_config:
+      weight: 100
+      device_read_bps:
+        - path: ${AISUB_MEDIA_DEVICE}
+          rate: 10mb
+      device_write_bps:
+        - path: ${AISUB_MEDIA_DEVICE}
+          rate: 2mb

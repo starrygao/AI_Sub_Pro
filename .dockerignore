@@ -1,0 +1,12 @@
+**
+!requirements.txt
+!app/
+!app/**
+!resources/
+!resources/**
+!deploy/
+!deploy/docker/
+!deploy/docker/Dockerfile
+!deploy/docker/entrypoint.py
+**/__pycache__/
+**/*.pyc

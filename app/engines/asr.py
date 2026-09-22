@@ -329,7 +329,10 @@ def _transcribe_faster_whisper(
         callback(f"正在加载 faster-whisper {model_size} 模型...")
 
     start = time.time()
-    model = WhisperModel(model_size, device="auto", compute_type="auto")
+    thread_options = {}
+    if os.environ.get("AISUBPRO_ASR_CPU_THREADS"):
+        thread_options["cpu_threads"] = max(1, int(os.environ["AISUBPRO_ASR_CPU_THREADS"]))
+    model = WhisperModel(model_size, device="auto", compute_type="auto", **thread_options)
 
     if callback:
         callback("开始语音识别 (faster-whisper)...")

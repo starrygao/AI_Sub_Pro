@@ -1,0 +1,64 @@
+services:
+  ai-sub-pro:
+    image: ai-sub-pro:server-1.3.42
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: ai-sub-pro
+    init: true
+    restart: unless-stopped
+    user: "${AISUB_UID:-1000}:${AISUB_GID:-1000}"
+    network_mode: host
+    cpus: 2.0
+    mem_limit: 4g
+    pids_limit: 256
+    cpu_shares: 128
+    blkio_config:
+      weight: 100
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      TZ: Asia/Shanghai
+      AISUBPRO_SERVER_HOST: ${AISUB_BIND:-127.0.0.1}
+      AISUBPRO_SERVER_PORT: ${AISUB_PORT:-18091}
+      HTTP_PROXY: ${AISUB_PROXY:-}
+      HTTPS_PROXY: ${AISUB_PROXY:-}
+      NO_PROXY: localhost,127.0.0.1,192.168.31.4,host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/config:/config:ro
+      - ${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/data:/data
+      - ${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/codex:/codex
+      - ${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/models:/models
+      - ${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/readiness:/readiness:ro
+      - /vol2/1000/video:/video
+      - /vol2/1000/备份:/备份
+      - /vol1/1000/docker/moviepilot-v2/config:/integrations/moviepilot:ro
+      - ${AISUB_VTRANS_QUEUE:-/vol1/1000/docker/vtrans/releases/queue-hdr-20260918/config/queue}:/integrations/vtrans:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  upload-readiness:
+    image: ai-sub-pro:server-1.3.42
+    container_name: ai-sub-pro-upload-readiness
+    restart: unless-stopped
+    user: "0:0"
+    pid: host
+    network_mode: none
+    cap_drop: [ALL]
+    cap_add: [SYS_PTRACE, DAC_READ_SEARCH]
+    # No network, read-only filesystem; allow only this collector to inspect host /proc.
+    security_opt: [no-new-privileges:true, apparmor:unconfined]
+    read_only: true
+    cpus: 0.15
+    mem_limit: 128m
+    pids_limit: 16
+    entrypoint: ["python", "-m", "app.library.open_writes"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,time; s=json.load(open('/state/open-writes.json')); assert s['ok'] and time.time()-s['updated']<40"]
+    volumes:
+      - ${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/readiness:/state
