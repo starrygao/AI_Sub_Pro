@@ -6,6 +6,7 @@ VIDEO_EXTENSIONS = {'.mkv', '.mp4', '.avi', '.mov', '.m4v', '.ts', '.m2ts', '.we
 SUBTITLE_EXTENSIONS = {'.srt', '.ass', '.ssa', '.vtt', '.sub', '.idx', '.sup'}
 TEMP_MARKERS = {'.parts', '.partial', '.part', '.tmp', '.!qb', '.crdownload', '.download'}
 CHINESE = re.compile(r'(?:^|[._\s-])(?:zh(?:-cn|-tw|-hans|-hant)?|zho|chi|cmn|chs|cht)(?:$|[._\s-])|中文|简体|繁体|簡體|繁體|chinese', re.I)
+CHINESE_LANGUAGES = {'zh', 'zho', 'chi', 'cmn', 'yue', 'wuu', 'nan', 'hak'}
 
 
 def map_path(path, mappings):
@@ -45,11 +46,16 @@ def chinese_track(stream):
 def chinese_audio_only(streams):
     """Skip only unambiguous Chinese audio; unknown or multilingual audio needs checking."""
     audio = [s for s in streams if s.get('codec_type') == 'audio']
-    languages = {'zh', 'zho', 'chi', 'cmn', 'yue', 'wuu', 'nan', 'hak'}
     return bool(audio) and all(
-        str((s.get('tags') or {}).get('language', '')).lower().split('-')[0] in languages
+        str((s.get('tags') or {}).get('language', '')).lower().split('-')[0] in CHINESE_LANGUAGES
         for s in audio
     )
+
+
+def has_foreign_audio(streams):
+    return any(str((s.get('tags') or {}).get('language','')).lower().split('-')[0]
+               not in CHINESE_LANGUAGES | {'', 'und', 'unknown', 'mul'}
+               for s in streams if s.get('codec_type')=='audio')
 
 
 def subtitle_files(video):

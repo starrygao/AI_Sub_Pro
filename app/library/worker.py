@@ -11,7 +11,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from .guard import VIDEO_EXTENSIONS, fingerprint, ready_file, chinese_track, chinese_sidecar, subtitle_files, chinese_audio_only
+from .guard import VIDEO_EXTENSIONS, fingerprint, ready_file, chinese_track, chinese_sidecar, subtitle_files, chinese_audio_only, has_foreign_audio, CHINESE_LANGUAGES
 from .publish import publish_sidecar, archive_stale_sidecar
 from .sources import Sources
 from .store import Store
@@ -265,6 +265,13 @@ class LibraryWorker:
                     self.save(row,state='skipped',reason='已有内嵌中文字幕');return
                 if self.config.get('skip_chinese_audio',True) and chinese_audio_only(info['streams']):
                     self.save(row,state='native_language',reason='中文原声，无需翻译');return
+                if self.config.get('skip_chinese_audio',True) and not has_foreign_audio(info['streams']):
+                    metadata={**self.sources.metadata(path),**row.get('metadata',{})}
+                    try:language=self.sources.original_language(metadata)
+                    except Exception:
+                        self.save(row,reason='音轨语言未知，等待 TMDB 原始语言确认');return
+                    if language in CHINESE_LANGUAGES:
+                        self.save(row,state='native_language',reason='TMDB 确认为中文原声，无需翻译',metadata=metadata);return
                 # Re-read external readiness immediately before extraction / model work.
                 self.refresh_readiness()
                 if self.block_reason(path):self.save(row,reason=self.block_reason(path));return

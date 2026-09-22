@@ -41,6 +41,7 @@ class Sources:
         self.client=httpx.Client(timeout=15,trust_env=False)
         self.health={}
         self.emby_cache={}
+        self.language_cache={}
 
     def emby(self, endpoint, **params):
         conf=self.config['emby']
@@ -158,6 +159,16 @@ class Sources:
                     return {'tmdb_id':int(row[0]),'tmdb_type':'tv' if row[1] in {'电视剧','tv','TV'} else 'movie','show_title':row[2],'metadata_source':'moviepilot'}
             finally:db.close()
         return {}
+
+    def original_language(self,metadata):
+        identity=(metadata.get('tmdb_type'),metadata.get('tmdb_id'))
+        if identity[0] not in {'tv','movie'} or not identity[1]:return ''
+        if identity not in self.language_cache:
+            import asyncio
+            from app.engines.tmdb import get_show_details
+            detail=asyncio.run(get_show_details(identity[1],identity[0]))
+            self.language_cache[identity]=str(detail.get('original_language','')).lower()
+        return self.language_cache[identity]
 
     def refresh_subtitles(self,item_id):
         if not item_id:return

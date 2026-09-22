@@ -55,3 +55,28 @@ def test_chinese_audio_skips_without_starting_model(tmp_path,monkeypatch):
     monkeypatch.setattr(worker,'refresh_readiness',lambda:None)
     worker.process_one()
     prepare.assert_called_once()
+
+
+def test_unknown_audio_uses_tmdb_original_language_before_asr(tmp_path,monkeypatch):
+    from app.engines.providers.codex_cli import CodexCliProvider
+    from app.library import worker as module
+    video=tmp_path/'Unknown.mkv';video.write_bytes(b'video')
+    worker=LibraryWorker({'allowed_roots':[str(tmp_path)],'quiet_seconds':0},tmp_path/'state')
+    worker.observe(video,{'tmdb_id':101172,'tmdb_type':'tv'})
+    monkeypatch.setattr(CodexCliProvider,'check_logged_in',lambda:True)
+    monkeypatch.setattr(module.os,'getloadavg',lambda:(0,0,0))
+    monkeypatch.setattr(worker,'probe',lambda p:{'streams':[{'codec_type':'audio','tags':{'language':'und'}}]})
+    monkeypatch.setattr(worker.sources,'metadata',lambda p:{})
+    monkeypatch.setattr(worker.sources,'original_language',lambda m:'zh',raising=False)
+    monkeypatch.setattr(worker,'refresh_readiness',lambda:None)
+    prepare=Mock();monkeypatch.setattr(worker,'prepare',prepare)
+    worker.process_one()
+    assert worker.store.get(video)['state']=='native_language'
+    prepare.assert_not_called()
+    # An explicit foreign dub must not inherit the original show's Chinese language.
+    row=worker.store.get(video);worker.save(row,state='waiting')
+    monkeypatch.setattr(worker,'probe',lambda p:{'streams':[{'codec_type':'audio','tags':{'language':'eng'}}]})
+    language=Mock(side_effect=AssertionError('foreign audio must win'))
+    monkeypatch.setattr(worker.sources,'original_language',language)
+    worker.process_one()
+    language.assert_not_called();prepare.assert_called_once()

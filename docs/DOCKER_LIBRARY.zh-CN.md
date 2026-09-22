@@ -5,7 +5,7 @@
 ## 数据流与约束
 
 - Emby 最近条目 + 分页历史盘点；媒体目录分批遍历覆盖直接上传。
-- 默认跳过明确只有中文音轨的视频，任务标记为“中文原声，无需翻译”。依据音轨语言标识（含普通话/粤语）判断；混合语言或未知语言不会误跳过。可在 `library.json` 设置 `skip_chinese_audio: false` 关闭。
+- 默认跳过明确只有中文音轨的视频，任务标记为“中文原声，无需翻译”。依据音轨语言标识（含普通话/粤语）判断；混合语言不会被原始语言覆盖；音轨语言未知时，利用 Emby/MoviePilot 的 TMDB ID 查询原始语言并按影片缓存。TMDB 无法确认时延后，不直接把有身份信息的未知音轨整片送去识别。没有 TMDB 身份的未知音轨仍需识别。可在 `library.json` 设置 `skip_chinese_audio: false` 关闭。
 - 内嵌中文/繁体字幕、同名外挂中文字幕直接跳过。仅强制字幕不能代表整片已有中文字幕。
 - 文件大小、纳秒修改时间、inode/device 连续稳定至少 300 秒；临时文件不进入翻译。
 - qBittorrent / Transmission 下载和校验状态、MoviePilot 整理任务、VTrans 持久队列共同决定就绪。任一必需服务不可读时停止新的翻译及字幕发布。
@@ -61,7 +61,10 @@ Codex 登录可用 `docker exec -it ai-sub-pro codex login --device-auth`，或�
 - 实际打开写入句柄时上传检测列出视频，关闭后恢复；暂停下载、MoviePilot 整理、VTrans 排队/待发布/替换、硬链接、陈旧快照阻断由自动测试覆盖。未操作真实下载或转码任务来制造故障。
 - 播放观测：12 路 Emby 播放、0 转码，Sessions 请求约 19ms；字幕服务约 1.49GiB/4GiB、CPU 7.24%，Emby CPU 9.18%。这是验收时点观测，不代表所有负载下的延迟保证。
 - UI 在 320/768/1024/1440 宽度检查无横向溢出，状态、路径、筛选、暂停/开启交互通过；使用无敏感数据的本地 fixture 验证视觉，真实 NAS API 另外验收。
-- 回归：157 项相关测试通过（含服务器认证、跨站写入、分页、桌面端导出回归）。测试产物位于 `.runtime/verification/docker-library-20260922/`（不入 Git）。
+- 回归：158 项相关测试通过（含服务器认证、跨站写入、分页、桌面端导出回归）。测试产物位于 `.runtime/verification/docker-library-20260922/`（不入 Git）。
 - 测试媒体位于 `/vol2/1000/video/AI_Sub_Pro_Verification_20260922/`，与真实媒体分离，自动监控根目录不包含它。独立 Emby 测试实例的样本保留在 `AISubProof20260922` 文件夹。
 
 容器重建验证：Codex 凭证文件一致、发现队列未丢失、已发布字幕哈希一致，模型缓存保留。单条目刷新使用当前 Emby 支持的 `Default` 模式，并明确禁用替换全部元数据/图片；测试确认移除和恢复外挂中文字幕均被该接口识别。[Emby 刷新接口](https://betadev.emby.media/reference/RestAPI/ItemRefreshService/postItemsByIdRefresh.html)。
+
+
+中文原声补充验证：实际《吞噬星空》S01E242 音轨未标语言，TMDB 系列 101172 的 `original_language=zh`。新增 TMDB 原始语言兜底；显式外语配音优先于作品原始语言。TMDB 凭证复用 NAS 上 MoviePilot 的已有设置，以 600 权限存放在只读挂载的 `/config/tmdb-api-key`，入口加载到进程环境。不要把服务器 TMDB 密钥写入桌面 `config.json`，其系统钥匙串存储不适用于无 Secret Service 的容器。原 MoviePilot 配置与桌面凭证机制均保持不变。

@@ -3,6 +3,11 @@ import json
 import os
 from pathlib import Path
 
+tmdb_secret=Path(os.environ.get('AISUBPRO_TMDB_KEY_FILE','/config/tmdb-api-key'))
+if tmdb_secret.is_file():
+    if tmdb_secret.stat().st_mode & 0o077:raise RuntimeError('TMDB 凭证文件必须设置为 600 权限')
+    os.environ.setdefault('AI_SUB_PRO_TMDB_API_KEY',tmdb_secret.read_text().strip())
+
 path=Path(os.environ['AI_SUB_PRO_DATA_DIR'])/'config.json'
 path.parent.mkdir(parents=True,exist_ok=True)
 if not path.exists():
