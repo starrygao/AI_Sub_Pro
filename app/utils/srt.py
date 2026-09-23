@@ -8,6 +8,7 @@ from math import isfinite
 from typing import List, Optional
 
 from app.utils.subtitle_structure import classify_speaker_lines
+from app.utils.subtitle_metadata import strip_subtitle_metadata
 
 
 @dataclass
@@ -473,7 +474,7 @@ def write_mono_srt(blocks, out_path: str, use_translation: bool = True) -> int:
 
 
 def write_bilingual_srt(blocks: List[SubtitleBlock], path: str):
-    """Write bilingual SRT (translation on top, original below)."""
+    """Write one translation line above one original line per bilingual cue."""
     with open(path, "w", encoding="utf-8") as f:
         idx = 1
         for b in blocks:
@@ -481,12 +482,10 @@ def write_bilingual_srt(blocks: List[SubtitleBlock], path: str):
                 continue
             if _is_source_sound_description(getattr(b, "text", "")):
                 continue
-            text = _subtitle_text(getattr(b, "text", ""))
-            translation = _subtitle_text(
-                getattr(b, "translation", ""),
-                single_line=True,
-                is_translation=True,
-            )
+            text = _bilingual_line(_subtitle_text(getattr(b, "text", "")))
+            translation = _bilingual_line(_subtitle_text(
+                getattr(b, "translation", ""), is_translation=True,
+            ))
             if not text and not translation:
                 continue
             start = getattr(b, "start", timedelta(0))
@@ -529,7 +528,7 @@ def _subtitle_text(
 ) -> str:
     if not isinstance(value, str):
         return ""
-    text = _MUSIC_SYMBOL_RE.sub("", value)
+    text = _MUSIC_SYMBOL_RE.sub("", strip_subtitle_metadata(value))
     lines = []
     for line in text.splitlines():
         cleaned = re.sub(r"\s{2,}", " ", line).strip()
@@ -542,6 +541,28 @@ def _subtitle_text(
     if single_line:
         lines = _single_line_translation(lines)
     return "\n".join(lines).strip()
+
+
+def _bilingual_line(text: str) -> str:
+    lines = text.splitlines()
+    if not lines:
+        return ""
+    if _has_structural_line_break(lines):
+        return " ".join(lines)
+    out = lines[0]
+    for line in lines[1:]:
+        # Look past styling tags when deciding word boundaries. English
+        # sentence endings still need a space; CJK visual wraps do not.
+        left = re.sub(r"<[^>]+>", "", out).rstrip()
+        right = re.sub(r"<[^>]+>", "", line).lstrip()
+        space = bool(left and right and (
+            _needs_join_space(left, right)
+            or (left[-1].isascii() and right[0].isascii()
+                and right[0] not in "),.!?;:%]}" and left[-1] not in "([{"
+                and left[-1] != "-")
+        ))
+        out += (" " if space else "") + line
+    return out
 
 
 def _single_line_translation(lines: list[str]) -> list[str]:

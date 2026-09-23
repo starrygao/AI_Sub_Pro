@@ -184,7 +184,7 @@ def test_srt_cleanup_preserves_source_interruption_but_removes_translation_dash_
     assert "我本来要说--" not in translated
 
 
-def test_bilingual_srt_collapses_translation_only(tmp_path):
+def test_bilingual_srt_collapses_both_languages(tmp_path):
     from app.utils.srt import write_bilingual_srt
 
     blocks = [
@@ -195,10 +195,10 @@ def test_bilingual_srt_collapses_translation_only(tmp_path):
     write_bilingual_srt(blocks, str(out))
 
     text = out.read_text(encoding="utf-8")
-    assert "第一句译文第二句译文\nFirst source line\nSecond source line" in text
+    assert "第一句译文第二句译文\nFirst source line Second source line" in text
 
 
-def test_bilingual_srt_preserves_structural_speaker_lines_and_source_interruption(tmp_path):
+def test_bilingual_srt_preserves_speaker_markers_on_each_language_line_and_source_interruption(tmp_path):
     from app.utils.srt import write_bilingual_srt
 
     blocks = [
@@ -218,10 +218,10 @@ def test_bilingual_srt_preserves_structural_speaker_lines_and_source_interruptio
     write_bilingual_srt(blocks, str(out))
 
     text = out.read_text(encoding="utf-8")
-    assert "- 你给她打电话了吗？\n- 我正准备打——" in text
-    assert "- Did you call her?\n- I was going to--" in text
-    assert "玛拉：留在这里。\n伊沃：不。" in text
-    assert "MARA: Stay here.\nIVO: No." in text
+    assert "- 你给她打电话了吗？ - 我正准备打——" in text
+    assert "- Did you call her? - I was going to--" in text
+    assert "玛拉：留在这里。 伊沃：不。" in text
+    assert "MARA: Stay here. IVO: No." in text
 
 
 def test_write_srt_report_maps_source_block_ids_to_output_sequence_ids(tmp_path):
@@ -497,3 +497,40 @@ def test_resolve_font_latin_default():
     from app.utils.media import resolve_font
     assert resolve_font("en") in ("Helvetica", "Arial", "DejaVu Sans")
     assert resolve_font("fr") in ("Helvetica", "Arial", "DejaVu Sans")
+
+
+@pytest.mark.parametrize("source,target,expected", [
+    ("<i>Hello,</i>\n<i>my friend.</i>", "你好，\n我的朋友。", "你好，我的朋友。\n<i>Hello,</i> <i>my friend.</i>"),
+    ("First sentence.\nNext sentence.", "这是一条非常非常非常非常长的字幕\n它本来有换行但双语输出只占一行", "这是一条非常非常非常非常长的字幕它本来有换行但双语输出只占一行\nFirst sentence. Next sentence."),
+])
+def test_bilingual_has_two_authored_lines(tmp_path, source, target, expected):
+    from app.utils.srt import write_bilingual_srt, parse_srt_file
+    out = tmp_path / "bilingual.srt"
+    write_bilingual_srt([_make_block(1, source, target)], str(out))
+    cue = parse_srt_file(str(out))[0]
+    assert cue.text == expected
+    assert len(cue.text.splitlines()) == 2
+
+
+def test_webvtt_headers_do_not_create_missing_translation_or_leak_to_export(tmp_path):
+    from app.engines.translation_qa import classify_subtitle_source
+    from app.utils.srt import write_srt, write_bilingual_srt
+    from app.services.translation_tasks import _expected_translation_export_ids, _translation_export_integrity_message
+    headers = "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0"
+    blocks = [_make_block(208, "♪ ♪\n" + headers, "♪ ♪"),
+              _make_block(511, "- I knew you'd come around.\n" + headers, "- 我就知道你会想通的。")]
+    assert not classify_subtitle_source(blocks[0].text).requires_translation
+    assert classify_subtitle_source(blocks[1].text).dialogue_text == "- I knew you'd come around."
+    report = write_srt(blocks, str(tmp_path / "zh.srt"), True, return_report=True)
+    assert _expected_translation_export_ids(blocks) == [511]
+    assert report.written_ids == [511]
+    assert _translation_export_integrity_message(blocks, report) is None
+    write_bilingual_srt(blocks, str(tmp_path / "bi.srt"))
+    assert "WEBVTT" not in (tmp_path / "bi.srt").read_text()
+    assert "我就知道你会想通的" in (tmp_path / "bi.srt").read_text()
+
+
+def test_header_cleanup_does_not_remove_dialogue_about_webvtt():
+    from app.engines.translation_qa import classify_subtitle_source
+    source = "I wrote WEBVTT on the board.\nX-TIMESTAMP-MAP is the name of a header."
+    assert classify_subtitle_source(source).dialogue_text == source

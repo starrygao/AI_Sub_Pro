@@ -1009,7 +1009,7 @@ class SubtitleSourceDecision:
         return self.kind not in {"sound", "empty"}
 
 
-SUBTITLE_CLASSIFICATION_VERSION = 3
+SUBTITLE_CLASSIFICATION_VERSION = 4
 
 
 @lru_cache(maxsize=16384)
@@ -1019,6 +1019,8 @@ def classify_subtitle_source(source: str) -> SubtitleSourceDecision:
     Unrecognized bracketed content remains translatable. Neither an empty
     model result nor sound-like words in the target authorize omission.
     """
+    from app.utils.subtitle_metadata import strip_subtitle_metadata
+    source = strip_subtitle_metadata(source)
     if not source.strip():
         return SubtitleSourceDecision("empty", "", "empty_source")
     if _matches_sound_description(source):
