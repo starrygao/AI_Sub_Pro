@@ -5,6 +5,7 @@ import time
 
 from .guard import VIDEO_EXTENSIONS, fingerprint, map_path
 from .sources import emby_metadata
+from .publish import bilingual_sidecar_path
 
 ITEM_ID = r'[A-Za-z0-9_-]{1,80}'
 FIELDS = 'Path,ProviderIds,MediaStreams,DateCreated,Overview,ProductionYear'
@@ -94,7 +95,7 @@ class EmbySelection:
                 row = {'path': str(path), 'state': 'waiting', 'reason': '手动添加：等待文件稳定及音轨、字幕检查',
                        'fingerprint': fingerprint(path), 'stable_since': now, 'updated': now, 'priority': 1,
                        'manual_requested': True, 'manual_requested_at': now,
-                       'metadata': emby_metadata(item, self.worker.sources.item), 'output_path': str(path.with_suffix('.srt'))}
+                       'metadata': emby_metadata(item, self.worker.sources.item), 'output_path': str(bilingual_sidecar_path(path))}
                 actual, inserted = self.worker.store.insert_request(row)
                 results.append({'id': item_id, 'status': 'queued' if inserted else 'existing',
                                 'state': actual['state'], 'message': '已加入待处理，检查通过后翻译' if inserted else '已有任务记录，未重复添加'})

@@ -15,7 +15,7 @@ from .guard import (VIDEO_EXTENSIONS, fingerprint, ready_file, chinese_track, ch
                     subtitle_files, chinese_audio_only, has_foreign_audio, CHINESE_LANGUAGES, map_path,
                     complete_subtitle_stream, complete_sidecar, select_audio_track, language_code,
                     chinese_subtitle_attachment)
-from .publish import publish_sidecar, archive_stale_sidecar
+from .publish import publish_sidecar, archive_stale_sidecar, bilingual_sidecar_path
 from .sources import Sources
 from .store import Store
 from .settings import LibrarySettings
@@ -68,7 +68,7 @@ class LibraryWorker:
         except (ValueError,TypeError):priority=0
         if not old or old.get('fingerprint')!=current:
             row={'path':str(path),'state':'waiting','reason':'等待文件稳定','fingerprint':current,
-                 'stable_since':now,'updated':now,'priority':priority,'metadata':metadata,'output_path':str(path.with_suffix('.srt'))}
+                 'stable_since':now,'updated':now,'priority':priority,'metadata':metadata,'output_path':str(bilingual_sidecar_path(path))}
             if manual:
                 row.update(manual_requested=True,manual_requested_at=(old or {}).get('manual_requested_at',now))
             if old and (old.get('output_hash') or old.get('stale_output_hash')):
@@ -228,13 +228,13 @@ class LibraryWorker:
                     export_srt(pid,format='bilingual',container='srt')
                     delivery_ready=True
                     source=tasks.PROJECTS_DIR/pid/'bilingual.srt'
-                    other=[p for p in subtitle_files(path) if p!=path.with_suffix('.srt') and chinese_sidecar(p,path)]
+                    other=[p for p in subtitle_files(path) if p!=bilingual_sidecar_path(path) and chinese_sidecar(p,path)]
                     if other:
                         self.save(row,state='skipped',reason='翻译期间出现中文字幕，保留现有文件',
                                   existing_subtitles=[{'path':str(p),'fingerprint':fingerprint(p)} for p in other]);continue
                     output=publish_sidecar(path,source,row['fingerprint'])
                 mutate_project(pid,lambda p:p.update(library_output_path=str(output),library_status='done'))
-                self.save(row,state='done',reason='翻译完成，同名双语字幕已保存',output_path=str(output),completed_at=time.time(),output_hash=hashlib.sha256(output.read_bytes()).hexdigest(),retry_stage=None)
+                self.save(row,state='done',reason='翻译完成，带中文语言标记的双语字幕已保存',output_path=str(output),completed_at=time.time(),output_hash=hashlib.sha256(output.read_bytes()).hexdigest(),retry_stage=None)
                 try:self.sources.refresh_subtitles(row.get('metadata',{}).get('emby_id',''))
                 except Exception:self.save(row,reason='字幕已保存，Emby 刷新待重试',refresh_pending=True)
             except Exception as exc:
@@ -254,7 +254,7 @@ class LibraryWorker:
         from app.utils.media import get_ffmpeg_path
         from app.utils.srt import parse_srt_file
         path=Path(row['path']);pid=uuid.uuid4().hex[:8];pdir=tasks.PROJECTS_DIR/pid;pdir.mkdir()
-        row['output_path']=str(path.with_suffix('.srt'))
+        row['output_path']=str(bilingual_sidecar_path(path))
         metadata={**self.sources.metadata(path),**row.get('metadata',{})}
         streams=info['streams'];audio=[s for s in streams if s.get('codec_type')=='audio']
         subs=[s for s in streams if s.get('codec_type')=='subtitle']
@@ -341,8 +341,8 @@ class LibraryWorker:
                     self.save(row,state='skipped',reason='已有内嵌中文字幕');return
                 if any(chinese_subtitle_attachment(s,path) for s in info['streams']):
                     self.save(row,state='skipped',reason='已有中文字幕附件');return
-                if path.with_suffix('.srt').exists():
-                    self.save(row,state='error',reason='同名 SRT 已存在，保留原文件；请先另存已有字幕后重新检查');continue
+                if bilingual_sidecar_path(path).exists():
+                    self.save(row,state='error',reason='双语字幕目标文件已存在，保留原文件；请先检查该文件后重试');continue
                 if self.config.get('skip_chinese_audio',True) and chinese_audio_only(info['streams']):
                     self.save(row,state='native_language',reason='中文原声，无需翻译');return
                 if self.config.get('skip_chinese_audio',True) and not has_foreign_audio(info['streams']):

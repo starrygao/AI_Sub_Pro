@@ -106,12 +106,12 @@ def test_finish_publishes_certified_bilingual_srt_without_changing_video(tmp_pat
     monkeypatch.setattr(worker.sources, 'refresh_subtitles', lambda pid:None)
     worker.finish()
     assert worker.store.get(video)['state']=='done'
-    assert video.with_suffix('.srt').read_text().splitlines()[2:4] == ['你好','Hello']
+    assert video.with_suffix('.双语.zh-CN.srt').read_text().splitlines()[2:4] == ['你好','Hello']
     assert hashlib.sha256(video.read_bytes()).hexdigest()==before
-    assert not video.with_suffix('.chi.srt').exists()
+    assert not video.with_suffix('.srt').exists()
 
 
-def test_existing_same_name_foreign_srt_is_preserved_before_any_model_work(tmp_path, monkeypatch):
+def test_existing_same_name_foreign_srt_can_be_used_without_output_collision(tmp_path, monkeypatch):
     from app.engines.providers.codex_cli import CodexCliProvider
     from app.library import worker as module
     video=tmp_path/'Episode.mkv'; video.write_bytes(b'video')
@@ -121,8 +121,9 @@ def test_existing_same_name_foreign_srt_is_preserved_before_any_model_work(tmp_p
     monkeypatch.setattr(CodexCliProvider,'check_logged_in',lambda:True)
     monkeypatch.setattr(module.os,'getloadavg',lambda:(0,0,0))
     monkeypatch.setattr(worker,'probe',lambda path:{'streams':[{'codec_type':'audio','tags':{'language':'eng'}}]})
+    monkeypatch.setattr(worker,'refresh_readiness',lambda:None)
     prepare=Mock();monkeypatch.setattr(worker,'prepare',prepare)
     worker.process_one()
-    assert worker.store.get(video)['state']=='error'
     assert source.read_text()=='Original foreign subtitle'
-    prepare.assert_not_called()
+    prepare.assert_called_once()
+    assert source in prepare.call_args.args[2]

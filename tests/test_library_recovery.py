@@ -24,17 +24,18 @@ def library(tmp_path, monkeypatch):
     return worker, media
 
 
+@pytest.mark.parametrize('suffix', ['.srt', '.双语.zh-CN.srt'])
 @pytest.mark.parametrize('user_edited', [False, True])
-def test_repeated_replacement_retires_only_owned_old_subtitle(library, monkeypatch, user_edited):
+def test_repeated_replacement_retires_only_owned_old_subtitle(library, monkeypatch, user_edited, suffix):
     worker, media = library
     video = media / 'Episode.mkv'
     video.write_bytes(b'first version')
     worker.observe(video, {})
-    subtitle = video.with_suffix('.srt')
+    subtitle = video.with_suffix(suffix)
     old_text = '1\n00:00:00,000 --> 00:00:01,000\n这是旧版视频的中文字幕。\nOld version.\n'
     subtitle.write_text(old_text)
     worker.save(worker.store.get(video), state='done', project_id='1234abcd',
-                output_hash=hashlib.sha256(subtitle.read_bytes()).hexdigest())
+                output_hash=hashlib.sha256(subtitle.read_bytes()).hexdigest(), output_path=str(subtitle))
     if user_edited:
         subtitle.write_text(old_text.replace('旧版', '用户改过'))
     for content in (b'replacement partially written', b'replacement finished with a different cut'):
@@ -150,7 +151,7 @@ def test_publish_retry_reuses_certified_project_without_model_work(library, tmp_
     worker.finish()
     assert worker.store.get(video)['state'] == 'done'
     assert worker.store.get(video)['project_id'] == pid
-    assert video.with_suffix('.srt').read_bytes() == (tmp_project_dir / pid / 'bilingual.srt').read_bytes()
+    assert video.with_suffix('.双语.zh-CN.srt').read_bytes() == (tmp_project_dir / pid / 'bilingual.srt').read_bytes()
     start.assert_not_called()
 
 
@@ -173,7 +174,7 @@ def test_publish_retry_still_rejects_changed_source_or_invalid_artifact(library,
     monkeypatch.setattr(tasks, 'is_task_registered', lambda pid: False)
     server.library_retry(server.Retry(path=str(video)))
     worker.finish()
-    assert not video.with_suffix('.srt').exists()
+    assert not video.with_suffix('.双语.zh-CN.srt').exists()
     assert worker.store.get(video)['state'] in {'changed', 'error'}
     if change == 'artifact':
         assert not worker.store.get(video).get('retry_stage')
