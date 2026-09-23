@@ -14,7 +14,6 @@ from app.engines.kb_suggestions import (
     load_suggestions,
     save_suggestions,
     suggest_kb_entries,
-    update_suggestion_status,
 )
 from app.utils.project_store import atomic_write_json, project_dir, validate_pid
 from app.utils.srt import parse_srt_file
@@ -56,6 +55,8 @@ class ProjectKbIn(BaseModel):
     brands: List[TermEntryIn] = Field(default_factory=list)
     slang: List[TermEntryIn] = Field(default_factory=list)
     style_notes: StyleNotesIn = Field(default_factory=StyleNotesIn)
+    # Optional for older clients; the console sends the record it began editing.
+    expected_state: Optional[dict] = None
 
 
 class SuggestionAcceptEntryIn(BaseModel):
@@ -290,40 +291,44 @@ def _kb_key_for_project(pid: str, project: dict) -> str:
     return slug[:64] or 'title-'+hashlib.sha256(key.casefold().encode()).hexdigest()[:16]
 
 
-def _append_term_once(entries: list[TermEntry], source: str, target: str, notes: str = "") -> None:
-    folded = _clean_text(source).casefold()
-    if not folded or not _clean_text(target):
-        return
-    for entry in entries:
-        if _clean_text(entry.source).casefold() == folded:
-            return
-    entries.append(TermEntry(source=_clean_text(source), target=_clean_text(target), notes=_clean_text(notes)))
-
-
 def _accept_status_suggestion_into_kb(pid: str, project: dict, suggestion) -> None:
     if not _clean_text(getattr(suggestion, "target", "")):
         return
     key = _kb_key_for_project(pid, project)
     kb_store = _get_kb()
-    proj = kb_store.get_project(key)
-    if proj is None:
+    previous = kb_store.get_project(key)
+    if previous is None:
         proj = ProjectKb(
             show_title=_clean_text(project.get("show_title") or project.get("name") or ""),
             tmdb_id=project.get("tmdb_id") if isinstance(project.get("tmdb_id"), int) else None,
             tmdb_type=project.get('tmdb_type') if project.get('tmdb_type') in {'tv','movie'} else '',
         )
+    else:
+        # Work on a copy so a failed save cannot expose an unpersisted revision.
+        proj = ProjectKb.from_dict(previous.to_dict())
 
     category = _clean_text(getattr(suggestion, "category", "")).casefold()
-    if category == "characters":
-        _append_term_once(proj.characters, suggestion.source, suggestion.target, suggestion.notes)
-    elif category == "places":
-        _append_term_once(proj.places, suggestion.source, suggestion.target, suggestion.notes)
-    elif category == "brands":
-        _append_term_once(proj.brands, suggestion.source, suggestion.target, suggestion.notes)
+    categories = {name: getattr(proj, name) for name in ("characters", "places", "brands", "slang")}
+    source, target, notes = map(_clean_text, (suggestion.source, suggestion.target, suggestion.notes))
+    matches = [entry for entries in categories.values() for entry in entries
+               if entry.source.casefold() == source.casefold()]
+    if matches:
+        # An explicit confirmation revises the existing term, even when automatic
+        # classification picked another category. Never keep conflicting targets.
+        for entry in matches:
+            entry.target = target
+            if notes:
+                entry.notes = notes
     else:
-        _append_term_once(proj.slang, suggestion.source, suggestion.target, suggestion.notes)
-
-    kb_store.put_project(key, proj)
+        categories.get(category, proj.slang).append(TermEntry(source, target, notes))
+    try:
+        kb_store.put_project(key, proj)
+    except Exception:
+        if previous is None:
+            kb_store.delete_project(key)
+        else:
+            kb_store.set_project(key, previous)
+        raise
     _invalidate_translator_kb()
 
 
@@ -379,43 +384,32 @@ def update_kb_project_suggestion_status(pid: str, suggestion_id: str, body: Sugg
     pdir, project = _load_project_or_http(pid)
     path = _project_suggestions_path(pdir)
     cleaned_status = _clean_text(body.status).casefold()
+    if cleaned_status not in {"pending", "accepted", "rejected"}:
+        raise HTTPException(status_code=400, detail="invalid suggestion status")
     if not path.is_file():
         # GET can preview locally extracted candidates before a translation has run.
         # Persist that same candidate set when the user first confirms or rejects one.
         candidates=suggest_kb_entries(project,_subtitle_dicts_for_project(pdir),_get_kb().select_for_project(project))
         if any(item.id==suggestion_id for item in candidates):save_suggestions(path,candidates)
+    suggestions = load_suggestions(path)
     existing = next(
-        (item for item in load_suggestions(path) if item.id == suggestion_id),
+        (item for item in suggestions if item.id == suggestion_id),
         None,
     )
-    if existing is not None and (body.target is not None or body.notes is not None):
-        suggestions = load_suggestions(path)
-        for item in suggestions:
-            if item.id != suggestion_id:
-                continue
-            if body.target is not None:
-                item.target = _clean_text(body.target)
-            if body.notes is not None:
-                item.notes = _clean_text(body.notes)
-            existing = item
-            break
-        save_suggestions(path, suggestions)
-    if cleaned_status == "accepted":
-        if existing is not None and not _clean_text(getattr(existing, "target", "")):
-            raise HTTPException(status_code=400, detail="接受 KB 建议前需要填写译文")
-    try:
-        suggestion = update_suggestion_status(
-            path,
-            suggestion_id,
-            body.status,
-        )
-    except ValueError:
-        raise HTTPException(status_code=400, detail="invalid suggestion status")
-    except KeyError:
+    if existing is None:
         raise HTTPException(status_code=404, detail="suggestion not found")
-    if suggestion.status == "accepted":
-        _accept_status_suggestion_into_kb(pid, project, suggestion)
-    return {"ok": True, "suggestion": suggestion.to_dict()}
+    if body.target is not None:
+        existing.target = _clean_text(body.target)
+    if body.notes is not None:
+        existing.notes = _clean_text(body.notes)
+    if cleaned_status == "accepted":
+        if not _clean_text(existing.target):
+            raise HTTPException(status_code=400, detail="接受 KB 建议前需要填写译文")
+        _accept_status_suggestion_into_kb(pid, project, existing)
+    # Only report acceptance after the reviewed translation has been persisted.
+    existing.status = cleaned_status
+    save_suggestions(path, suggestions)
+    return {"ok": True, "suggestion": existing.to_dict()}
 
 
 @router.get("/projects/{pid}/usage-trace")
@@ -507,6 +501,11 @@ def put_kb_project(key: str, body: ProjectKbIn):
     if body.tmdb_id is not None and body.tmdb_id < 1:
         raise HTTPException(status_code=400, detail="tmdb_id must be positive")
 
+    previous = _get_kb().get_project(key)
+    if body.expected_state is not None and (
+        previous is None or ProjectKb.from_dict(body.expected_state).to_dict() != previous.to_dict()
+    ):
+        raise HTTPException(status_code=409, detail="知识库已更新，请先保留需要的修改，再撤销更改并基于最新内容重新编辑。")
     proj = ProjectKb(
         show_title=_clean_text(body.show_title),
         tmdb_id=body.tmdb_id,
@@ -520,11 +519,11 @@ def put_kb_project(key: str, body: ProjectKbIn):
             perspective=_clean_text(body.style_notes.perspective),
             rules=[r for r in (_clean_text(rule) for rule in body.style_notes.rules) if r],
         ),
-        legacy_keywords=list(getattr(_get_kb().get_project(key),'legacy_keywords',[])),
+        legacy_keywords=list(getattr(previous,'legacy_keywords',[])),
     )
     _get_kb().put_project(key, proj)
     _invalidate_translator_kb()
-    return {"ok": True}
+    return {"ok": True, "project": proj.to_dict()}
 
 
 @router.delete("/projects/{key}")

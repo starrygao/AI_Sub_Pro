@@ -247,30 +247,57 @@ def _normalize_progress_payload(data: dict) -> dict:
     return payload
 
 
+def _read_progress_locked(pid: str, fp: Path) -> Optional[dict]:
+    """Read the latest persisted value while the caller holds _progress_lock."""
+    if fp.exists():
+        try:
+            data = json.loads(fp.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("progress payload is not an object")
+            data = _normalize_progress_payload(data)
+            progress_store[pid] = data
+            return dict(data)
+        except Exception as e:
+            log.warning("load progress failed pid=%s: %s", pid, e)
+    data = progress_store.get(pid)
+    if not isinstance(data, dict):
+        return None
+    data = _normalize_progress_payload(data)
+    progress_store[pid] = data
+    return dict(data)
+
+
 def get_progress(pid: str) -> Optional[dict]:
     try:
         fp = project_dir(pid) / "progress.json"
     except ValueError:
         return None
     with _progress_lock:
-        if fp.exists():
+        return _read_progress_locked(pid, fp)
+
+
+def update_progress_message(pid: str, stage: str, msg: str) -> None:
+    """Record a stop message without changing the last measured percentage.
+
+    If there was no progress record, keep it unknown rather than inventing a
+    stage-start percentage. The project/workflow still carries the stop state.
+    """
+    validate_pid(pid)
+    fp = project_dir(pid) / "progress.json"
+    with _progress_lock:
+        payload = _read_progress_locked(pid, fp)
+        if payload is not None:
+            payload.update(stage=stage, message=msg, updated_at=datetime.now(timezone.utc).isoformat())
+            progress_store[pid] = payload
             try:
-                data = json.loads(fp.read_text(encoding="utf-8"))
-                if not isinstance(data, dict):
-                    raise ValueError("progress payload is not an object")
-                data = _normalize_progress_payload(data)
-                progress_store[pid] = data
-                return dict(data)
+                atomic_write_json(fp, payload)
             except Exception as e:
-                log.warning("load progress failed pid=%s: %s", pid, e)
-        if pid not in progress_store:
-            return None
-        data = progress_store[pid]
-        if not isinstance(data, dict):
-            return None
-        data = _normalize_progress_payload(data)
-        progress_store[pid] = data
-        return dict(data)
+                log.warning("persist progress message failed pid=%s: %s", pid, e)
+    if stage and msg:
+        try:
+            append_stage_log(pid, stage, msg)
+        except Exception as e:
+            log.warning("append stage log failed pid=%s stage=%s: %s", pid, stage, e)
 
 
 def load_progress_store_from_disk() -> int:

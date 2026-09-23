@@ -233,5 +233,7 @@ def library_retry(body:Retry):
     if not row:raise HTTPException(404,'记录不存在')
     if not worker.eligible_new_path(body.path,row.get('fingerprint')):raise HTTPException(409,'现有视频不补翻译')
     if row['state'] not in {'error','changed','missing','skipped','native_language'}:raise HTTPException(409,'当前任务不能重试')
-    worker.save(row,state='waiting',reason='等待重新检查')
+    publishing=row.get('retry_stage')=='publish' and bool(row.get('project_id'))
+    worker.save(row,state='publishing' if publishing else 'waiting',
+                reason='等待重新保存字幕' if publishing else '等待重新检查',next_attempt_at=0,retry_attempts=0)
     worker.wake.set();return {'scheduled':True}

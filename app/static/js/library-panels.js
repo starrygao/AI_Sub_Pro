@@ -15,7 +15,7 @@
     'setting-full-doc':['translation','full_doc_mode'],
   };
   let panel = 'tasks', pid = '', settings = null, catalog = {}, serverStatus = null;
-  let saving = false, settingsLoading = false, detailRequest = 0, previewKey = '', blocks = [], shown = 0;
+  let saving = false, settingsLoading = false, detailRequest = 0, detailPending = 0, previewKey = '', blocks = [], shown = 0;
   let polishCatalog = {}, modelCatalogs = {}, polishLoading = false, polishError = '', polishRequest = 0;
 
   function notice(id, message) { $(id).textContent = message; $(id).hidden = !message; }
@@ -192,7 +192,10 @@
     $('subtitle-count').textContent = blocks.length ? shown + ' / ' + blocks.length + ' 条' : '';
   }
   async function loadProject(initial = false) {
+    // Polls wait for this request; explicit navigation/reload may supersede it.
+    if (!initial && detailPending) return;
     const id = pid, ticket = ++detailRequest;
+    detailPending = ticket;
     if (initial) { $('project-loading').hidden = false; $('project-content').hidden = true; $('project-title').textContent = '翻译详情'; $('project-meta').textContent = ''; }
     $('project-reload').hidden = true; notice('project-error', '');
     try {
@@ -215,7 +218,7 @@
         }
       }
     } catch (e) { if (ticket === detailRequest && panel === 'project') { notice('project-error', e.message); $('project-reload').hidden = false; } }
-    finally { if (ticket === detailRequest) $('project-loading').hidden = true; }
+    finally { if (ticket === detailRequest) $('project-loading').hidden = true; if (ticket === detailPending) detailPending = 0; }
   }
   $('subtitle-more').onclick = showMoreSubtitles;
   $('project-reload').onclick = () => { previewKey = ''; loadProject(true); };

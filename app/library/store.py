@@ -41,6 +41,21 @@ class Store:
     def counts(self):
         with self.db() as db:return dict(db.execute('SELECT state,count(*) FROM media GROUP BY state').fetchall())
 
+    def waiting_ready(self,now,limit=100):
+        """Retry oldest checked arrivals first; priority cannot pin a blocked page."""
+        with self.db() as db:
+            return [json.loads(row[0]) for row in db.execute(
+                "SELECT payload FROM media WHERE state='waiting' "
+                "AND COALESCE(json_extract(payload,'$.next_attempt_at'),0)<=? "
+                "ORDER BY updated ASC, COALESCE(json_extract(payload,'$.priority'),0) DESC LIMIT ?",
+                (now,limit))]
+
+    def pending_refresh(self,limit=50):
+        with self.db() as db:
+            return [json.loads(row[0]) for row in db.execute(
+                "SELECT payload FROM media WHERE state='done' AND json_extract(payload,'$.refresh_pending')=1 "
+                "ORDER BY updated ASC LIMIT ?",(limit,))]
+
     def setting(self,key,default=None):
         with self.db() as db:
             row=db.execute('SELECT value FROM settings WHERE key=?',(key,)).fetchone()

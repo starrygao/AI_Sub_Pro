@@ -68,9 +68,10 @@ class LibraryWorker:
         if not old or old.get('fingerprint')!=current:
             row={'path':str(path),'state':'waiting','reason':'等待文件稳定','fingerprint':current,
                  'stable_since':now,'updated':now,'priority':priority,'metadata':metadata,'output_path':str(path.with_suffix('.srt'))}
-            if old and old.get('output_hash'):
-                row['stale_output_hash']=old['output_hash']
-                row['stale_output_path']=old.get('output_path',str(path.with_suffix('.srt')))
+            if old and (old.get('output_hash') or old.get('stale_output_hash')):
+                # A replacement can change across many scans before becoming stable.
+                row['stale_output_hash']=old.get('output_hash') or old['stale_output_hash']
+                row['stale_output_path']=(old.get('output_path') if old.get('output_hash') else old.get('stale_output_path')) or str(path.with_suffix('.srt'))
             if old and old.get('project_id'):
                 row['previous_project_id']=old['project_id']
                 if old['state']=='translating':
@@ -186,7 +187,8 @@ class LibraryWorker:
         return info
 
     def refresh_readiness(self):
-        self.set_blockers(self.sources.readiness());self.health=dict(self.sources.health)
+        candidates=self.store.waiting_ready(time.time())+self.store.rows(['translating','publishing'],limit=5)
+        self.set_blockers(self.sources.readiness(candidates=[row['path'] for row in candidates]));self.health=dict(self.sources.health)
         self.last_error=''
 
     def finish(self):
@@ -205,12 +207,14 @@ class LibraryWorker:
                 self.save(row,state='error',reason=project.get('error') or project.get('progress_msg') or '翻译已停止');continue
             reason=self.block_reason(path)
             if reason:self.save(row,state='publishing',reason=reason);continue
+            delivery_ready=False
             try:
                 with translation_delivery_lock(pid,blocking=False) as acquired:
                     if not acquired:
                         self.save(row,state='publishing',reason='等待字幕交付完成');continue
                     # Existing export gate validates source generation, report and delivery hashes.
                     export_srt(pid,format='bilingual',container='srt')
+                    delivery_ready=True
                     source=tasks.PROJECTS_DIR/pid/'bilingual.srt'
                     other=[p for p in subtitle_files(path) if p!=path.with_suffix('.srt') and chinese_sidecar(p,path)]
                     if other:
@@ -218,11 +222,11 @@ class LibraryWorker:
                                   existing_subtitles=[{'path':str(p),'fingerprint':fingerprint(p)} for p in other]);continue
                     output=publish_sidecar(path,source,row['fingerprint'])
                 mutate_project(pid,lambda p:p.update(library_output_path=str(output),library_status='done'))
-                self.save(row,state='done',reason='翻译完成，同名双语字幕已保存',output_path=str(output),completed_at=time.time(),output_hash=hashlib.sha256(output.read_bytes()).hexdigest())
+                self.save(row,state='done',reason='翻译完成，同名双语字幕已保存',output_path=str(output),completed_at=time.time(),output_hash=hashlib.sha256(output.read_bytes()).hexdigest(),retry_stage=None)
                 try:self.sources.refresh_subtitles(row.get('metadata',{}).get('emby_id',''))
                 except Exception:self.save(row,reason='字幕已保存，Emby 刷新待重试',refresh_pending=True)
             except Exception as exc:
-                self.save(row,state='error',reason='字幕未发布：'+self.safe_error(exc))
+                self.save(row,state='error',reason='字幕未发布：'+self.safe_error(exc),retry_stage='publish' if delivery_ready else None)
 
     @staticmethod
     def safe_error(exc):
@@ -272,7 +276,8 @@ class LibraryWorker:
         if fingerprint(path)!=row['fingerprint'] or self.block_reason(path):raise RuntimeError('提取期间视频状态变化')
         project['library_subtitle_source']=source_label
         atomic_write_json(pdir/'project.json',project)
-        self.save(row,state='translating',reason='正在翻译',project_id=pid,subtitle_source=source_label,metadata=metadata)
+        self.save(row,state='translating',reason='正在翻译',project_id=pid,subtitle_source=source_label,metadata=metadata,
+                  retry_stage=None,next_attempt_at=0,retry_attempts=0)
         if project['status']=='asr_done':tasks.start_translate(pid,tasks.TranslateRequest(target_language='简体中文'))
         else:tasks.start_transcribe_translate(pid,tasks.FullPipelineRequest(workflow_mode='translate_only'))
 
@@ -286,7 +291,7 @@ class LibraryWorker:
         if os.getloadavg()[0]>float(self.config.get('max_load',16)):return
         now=time.time()
         # Oldest waiting first avoids starvation while new arrivals keep coming.
-        rows=self.store.rows(['waiting'],limit=100,oldest=True)
+        rows=self.store.waiting_ready(now)
         for row in rows:
             path=Path(row['path'])
             if not self.eligible_new_path(path,row.get('fingerprint')):continue
@@ -320,7 +325,9 @@ class LibraryWorker:
                     metadata={**self.sources.metadata(path),**row.get('metadata',{})}
                     try:language=self.sources.original_language(metadata)
                     except Exception:
-                        self.save(row,reason='音轨语言未知，等待 TMDB 原始语言确认');return
+                        attempts=min(int(row.get('retry_attempts',0))+1,7)
+                        self.save(row,reason='音轨语言未知，等待 TMDB 原始语言确认',retry_attempts=attempts,
+                                  next_attempt_at=now+min(3600,60*2**(attempts-1)));return
                     if language in CHINESE_LANGUAGES:
                         self.save(row,state='native_language',reason='TMDB 确认为中文原声，无需翻译',metadata=metadata);return
                 # Re-read external readiness immediately before extraction / model work.
@@ -345,12 +352,13 @@ class LibraryWorker:
         self.refresh_readiness()
         self.finish()
         self.apply_pending_settings()
-        for row in self.store.rows(['done'],limit=50):
-            if row.get('refresh_pending'):
-                try:
-                    self.sources.refresh_subtitles(row.get('metadata',{}).get('emby_id',''))
-                    self.save(row,refresh_pending=False,reason='翻译完成，Emby 已刷新')
-                except Exception:pass
+        for row in self.store.pending_refresh():
+            try:
+                self.sources.refresh_subtitles(row.get('metadata',{}).get('emby_id',''))
+                self.save(row,refresh_pending=False,reason='翻译完成，Emby 已刷新')
+            except Exception:
+                # Rotate failed attempts so an unavailable batch cannot hide older work.
+                self.save(row,refresh_pending=True)
         self.discover()
         if (self.store.setting('enabled',self.config.get('enabled',False)) and not self.model_settings.state()['pending']
                 and not self.directories.read()['pending'] and not (self.storage and self.storage.state()['pending'])):

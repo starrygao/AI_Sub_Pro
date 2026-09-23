@@ -22,18 +22,32 @@ def emby_metadata(item, get_item):
     return result
 
 
-def pending_download_paths(torrents, get_files, mappings):
+def pending_download_paths(torrents, get_files, mappings, candidates=None):
+    """None inspects all downloads; a candidate list limits per-file API requests."""
     paths = set()
     for torrent in torrents:
         state = str(torrent.get('state','')).lower()
-        if float(torrent.get('progress',0)) >= 1 and not any(x in state for x in ['check','moving','error','missing']):
+        unsafe=any(x in state for x in ['check','moving','error','missing'])
+        if float(torrent.get('progress',0)) >= 1 and not unsafe:
             continue
         content=torrent.get('content_path')
         if isinstance(content,str) and content.startswith('/'):
-            paths.add(map_path(content,mappings))
-            continue
-        for file in get_files(torrent['hash']):
-            paths.add(map_path(str(Path(torrent['save_path']) / file['name']),mappings))
+            content=map_path(content,mappings)
+            if unsafe or (candidates is not None and not any(Path(p).is_relative_to(content) for p in candidates)):
+                paths.add(content)
+                continue
+        else:content=None
+        # A finished episode can be used while other episodes in its torrent download.
+        # Keep whole-torrent safety gates, and only query files for relevant candidates.
+        files=get_files(torrent['hash'])  # Request failures propagate: readiness fails closed.
+        if not files:
+            if content:
+                paths.add(content)
+                continue
+            raise RuntimeError('qBittorrent 文件状态暂不可用')
+        for file in files:
+            if unsafe or not float(file.get('progress',0))>=1:
+                paths.add(map_path(str(Path(torrent['save_path']) / file['name']),mappings))
     return paths
 
 
@@ -91,7 +105,7 @@ class Sources:
             return result
         finally:db.close()
 
-    def readiness(self):
+    def readiness(self,candidates=None):
         blocked={}
         self.health={}
         writers=self.config.get('open_writes')
@@ -104,6 +118,13 @@ class Sources:
         sessions=self.emby('/Sessions')
         self.health['emby']={'ok':True,'playing':sum(bool(x.get('NowPlayingItem')) for x in sessions),
                              'transcoding':sum(bool(x.get('TranscodingInfo')) for x in sessions)}
+        download_candidates=None
+        if candidates is not None and self.config.get('qbittorrent'):
+            download_candidates={str(path) for path in candidates}
+            if self.config.get('moviepilot'):
+                for path in list(download_candidates):
+                    original=self.download_source(path)
+                    if original:download_candidates.add(original)
         for conf in self.config.get('qbittorrent',[]):
             name=conf['name'];base=conf['url'].rstrip('/')
             with httpx.Client(timeout=15,trust_env=False) as client:
@@ -112,7 +133,7 @@ class Sources:
                 if r.text.strip()!='Ok.':raise RuntimeError(name+' 登录失败')
                 def get(route,**params):
                     r=client.get(base+'/api/v2/'+route,params=params);r.raise_for_status();return r.json()
-                paths=pending_download_paths(get('torrents/info'),lambda h:get('torrents/files',hash=h),conf.get('path_maps',{}))
+                paths=pending_download_paths(get('torrents/info'),lambda h:get('torrents/files',hash=h),conf.get('path_maps',{}),candidates=download_candidates)
                 blocked.update({p:name+'：下载或校验尚未完成' for p in paths})
                 self.health[name]={'ok':True,'pending_files':len(paths)}
         conf=self.config.get('transmission')

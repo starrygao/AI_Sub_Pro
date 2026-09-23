@@ -96,6 +96,7 @@ from app.engines.scheduler import (
     complete_progress as _scheduler_complete_progress,
     get_progress as _scheduler_get_progress,
     update_progress as _scheduler_update_progress,
+    update_progress_message as _scheduler_update_progress_message,
     progress_store,  # re-export for compatibility with older internal imports
     restore_progress_state as _restore_progress_state,
     snapshot_progress_state as _snapshot_progress_state,
@@ -304,10 +305,9 @@ def _rollback_failed_task_launch(
                         "progress_msg",
                         "已取消",
                     )
-                    _emit_progress(
+                    _emit_cancelled_progress(
                         pid,
                         launch_stage,
-                        0,
                         message if isinstance(message, str) else "已取消",
                     )
                 except Exception as exc:
@@ -418,6 +418,10 @@ def is_task_launch_pending(pid: str) -> bool:
 def _emit_progress(pid: str, stage: str, local_pct: int, msg: str) -> None:
     """Route progress through scheduler (locked + persisted + stage-mapped)."""
     _scheduler_update_progress(pid, stage=stage, local_pct=local_pct, msg=msg)
+
+
+def _emit_cancelled_progress(pid: str, stage: str, msg: str) -> None:
+    _scheduler_update_progress_message(pid, stage=stage, msg=msg)
 
 
 def _check_cancel(pid: str) -> None:
@@ -967,10 +971,9 @@ def _mark_project_cancelled(
             if commit_workflow_state:
                 _best_effort_cancel_workflow(pid, stage)
                 message = fields.get("progress_msg")
-                _emit_progress(
+                _emit_cancelled_progress(
                     pid,
                     stage,
-                    0,
                     message if isinstance(message, str) else "已取消",
                 )
             return fields
@@ -1323,7 +1326,7 @@ def _run_asr_pipeline(pid: str, audio_track: int, language: str, owns_registrati
             )
         except Exception:
             pass
-        _emit_progress(pid, "asr", 0, "已取消")
+        _emit_cancelled_progress(pid, "asr", "已取消")
     except Exception as e:
         log.exception("ASR pipeline failed for %s", pid)
         _best_effort_mark_exception(pid, "asr", e)
@@ -8782,7 +8785,7 @@ def _run_translate_pipeline(
             )
         except Exception:
             pass
-        _emit_progress(pid, "translate", 0, "已取消")
+        _emit_cancelled_progress(pid, "translate", "已取消")
     except Exception as e:
         log.exception("Translation pipeline failed for %s", pid)
         error_msg = _safe_error_message(e)
@@ -8797,7 +8800,7 @@ def _run_translate_pipeline(
         except Exception:
             terminal = {}
         if terminal and terminal.cancel_won:
-            _emit_progress(pid, "translate", 0, "已取消")
+            _emit_cancelled_progress(pid, "translate", "已取消")
         else:
             _emit_progress(
                 pid,
@@ -9682,7 +9685,7 @@ def _run_burn_pipeline(pid: str):
             message = fields.get("progress_msg") if isinstance(fields.get("progress_msg"), str) else "已取消"
         except Exception:
             message = "已取消"
-        _emit_progress(pid, "burn", 0, message)
+        _emit_cancelled_progress(pid, "burn", message)
     except Exception as e:
         log.exception("Burn pipeline failed for %s", pid)
         error_msg = _safe_error_message(e, 120)
@@ -9697,7 +9700,7 @@ def _run_burn_pipeline(pid: str):
         except Exception:
             terminal = {}
         if terminal and terminal.cancel_won:
-            _emit_progress(pid, "burn", 0, "已取消")
+            _emit_cancelled_progress(pid, "burn", "已取消")
             return
         _emit_progress(
             pid,
@@ -9768,7 +9771,7 @@ def _run_full_pipeline(pid: str, audio_track: int, language: str, target_languag
             message = fields.get("progress_msg") if isinstance(fields.get("progress_msg"), str) else "已取消"
         except Exception:
             message = "已取消"
-        _emit_progress(pid, stage, 0, message)
+        _emit_cancelled_progress(pid, stage, message)
     except Exception as e:
         if _burn_failure_terminal_is_committed(pid):
             log.warning(
@@ -9821,7 +9824,7 @@ def _run_asr_translate_pipeline(pid: str, audio_track: int, language: str, targe
             message = fields.get("progress_msg") if isinstance(fields.get("progress_msg"), str) else "已取消"
         except Exception:
             message = "已取消"
-        _emit_progress(pid, stage, 0, message)
+        _emit_cancelled_progress(pid, stage, message)
     except Exception as e:
         log.exception("ASR+translate pipeline failed for %s", pid)
         error_msg = _safe_error_message(e)
@@ -10238,7 +10241,7 @@ def start_burn(pid: str = ""):
                 message = fields.get("progress_msg") if isinstance(fields.get("progress_msg"), str) else "已取消"
             except Exception:
                 message = "已取消"
-            _emit_progress(pid, "burn", 0, message)
+            _emit_cancelled_progress(pid, "burn", message)
         except Exception as e:
             error_msg = _safe_error_message(e, 120)
             try:
@@ -10252,7 +10255,7 @@ def start_burn(pid: str = ""):
             except Exception:
                 terminal = {}
             if terminal and terminal.cancel_won:
-                _emit_progress(pid, "burn", 0, "已取消")
+                _emit_cancelled_progress(pid, "burn", "已取消")
             else:
                 _emit_progress(
                     pid,

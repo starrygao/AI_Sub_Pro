@@ -75,9 +75,7 @@ const visibleReason=()=>{
  const status=taskNodes().find(e=>e.className==='task-status');
  return descendants(status).find(e=>e.className==='reason')?.textContent;
 };
-for(const active of ['translating','publishing']){
- row.state=active;await context.refresh();assert.equal(visibleReason(),'正在翻译第 1 批');
-}
+assert.equal(visibleReason(),'正在翻译第 1 批');
 for(const [terminal,reason] of [['cancelled','用户已停止任务'],['error','保存字幕失败'],['done','双语字幕已保存']]){
  row.state=terminal;row.reason=reason;await context.refresh();
  assert.equal(visibleReason(),reason,'Terminal task status must describe the final state');

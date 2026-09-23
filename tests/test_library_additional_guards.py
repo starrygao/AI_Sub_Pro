@@ -6,7 +6,7 @@ from app.library.guard import chinese_sidecar
 
 def test_qbit_large_inventory_uses_content_path_without_per_torrent_requests():
     def no_files(_):raise AssertionError('one HTTP request per torrent is too expensive')
-    assert pending_download_paths([{'hash':'a','content_path':'/pt/Show','progress':0.9,'state':'pausedDL'}],no_files,{'/pt':'/video/pt'})=={'/video/pt/Show'}
+    assert pending_download_paths([{'hash':'a','content_path':'/pt/Show','progress':0.9,'state':'pausedDL'}],no_files,{'/pt':'/video/pt'},candidates=[])=={'/video/pt/Show'}
 
 
 def test_expired_upload_snapshot_fails_closed(tmp_path):
