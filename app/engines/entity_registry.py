@@ -15,10 +15,14 @@ from app.utils.subtitle_structure import visible_subtitle_text
 _TOKEN = r"(?:[A-Z]\.){2,}|[A-Z][A-Za-z]*(?:['’-][A-Za-z]+)*"
 _TOKEN_RE = re.compile(rf"(?<![A-Za-z])(?:{_TOKEN})(?![A-Za-z])")
 _LABEL_RE = re.compile(r"(?:^|\n)\s*[-–—]?\s*(?:[\[［【]([^\]］】]+)[\]］】]|([^:：\n]{1,48})[:：])")
+_CONTEXT_MARKER_RE = re.compile(
+    r"(?m)^(\s*[-–—]?\s*)(?:【(?:电话|广播|电视|新闻|无线电|旁白|画外音|主持人|DJ|酒保|人群|歌声)】\s*)+"
+)
 _STOP = set("I A An The This That These Those He She It We You They My Your Our His Her Its Their Yes No Oh Ah Hey Hi Hello Well Please Thanks Thank What Who Where When Why How If Then But And Or So Not Now Just All Some Come Go Look Let Tell Call Find Ask Contact Good Very Really Maybe Still Sir Lady Queen King Prince Captain Doctor Ensign Agent Special Director Mr Mrs Miss Dr Music Radio Phone News Voice Sighs Laughing Groans Grunts".casefold().split())
 _STOP.update("group flight lieutenant colonel commander officer general major marshal professor sergeant secretary admiral police home".split())
 _STOP.update("yeah there here because actually also everything something nothing right okay ok sure listen see get got don't isn't wasn't doesn't can't could would should did do does was were are has have had will must may might which whatever whoever never only even about too much any each both let's".split())
 _STOP.update({"princess", "bandits"})
+_STOP.update("is can uh um hmm mm-hmm somebody welcome sorry seriously god goddammit shit man woman boy girl voice voices".split())
 _STOP.update("duchess duke baron baroness count countess lord chief security".split())
 _STOP.update("to from for with in on at by over under during before after out through into until since although while as of off than still every nor either neither been being because without within between".split())
 # Phonetic characters provide a conservative lexical boundary. Ordinary
@@ -68,7 +72,10 @@ def target_name_spans(source_name: str, translation: str) -> list[str]:
     return list(dict.fromkeys(spans))
 
 
-def aligned_name_span(name: str, source: str, target: str) -> tuple[str, str] | None:
+def aligned_name_span(name: str, source: str, target: str, *,
+                      known_forms=(), source_aliases=()) -> tuple[str, str] | None:
+    # Delivery annotations describe audio context, never the person's identity.
+    target = _CONTEXT_MARKER_RE.sub(r"\1", visible_subtitle_text(target))
     labels = speaker_labels(source)
     targets = speaker_labels(target)
     if len(labels) == len(targets):
@@ -82,13 +89,29 @@ def aligned_name_span(name: str, source: str, target: str) -> tuple[str, str] | 
     # Speaker names are not candidates for names mentioned in their speech.
     target_body = _LABEL_RE.sub("", visible_subtitle_text(target))
     source_body = _LABEL_RE.sub("", visible_subtitle_text(source))
-    spans = target_name_spans(name, target_body)
-    if len(spans) == 1:
-        return spans[0], "bounded_lexical_span"
+    # A complete address is stronger evidence than a phonetic substring.
     if source_body.strip(" \r\n-–—.!?…。，？！").casefold() == name.casefold():
         address = target_body.strip(" \r\n-–—.!?…。，？！")
         if re.fullmatch(r"[\u3400-\u9fff·]{2,12}", address):
             return address, "standalone_address"
+    if re.fullmatch(r"[A-Z]{2,8}", name) and entity_matcher(name).search(target_body):
+        return entity_matcher(name).search(target_body).group(), "literal_source"
+    # Only explicit labels/addresses elsewhere may resolve an ambiguous cue.
+    phonetic_spans = [match.group() for match in _PHONETIC_RE.finditer(target_body)]
+    known = [form for form in known_forms if form and target_body.count(form) == 1
+             and not any(form in span and span != form for span in phonetic_spans)]
+    if len(known) == 1:
+        return known[0], "bounded_lexical_span"
+    remainder = source_body
+    for identity in sorted({name, *source_aliases}, key=len, reverse=True):
+        remainder = entity_matcher(identity).sub("", remainder)
+    other_names = [re.sub(r"['’]s$", "", match.group()).casefold()
+                   for match in _TOKEN_RE.finditer(remainder)]
+    if any(len(word) >= 2 and word not in _STOP for word in other_names):
+        return None
+    spans = target_name_spans(name, target_body)
+    if len(spans) == 1:
+        return spans[0], "bounded_lexical_span"
     if re.search(r"\b(?:Prince|Princess|Queen|Sir)\s+" + re.escape(name) + r"\b", source):
         titled = re.findall(r"(?:^|[，。？！：、\s])([\u3400-\u9fff]{2,5})(?:王子|公主|女王|爵士)", target_body)
         if len(titled) == 1:
@@ -139,10 +162,17 @@ def build_entity_registry(source_by_id: dict[str, str], target_by_id: dict[str, 
             continue
         name = spellings[key]
         observations = []
+        explicit_forms = set()
+        for bid in ids:
+            aligned = aligned_name_span(name, source_by_id.get(bid, ""),
+                                        target_by_id.get(bid, ""), source_aliases=full_names[key])
+            if aligned and aligned[1] in {"speaker_label", "standalone_address"}:
+                explicit_forms.add(aligned[0])
         for bid in ids:
             source = source_by_id.get(bid, "")
             target = target_by_id.get(bid, "")
-            aligned = aligned_name_span(name, source, target)
+            aligned = aligned_name_span(name, source, target, known_forms=explicit_forms,
+                                        source_aliases=full_names[key])
             if aligned:
                 span, evidence = aligned
                 # A first-name mention inside an explicit full name can be

@@ -1041,7 +1041,11 @@ def proper_name_consistency_score(
 
         target_forms = []
         for item in observations:
-            aligned = aligned_name_span(proper_name, item["source_text"], item["translation"])
+            aligned = aligned_name_span(
+                proper_name, item["source_text"], item["translation"],
+                source_aliases=[name for name in _extract_proper_names(item["source_text"])
+                                if name.endswith(" " + proper_name)],
+            )
             if aligned and "·" in aligned[0] and any(
                 name != proper_name and name.endswith(" " + proper_name)
                 for name in _extract_proper_names(item["source_text"])

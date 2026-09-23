@@ -748,7 +748,7 @@ def _contextual_marker_from_label(label: str) -> str:
         return "【DJ】"
     if "BARTENDER" in words:
         return "【酒保】"
-    if {"VOICE", "VOICEOVER", "VO", "NARRATOR"} & words or "V O" in normalized:
+    if {"VOICEOVER", "VO", "NARRATOR"} & words or "V O" in normalized:
         return "【旁白】"
     if (
         {"OFFSCREEN", "OFFCAMERA", "OS"} & words
