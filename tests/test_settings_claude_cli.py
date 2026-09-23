@@ -692,7 +692,10 @@ def test_models_endpoint_returns_claude_cli_static_models_without_api_key():
     ]
 
 
-def test_models_endpoint_returns_codex_cli_static_models_without_api_key():
+def test_models_endpoint_returns_codex_cli_static_models_without_api_key(monkeypatch):
+    from app.engines import codex_models
+    monkeypatch.setattr(codex_models, 'read_cache', lambda: None)
+    monkeypatch.setattr(codex_models, 'query_models', lambda: (_ for _ in ()).throw(OSError('unavailable')))
     from app.main import app
     client = TestClient(app)
 
@@ -1154,7 +1157,10 @@ def test_system_check_reports_configured_bundled_asr_model(monkeypatch, tmp_path
     assert data["whisper_model_source"] == "bundled"
 
 
-def test_model_catalog_frontend_backend_parity_without_credentials():
+def test_model_catalog_frontend_backend_parity_without_credentials(monkeypatch):
+    from app.engines import codex_models
+    monkeypatch.setattr(codex_models, 'read_cache', lambda: None)
+    monkeypatch.setattr(codex_models, 'query_models', lambda: (_ for _ in ()).throw(OSError('unavailable')))
     import json
     import subprocess
     from app.api.settings import list_models

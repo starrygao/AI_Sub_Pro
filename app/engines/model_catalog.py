@@ -14,6 +14,11 @@ def model_ids(provider: str) -> list[str]:
 def capabilities(provider: str, model: str) -> dict:
     entries = CATALOG['providers'].get(provider, {}).get('models', {})
     model = model.strip() if isinstance(model, str) else ''
+    if provider == 'codex_cli':
+        from .codex_models import cached_capability
+        dynamic = cached_capability(model)
+        if dynamic is not None:
+            return dynamic
     entry = entries.get(model)
     # Only documented date-style snapshots inherit their exact base model.
     if entry is None and provider == 'openai':

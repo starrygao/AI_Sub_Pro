@@ -201,3 +201,31 @@ assert.equal($('subtitle-preview').children[0].children[1].children[1].textConte
 assert.equal($('project-stages').children[0].children[1].textContent,'已完成');
 navigate('#settings');await flush();assert.equal($('panel-project').hidden,true);
 ''')
+
+
+def test_model_sync_refreshes_both_dropdowns_without_resetting_unsaved_choices():
+    run_js(r'''
+config.translation.polish_provider='codex_cli';config.translation.polish_model='gpt-5.5';config.translation.polish_effort='medium';
+vm.runInContext(code,context);await flush();
+$('setting-model').value='fixture-model';$('setting-model').onchange();
+$('setting-batch').value='31';$('settings-form').handlers.change();
+const previous=context.request;let refreshes=0;
+context.request=async(path,...args)=>{
+ if(path==='models/codex_cli?refresh=true'){
+  refreshes++;return {source:'remote',models:['new-model','gpt-5.5','fixture-model'],capabilities:{'new-model':{reasoning_efforts:['high']},'gpt-5.5':{reasoning_efforts:['medium']},'fixture-model':{reasoning_efforts:['low']}}};
+ }
+ return previous(path,...args);
+};
+await $('models-refresh').onclick();
+assert.equal(refreshes,1); // Same provider shares one synchronization.
+assert.equal($('setting-model').value,'fixture-model');assert.equal($('setting-batch').value,'31');
+assert.equal($('setting-polish-model').value,'gpt-5.5');assert.equal($('setting-polish-effort').value,'medium');
+assert($('setting-model').options.some(x=>x.value==='new-model'));
+assert($('setting-polish-model').options.some(x=>x.value==='new-model'));
+$('setting-model').value='new-model';$('setting-model').onchange();
+assert($('setting-effort').options.some(x=>x.value==='high'));
+assert.match($('model-hint').textContent,/已同步/);assert.equal(saved.length,0);
+context.request=async()=>{throw Error('offline')};
+await $('models-refresh').onclick();
+assert.equal($('setting-model').value,'new-model');assert.match($('settings-error').textContent,/同步失败/);
+''')

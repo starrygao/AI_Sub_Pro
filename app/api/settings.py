@@ -630,14 +630,17 @@ def model_catalog_script():
 
 
 @router.get("/models/{provider}")
-def list_models(provider: str):
+def list_models(provider: str, refresh: bool = False):
     """Fetch available models from a provider using the configured API key."""
     from app.engines.translator import PROVIDER_URLS
     from openai import OpenAI
 
     provider = _validate_provider_field("provider", provider, allow_empty=False)
 
-    if provider in ("claude_cli", "codex_cli"):
+    if provider == "codex_cli":
+        from app.engines.codex_models import catalog
+        return catalog(force=refresh)
+    if provider == "claude_cli":
         return catalog_response(provider, model_ids(provider), "static", "cli")
 
     cfg = Config.to_dict()

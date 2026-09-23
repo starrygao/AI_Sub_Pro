@@ -17,6 +17,14 @@
   let panel = 'tasks', pid = '', settings = null, catalog = {}, serverStatus = null;
   let saving = false, settingsLoading = false, detailRequest = 0, detailPending = 0, previewKey = '', blocks = [], shown = 0;
   let polishCatalog = {}, modelCatalogs = {}, polishLoading = false, polishError = '', polishRequest = 0;
+  let modelsRefreshing = false;
+
+  function catalogHint(info) {
+    return info.source === 'remote' ? '已同步当前账号的模型列表；实际可用性取决于账号权限。'
+      : info.source === 'cache' ? (info.stale || info.refresh_failed ? '暂未同步成功，使用 Codex 缓存列表。' : '已读取 Codex 当前模型列表。')
+        + (info.verified_at ? ' 更新于 ' + new Date(info.verified_at).toLocaleString() : '')
+      : '暂未获取当前模型列表，使用内置目录；可点击同步重试。';
+  }
 
   function notice(id, message) { $(id).textContent = message; $(id).hidden = !message; }
   function options(id, values, selected, labels = {}) {
@@ -77,7 +85,8 @@
   function settingsState(s = serverStatus) {
     serverStatus = s;
     $('settings-fields').disabled = saving || !settings;
-    $('settings-save').disabled = saving || !settings || polishLoading || !!polishError || !dirty();
+    $('settings-save').disabled = saving || modelsRefreshing || !settings || polishLoading || !!polishError || !dirty();
+    $('models-refresh').disabled = saving || modelsRefreshing || polishLoading || !settings;
     $('settings-reset').disabled = saving || !settings || !dirty();
     const update = s?.model_settings;
     const current = [update?.current_model, effortNames[update?.current_effort]].filter(Boolean).join(' · ');
@@ -94,6 +103,7 @@
       else input.value = value;
     }
     options('setting-model', catalog.models || [], settings.translation.primary_model);
+    $('model-hint').textContent = catalogHint(catalog);
     modelEfforts(settings.translation.primary_effort);
     const provider = settings.translation.primary_provider;
     const polishProvider = settings.translation.polish_provider || '';
@@ -138,6 +148,22 @@
   $('settings-form').addEventListener('change', () => { $('settings-feedback').textContent = dirty() ? '有未保存的更改' : '尚未修改'; settingsState(); });
   $('settings-reset').onclick = () => { populate(); notice('settings-error', ''); };
   $('settings-reload').onclick = loadSettings;
+  $('models-refresh').onclick = async () => {
+    if (modelsRefreshing || saving || !settings) return;
+    modelsRefreshing = true; settingsState(); notice('settings-error', '');
+    $('models-refresh').textContent = '正在同步…';
+    try {
+      const providers = [...new Set([settings.translation.primary_provider, $('setting-polish-provider').value].filter(Boolean))];
+      const responses = await Promise.all(providers.map(provider => request('models/' + encodeURIComponent(provider) + '?refresh=true')));
+      providers.forEach((provider, index) => { modelCatalogs[provider] = responses[index]; });
+      catalog = modelCatalogs[settings.translation.primary_provider];
+      const selected = $('setting-model').value, effort = $('setting-effort').value;
+      options('setting-model', catalog.models || [], selected); modelEfforts(effort);
+      $('model-hint').textContent = catalogHint(catalog);
+      await loadPolishModels($('setting-polish-model').value, $('setting-polish-effort').value);
+    } catch (e) { notice('settings-error', '模型同步失败：' + e.message + '。已保留当前选择。'); }
+    finally { modelsRefreshing = false; $('models-refresh').textContent = '同步模型列表'; settingsState(); }
+  };
   $('settings-form').onsubmit = async event => {
     event.preventDefault();
     if (saving || !settings || polishLoading || polishError || !dirty() || !$('settings-form').reportValidity()) return;

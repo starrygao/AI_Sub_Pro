@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .base import BaseProvider
-from app.engines.model_catalog import model_ids, model_efforts, context_window
+from app.engines.model_catalog import model_ids, model_efforts, context_window, capabilities
 from .result_contract import (
     provider_response_instruction,
     reconcile_translation_results,
@@ -50,7 +50,7 @@ def _coerce_effort(value, model: str) -> str:
     normalized = value.strip().lower()
     if normalized == "auto":
         return normalized
-    return normalized if normalized in CODEX_CLI_MODEL_EFFORTS.get(model, set()) else "auto"
+    return normalized if normalized in capabilities('codex_cli', model)['reasoning_efforts'] else "auto"
 
 
 class CodexCliProvider(BaseProvider):
