@@ -13,7 +13,11 @@
     $('storage-total').textContent=bytes(value.total_bytes);
     $('storage-disk').textContent=(value.disks||[]).map(d=>'磁盘可用 '+bytes(d.free_bytes)+' / 总容量 '+bytes(d.total_bytes)).join(' · ');
     $('storage-categories').replaceChildren(...(value.categories||[]).map(group=>{const row=el('tr');for(const text of [group.label,bytes(group.bytes),bytes(group.eligible_bytes),String(group.files)])row.append(el('td',text));return row;}));
-    $('system-storage').replaceChildren();for(const [key,label] of [['data','知识库与任务数据'],['temporary','临时文件'],['models','模型缓存']]){if(value.paths?.[key])$('system-storage').append(el('dt',label),el('dd',value.paths[key]));}
+    const paths=value.paths||{},root=paths.data?.replace(/\/+$/,'');
+    const locations=[['数据主目录',paths.data],['影视知识库',root&&root+'/knowledge.json'],
+      ['翻译记忆',root&&root+'/translation_memory.sqlite3'],['短语库',root&&root+'/phrase_library.sqlite3'],
+      ['任务文件与音频中间文件',root&&root+'/projects'],['临时文件',paths.temporary],['模型缓存',paths.models]];
+    $('system-storage').replaceChildren();for(const [label,path] of locations){if(path)$('system-storage').append(el('dt',label),el('dd',path));}
     $('storage-measured').textContent='统计时间 '+new Date(value.measured_at*1000).toLocaleString()+' · 可清理量已排除受保护文件。'+(value.unreadable_entries?' 有 '+value.unreadable_entries+' 项无法读取，统计不完整。':'');
   }
   function show(result){

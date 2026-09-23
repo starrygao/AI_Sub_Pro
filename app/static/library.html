@@ -5,7 +5,7 @@
 <link rel="icon" href="/static/favicon.ico?v=1" sizes="16x16 32x32">
 <link rel="icon" href="/static/favicon.svg?v=1" type="image/svg+xml">
 <meta name="theme-color" content="#153f42">
-<link rel="stylesheet" href="/static/css/library.css?v=console-13"><script defer src="/static/js/library.js?v=console-14"></script><script defer src="/static/js/library-knowledge.js?v=console-10"></script><script defer src="/static/js/library-panels.js?v=console-11"></script><script defer src="/static/js/library-directories.js?v=console-6"></script><script defer src="/static/js/library-selection.js?v=console-1"></script><script defer src="/static/js/library-cleanup.js?v=2"></script><script defer src="/static/js/library-controls.js?v=1"></script></head>
+<link rel="stylesheet" href="/static/css/library.css?v=console-13"><script defer src="/static/js/library.js?v=console-14"></script><script defer src="/static/js/library-knowledge.js?v=console-10"></script><script defer src="/static/js/library-panels.js?v=console-11"></script><script defer src="/static/js/library-directories.js?v=console-6"></script><script defer src="/static/js/library-selection.js?v=console-1"></script><script defer src="/static/js/library-cleanup.js?v=3"></script><script defer src="/static/js/library-controls.js?v=1"></script></head>
 <body><header><a class="brand" href="#tasks">AI Sub Pro</a><nav class="console-nav" aria-label="主导航"><a id="nav-tasks" href="#tasks" aria-current="page">字幕任务</a><a id="nav-system" href="#system">设置</a><a id="nav-knowledge" href="#knowledge">知识库</a></nav><div class="header-actions"><button id="logout" class="secondary">退出登录</button></div></header>
 <main><div id="error" role="alert" hidden></div>
 <div id="panel-tasks">
@@ -85,7 +85,7 @@
   <section class="storage-overview" aria-labelledby="storage-heading"><div><h2 id="storage-heading">当前占用</h2><strong id="storage-total">正在统计…</strong><p id="storage-disk" class="hint"></p></div><p class="hint">统计本服务数据、临时文件与模型目录，不含原视频和媒体目录中的字幕。按文件大小统计，硬链接不重复计入。</p></section>
   <div class="storage-table-wrap"><table class="storage-table"><caption class="sr-only">文件分类占用</caption><thead><tr><th scope="col">文件类别</th><th scope="col">占用</th><th scope="col">可清理</th><th scope="col">文件数</th></tr></thead><tbody id="storage-categories"></tbody></table></div>
   <p id="storage-measured" class="hint" role="status"></p>
-  <section class="detail-section"><div class="task-heading"><h2>保存位置</h2><button id="storage-edit" class="secondary">编辑保存位置</button></div><dl id="system-storage" class="project-facts"></dl><p class="hint">可以更改数据、临时文件和模型目录。切换时会等待任务结束，校验复制的数据并重启服务；原目录保留。字幕仍保存到视频所在文件夹。</p></section>
+  <section class="detail-section"><div class="task-heading"><h2>保存位置</h2><button id="storage-edit" class="secondary">编辑保存位置</button></div><dl id="system-storage" class="project-facts"></dl><p class="hint">可编辑数据主目录、临时文件和模型目录。知识库、翻译记忆、短语库及任务文件随数据主目录一起迁移，不单独编辑；尚未生成的数据文件也会显示其保存位置。切换时等待任务结束，校验复制后重启，原目录保留。成品字幕仍保存到视频所在文件夹。</p></section>
   <section class="settings-section" aria-labelledby="cleanup-heading">
     <div><h2 id="cleanup-heading">过程文件清理</h2><p>仅清理本服务留下的可重新生成的过程文件。</p></div>
     <form id="cleanup-form" class="form-grid">

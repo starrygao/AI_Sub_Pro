@@ -38,5 +38,7 @@ context.location.hash='#system';context.api=async()=>({enabled:false,limit_gb:20
 vm.runInContext(fs.readFileSync('app/static/js/library-cleanup.js','utf8'),context);await flush();
 assert.equal($('storage-total').textContent,'2 KB');assert.equal($('storage-categories').children.length,2);
 assert($('system-storage').children.some(e=>e.textContent==='/vol2/tmp'));
+const locations=$('system-storage').children;assert.equal(locations.length,14);
+for(const file of ['knowledge.json','translation_memory.sqlite3','phrase_library.sqlite3','projects'])assert(locations.some(e=>e.textContent==='/vol2/data/'+file));
 assert.match($('storage-measured').textContent,/统计不完整/);
 ''')
