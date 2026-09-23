@@ -26,6 +26,15 @@
 
 证据目录：`.runtime/verification/functional-fixes-20260923/`。独立审查/先红后绿的补充记录位于 `.runtime/verification/functional-audit-20260923/`。
 
+## NAS 部署验收
+
+- 修复代码提交 `b65a09d`；运行镜像 `sha256:ed8cdf9869326231769f44f20c2afc6f00390d1cb7efd4739a3c4ce405e5518b`。
+- 切换前确认无运行中的翻译/发布任务，临时暂停启动新任务；切换后恢复原本开启的自动翻译。主容器与上传就绪采集容器均 healthy，重启计数为 0。
+- 账号文件、library/app 配置、翻译和润色模型、原任务字幕产物 SHA-256、目录配置均保持一致；28 个监控目录及 98,575 条既有媒体基线保持不变。
+- 真实认证 HTTP 请求读取了新版首页、三个 `console-9` 脚本和知识库接口；响应脚本与测试源码哈希一致。
+- 《千锤百炼》S02E02 已实际进入 FFmpeg 源字幕提取，输出 `/data/projects/6866ef2b/raw.srt`，不再受整季下载阻塞。验收时尚未完成这条任务的最终双语字幕交付；同步提取期间台账状态仍在提取结束后更新，因此不能把开始提取等同于已翻译完成。
+- 回退镜像：`ai-sub-pro:before-functional-fixes-20260923`；原源码备份：`/vol1/1000/docker/ai-sub-pro/backups/functional-fixes-20260923/app-before.tgz`。部署核对记录：`deployment-verification.json`。
+
 ## 兼容边界
 
 - 原有客户端未携带 `expected_state` 时保持原 API 行为；本次并发覆盖保护由更新后的后台主动启用。
