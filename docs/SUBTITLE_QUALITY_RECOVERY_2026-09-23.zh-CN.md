@@ -37,7 +37,7 @@ Line.of.Fire S01E01（项目 b6d76c74）的失败发生在导出阶段。源字�
 - 只替换哈希与系统所有权记录吻合的旧字幕，原文件备份在各视频目录 `.aisub-backups`。保持旧文件名（含历史 `.chi.srt`），未修改视频。
 - 更新时确认无正在翻译/发布任务，暂缓新任务启动，完成后恢复原先开启的自动监控。模型、账户、配置、媒体路径不变。
 - 本地新 App 已安装；构建包通过固定证书签名及合成凭证写入、跨重启读取、清理测试。隔离项目经实际打包进程的 HTTP 导出返回 978 条两行字幕。
-- 恢复脚本曾产生额外 Python 字节码，导致一次已安装包签名校验失败；随后从完整签名的构建包重新安装并验证通过。实际 App 目前等待 macOS 对现有钥匙串访问的用户授权，尚未完成真实账户启动验收。未读取或记录用户凭证内容。
+- 恢复脚本曾产生额外 Python 字节码，导致一次已安装包签名校验失败；随后从完整签名的构建包重新安装并验证通过。用户完成 macOS 钥匙串授权后，实际 App 已正常启动；随后停止临时后台等待进程，重新启动原生 App，再次验证保存的凭证可读取、模型设置保留、任务为 translated / 100%、HTTP 双语导出 978 条且每条两行、视频旁同名 SRT 与导出内容一致。最终安装包签名复核通过。未读取或记录用户凭证内容。
 
 ## 测试与复现证据
 
@@ -54,3 +54,5 @@ python3 -m pytest tests/test_bilingual_srt.py tests/test_subtitle_source_contrac
 真实本地任务副本及生产恢复均核对：978 条有效字幕、两行、证书有效、原文与草稿哈希不变、0 次模型调用。最终 diff 已检查。
 
 证据目录：`.runtime/verification/subtitle-quality-recovery-20260923/`。本地旧 App 与项目备份：`.runtime/handoff-backups/subtitle-quality-20260923/`。NAS 源码/镜像回滚分别位于 `/vol1/1000/docker/ai-sub-pro/backups/subtitle-quality-20260923/` 和 `ai-sub-pro:before-subtitle-quality-20260923`；NAS 项目备份保存在 vol2 数据目录 `recovery-backups/subtitle-quality-20260923/`。
+
+2026-09-23 15:42 授权后真实安装版验收通过，记录见证据目录 `installed-verification.json` 与 `authorized-verification.log`。
