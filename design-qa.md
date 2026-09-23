@@ -51,3 +51,13 @@ final result: passed
 - [x] 回归测试与最终 diff 检查
 
 P3：不同平台的系统字体字形会略有变化；未引入网络字体下载。无未完成的视觉阻断项。
+
+## 生产部署验证（2026-09-23）
+
+- 实现提交：`d0553f0`，部署到原 NAS 容器 `ai-sub-pro`；仅重建主服务，未重启桌面 App 或 readiness sidecar。原镜像和源码已备份。
+- 新镜像 `sha256:517810d82bdf702d2f31a2becfd7887a7e6df84423f506fb4048e3c3d51b606f`，状态 healthy、restarts 0。
+- 切换前确认没有 translating / publishing 任务，临时暂停自动启动；切换后恢复原本 enabled=true。2 条等待记录及历史状态保留。
+- 部署前后账号文件、库配置、模型配置、目录设置、28 个监控目录、98,575 条基线及已完成项目的字幕／QA 产物哈希一致；已完成字幕仍为 330 条。
+- 通过已有登录会话和本机 SSH 隧道实际打开生产页面：三张 Emby 横幅均加载成功；停止记录显示最后 40%／15%，完成记录显示 100%。`12-production-desktop.png`、`13-production-mobile.png` 为真实线上数据截图。
+- 线上模型页面仍是翻译 gpt-6-astra/low、润色 gpt-6-astra/medium。知识库入口和保存位置编辑弹窗正常，数据／临时文件／模型目录仍在 vol2。未保存任何生产表单更改。
+- 线上手机 320 px 无横向溢出；控制台无 error/warn。详细校验见 `.runtime/verification/ui-implementation-20260923/deployment-verification.json`。
