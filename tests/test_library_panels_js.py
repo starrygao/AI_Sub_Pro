@@ -9,11 +9,13 @@ class Element {
  constructor(tag='div',type=''){this.tagName=tag.toUpperCase();this.type=type;this.children=[];this.handlers={};this.hidden=false;this.value='';this.checked=false;this.disabled=false;this.textContent='';this.attrs={};}
  append(...items){this.children.push(...items);} replaceChildren(...items){this.children=items;}
  get options(){return this.children;} addEventListener(n,f){this.handlers[n]=f;}
- setAttribute(n,v){this.attrs[n]=v;} removeAttribute(n){delete this.attrs[n];} focus(){} reportValidity(){return true;}
+ setAttribute(n,v){this.attrs[n]=String(v);} getAttribute(n){return this.attrs[n]??null;} removeAttribute(n){delete this.attrs[n];}
+ focus(){context.document.activeElement=this;} reportValidity(){return true;}
 }
 const elements={};
 for(const m of fs.readFileSync('app/static/library.html','utf8').matchAll(/<(\w+)[^>]*\bid="([^"]+)"([^>]*)>/g)){
  elements[m[2]]=new Element(m[1],/type="([^"]+)"/.exec(m[3])?.[1]||'');
+ for(const attr of m[0].matchAll(/([\w-]+)="([^"]*)"/g))elements[m[2]].setAttribute(attr[1],attr[2]);
  elements[m[2]].hidden=/\bhidden\b/.test(m[3]);
 }
 const el=(tag,text)=>{const e=new Element(tag);e.textContent=text||'';return e;};
@@ -80,6 +82,36 @@ assert.equal($('settings-form').hidden,true);assert.equal($('settings-reload').h
 failModels=false;await $('settings-reload').onclick();
 assert.equal($('settings-form').hidden,false);assert.equal($('setting-model').value,'gpt-5.5');
 assert.equal($('settings-save').disabled,true);
+''')
+
+
+def test_console_navigation_keeps_knowledge_settings_and_directory_dialog_reachable():
+    run_js(r'''
+context.location.hash='#tasks';
+const originalRequest=context.request,originalApi=context.api;
+context.request=async(path,...args)=>path==='knowledge'?{}:originalRequest(path,...args);
+context.api=async(path,...args)=>{
+ if(path==='knowledge')return {projects:0,terms:0,memory_entries:0,phrase_entries:0,memory_enabled:true,pending:[],storage:{knowledge:'/vol2/data/knowledge.json',data:'/vol2/data',projects:'/vol2/data/projects',temporary:'/vol2/tmp',models:'/vol2/models'}};
+ if(path==='directories')return {watch:{current:['/vol2/media'],desired:['/vol2/media'],allowed:['/vol2/media'],pending:false,error:''},storage:{supported:true,current:{data:'/vol2/data',temporary:'/vol2/tmp',models:'/vol2/models'},desired:{data:'/vol2/data',temporary:'/vol2/tmp',models:'/vol2/models'},allowed:'/vol2',pending:false}};
+ return originalApi(path,...args);
+};
+Object.assign($('directory-dialog'),{open:false,showModal(){this.open=true},close(){this.open=false}});
+context.setTimeout=()=>1;context.clearTimeout=()=>{};context.refresh=()=>{};
+vm.runInContext(fs.readFileSync('app/static/js/library-knowledge.js','utf8'),context);
+vm.runInContext(fs.readFileSync('app/static/js/library-directories.js','utf8'),context);
+vm.runInContext(code,context);
+navigate('#knowledge');await flush();
+assert.equal($('panel-knowledge').hidden,false);assert.equal($('panel-tasks').hidden,true);
+assert.equal($('nav-knowledge').attrs['aria-current'],'page');
+assert.match($('kb-overview').textContent,/0 部作品/);
+$('kb-new').onclick();assert.equal($('kb-form').hidden,false);
+await $('storage-edit').onclick();assert.equal($('directory-dialog').open,true);
+assert.equal($('storage-data').value,'/vol2/data');$('directory-close').onclick();
+navigate('#settings');await flush();
+assert.equal($('panel-settings').hidden,false);assert.equal($('settings-form').hidden,false);
+navigate('#tasks');await $('watch-edit').onclick();
+assert.equal($('panel-tasks').hidden,false);assert.equal($('watch-paths').value,'/vol2/media');
+assert.equal($('directory-dialog').open,true);
 ''')
 
 

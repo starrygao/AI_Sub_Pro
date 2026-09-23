@@ -6,10 +6,11 @@ import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlencode
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 from app.main import app as desktop_app, lifespan as desktop_lifespan
 from starlette.routing import WebSocketRoute
@@ -185,6 +186,8 @@ def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
         rows=worker.store.rows(states,limit,offset)
         total=sum(counts.get(s,0) for s in states) if states else sum(counts.values())
     for row in rows:
+        from app.library.artwork import artwork_links
+        row.update(artwork_links(row))
         mappings=worker.config.get('host_path_maps',{})
         if row['state'] not in {'done','skipped','native_language','cancelled'}:
             row['output_path']=str(Path(row['path']).with_suffix('.srt'))
@@ -195,6 +198,16 @@ def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
             row['progress']=get_progress(row['project_id'])
     return {'items':rows,'counts':counts,'total':total,
             'view_counts':{name:sum(counts.get(s,0) for s in states) for name,states in views.items()}}
+
+
+@app.get('/api/library/artwork')
+def library_artwork(path:str=Query(max_length=4096),kind:Literal['poster','backdrop']='poster'):
+    # The client selects a ledger row, never an upstream URL, local file or Emby ID.
+    row=worker.store.get(path)
+    if not row:raise HTTPException(404,'没有这条媒体记录')
+    image=worker.sources.artwork.get(row,kind)
+    if image is None:raise HTTPException(404,'暂无可用封面')
+    return Response(image.content,media_type=image.media_type,headers={'X-Content-Type-Options':'nosniff'})
 
 
 class Control(BaseModel):

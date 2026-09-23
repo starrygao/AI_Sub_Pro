@@ -6,6 +6,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 import httpx
 from .guard import map_path, vtrans_blockers
+from .artwork import Artwork, emby_artwork
 
 
 def emby_metadata(item, get_item):
@@ -15,6 +16,7 @@ def emby_metadata(item, get_item):
     result = {'name': item.get('Name',''), 'emby_id':str(item.get('Id','')),
               'season_number':item.get('ParentIndexNumber'), 'episode_number':item.get('IndexNumber'),
               'show_title':identity.get('Name',''), 'overview':item.get('Overview') or identity.get('Overview',''),'date_created':item.get('DateCreated','')}
+    result['emby_artwork'] = emby_artwork(identity, item.get('SeriesId') if episode else item.get('Id'))
     if str(raw).isdigit():
         result.update(tmdb_id=int(raw),tmdb_type='tv' if episode else 'movie',metadata_source='emby')
     return result
@@ -42,6 +44,7 @@ class Sources:
         self.health={}
         self.emby_cache={}
         self.language_cache={}
+        self.artwork=Artwork(self)
 
     def emby(self, endpoint, **params):
         conf=self.config['emby']
