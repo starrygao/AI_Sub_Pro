@@ -3,6 +3,7 @@ import hashlib
 import logging
 import os
 import re
+import shutil
 import stat
 import time
 from pathlib import Path
@@ -97,12 +98,63 @@ class ProcessCleanup:
                     if re.fullmatch(r'track_\d+\.(srt|ass|ssa|vtt)',path.name):add(path,temporary,True)
         return total,sorted(candidates,key=lambda c:c['mtime'])
 
+    def usage(self,candidates):
+        """Read-only file sizes within managed roots; never follow links into media."""
+        data=Path(self.store.path).parent.resolve()
+        if self.worker.storage:
+            active=self.worker.storage.load()['active']
+            roots={key:self.worker.storage.local(value) for key,value in active.items()}
+            host={key:str(self.worker.storage.host_root/value) for key,value in active.items()}
+        else:
+            roots={'data':data,'temporary':data/'temporary'}
+            host={key:str(path) for key,path in roots.items()}
+        labels={'audio':'提取音频','separation':'人声分离文件','subtitle_temp':'字幕提取临时副本',
+                'model_temp':'模型调用临时文件','subtitles':'项目字幕与翻译检查点','projects':'其他任务数据与日志',
+                'knowledge':'知识库与翻译记忆','models':'语音模型缓存','temporary':'其他临时文件','system':'配置、账本与其他数据'}
+        groups={key:{'key':key,'label':label,'bytes':0,'files':0,'eligible_bytes':0} for key,label in labels.items()}
+        eligible={str(c['path']):c['size'] for c in candidates};seen=set();errors=0
+        def onerror(exc):
+            nonlocal errors
+            errors+=1
+        # Child roots first so a nested temporary directory isn't counted as data.
+        for role,root in sorted(roots.items(),key=lambda item:len(item[1].parts),reverse=True):
+            if root.is_symlink() or not root.is_dir():continue
+            for folder,dirs,files in os.walk(root,followlinks=False,onerror=onerror):
+                dirs[:]=[name for name in dirs if not (Path(folder)/name).is_symlink()]
+                for name in files:
+                    path=Path(folder)/name
+                    try:value=path.lstat()
+                    except OSError:errors+=1;continue
+                    if not stat.S_ISREG(value.st_mode) or (value.st_dev,value.st_ino) in seen:continue
+                    seen.add((value.st_dev,value.st_ino));relative=path.relative_to(root)
+                    if role=='models':key='models'
+                    elif role=='temporary':
+                        key=('model_temp' if re.fullmatch(r'aisubpro-codex-.*\.txt',name) else
+                             'subtitle_temp' if path.parent.name.startswith('aisubpro-subtitles-') and re.fullmatch(r'track_\d+\.(srt|ass|ssa|vtt)',name) else 'temporary')
+                    elif relative.parts[0]=='projects':
+                        tail='/'.join(relative.parts[2:])
+                        key='audio' if tail=='raw_audio.wav' else 'separation' if tail in PROJECT_FILES[1:] else 'subtitles' if path.suffix in {'.srt','.ass','.ssa','.vtt'} or 'checkpoint' in name else 'projects'
+                    elif any(word in str(relative).lower() for word in ('knowledge','translation_memory','phrase_library')):key='knowledge'
+                    else:key='system'
+                    group=groups[key];group['bytes']+=value.st_size;group['files']+=1
+                    group['eligible_bytes']+=eligible.get(str(path),0)
+        disks=[];devices=set()
+        for key,path in roots.items():
+            try:
+                device=path.stat().st_dev
+                if device in devices:continue
+                devices.add(device);disk=shutil.disk_usage(path)
+                disks.append({'path':host[key],'total_bytes':disk.total,'free_bytes':disk.free})
+            except OSError:errors+=1
+        return {'total_bytes':sum(g['bytes'] for g in groups.values()),'categories':list(groups.values()),
+                'paths':host,'disks':disks,'unreadable_entries':errors,'measured_at':time.time()}
+
     def snapshot(self):
         total,candidates=self.inventory()
         eligible=sum(c['size'] for c in candidates)
         return {**self.policy(),'minimum_gb':MIN_LIMIT_GB,'minimum_age_hours':24,
                 'managed_bytes':total,'eligible_bytes':eligible,'protected_bytes':total-eligible,
-                'eligible_files':len(candidates),'last_run':self.store.setting('cleanup_last_run',{})}
+                'eligible_files':len(candidates),'usage':self.usage(candidates),'last_run':self.store.setting('cleanup_last_run',{})}
 
     def tick(self,now=None):
         now=time.time() if now is None else now
@@ -110,7 +162,7 @@ class ProcessCleanup:
         if not policy['enabled'] or now<self.store.setting('cleanup_next_check',0):return
         self.store.set_setting('cleanup_next_check',now+600)
         try:
-            if (self.worker.store.rows(['translating','publishing'],limit=1)
+            if (self.worker.store.rows(['translating','publishing','pausing','cancelling'],limit=1)
                     or (self.worker.storage and self.worker.storage.state()['pending'])):
                 self.record(now,'busy',0,0);return
             from app.services.translation_tasks import run_when_tasks_idle

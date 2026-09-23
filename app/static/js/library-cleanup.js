@@ -1,14 +1,23 @@
 'use strict';
 (() => {
   let data=null,busy=false,dirty=false,ticket=0;
-  const bytes=value=>value>=1024**3?(value/1024**3).toFixed(2)+' GB':value>=1024**2?(value/1024**2).toFixed(1)+' MB':Math.round(value/1024)+' KB';
+  const bytes=value=>value>=1024**3?(value/1024**3).toFixed(2)+' GB':value>=1024**2?(value/1024**2).toFixed(1)+' MB':value>=1024?Math.round(value/1024)+' KB':value+' B';
   function state(){
     $('cleanup-limit').disabled=busy||!data;
     $('cleanup-save').disabled=busy||!data||(!dirty&&data.enabled);
     $('cleanup-pause').hidden=!data?.enabled;$('cleanup-pause').disabled=busy;
     $('cleanup-refresh').disabled=busy;
   }
+  function usage(value){
+    if(!value)return;
+    $('storage-total').textContent=bytes(value.total_bytes);
+    $('storage-disk').textContent=(value.disks||[]).map(d=>'磁盘可用 '+bytes(d.free_bytes)+' / 总容量 '+bytes(d.total_bytes)).join(' · ');
+    $('storage-categories').replaceChildren(...(value.categories||[]).map(group=>{const row=el('tr');for(const text of [group.label,bytes(group.bytes),bytes(group.eligible_bytes),String(group.files)])row.append(el('td',text));return row;}));
+    $('system-storage').replaceChildren();for(const [key,label] of [['data','知识库与任务数据'],['temporary','临时文件'],['models','模型缓存']]){if(value.paths?.[key])$('system-storage').append(el('dt',label),el('dd',value.paths[key]));}
+    $('storage-measured').textContent='统计时间 '+new Date(value.measured_at*1000).toLocaleString()+' · 可清理量已排除受保护文件。'+(value.unreadable_entries?' 有 '+value.unreadable_entries+' 项无法读取，统计不完整。':'');
+  }
   function show(result){
+    usage(result.usage);
     data=result;if(!dirty)$('cleanup-limit').value=result.limit_gb;
     $('cleanup-limit').min=result.minimum_gb;
     $('cleanup-summary').textContent=(result.enabled?'自动清理已启用':'自动清理未启用')+' · 过程文件 '+bytes(result.managed_bytes)+' · 可清理 '+bytes(result.eligible_bytes)+' · 受保护 '+bytes(result.protected_bytes);
@@ -20,7 +29,7 @@
   async function load(){
     if(busy)return;const request=++ticket;busy=true;state();error('');
     try{const result=await api('cleanup');if(request===ticket)show(result);}
-    catch(e){if(request===ticket)error(e.message);}
+    catch(e){if(request===ticket){error(e.message);$('storage-measured').textContent=data?'刷新失败，当前显示上次统计。':'统计失败，请点击刷新占用重试。';}}
     finally{if(request===ticket){busy=false;state();}}
   }
   async function save(enabled){
@@ -35,6 +44,6 @@
   $('cleanup-form').onsubmit=event=>{event.preventDefault();return save(true);};
   $('cleanup-limit').oninput=()=>{dirty=true;state();};
   $('cleanup-pause').onclick=()=>save(false);$('cleanup-refresh').onclick=load;
-  const open=()=>{if(location.hash==='#settings'&&!dirty)load();};
+  const open=()=>{if(location.hash==='#system'&&!dirty)load();};
   window.addEventListener('hashchange',open);open();
 })();

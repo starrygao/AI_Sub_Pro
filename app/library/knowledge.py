@@ -17,7 +17,7 @@ def summary(store):
     kb=_get_singleton().list_projects()
     terms=sum(len(getattr(p,field)) for p in kb.values() for field in ['characters','places','brands','slang'])
     pending=[]
-    for row in store.rows(['done','cancelled','error','translating','publishing'],limit=100):
+    for row in store.rows(['done','cancelled','error','translating','publishing','paused','pausing','cancelling'],limit=100):
         pid=row.get('project_id')
         if not pid:continue
         suggestions=load_suggestions(root/'projects'/pid/'kb_suggestions.json')

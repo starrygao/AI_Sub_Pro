@@ -105,6 +105,7 @@ assert.equal($('panel-knowledge').hidden,false);assert.equal($('panel-tasks').hi
 assert.equal($('nav-knowledge').attrs['aria-current'],'page');
 assert.match($('kb-overview').textContent,/0 部作品/);
 $('kb-new').onclick();assert.equal($('kb-form').hidden,false);
+navigate('#system');await flush();assert.equal($('panel-system').hidden,false);assert.equal($('panel-knowledge').hidden,true);
 await $('storage-edit').onclick();assert.equal($('directory-dialog').open,true);
 assert.equal($('storage-data').value,'/vol2/data');$('directory-close').onclick();
 navigate('#settings');await flush();

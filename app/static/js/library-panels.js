@@ -250,14 +250,14 @@
   $('project-reload').onclick = () => { previewKey = ''; loadProject(true); };
   function route(focus = true) {
     const match = /^#project\/([a-f0-9]{8})$/.exec(location.hash);
-    panel = match ? 'project' : location.hash === '#settings' ? 'settings' : location.hash === '#knowledge' ? 'knowledge' : 'tasks';
+    panel = match ? 'project' : location.hash === '#settings' ? 'settings' : location.hash === '#knowledge' ? 'knowledge' : location.hash === '#system' ? 'system' : 'tasks';
     pid = match ? match[1] : ''; detailRequest++;
-    for (const name of ['tasks', 'settings', 'project', 'knowledge']) $('panel-' + name).hidden = name !== panel;
-    for (const name of ['tasks', 'settings', 'knowledge']) {
-      if (name === (panel === 'project' ? 'tasks' : panel)) $('nav-' + name).setAttribute('aria-current', 'page');
+    for (const name of ['tasks', 'settings', 'project', 'knowledge', 'system']) $('panel-' + name).hidden = name !== panel;
+    for (const name of ['tasks', 'knowledge', 'system']) {
+      if (name === (panel === 'project' ? 'tasks' : panel === 'settings' ? 'system' : panel)) $('nav-' + name).setAttribute('aria-current', 'page');
       else $('nav-' + name).removeAttribute('aria-current');
     }
-    document.title = (panel === 'settings' ? '模型设置' : panel === 'project' ? '翻译详情' : panel === 'knowledge' ? '知识库' : '字幕任务') + ' · AI Sub Pro';
+    document.title = (panel === 'settings' ? '模型设置' : panel === 'project' ? '翻译详情' : panel === 'knowledge' ? '知识库' : panel === 'system' ? '存储与清理' : '字幕任务') + ' · AI Sub Pro';
     if (focus) $(panel + '-title').focus({preventScroll:true});
     if (panel === 'settings' && !settings) loadSettings();
     if (panel === 'knowledge') window.LibraryKnowledge?.open();

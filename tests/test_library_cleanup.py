@@ -144,3 +144,23 @@ def test_cleanup_failure_is_recorded_without_blocking_worker(setup,monkeypatch):
     monkeypatch.setattr(cleanup,'clean',fail)
     cleanup.tick(now=NOW)
     assert cleanup.store.setting('cleanup_last_run')['status']=='error'
+
+
+def test_usage_categories_include_protected_data_without_following_media_links(setup,tmp_path):
+    worker,cleanup=setup
+    audio,subtitle=artifact(worker,'11111111',700)
+    root=Path(worker.store.path).parent
+    (root/'knowledge.json').write_bytes(b'k'*50)
+    temp=root/'temporary';temp.mkdir()
+    (temp/'aisubpro-codex-test.txt').write_bytes(b't'*30)
+    external=tmp_path/'video.mkv';external.write_bytes(b'v'*10000)
+    (root/'projects'/'video-link.mkv').symlink_to(external)
+    snapshot=cleanup.snapshot();usage=snapshot['usage'];groups={g['key']:g for g in usage['categories']}
+    assert groups['audio']['bytes']==700
+    assert groups['knowledge']['bytes']==50
+    assert groups['model_temp']['bytes']==30
+    assert groups['subtitles']['bytes']==subtitle.stat().st_size
+    assert sum(g['bytes'] for g in groups.values())==usage['total_bytes']
+    assert snapshot['managed_bytes']==730
+    assert groups['audio']['eligible_bytes']==0  # Fresh file metadata is protected.
+    assert usage['disks'][0]['free_bytes']>0

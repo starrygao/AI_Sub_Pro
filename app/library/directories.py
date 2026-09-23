@@ -58,7 +58,7 @@ class DirectorySettings:
             with self.lock:
                 desired = self.worker.store.setting('pending_roots')
                 revision = self.worker.store.setting('pending_roots_revision')
-                if desired is None or self.worker.store.rows(['translating', 'publishing'], limit=1): return False
+                if desired is None or self.worker.store.rows(['translating', 'publishing', 'pausing', 'cancelling'], limit=1): return False
                 old_roots = list(self.worker.roots)
             try:
                 desired = self.validate([self.host(p) for p in desired])

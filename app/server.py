@@ -180,7 +180,7 @@ def library_storage_update(data:dict):
 @app.get('/api/library/tasks')
 def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
     if not 1<=limit<=200 or offset<0:raise HTTPException(400,'分页参数无效')
-    views={'processed':['translating','publishing','done','error','changed','missing','cancelled'],
+    views={'processed':['translating','publishing','done','error','changed','missing','cancelled','paused','pausing','cancelling'],
            'waiting':['waiting'],'ready':['ready'],'skipped':['skipped','native_language','historical']}
     if view not in {'all',*views}:raise HTTPException(400,'列表类型无效')
     states=views.get(view)
@@ -195,6 +195,9 @@ def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
         from app.library.artwork import artwork_links
         row.pop('detection',None)  # Probe metadata stays in the ledger, not the browser response.
         row.update(artwork_links(row))
+        from app.library.control import TaskControls
+        row['available_actions']=TaskControls.actions(row)
+        row['control_revision']=TaskControls.revision(row)
         mappings=worker.config.get('host_path_maps',{})
         if row['state'] not in {'done','skipped','native_language','historical','cancelled'}:
             from app.library.publish import bilingual_sidecar_path
@@ -236,6 +239,30 @@ def library_scan():
 
 class Retry(BaseModel):
     path:str
+
+
+class TaskTarget(BaseModel):
+    model_config={'extra':'forbid'}
+    path:str=Field(max_length=4096)
+    revision:str=Field(pattern=r'^[0-9a-f]{64}$')
+
+
+class TaskAction(BaseModel):
+    model_config={'extra':'forbid'}
+    action:Literal['pause','resume','cancel']
+    items:list[TaskTarget]=Field(min_length=1,max_length=100)
+
+
+@app.post('/api/library/tasks/control')
+def library_task_control(body:TaskAction):
+    results=[];seen=set()
+    for item in body.items:
+        if item.path in seen:continue
+        seen.add(item.path)
+        try:results.append(worker.controls.request(item.path,body.action,item.revision))
+        except HTTPException as exc:results.append({'path':item.path,'ok':False,'error':worker.safe_error(exc.detail)})
+        except (ValueError,OSError) as exc:results.append({'path':item.path,'ok':False,'error':worker.safe_error(exc)})
+    return {'results':results}
 
 
 class HardSubtitle(Retry):

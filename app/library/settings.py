@@ -120,7 +120,7 @@ class LibrarySettings:
         def commit():
             with self.lock:
                 patch = self.store.setting('pending_model_settings', {})
-                if not patch or self.store.rows(['translating', 'publishing'], limit=1):
+                if not patch or self.store.rows(['translating', 'publishing', 'pausing', 'cancelling'], limit=1):
                     return False
                 offset = 0
                 while True:

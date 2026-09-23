@@ -371,3 +371,11 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
   #emby-selection-count { margin-left: 0; }
   .task-intro .actions { justify-content: flex-start; }
 }
+/* System storage and direct task controls */
+.storage-overview{display:flex;align-items:center;justify-content:space-between;gap:2rem;padding:1.5rem 0;border-bottom:1px solid var(--line,#d8dfdc)}
+.storage-overview>p{max-width:30rem}.storage-overview strong{display:block;font-size:2.5rem;font-weight:650;letter-spacing:-.04em;margin:.5rem 0}
+.storage-table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}.storage-table th,.storage-table td{padding:.8rem .6rem;text-align:right;border-bottom:1px solid var(--line,#d8dfdc)}.storage-table th:first-child,.storage-table td:first-child{text-align:left}.storage-table th{font-weight:500;color:var(--muted,#61706b)}
+.batch-toolbar{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;padding:1rem 0}.batch-toolbar .actions{display:flex;flex-wrap:wrap;gap:.5rem}.batch-toolbar label,.task-select{display:flex;align-items:center;gap:.4rem;font-size:.85rem}.batch-toolbar input,.task-select input{width:1rem;height:1rem;accent-color:#153f42}.row-actions{display:flex;gap:.4rem;flex-wrap:wrap}.row-actions button{padding:.4rem .65rem}.task-side{gap:.5rem}
+#task-cancel-items{max-height:40vh;overflow:auto;overflow-wrap:anywhere}#task-action-errors{overflow-wrap:anywhere}.status.paused,.status.pausing,.status.cancelling{background:#f4ead4;color:#6c5219}#system-storage dd{overflow-wrap:anywhere}
+@media(max-width:600px){.storage-overview{display:block}.storage-table th,.storage-table td{padding:.65rem .25rem;font-size:.8rem}.storage-table th:first-child{width:40%}.batch-toolbar{gap:.6rem}.batch-toolbar .actions{width:100%}.console-nav{flex-wrap:wrap}}
+.settings-tabs{display:flex;gap:1.5rem;margin:0 0 1.5rem;border-bottom:1px solid var(--line,#d8dfdc)}.settings-tabs a{padding:.65rem 0;text-decoration:none;color:var(--muted,#61706b);border-bottom:3px solid transparent}.settings-tabs a[aria-current]{color:#087f91;border-color:currentColor;font-weight:650}

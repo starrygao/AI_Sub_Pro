@@ -35,7 +35,6 @@
       if(!dirty&&selected)edit(selected,false);
       $('kb-overview').textContent=info.projects+' 部作品 · '+info.terms+' 条审定术语 · '+info.memory_entries+' 条人工修订记忆 · '+info.phrase_entries+' 条短语范例'+(info.memory_enabled?'':' · 翻译记忆已关闭');
       $('kb-pending').replaceChildren();for(const item of info.pending){const link=el('a',item.name+' · '+item.count+' 条候选','kb-pending-link');link.href='#project/'+encodeURIComponent(item.project_id);$('kb-pending').append(link);}if(!info.pending.length)$('kb-pending').append(el('p','暂无待确认候选。新任务提取术语后会显示在这里。','hint'));
-      $('kb-storage').replaceChildren();for(const [key,label] of [['knowledge','影视知识库'],['data','翻译记忆与短语库'],['projects','任务文件与音频中间文件'],['temporary','临时目录'],['models','模型缓存']])$('kb-storage').append(el('dt',label),el('dd',info.storage[key]));
     }catch(e){if(ticket===readTicket){notice('kb-error',e.message);$('kb-reload').hidden=false;}}
     finally{if(ticket===readTicket){loading=false;$('kb-new').disabled=saving||!loaded;}}
   }

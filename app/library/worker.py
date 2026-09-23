@@ -22,6 +22,7 @@ from .settings import LibrarySettings
 from .directories import DirectorySettings
 from .storage import StoragePaths
 from .extraction import extract_subtitles
+from .control import TaskControls, MediaStopped
 
 log=logging.getLogger(__name__)
 TEXT_CODECS={'subrip','srt','ass','ssa','mov_text','webvtt','text'}
@@ -51,6 +52,7 @@ class LibraryWorker:
         self._media_locks=tuple(threading.RLock() for _ in range(64))
         from .cleanup import ProcessCleanup
         self.cleanup=ProcessCleanup(self)
+        self.controls=TaskControls(self)
 
     def media_lock(self,path):
         return self._media_locks[hash(str(path))%len(self._media_locks)]
@@ -59,21 +61,22 @@ class LibraryWorker:
         lock=self.media_lock(path)
         if not lock.acquire(timeout=2):raise ValueError('该文件正在检测或准备翻译，请稍后重试')
         try:
-            row=self.store.get(path)
-            if not row:raise LookupError('记录不存在')
-            if row.get('project_id') or row['state'] in {'translating','publishing','done'}:
-                raise ValueError('已开始处理的任务不能标记；请先在任务详情处理当前任务')
-            if not self.allowed(path) or fingerprint(path)!=row.get('fingerprint'):
-                raise ValueError('视频已变化或不可读，请等待重新检测')
-            if present:
-                self.save(row,state='skipped',reason='手动确认：画面中已有中文硬字幕',
-                          manual_hard_subtitle={'fingerprint':row['fingerprint'],'marked_at':time.time()},
-                          detection=None,next_attempt_at=0)
-            elif row.get('manual_hard_subtitle'):
-                self.save(row,state='waiting',reason='已撤销硬字幕标记，等待重新检测',
-                          manual_hard_subtitle=None,detection=None,next_attempt_at=0)
-            self.wake.set()
-            return {'state':row['state'],'present':bool(row.get('manual_hard_subtitle'))}
+            with self.controls.lock:
+                row=self.store.get(path)
+                if not row:raise LookupError('记录不存在')
+                if row.get('control_action') or row.get('project_id') or row['state'] in {'translating','publishing','done'}:
+                    raise ValueError('已开始处理的任务不能标记；请先在任务详情处理当前任务')
+                if not self.allowed(path) or fingerprint(path)!=row.get('fingerprint'):
+                    raise ValueError('视频已变化或不可读，请等待重新检测')
+                if present:
+                    self.save(row,state='skipped',reason='手动确认：画面中已有中文硬字幕',
+                              manual_hard_subtitle={'fingerprint':row['fingerprint'],'marked_at':time.time()},
+                              detection=None,next_attempt_at=0)
+                elif row.get('manual_hard_subtitle'):
+                    self.save(row,state='waiting',reason='已撤销硬字幕标记，等待重新检测',
+                              manual_hard_subtitle=None,detection=None,next_attempt_at=0)
+                self.wake.set()
+                return {'state':row['state'],'present':bool(row.get('manual_hard_subtitle'))}
         finally:lock.release()
 
     def allowed(self,path):
@@ -83,7 +86,7 @@ class LibraryWorker:
         except (OSError,RuntimeError):return False
 
     def observe(self,path,metadata,*,manual=False):
-        with self.media_lock(path):return self._observe(path,metadata,manual=manual)
+        with self.media_lock(path), self.controls.lock:return self._observe(path,metadata,manual=manual)
 
     def _observe(self,path,metadata,*,manual=False):
         path=Path(path)
@@ -143,7 +146,7 @@ class LibraryWorker:
         except OSError:return '视频不存在或不可读'
 
     def save(self,row,**values):
-        row.update(values,updated=time.time());self.store.put(row)
+        self.controls.save(row,values)
 
     def start(self):
         self.thread=threading.Thread(target=self.run,name='library-monitor',daemon=True);self.thread.start()
@@ -231,46 +234,52 @@ class LibraryWorker:
         self.last_error=''
 
     def finish(self):
+        self.controls.settle()
+        for row in self.store.rows(['translating','publishing'],limit=5):
+            with self.controls.lock:
+                row=self.store.get(row['path'])
+                if row and row['state'] in {'translating','publishing'}:self.finish_row(row)
+
+    def finish_row(self,row):
         from app.services import translation_tasks as tasks
         from app.api.projects import export_srt
         from app.utils.translation_delivery import translation_delivery_lock
         from app.utils.project_store import mutate_project
-        for row in self.store.rows(['translating','publishing'],limit=5):
-            # prepare runs synchronously in this worker. A persisted preparation here
-            # therefore survived an interrupted process, not an active extraction.
-            if row.get('preparation_progress'):
-                self.save(row,state='error',reason='字幕提取被中断，请重新检查',retry_stage=None)
-                continue
-            path=Path(row['path']);pid=row['project_id']
-            if not path.exists() or fingerprint(path)!=row['fingerprint']:
-                if tasks.is_task_registered(pid):tasks.cancel_task(pid)
-                self.save(row,state='changed',reason='视频已被替换，旧译文不会写回');continue
-            if tasks.is_task_registered(pid):continue
-            project=tasks._load_project(pid)
-            if project.get('status') in {'error','cancelled'}:
-                self.save(row,state='error',reason=project.get('error') or project.get('progress_msg') or '翻译已停止');continue
-            reason=self.block_reason(path)
-            if reason:self.save(row,state='publishing',reason=reason);continue
-            delivery_ready=False
-            try:
-                with translation_delivery_lock(pid,blocking=False) as acquired:
-                    if not acquired:
-                        self.save(row,state='publishing',reason='等待字幕交付完成');continue
-                    # Existing export gate validates source generation, report and delivery hashes.
-                    export_srt(pid,format='bilingual',container='srt')
-                    delivery_ready=True
-                    source=tasks.PROJECTS_DIR/pid/'bilingual.srt'
-                    other=[p for p in subtitle_files(path) if p!=bilingual_sidecar_path(path) and chinese_sidecar(p,path)]
-                    if other:
-                        self.save(row,state='skipped',reason='翻译期间出现中文字幕，保留现有文件',
-                                  existing_subtitles=[{'path':str(p),'fingerprint':fingerprint(p)} for p in other]);continue
-                    output=publish_sidecar(path,source,row['fingerprint'])
-                mutate_project(pid,lambda p:p.update(library_output_path=str(output),library_status='done'))
-                self.save(row,state='done',reason='翻译完成，带中文语言标记的双语字幕已保存',output_path=str(output),completed_at=time.time(),output_hash=hashlib.sha256(output.read_bytes()).hexdigest(),retry_stage=None)
-                try:self.sources.refresh_subtitles(row.get('metadata',{}).get('emby_id',''))
-                except Exception:self.save(row,reason='字幕已保存，Emby 刷新待重试',refresh_pending=True)
-            except Exception as exc:
-                self.save(row,state='error',reason='字幕未发布：'+self.safe_error(exc),retry_stage='publish' if delivery_ready else None)
+        # prepare runs synchronously in this worker. A persisted preparation here
+        # therefore survived an interrupted process, not an active extraction.
+        if row.get('preparation_progress'):
+            self.save(row,state='error',reason='字幕提取被中断，请重新检查',retry_stage=None)
+            return
+        path=Path(row['path']);pid=row['project_id']
+        if not path.exists() or fingerprint(path)!=row['fingerprint']:
+            if tasks.is_task_registered(pid):tasks.cancel_task(pid)
+            self.save(row,state='changed',reason='视频已被替换，旧译文不会写回');return
+        if tasks.is_task_registered(pid):return
+        project=tasks._load_project(pid)
+        if project.get('status') in {'error','cancelled'}:
+            self.save(row,state='error',reason=project.get('error') or project.get('progress_msg') or '翻译已停止');return
+        reason=self.block_reason(path)
+        if reason:self.save(row,state='publishing',reason=reason);return
+        delivery_ready=False
+        try:
+            with translation_delivery_lock(pid,blocking=False) as acquired:
+                if not acquired:
+                    self.save(row,state='publishing',reason='等待字幕交付完成');return
+                # Existing export gate validates source generation, report and delivery hashes.
+                export_srt(pid,format='bilingual',container='srt')
+                delivery_ready=True
+                source=tasks.PROJECTS_DIR/pid/'bilingual.srt'
+                other=[p for p in subtitle_files(path) if p!=bilingual_sidecar_path(path) and chinese_sidecar(p,path)]
+                if other:
+                    self.save(row,state='skipped',reason='翻译期间出现中文字幕，保留现有文件',
+                              existing_subtitles=[{'path':str(p),'fingerprint':fingerprint(p)} for p in other]);return
+                output=publish_sidecar(path,source,row['fingerprint'])
+            mutate_project(pid,lambda p:p.update(library_output_path=str(output),library_status='done'))
+            self.save(row,state='done',reason='翻译完成，带中文语言标记的双语字幕已保存',output_path=str(output),completed_at=time.time(),output_hash=hashlib.sha256(output.read_bytes()).hexdigest(),retry_stage=None)
+            try:self.sources.refresh_subtitles(row.get('metadata',{}).get('emby_id',''))
+            except Exception:self.save(row,reason='字幕已保存，Emby 刷新待重试',refresh_pending=True)
+        except Exception as exc:
+            self.save(row,state='error',reason='字幕未发布：'+self.safe_error(exc),retry_stage='publish' if delivery_ready else None)
 
     @staticmethod
     def safe_error(exc):
@@ -280,6 +289,33 @@ class LibraryWorker:
         return public_error_message(exc)
 
     def prepare(self,row,info,sidecars):
+        path=row['path']
+        with self.controls.lock:
+            current=self.store.get(path)
+            if not current or current.get('control_action'):return
+            self.controls.preparing.add(path)
+        try:
+            if row.get('resume_pending') and row.get('project_id'):
+                from app.services import translation_tasks as tasks
+                with self.controls.lock:
+                    self.controls.check(path)
+                    project=tasks._load_project(row['project_id'])
+                    if project.get('status') in {'translated','completed'}:
+                        self.save(row,state='publishing',reason='已继续，等待保存已完成字幕',resume_pending=False,preparation_progress=None)
+                        return
+                    stage=tasks._resume_stage_for_project(row['project_id'],project)
+                    if stage=='translate':tasks.start_translate(row['project_id'],tasks.TranslateRequest(target_language='简体中文'))
+                    else:tasks.start_transcribe_translate(row['project_id'],tasks.FullPipelineRequest(workflow_mode='translate_only'))
+                    self.save(row,state='translating',reason='已继续处理',resume_pending=False,preparation_progress=None)
+            else:self._prepare(row,info,sidecars)
+        except MediaStopped:pass
+        except Exception:
+            if not self.controls.stopped(path):raise
+        finally:
+            with self.controls.lock:self.controls.preparing.discard(path)
+            self.controls.settle()
+
+    def _prepare(self,row,info,sidecars):
         from app.services import translation_tasks as tasks
         from app.services.project_defaults import _apply_safe_defaults
         from app.utils.project_store import atomic_write_json
@@ -313,6 +349,7 @@ class LibraryWorker:
                       preparation_progress={'stage':'subtitle_extract','progress':None,
                                             'message':'正在提取字幕，准备读取源文件'})
             def report(position,total,elapsed):
+                self.controls.check(row['path'])
                 percent=min(99,int(position*100/total)) if position is not None and total>0 else None
                 reading=(f'读取位置 {position/1024**2:.1f} / {total/1024**2:.1f} MiB · ' if position is not None else '')
                 self.save(row,preparation_progress={'stage':'subtitle_extract','progress':percent,
@@ -330,10 +367,12 @@ class LibraryWorker:
         if fingerprint(path)!=row['fingerprint'] or self.block_reason(path):raise RuntimeError('提取期间视频状态变化')
         project['library_subtitle_source']=source_label
         atomic_write_json(pdir/'project.json',project)
-        self.save(row,state='translating',reason='正在翻译',project_id=pid,subtitle_source=source_label,metadata=metadata,
+        with self.controls.lock:
+            self.controls.check(row['path'])
+            self.save(row,state='translating',reason='正在翻译',project_id=pid,subtitle_source=source_label,metadata=metadata,
                   preparation_progress=None,retry_stage=None,next_attempt_at=0,retry_attempts=0)
-        if project['status']=='asr_done':tasks.start_translate(pid,tasks.TranslateRequest(target_language='简体中文'))
-        else:tasks.start_transcribe_translate(pid,tasks.FullPipelineRequest(workflow_mode='translate_only'))
+            if project['status']=='asr_done':tasks.start_translate(pid,tasks.TranslateRequest(target_language='简体中文'))
+            else:tasks.start_transcribe_translate(pid,tasks.FullPipelineRequest(workflow_mode='translate_only'))
 
     def arrival_status(self,row):
         """An old Emby item is not a new episode just because its directory moved."""
@@ -459,7 +498,7 @@ class LibraryWorker:
                 if current and current['state']=='ready' and current.get('reason')!=queued_reason:
                     self.save(current,reason=queued_reason)
         if not start or not self.authenticated or busy_reason:return
-        if self.store.rows(['translating','publishing'],limit=1):return
+        if self.store.rows(['translating','publishing','pausing','cancelling'],limit=1):return
         for row in self.store.rows(['ready'],limit=1,oldest=True):
             with self.media_lock(row['path']):
                 row=self.store.get(row['path'])
@@ -481,6 +520,7 @@ class LibraryWorker:
             log.warning('Library start deferred: %s',type(exc).__name__)
 
     def tick(self):
+        self.controls.settle()
         if self.apply_storage_settings():return
         self.directories.apply()
         from app.engines.providers.codex_cli import CodexCliProvider
@@ -506,7 +546,7 @@ class LibraryWorker:
         if not self.storage or not self.storage.state()['pending']:return False
         from app.services.translation_tasks import run_when_tasks_idle
         def restart():
-            if self.store.rows(['translating','publishing'],limit=1):return False
+            if self.store.rows(['translating','publishing','pausing','cancelling'],limit=1):return False
             if not self.restarting and self.storage.mark_restarting():
                 import signal
                 self.restarting=True

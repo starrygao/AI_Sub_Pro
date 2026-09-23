@@ -6,7 +6,7 @@ def test_cleanup_settings_load_save_pause_and_preserve_failed_input():
 const policy={enabled:false,limit_gb:20,minimum_gb:5,managed_bytes:0,eligible_bytes:0,protected_bytes:0,last_run:{}};
 const requests=[];let failure=false;
 context.api=async(path,body)=>{assert.equal(path,'cleanup');if(failure)throw Error('暂时不可用');if(body){requests.push(body);Object.assign(policy,body);}return {...policy};};
-vm.runInContext(fs.readFileSync('app/static/js/library-cleanup.js','utf8'),context);await flush();
+context.location.hash='#system';vm.runInContext(fs.readFileSync('app/static/js/library-cleanup.js','utf8'),context);await flush();
 assert.equal($('cleanup-limit').value,20);assert.equal($('cleanup-limit').min,5);
 assert.equal($('cleanup-save').disabled,false);assert.equal($('cleanup-pause').hidden,true);
 $('cleanup-limit').value='12';$('cleanup-limit').oninput();failure=true;
@@ -24,9 +24,19 @@ def test_cleanup_load_failure_and_protected_remaining_are_visible():
     run_js(r'''
 let fail=true;
 context.api=async()=>{if(fail)throw Error('读取失败');return {enabled:true,limit_gb:5,minimum_gb:5,managed_bytes:10*1024**3,eligible_bytes:0,protected_bytes:10*1024**3,last_run:{status:'protected_remaining'}};};
-vm.runInContext(fs.readFileSync('app/static/js/library-cleanup.js','utf8'),context);await flush();
+context.location.hash='#system';vm.runInContext(fs.readFileSync('app/static/js/library-cleanup.js','utf8'),context);await flush();
 assert.equal($('cleanup-save').disabled,true);assert.match($('cleanup-error').textContent,/读取失败/);
 fail=false;await $('cleanup-refresh').onclick();
 assert.match($('cleanup-summary').textContent,/受保护 10.00 GB/);
 assert.match($('cleanup-feedback').textContent,/不会.*扩大删除范围/);
+''')
+
+
+def test_storage_breakdown_and_paths_display_under_system_settings():
+    run_js(r'''
+context.location.hash='#system';context.api=async()=>({enabled:false,limit_gb:20,minimum_gb:5,managed_bytes:1024,eligible_bytes:0,protected_bytes:1024,last_run:{},usage:{total_bytes:2048,measured_at:1700000000,unreadable_entries:1,paths:{data:'/vol2/data',temporary:'/vol2/tmp',models:'/vol2/models'},disks:[{free_bytes:4096,total_bytes:8192}],categories:[{label:'提取音频',bytes:1024,eligible_bytes:0,files:1},{label:'知识库',bytes:1024,eligible_bytes:0,files:2}]}});
+vm.runInContext(fs.readFileSync('app/static/js/library-cleanup.js','utf8'),context);await flush();
+assert.equal($('storage-total').textContent,'2 KB');assert.equal($('storage-categories').children.length,2);
+assert($('system-storage').children.some(e=>e.textContent==='/vol2/tmp'));
+assert.match($('storage-measured').textContent,/统计不完整/);
 ''')
