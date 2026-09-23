@@ -61,7 +61,8 @@ async def authenticate(request:Request,call_next):
         origin=request.headers.get('origin')
         if (origin and origin.rstrip('/')!=str(request.base_url).rstrip('/')) or request.headers.get('sec-fetch-site')=='cross-site':
             return JSONResponse({'detail':'跨站请求已拒绝'},status_code=403)
-    if request.url.path in {'/login','/api/auth/login','/static/css/login.css','/static/js/login.js'}:
+    if request.url.path in {'/login','/api/auth/login','/static/css/login.css','/static/js/login.js',
+                            '/favicon.ico','/static/favicon.ico','/static/favicon.svg'}:
         return await call_next(request)
     token=getattr(app.state,'operator_token','')
     supplied=request.headers.get('x-aisub-key','')
@@ -86,6 +87,11 @@ async def authenticate(request:Request,call_next):
 @app.get('/login')
 def login_page():
     return FileResponse(Path(__file__).parent/'static'/'login.html',headers={'Cache-Control':'no-store'})
+
+
+@app.get('/favicon.ico', include_in_schema=False)
+def favicon():
+    return FileResponse(Path(__file__).parent/'static'/'favicon.ico',media_type='image/vnd.microsoft.icon')
 
 
 class Login(BaseModel):

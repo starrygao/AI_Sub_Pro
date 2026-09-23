@@ -24,6 +24,14 @@ def test_account_verification_and_authenticated_server_routes(monkeypatch,tmp_pa
     assert client.get('/library',follow_redirects=False).headers['location'].startswith('/login?')
     assert client.get('/login').status_code==200
     assert client.get('/static/css/login.css').status_code==200
+    for path, content_type in [('/favicon.ico', 'image/'), ('/static/favicon.ico?v=1', 'image/'),
+                               ('/static/favicon.svg?v=1', 'image/svg+xml')]:
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.headers['content-type'].startswith(content_type)
+        assert response.content
+    assert client.get('/static/library.html').status_code == 401
+    assert client.get('/static/js/library.js').status_code == 401
     assert client.post('/api/auth/login',json={'username':'fixture','password':'wrong'}).status_code==401
     before=dict(account)
     response=client.post('/api/auth/login',json={'username':'fixture','password':'fixture-password'})
