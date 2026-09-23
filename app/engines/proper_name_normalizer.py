@@ -9,7 +9,6 @@ from app.evaluation.metrics import proper_name_consistency_score
 
 
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
-_NAME_JOINERS = {"·", "・", "-"}
 _BAD_ANCHORS = {
     "今天",
     "他们",
@@ -29,19 +28,8 @@ _BAD_ANCHORS = {
     "那个",
     "那是",
 }
-_RIGHT_CONTEXT_STOPS = set(
-    "的了呢吗啊呀吧哦嘛么着过在从到去来给把被将让为就时后前上下一些"
-    "这那哪谁什么怎很太都也还又会能要想说问看见听帮派传发走入出先等首"
-)
-
-
 def _cjk_compact(value: str) -> str:
     return "".join(_CJK_RE.findall(value or ""))
-
-
-def _source_target_cjk_limit(source: str) -> int:
-    letter_count = sum(1 for char in (source or "") if char.isalpha())
-    return max(3, min(8, (letter_count * 3 + 4) // 5))
 
 
 def _shared_majority_anchor(translations: list[str]) -> str:
@@ -69,46 +57,6 @@ def _shared_majority_anchor(translations: list[str]) -> str:
     return max(candidates)[3]
 
 
-def _span_for_anchor(text: str, anchor: str, source: str) -> tuple[str, str] | None:
-    cjk_chars = []
-    cjk_positions = []
-    for idx, char in enumerate(text or ""):
-        if _CJK_RE.match(char):
-            cjk_chars.append(char)
-            cjk_positions.append(idx)
-    compact = "".join(cjk_chars)
-    anchor_start = compact.find(anchor)
-    if anchor_start < 0:
-        return None
-
-    start = cjk_positions[anchor_start]
-    end = cjk_positions[anchor_start + len(anchor) - 1] + 1
-    cjk_count = len(anchor)
-    cjk_limit = _source_target_cjk_limit(source)
-
-    idx = end
-    while idx < len(text) and cjk_count < cjk_limit:
-        char = text[idx]
-        if char in _NAME_JOINERS:
-            end = idx + 1
-            idx += 1
-            continue
-        if _CJK_RE.match(char):
-            if char in _RIGHT_CONTEXT_STOPS:
-                break
-            end = idx + 1
-            idx += 1
-            cjk_count += 1
-            continue
-        break
-
-    span = text[start:end]
-    signature = _cjk_compact(span)
-    if len(signature) < 2:
-        return None
-    return span, signature
-
-
 def _canonical_span(spans: list[str]) -> str:
     by_span: dict[str, int] = {}
     for span in spans:
@@ -123,7 +71,8 @@ def normalize_inferred_proper_name_variants(blocks: Iterable, *, protected_terms
     - it only uses repeated source proper names already detected by the local
       QA metric;
     - it requires a strict majority target form;
-    - it only replaces an exact extracted name span inside the affected block.
+    - it requires a unique bounded span and shared name characters;
+    - it never shortens/expands a containing span, or reuses stale observations.
     """
     active_blocks = [
         block for block in (blocks or [])
@@ -183,12 +132,15 @@ def normalize_inferred_proper_name_variants(blocks: Iterable, *, protected_terms
             if not block_id or not isinstance(translation, str):
                 continue
             bounded_span = item.get("target_span", "")
-            span = ((bounded_span, _cjk_compact(bounded_span))
-                    if bounded_span and bounded_span in translation
-                    else _span_for_anchor(translation, anchor, source))
-            if span is None:
+            # A shared phrase is evidence for a QA warning, not permission
+            # to rewrite a guessed name inside a sentence.
+            if (item.get("evidence") not in {"bounded_lexical_span", "speaker_label", "standalone_address", "title_boundary"}
+                    or not isinstance(bounded_span, str) or not bounded_span
+                    or translation.count(bounded_span) != 1):
                 continue
-            text_span, signature = span
+            text_span, signature = bounded_span, _cjk_compact(bounded_span)
+            if len(signature) < 2:
+                continue
             spans_by_signature[signature].append((block_id, text_span))
 
         counts = Counter({
@@ -217,15 +169,21 @@ def normalize_inferred_proper_name_variants(blocks: Iterable, *, protected_terms
                 continue
             # Adding/removing a title is not a transliteration correction.
             # A shorter existing name may already have its title on the left.
-            if (signature.startswith(canonical_signature)
-                    or canonical_signature.startswith(signature)):
+            # Containment may reflect titles OR surrounding dialogue (e.g.
+            # "得希尔克" in "我觉得希尔克教会"). Never delete that context.
+            if signature in canonical_signature or canonical_signature in signature:
+                continue
+            # Unrelated names in one cue must not be unified merely because
+            # a lexical guess paired them with the same source mention.
+            if len(set(signature) & set(canonical_signature)) < 2:
                 continue
             for block_id, span in items:
                 block = by_id.get(block_id)
                 if block is None:
                     continue
                 current = getattr(block, "translation", "")
-                if not isinstance(current, str) or span not in current:
+                if (not isinstance(current, str) or current.count(span) != 1
+                        or current != translation_by_id.get(block_id)):
                     continue
                 updated = current.replace(span, canonical, 1)
                 if updated == current:

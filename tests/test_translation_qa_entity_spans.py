@@ -52,3 +52,28 @@ def test_shared_book_title_does_not_hide_a_different_person_name():
          "2": "米里亚姆·克雷斯写了《小小人》。"},
     )
     assert any(i["source"] == "Miriam Crace" for i in result["issues"])
+
+
+@pytest.mark.parametrize('source_targets', [
+    [
+        ('So, Lady Chiyome, what happened upon your return to the village?', '那么千代女大人，你回村后怎么样了？'),
+        ('Lady Chiyome, Lady Tsubone, I take it that your visit to Lalatoya is related?', '千代女大人、局大人，你们来拉拉托亚也是为此吗？'),
+        ('My aid is yours, Lady Chiyome, Lady Tsubone.', '千代女大人、局大人，我愿助你们一臂之力。'),
+    ],
+    [
+        ('The Hilk Church did it.', '是希尔克教会干的。'),
+        ('I feel like the Hilk Church might be behind this.', '我觉得希尔克教会可能在幕后。'),
+        ('I dislike the Hilk Church.', '我不喜欢希尔克教会。'),
+    ],
+    [
+        ('It seems the Holy Hilk Kingdom is making its move.', '看来圣希尔克王国已经开始行动了。'),
+        ('The Holy Hilk Kingdom.', '圣希尔克王国。'),
+        ('The Holy Hilk Kingdom has been a topic of interest.', '圣希尔克王国一直备受关注。'),
+    ],
+])
+def test_inferred_name_replacement_preserves_other_entities_and_sentence_context(source_targets):
+    blocks = [SubtitleBlock(i, timedelta(seconds=i * 5), timedelta(seconds=i * 5 + 4), source, target)
+              for i, (source, target) in enumerate(source_targets, 1)]
+    before = [b.translation for b in blocks]
+    assert normalize_inferred_proper_name_variants(blocks) == []
+    assert [b.translation for b in blocks] == before
