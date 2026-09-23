@@ -233,3 +233,21 @@ rows[0]={path:'/video/Ready.mkv',state:'ready',reason:'检测通过，等待翻�
 assert.match(taskText(),/待翻译/);assert.match(taskText(),/等待翻译名额/);
 $('view-waiting').onclick();await flush();assert.match($('list-hint').textContent,/尚未确认/);
 ''')
+
+
+def test_manual_hard_subtitle_mark_and_revoke_are_explicit_actions():
+    run_js(LIST_FIXTURE + r'''
+rows.push({path:'/video/Episode.mkv',state:'waiting',metadata:{}});
+await loadList();
+let button=taskNodes().find(e=>e.tagName==='BUTTON'&&e.textContent==='已有中文硬字幕');
+assert(button);await button.onclick();
+assert(calls.some(c=>c.url.endsWith('/hard-subtitle')&&c.body.present===true));
+rows[0].state='skipped';rows[0].manual_hard_subtitle={marked_at:1};await context.refresh();
+assert.match(taskText(),/中文硬字幕/);
+assert(!taskNodes().some(e=>e.tagName==='BUTTON'&&e.textContent==='重新检查'));
+button=taskNodes().find(e=>e.tagName==='BUTTON'&&e.textContent==='撤销硬字幕标记');
+await button.onclick();
+assert(calls.some(c=>c.url.endsWith('/hard-subtitle')&&c.body.present===false));
+rows[0].state='translating';rows[0].project_id='deadbeef';await context.refresh();
+assert(!taskNodes().some(e=>e.tagName==='BUTTON'&&e.textContent==='撤销硬字幕标记'));
+''')

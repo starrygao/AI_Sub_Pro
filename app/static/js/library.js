@@ -19,7 +19,7 @@ function error(message){$('error').textContent=message;$('error').hidden=!messag
 
 function icon(name){const node=el('span',undefined,'icon icon-'+name);node.setAttribute('aria-hidden','true');return node;}
 const stages={asr:'语音识别',translate:'翻译与复核',subtitle_extract:'正在提取字幕',filter:'整理字幕',export:'保存字幕'};
-function progressLabel(row){return row.state==='done'?'字幕已保存':row.state==='publishing'?'等待保存':row.state==='translating'?(stages[row.progress?.stage]||'正在处理'):names[row.state]||row.state;}
+function progressLabel(row){if(row.manual_hard_subtitle)return '中文硬字幕';return row.state==='done'?'字幕已保存':row.state==='publishing'?'等待保存':row.state==='translating'?(stages[row.progress?.stage]||'正在处理'):names[row.state]||row.state;}
 function renderProgress(row,body){
   if(!['translating','publishing','done','cancelled','error','changed','missing'].includes(row.state)){
     body.append(el('p',row.state==='waiting'?'正在排队检测':row.state==='ready'?'等待翻译名额':'无需翻译','progress-idle'));return;
@@ -103,10 +103,16 @@ function renderRows(rows,total){
       if(reason){const description=el('p',reason,'reason');description.title=reason;taskStatus.append(description);}
       article.append(taskArtwork(row),identity,taskStatus);renderProgress(row,article);
       if(row.project_id){const link=el('a','查看详情');link.href='#project/'+encodeURIComponent(row.project_id);link.append(icon('arrow'));side.append(focusable(link,'detail'));}
-      if(['error','changed','missing','skipped','native_language'].includes(row.state)){
+      if(!row.manual_hard_subtitle&&['error','changed','missing','skipped','native_language'].includes(row.state)){
         const button=el('button','重新检查','secondary');
         button.onclick=async()=>{button.disabled=true;try{await api('retry',{path:row.path});rowsSignature='';await refresh();}catch(e){error(e.message);}finally{button.disabled=false;}};
         side.append(focusable(button,'retry'));
+      }
+      if(!row.project_id&&(['waiting','ready'].includes(row.state)||row.manual_hard_subtitle)){
+        const marked=!!row.manual_hard_subtitle,button=el('button',marked?'撤销硬字幕标记':'已有中文硬字幕','secondary');
+        button.title=marked?'撤销后重新检测音轨和字幕':'确认画面中已有中文字幕，跳过自动翻译';
+        button.onclick=async()=>{button.disabled=true;try{await api('hard-subtitle',{path:row.path,present:!marked});rowsSignature='';await refresh();}catch(e){error(e.message);}finally{button.disabled=false;}};
+        side.append(focusable(button,'hard-subtitle'));
       }
       if(!side.children.length)side.append(el('span',row.state==='waiting'?'检测后决定是否翻译':row.state==='ready'?'按队列自动开始':row.state==='translating'?'处理中':'无需操作','hint'));
       article.append(side);articles.push(article);

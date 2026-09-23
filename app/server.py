@@ -238,6 +238,34 @@ class Retry(BaseModel):
     path:str
 
 
+class HardSubtitle(Retry):
+    model_config={'extra':'forbid'}
+    present:bool
+
+
+class CleanupPolicy(BaseModel):
+    model_config={'extra':'forbid'}
+    enabled:bool
+    limit_gb:int=Field(ge=5,le=100000,strict=True)
+
+
+@app.get('/api/library/cleanup')
+def library_cleanup():
+    return worker.cleanup.snapshot()
+
+
+@app.post('/api/library/cleanup')
+def library_cleanup_settings(body:CleanupPolicy):
+    return worker.cleanup.configure(body.enabled,body.limit_gb)
+
+
+@app.post('/api/library/hard-subtitle')
+def library_hard_subtitle(body:HardSubtitle):
+    try:return worker.mark_hard_subtitle(body.path,body.present)
+    except LookupError as exc:raise HTTPException(404,str(exc)) from exc
+    except (ValueError,OSError) as exc:raise HTTPException(409,worker.safe_error(exc)) from exc
+
+
 EmbyId = Annotated[str, Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')]
 
 
@@ -274,8 +302,13 @@ def library_emby_enqueue(body: EmbyItems):
 
 @app.post('/api/library/retry')
 def library_retry(body:Retry):
+    with worker.media_lock(body.path):return retry_library_row(body)
+
+
+def retry_library_row(body):
     row=worker.store.get(body.path)
     if not row:raise HTTPException(404,'记录不存在')
+    if row.get('manual_hard_subtitle'):raise HTTPException(409,'请先撤销中文硬字幕标记')
     if not worker.eligible_new_path(body.path,row.get('fingerprint')):raise HTTPException(409,'现有视频不补翻译')
     if row['state'] not in {'error','changed','missing','skipped','native_language'}:raise HTTPException(409,'当前任务不能重试')
     publishing=row.get('retry_stage')=='publish' and bool(row.get('project_id'))

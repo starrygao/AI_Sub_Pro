@@ -5,7 +5,7 @@
 <link rel="icon" href="/static/favicon.ico?v=1" sizes="16x16 32x32">
 <link rel="icon" href="/static/favicon.svg?v=1" type="image/svg+xml">
 <meta name="theme-color" content="#153f42">
-<link rel="stylesheet" href="/static/css/library.css?v=console-11"><script defer src="/static/js/library.js?v=console-12"></script><script defer src="/static/js/library-knowledge.js?v=console-9"></script><script defer src="/static/js/library-panels.js?v=console-10"></script><script defer src="/static/js/library-directories.js?v=console-6"></script><script defer src="/static/js/library-selection.js?v=console-1"></script></head>
+<link rel="stylesheet" href="/static/css/library.css?v=console-12"><script defer src="/static/js/library.js?v=console-13"></script><script defer src="/static/js/library-knowledge.js?v=console-9"></script><script defer src="/static/js/library-panels.js?v=console-10"></script><script defer src="/static/js/library-directories.js?v=console-6"></script><script defer src="/static/js/library-selection.js?v=console-1"></script><script defer src="/static/js/library-cleanup.js?v=1"></script></head>
 <body><header><a class="brand" href="#tasks">AI Sub Pro</a><nav class="console-nav" aria-label="主导航"><a id="nav-tasks" href="#tasks" aria-current="page">字幕任务</a><a id="nav-settings" href="#settings">模型设置</a><a id="nav-knowledge" href="#knowledge">知识库</a></nav><div class="header-actions"><button id="logout" class="secondary">退出登录</button></div></header>
 <main><div id="error" role="alert" hidden></div>
 <div id="panel-tasks">
@@ -74,6 +74,17 @@
     </fieldset>
     <div class="settings-footer"><div class="actions"><button id="settings-save" type="submit" disabled>保存设置</button><button id="settings-reset" type="button" class="secondary" disabled>撤销更改</button></div><p id="settings-feedback" role="status">尚未修改</p></div>
   </form>
+  <section class="settings-section" aria-labelledby="cleanup-heading">
+    <div><h2 id="cleanup-heading">过程文件清理</h2><p>仅清理本服务留下的可重新生成的过程文件。</p></div>
+    <form id="cleanup-form" class="form-grid">
+      <p id="cleanup-summary" class="field-hint wide" role="status">打开设置后读取占用情况。</p>
+      <label class="form-field">过程文件占用上限（GB）<input id="cleanup-limit" type="number" min="5" max="100000" step="1" value="20" required disabled><span class="field-hint">最低 5 GB，超过上限才开始清理。</span></label>
+      <p class="field-hint wide">运行中的任务和最近 24 小时的文件会保留。只清理已保存字幕任务的音频中间文件，以及本服务遗留的临时副本；视频、字幕成品、知识库、模型和凭证不会删除。旧安装包和 Docker 镜像在发布后单独清理。</p>
+      <p id="cleanup-error" class="notice failure wide" role="alert" hidden></p>
+      <div class="actions wide"><button id="cleanup-save" type="submit" disabled>保存并启用清理</button><button id="cleanup-pause" class="secondary" type="button" hidden>暂停自动清理</button><button id="cleanup-refresh" class="secondary" type="button">刷新占用</button></div>
+      <p id="cleanup-feedback" class="field-hint wide" role="status"></p>
+    </form>
+  </section>
 </section>
 <section id="panel-knowledge" hidden aria-labelledby="knowledge-title">
   <div class="intro"><div><p class="eyebrow">控制台 / 翻译积累</p><h1 id="knowledge-title" tabindex="-1">知识库</h1><p>按影视作品维护审定术语，同一作品的后续任务自动复用。</p></div><button id="kb-new">新建影视知识库</button></div>

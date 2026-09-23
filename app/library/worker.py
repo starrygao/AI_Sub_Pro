@@ -48,6 +48,33 @@ class LibraryWorker:
         self.walker=None
         self.emby_cursor=0
         self.last_recent=0
+        self._media_locks=tuple(threading.RLock() for _ in range(64))
+        from .cleanup import ProcessCleanup
+        self.cleanup=ProcessCleanup(self)
+
+    def media_lock(self,path):
+        return self._media_locks[hash(str(path))%len(self._media_locks)]
+
+    def mark_hard_subtitle(self,path,present):
+        lock=self.media_lock(path)
+        if not lock.acquire(timeout=2):raise ValueError('该文件正在检测或准备翻译，请稍后重试')
+        try:
+            row=self.store.get(path)
+            if not row:raise LookupError('记录不存在')
+            if row.get('project_id') or row['state'] in {'translating','publishing','done'}:
+                raise ValueError('已开始处理的任务不能标记；请先在任务详情处理当前任务')
+            if not self.allowed(path) or fingerprint(path)!=row.get('fingerprint'):
+                raise ValueError('视频已变化或不可读，请等待重新检测')
+            if present:
+                self.save(row,state='skipped',reason='手动确认：画面中已有中文硬字幕',
+                          manual_hard_subtitle={'fingerprint':row['fingerprint'],'marked_at':time.time()},
+                          detection=None,next_attempt_at=0)
+            elif row.get('manual_hard_subtitle'):
+                self.save(row,state='waiting',reason='已撤销硬字幕标记，等待重新检测',
+                          manual_hard_subtitle=None,detection=None,next_attempt_at=0)
+            self.wake.set()
+            return {'state':row['state'],'present':bool(row.get('manual_hard_subtitle'))}
+        finally:lock.release()
 
     def allowed(self,path):
         try:
@@ -56,6 +83,9 @@ class LibraryWorker:
         except (OSError,RuntimeError):return False
 
     def observe(self,path,metadata,*,manual=False):
+        with self.media_lock(path):return self._observe(path,metadata,manual=manual)
+
+    def _observe(self,path,metadata,*,manual=False):
         path=Path(path)
         if path.suffix.lower() not in VIDEO_EXTENSIONS or not self.allowed(path):return
         try:current=fingerprint(path)
@@ -328,6 +358,12 @@ class LibraryWorker:
         return [{'path':str(p),'fingerprint':fingerprint(p)} for p in sorted(subtitle_files(path))]
 
     def inspect_candidate(self,row):
+        with self.media_lock(row['path']):
+            current=self.store.get(row['path'])
+            if not current or current['state'] not in {'waiting','ready'} or current.get('manual_hard_subtitle'):return
+            return self._inspect_candidate(current)
+
+    def _inspect_candidate(self,row):
         """No model work here. Reuse probe results only for the exact unchanged input."""
         path=Path(row['path'])
         if not path.exists():self.save(row,state='missing',reason='视频已移动或删除');return
@@ -400,11 +436,17 @@ class LibraryWorker:
         for row in self.store.waiting_ready(time.time()):
             if self.stop_event.is_set():break
             if busy_reason:
-                self.save(row,reason=busy_reason);continue
+                with self.media_lock(row['path']):
+                    current=self.store.get(row['path'])
+                    if current and current['state'] in {'waiting','ready'}:self.save(current,reason=busy_reason)
+                continue
             if self._detection_probes>=10 or time.monotonic()>=deadline:break
             try:self.inspect_candidate(row)
             except Exception as exc:
-                self.save(row,state='error',reason=self.safe_error(exc),detection=None)
+                with self.media_lock(row['path']):
+                    current=self.store.get(row['path'])
+                    if current and current['state'] in {'waiting','ready'} and not current.get('manual_hard_subtitle'):
+                        self.save(current,state='error',reason=self.safe_error(exc),detection=None)
                 log.warning('Library candidate deferred: %s',type(exc).__name__)
         from app.engines.providers.codex_cli import CodexCliProvider
         self.authenticated=CodexCliProvider.check_logged_in()
@@ -412,20 +454,31 @@ class LibraryWorker:
                        'Codex 尚未登录，等待登录后翻译' if not self.authenticated else
                        busy_reason.replace('后检测','后翻译') or '检测通过，等待翻译名额')
         for row in self.store.rows(['ready'],limit=100):
-            if row.get('reason')!=queued_reason:self.save(row,reason=queued_reason)
+            with self.media_lock(row['path']):
+                current=self.store.get(row['path'])
+                if current and current['state']=='ready' and current.get('reason')!=queued_reason:
+                    self.save(current,reason=queued_reason)
         if not start or not self.authenticated or busy_reason:return
         if self.store.rows(['translating','publishing'],limit=1):return
         for row in self.store.rows(['ready'],limit=1,oldest=True):
-            try:
-                # Refresh download/write blockers, then revalidate file and sidecars.
-                try:self.refresh_readiness()
-                except Exception as exc:
-                    self.save(row,state='waiting',reason='等待上游就绪状态恢复：'+self.safe_error(exc),detection=None);return
-                result=self.inspect_candidate(row)
-                if result:self.prepare(row,*result)
+            with self.media_lock(row['path']):
+                row=self.store.get(row['path'])
+                if not row or row['state']!='ready':return
+                self.start_ready(row)
+
+    def start_ready(self,row):
+        try:
+            # Refresh download/write blockers, then revalidate file and sidecars.
+            try:self.refresh_readiness()
             except Exception as exc:
-                self.save(row,state='error',reason=self.safe_error(exc))
-                log.warning('Library start deferred: %s',type(exc).__name__)
+                self.save(row,state='waiting',reason='等待上游就绪状态恢复：'+self.safe_error(exc),detection=None);return
+            result=self.inspect_candidate(row)
+            if result:
+                row=self.store.get(row['path'])
+                self.prepare(row,*result)
+        except Exception as exc:
+            self.save(row,state='error',reason=self.safe_error(exc))
+            log.warning('Library start deferred: %s',type(exc).__name__)
 
     def tick(self):
         if self.apply_storage_settings():return
@@ -435,6 +488,7 @@ class LibraryWorker:
         self.establish_baseline()
         self.refresh_readiness()
         self.finish()
+        self.cleanup.tick()
         self.apply_pending_settings()
         for row in self.store.pending_refresh():
             try:

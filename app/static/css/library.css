@@ -165,6 +165,7 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .settings-section:first-child { padding-top: 8px; }
 .settings-section > div > p { color: var(--muted); font-size: 13px; margin: 8px 0 14px; }
 .form-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 22px 24px; }
+#cleanup-form .actions { flex-wrap: wrap; }
 .form-field { display: flex; flex-direction: column; gap: 8px; font-size: 13px; font-weight: 600; min-width: 0; }
 .form-field select, .form-field input, textarea, .kb-term input, .kb-candidate input { margin: 0; width: 100%; min-width: 0; padding: 11px 12px; font: 400 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; border: 1px solid #c3d5db; border-radius: 7px; background: var(--paper); color: var(--ink); }
 .form-field input:disabled, .form-field select:disabled { opacity: 1; color: var(--muted); background: #e9f0f1; border-color: var(--line); cursor: not-allowed; }

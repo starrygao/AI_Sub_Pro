@@ -7,3 +7,6 @@ python3 tools/release/verify_environment.py
 bash make_dmg.sh
 VERSION=$(python3 -c 'from app.version import APP_VERSION; print(APP_VERSION)')
 python3 tools/release/smoke_test.py --bundle 'dist/AI Sub Pro.app' --version "$VERSION" --output dist/release-smoke-report.json
+if [[ -d '/Applications/AI Sub Pro.app' ]]; then
+    python3 tools/release/cleanup_project.py --apply > dist/retirement-report.json
+fi
