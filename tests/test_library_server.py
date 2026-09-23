@@ -61,7 +61,7 @@ def test_lists_separate_waiting_and_skipped_before_pagination(tmp_path,monkeypat
     page=client.get('/api/library/tasks?view=processed&limit=1').json()
     assert [r['state'] for r in page['items']]==['error']
     assert page['total']==2
-    assert page['view_counts']=={'processed':2,'waiting':2,'skipped':2}
+    assert page['view_counts']=={'processed':2,'waiting':2,'ready':0,'skipped':2}
     page=client.get('/api/library/tasks?view=processed&limit=1&offset=1').json()
     assert [r['state'] for r in page['items']]==['done']
     for view,states in [('waiting',{'waiting'}),('skipped',{'skipped','native_language'})]:
@@ -114,3 +114,19 @@ def test_task_list_distinguishes_missing_progress_from_recorded_zero(tmp_path, t
     rows = {row['project_id']: row for row in client.get('/api/library/tasks?view=processed').json()['items']}
     assert rows['deadbeef']['progress']['progress'] == 0
     assert rows['c0ffee42']['progress'] is None
+
+
+def test_detected_queue_has_its_own_count_and_does_not_expose_probe_cache(tmp_path,monkeypatch):
+    from app.library.store import Store
+    store=Store(tmp_path/'library.sqlite3')
+    for i,state in enumerate(['waiting','ready','historical']):
+        store.put({'path':f'/video/{i}.mkv','state':state,'updated':i,'detection':{'info':{'streams':['internal']}}})
+    monkeypatch.setattr(server,'worker',SimpleNamespace(store=store,config={}))
+    monkeypatch.setattr(server.app.state,'operator_token','fixture-token',raising=False)
+    client=TestClient(server.app,headers={'X-AISub-Key':'fixture-token'})
+    payload=client.get('/api/library/tasks?view=ready').json()
+    assert payload['view_counts']=={'processed':0,'waiting':1,'ready':1,'skipped':1}
+    assert len(payload['items'])==1 and payload['items'][0]['state']=='ready'
+    assert 'detection' not in payload['items'][0]
+    assert payload['items'][0]['output_path']=='/video/1.双语.zh-CN.srt'
+    assert client.get('/api/library/tasks?view=skipped').json()['items'][0]['state']=='historical'

@@ -5,15 +5,15 @@
 <link rel="icon" href="/static/favicon.ico?v=1" sizes="16x16 32x32">
 <link rel="icon" href="/static/favicon.svg?v=1" type="image/svg+xml">
 <meta name="theme-color" content="#153f42">
-<link rel="stylesheet" href="/static/css/library.css?v=console-10"><script defer src="/static/js/library.js?v=console-11"></script><script defer src="/static/js/library-knowledge.js?v=console-9"></script><script defer src="/static/js/library-panels.js?v=console-10"></script><script defer src="/static/js/library-directories.js?v=console-6"></script><script defer src="/static/js/library-selection.js?v=console-1"></script></head>
+<link rel="stylesheet" href="/static/css/library.css?v=console-11"><script defer src="/static/js/library.js?v=console-12"></script><script defer src="/static/js/library-knowledge.js?v=console-9"></script><script defer src="/static/js/library-panels.js?v=console-10"></script><script defer src="/static/js/library-directories.js?v=console-6"></script><script defer src="/static/js/library-selection.js?v=console-1"></script></head>
 <body><header><a class="brand" href="#tasks">AI Sub Pro</a><nav class="console-nav" aria-label="主导航"><a id="nav-tasks" href="#tasks" aria-current="page">字幕任务</a><a id="nav-settings" href="#settings">模型设置</a><a id="nav-knowledge" href="#knowledge">知识库</a></nav><div class="header-actions"><button id="logout" class="secondary">退出登录</button></div></header>
 <main><div id="error" role="alert" hidden></div>
 <div id="panel-tasks">
   <section class="intro task-intro"><div><h1 id="tasks-title" tabindex="-1">字幕任务</h1><p>为你的媒体库，补齐每一句对白。</p></div><div class="actions"><button id="toggle" class="secondary automation-toggle" disabled>读取状态…</button><button id="emby-open" class="secondary">从 Emby 添加</button><button id="scan" class="scan-button">检查新文件</button></div></section>
-  <section class="monitor" aria-label="运行状态"><div><span class="label">处理中</span><strong id="running">—</strong></div><div><span class="label">待处理</span><strong id="pending">—</strong></div><div><span class="label">需关注</span><strong id="attention">—</strong></div><p id="scope-summary" class="monitor-note">仅处理缺少中文字幕的新增视频</p></section>
+  <section class="monitor" aria-label="运行状态"><div><span class="label">处理中</span><strong id="running">—</strong></div><div><span class="label">待翻译</span><strong id="pending">—</strong></div><div><span class="label">需关注</span><strong id="attention">—</strong></div><p id="scope-summary" class="monitor-note">仅处理缺少中文字幕的新增视频</p></section>
   <section class="task-section" aria-label="字幕任务列表">
-    <div class="task-toolbar"><div class="list-switch" role="group" aria-label="任务列表"><button id="view-processed" aria-pressed="true">处理记录 <span id="count-processed">—</span></button><button id="view-waiting" aria-pressed="false">待处理 <span id="count-waiting">—</span></button><button id="view-skipped" aria-pressed="false">已跳过 <span id="count-skipped">—</span></button></div><label class="task-filter"><span class="sr-only">筛选任务</span><select id="filter"><option value="">全部处理记录</option><option value="translating">正在翻译</option><option value="publishing">等待保存</option><option value="done">已保存</option><option value="error">需要处理</option><option value="changed">视频已变化</option><option value="missing">文件已移走</option><option value="cancelled">已停止</option></select></label></div>
-    <p id="list-hint" class="sr-only">正在处理、已完成及异常的记录。尚未处理的视频在“待处理”列表。</p>
+    <div class="task-toolbar"><div class="list-switch" role="group" aria-label="任务列表"><button id="view-processed" aria-pressed="true">处理记录 <span id="count-processed">—</span></button><button id="view-waiting" aria-pressed="false">待检测 <span id="count-waiting">—</span></button><button id="view-ready" aria-pressed="false">待翻译 <span id="count-ready">—</span></button><button id="view-skipped" aria-pressed="false">已跳过 <span id="count-skipped">—</span></button></div><label class="task-filter"><span class="sr-only">筛选任务</span><select id="filter"><option value="">全部处理记录</option><option value="translating">正在翻译</option><option value="publishing">等待保存</option><option value="done">已保存</option><option value="error">需要处理</option><option value="changed">视频已变化</option><option value="missing">文件已移走</option><option value="cancelled">已停止</option></select></label></div>
+    <p id="list-hint" class="sr-only">正在处理、已完成及异常的记录。新发现文件先检测，通过后才进入待翻译。</p>
     <div class="task-columns" aria-hidden="true"><span>视频</span><span>标题 / 文件</span><span>任务状态</span><span>进度</span><span>操作</span></div>
     <p id="empty" class="empty" role="status">正在读取媒体库任务…</p><div id="tasks"></div><div class="pagination"><button id="prev" class="secondary" hidden>上一页</button><span id="page"></span><button id="more" class="secondary" hidden>下一页</button></div>
   </section>
@@ -132,6 +132,6 @@
   </fieldset>
   <p class="hint">列表音轨信息来自 Emby；是否需要翻译以处理前的实际文件检查为准。每次只处理一个视频，字幕保存到视频原文件夹。</p>
   <p id="emby-error" class="notice failure" role="alert" hidden></p><p id="emby-feedback" role="status"></p><ul id="emby-outcomes" class="emby-outcomes" hidden></ul>
-  <div class="actions emby-footer"><button id="emby-add" type="button" disabled>添加到待处理</button><button id="emby-go-tasks" type="button" class="secondary" hidden>查看待处理列表</button></div>
+  <div class="actions emby-footer"><button id="emby-add" type="button" disabled>添加后检测</button><button id="emby-go-tasks" type="button" class="secondary" hidden>查看待检测列表</button></div>
 </dialog>
 <footer><div><strong>AI Sub Pro</strong><span>同目录双语 SRT · 保留原视频</span></div><p>中文在上，原文在下 · 不覆盖已有字幕</p></footer></body></html>

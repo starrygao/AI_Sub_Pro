@@ -72,7 +72,7 @@ def test_failed_tmdb_candidate_backs_off_without_starving_ready_arrival(library,
     probe = Mock(side_effect=lambda path: {'streams': [
         {'codec_type': 'audio', 'tags': {'language': 'und' if path == high else 'eng'}}]})
     monkeypatch.setattr(worker, 'probe', probe)
-    prepare = Mock()
+    prepare = Mock(side_effect=lambda row,info,sidecars:worker.save(row,state='translating',project_id='1234abcd'))
     monkeypatch.setattr(worker, 'prepare', prepare)
     worker.process_one()
     worker.process_one()
@@ -186,7 +186,7 @@ def test_pending_emby_refresh_is_not_limited_to_latest_completed_tasks(library, 
         worker.store.put({'path': str(media / f'{i}.mkv'), 'state': 'done', 'updated': i + 1,
                           'refresh_pending': i == 0, 'metadata': {'emby_id': str(i)}})
     for name in ('apply_storage_settings', 'finish', 'apply_pending_settings', 'discover', 'process_one'):
-        monkeypatch.setattr(worker, name, lambda: False)
+        monkeypatch.setattr(worker, name, lambda **kwargs: False)
     monkeypatch.setattr(worker.directories, 'apply', lambda: None)
     refresh = Mock()
     monkeypatch.setattr(worker.sources, 'refresh_subtitles', refresh)
@@ -201,7 +201,7 @@ def test_failed_emby_refresh_batch_rotates_to_remaining_pending_rows(library, mo
         worker.store.put({'path': str(media / f'{i}.mkv'), 'state': 'done', 'updated': i + 1,
                           'refresh_pending': True, 'metadata': {'emby_id': str(i)}})
     for name in ('apply_storage_settings', 'finish', 'apply_pending_settings', 'discover', 'process_one'):
-        monkeypatch.setattr(worker, name, lambda: False)
+        monkeypatch.setattr(worker, name, lambda **kwargs: False)
     monkeypatch.setattr(worker.directories, 'apply', lambda: None)
     refresh = Mock(side_effect=RuntimeError('Emby offline'))
     monkeypatch.setattr(worker.sources, 'refresh_subtitles', refresh)

@@ -54,6 +54,48 @@ def test_manual_old_video_survives_baseline_and_restart_without_enabling_automat
     assert restarted.eligible_new_path(video, row['fingerprint'])
 
 
+def test_explicit_emby_selection_reopens_history_exclusion_once(setup, monkeypatch):
+    from app.library.guard import fingerprint
+    worker, video, item, calls = setup
+    worker.store.put({'path':str(video),'fingerprint':fingerprint(video),
+                      'state':'historical','updated':1,'metadata':{}})
+    monkeypatch.setattr(server,'worker',worker)
+    monkeypatch.setattr(server.app.state,'operator_token','selection-test-token',raising=False)
+    client=TestClient(server.app,headers={'X-AISub-Key':'selection-test-token'})
+    result=client.get('/api/library/emby/search?q=Film').json()
+    assert result['items'][0]['selectable']
+    result=client.post('/api/library/emby/enqueue',json={'ids':['1']}).json()
+    assert result['items'][0]['status']=='queued'
+    row=worker.store.get(video)
+    assert row['state']=='waiting' and row['manual_requested']
+    assert worker.eligible_new_path(video,row['fingerprint'])
+    assert client.post('/api/library/emby/enqueue',json={'ids':['1']}).json()['items'][0]['status']=='existing'
+    assert worker.store.get(video)==row
+
+
+def test_history_override_uses_current_emby_path_after_rename(setup):
+    from app.library.guard import fingerprint
+    worker,video,item,calls=setup
+    worker.store.put({'path':str(video),'fingerprint':fingerprint(video),
+                      'state':'historical','updated':1,'metadata':{}})
+    renamed=video.with_name('renamed.mkv');video.rename(renamed);item['Path']=str(renamed)
+    assert EmbySelection(worker).enqueue(['1'])['items'][0]['status']=='queued'
+    row=worker.store.get(renamed)
+    assert row and row['manual_requested']
+    assert worker.store.get(video) is None
+    assert worker.eligible_new_path(renamed,row['fingerprint'])
+
+
+def test_history_row_with_project_is_not_offered_as_new_selection(setup):
+    from app.library.guard import fingerprint
+    worker,video,item,calls=setup
+    worker.store.put({'path':str(video),'fingerprint':fingerprint(video),
+                      'state':'historical','updated':1,'metadata':{},'project_id':'existing'})
+    service=EmbySelection(worker)
+    assert not service.search('Film')['items'][0]['selectable']
+    assert service.enqueue(['1'])['items'][0]['status']=='existing'
+
+
 def test_parallel_add_and_repeat_do_not_reset_a_task_or_stability_window(setup):
     worker, video, item, calls = setup
     service = EmbySelection(worker)
@@ -67,7 +109,7 @@ def test_parallel_add_and_repeat_do_not_reset_a_task_or_stability_window(setup):
 
 
 @pytest.mark.parametrize('kind,expected', [('embedded', 'skipped'), ('sidecar', 'skipped'),
-    ('attachment', 'skipped'), ('chinese_audio', 'native_language'), ('foreign', 'waiting'), ('downloading', 'waiting')])
+    ('attachment', 'skipped'), ('chinese_audio', 'native_language'), ('foreign', 'ready'), ('downloading', 'waiting')])
 def test_manual_selection_uses_existing_track_and_readiness_guards(setup, monkeypatch, kind, expected):
     from app.engines.providers.codex_cli import CodexCliProvider
     worker, video, item, calls = setup

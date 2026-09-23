@@ -67,7 +67,7 @@ class LibraryWorker:
             priority=int(now-created<7*86400)
         except (ValueError,TypeError):priority=0
         if not old or old.get('fingerprint')!=current:
-            row={'path':str(path),'state':'waiting','reason':'等待文件稳定','fingerprint':current,
+            row={'path':str(path),'state':'waiting','reason':'检测排队中','fingerprint':current,
                  'stable_since':now,'updated':now,'priority':priority,'metadata':metadata,'output_path':str(bilingual_sidecar_path(path))}
             if manual:
                 row.update(manual_requested=True,manual_requested_at=(old or {}).get('manual_requested_at',now))
@@ -194,7 +194,9 @@ class LibraryWorker:
         return info
 
     def refresh_readiness(self):
-        candidates=self.store.waiting_ready(time.time())+self.store.rows(['translating','publishing'],limit=5)
+        # A newly detected job may be outside the oldest discovery page.
+        candidates=(self.store.rows(['ready'],limit=1,oldest=True)+self.store.waiting_ready(time.time())
+                    +self.store.rows(['translating','publishing'],limit=5))
         self.set_blockers(self.sources.readiness(candidates=[row['path'] for row in candidates]));self.health=dict(self.sources.health)
         self.last_error=''
 
@@ -303,69 +305,127 @@ class LibraryWorker:
         if project['status']=='asr_done':tasks.start_translate(pid,tasks.TranslateRequest(target_language='简体中文'))
         else:tasks.start_transcribe_translate(pid,tasks.FullPipelineRequest(workflow_mode='translate_only'))
 
-    def process_one(self):
+    def arrival_status(self,row):
+        """An old Emby item is not a new episode just because its directory moved."""
+        if not self.config.get('new_only',False) or row.get('manual_requested'):return ''
+        baseline=self.store.setting('baseline',{}).get('started_at')
+        if not baseline:return '等待完成现有媒体登记'
+        metadata=row.get('metadata',{})
+        if metadata.get('emby_id'):
+            try:
+                created=datetime.fromisoformat(metadata.get('date_created','').replace('Z','+00:00'))
+                if created.tzinfo is not None:
+                    timestamp=created.timestamp()
+                    if 0<timestamp<=baseline:return 'historical'
+                    if baseline<timestamp<=time.time()+300:return ''
+            except (ValueError,TypeError,AttributeError):pass
+        # Old mtime alone is never evidence: downloads often preserve release timestamps.
+        if Path(row['path']).stat().st_ctime<=baseline:
+            return '文件早于监控启用，等待入库记录确认；可从 Emby 手动添加'
+        return ''
+
+    def subtitle_snapshot(self,path):
+        return [{'path':str(p),'fingerprint':fingerprint(p)} for p in sorted(subtitle_files(path))]
+
+    def inspect_candidate(self,row):
+        """No model work here. Reuse probe results only for the exact unchanged input."""
+        path=Path(row['path'])
+        if not path.exists():self.save(row,state='missing',reason='视频已移动或删除');return
+        if not self.allowed(path):self.save(row,state='missing',reason='视频不在允许的媒体目录内');return
+        current=fingerprint(path)
+        if current!=row['fingerprint']:
+            self.observe(path,row.get('metadata',{}),manual=bool(row.get('manual_requested')));return
+        if not self.eligible_new_path(path,current):
+            self.save(row,state='historical',reason='现有媒体或已离开监控范围，不自动补翻译',detection=None);return
+        arrival=self.arrival_status(row)
+        if arrival=='historical':
+            self.save(row,state='historical',reason='Emby 入库早于监控启用，不自动补翻译',detection=None);return
+        if arrival:
+            self.save(row,state='waiting',reason=arrival,detection=None,next_attempt_at=time.time()+60);return
+        reason=self.block_reason(path)
+        ok,message=ready_file(path,row,now=time.time(),quiet_seconds=int(self.config.get('quiet_seconds',300)))
+        if reason or not ok:
+            self.save(row,state='waiting',reason=reason or message,detection=None);return
+        if row.get('stale_output_hash'):
+            backup=archive_stale_sidecar(row.get('stale_output_path') or path.with_suffix('.srt'),row['stale_output_hash'])
+            self.save(row,previous_subtitle_backup=str(backup) if backup else '',stale_output_hash=None,stale_output_path=None)
+        subtitles=self.subtitle_snapshot(path)
+        sidecars=[Path(item['path']) for item in subtitles]
+        chinese=[p for p in sidecars if chinese_sidecar(p,path)]
+        if chinese:
+            self.save(row,state='skipped',reason='已有同目录中文字幕',detection=None,
+                      existing_subtitles=[{'path':str(p),'fingerprint':fingerprint(p)} for p in chinese]);return
+        policy=bool(self.config.get('skip_chinese_audio',True))
+        previous=row.get('detection') or {}
+        cached=(previous.get('fingerprint')==current and previous.get('subtitles')==subtitles
+                and previous.get('skip_chinese_audio')==policy and isinstance(previous.get('info'),dict))
+        if cached:info=previous['info']
+        else:
+            self.save(row,state='waiting',reason='正在检查字幕和音轨',detection=None)
+            self._detection_probes=getattr(self,'_detection_probes',0)+1
+            info=self.probe(path)
+        if fingerprint(path)!=current or self.subtitle_snapshot(path)!=subtitles:
+            self.observe(path,row.get('metadata',{}),manual=bool(row.get('manual_requested')))
+            self.save(self.store.get(path),state='waiting',reason='检测期间文件或字幕发生变化，等待重新检查',detection=None);return
+        if any(chinese_track(s,path) for s in info['streams']):
+            self.save(row,state='skipped',reason='已有内嵌中文字幕',detection=None);return
+        if any(chinese_subtitle_attachment(s,path) for s in info['streams']):
+            self.save(row,state='skipped',reason='已有中文字幕附件',detection=None);return
+        if bilingual_sidecar_path(path).exists():
+            self.save(row,state='error',reason='双语字幕目标文件已存在，保留原文件；请先检查该文件后重试',detection=None);return
+        if policy and chinese_audio_only(info['streams']):
+            self.save(row,state='native_language',reason='中文原声，无需翻译',detection=None);return
+        if policy and not has_foreign_audio(info['streams']):
+            metadata={**self.sources.metadata(path),**row.get('metadata',{})}
+            try:language=self.sources.original_language(metadata)
+            except Exception:
+                attempts=min(int(row.get('retry_attempts',0))+1,7)
+                self.save(row,state='waiting',reason='音轨语言未知，等待 TMDB 原始语言确认',detection=None,
+                          retry_attempts=attempts,next_attempt_at=time.time()+min(3600,60*2**(attempts-1)));return
+            if language in CHINESE_LANGUAGES:
+                self.save(row,state='native_language',reason='TMDB 确认为中文原声，无需翻译',metadata=metadata,detection=None);return
+        if fingerprint(path)!=current or self.subtitle_snapshot(path)!=subtitles:
+            self.save(row,state='waiting',reason='检测期间文件或字幕发生变化，等待重新检查',detection=None);return
+        self.save(row,state='ready',reason='检测通过，等待翻译名额',next_attempt_at=0,
+                  detection={'fingerprint':current,'subtitles':subtitles,'skip_chinese_audio':policy,'info':info})
+        return info,sidecars
+
+    def process_one(self,start=True):
+        # Detection is independent of model availability and the active translation.
+        busy=(self.health.get('emby',{}).get('transcoding',0)>int(self.config.get('max_emby_transcodes',0)))
+        busy_reason='Emby 正在转码，等待空闲后检测' if busy else ''
+        if os.getloadavg()[0]>float(self.config.get('max_load',16)):busy_reason='服务器负载较高，等待空闲后检测'
+        deadline=time.monotonic()+10
+        self._detection_probes=0
+        for row in self.store.waiting_ready(time.time()):
+            if self.stop_event.is_set():break
+            if busy_reason:
+                self.save(row,reason=busy_reason);continue
+            if self._detection_probes>=10 or time.monotonic()>=deadline:break
+            try:self.inspect_candidate(row)
+            except Exception as exc:
+                self.save(row,state='error',reason=self.safe_error(exc),detection=None)
+                log.warning('Library candidate deferred: %s',type(exc).__name__)
         from app.engines.providers.codex_cli import CodexCliProvider
         self.authenticated=CodexCliProvider.check_logged_in()
-        if not self.authenticated:return
+        queued_reason=('自动翻译已暂停或设置待生效，检测结果已保留' if not start else
+                       'Codex 尚未登录，等待登录后翻译' if not self.authenticated else
+                       busy_reason.replace('后检测','后翻译') or '检测通过，等待翻译名额')
+        for row in self.store.rows(['ready'],limit=100):
+            if row.get('reason')!=queued_reason:self.save(row,reason=queued_reason)
+        if not start or not self.authenticated or busy_reason:return
         if self.store.rows(['translating','publishing'],limit=1):return
-        if self.health.get('emby',{}).get('transcoding',0)>int(self.config.get('max_emby_transcodes',0)):
-            return
-        if os.getloadavg()[0]>float(self.config.get('max_load',16)):return
-        now=time.time()
-        # Oldest waiting first avoids starvation while new arrivals keep coming.
-        rows=self.store.waiting_ready(now)
-        for row in rows:
-            path=Path(row['path'])
-            if row.get('manual_requested') and not self.allowed(path):
-                self.save(row,state='missing',reason='手动选择的视频不可读或已不在允许的媒体目录内');continue
-            if not self.eligible_new_path(path,row.get('fingerprint')):continue
-            if not path.exists():self.save(row,state='missing',reason='视频已移动或删除');continue
-            current=fingerprint(path)
-            if current!=row['fingerprint']:self.observe(path,row.get('metadata',{}),manual=bool(row.get('manual_requested')));continue
-            reason=self.block_reason(path)
-            ok,message=ready_file(path,row,now=now,quiet_seconds=int(self.config.get('quiet_seconds',300)))
-            if reason or not ok:
-                self.save(row,reason=reason or message)
-                continue
+        for row in self.store.rows(['ready'],limit=1,oldest=True):
             try:
-                if row.get('stale_output_hash'):
-                    backup=archive_stale_sidecar(row.get('stale_output_path') or path.with_suffix('.srt'),row['stale_output_hash'])
-                    self.save(row,previous_subtitle_backup=str(backup) if backup else '',stale_output_hash=None,stale_output_path=None)
-                sidecars=subtitle_files(path)
-                chinese=[p for p in sidecars if chinese_sidecar(p,path)]
-                if chinese:
-                    self.save(row,state='skipped',reason='已有同目录中文字幕',
-                              existing_subtitles=[{'path':str(p),'fingerprint':fingerprint(p)} for p in chinese]);continue
-                info=self.probe(path)
-                if any(chinese_track(s,path) for s in info['streams']):
-                    self.save(row,state='skipped',reason='已有内嵌中文字幕');return
-                if any(chinese_subtitle_attachment(s,path) for s in info['streams']):
-                    self.save(row,state='skipped',reason='已有中文字幕附件');return
-                if bilingual_sidecar_path(path).exists():
-                    self.save(row,state='error',reason='双语字幕目标文件已存在，保留原文件；请先检查该文件后重试');continue
-                if self.config.get('skip_chinese_audio',True) and chinese_audio_only(info['streams']):
-                    self.save(row,state='native_language',reason='中文原声，无需翻译');return
-                if self.config.get('skip_chinese_audio',True) and not has_foreign_audio(info['streams']):
-                    metadata={**self.sources.metadata(path),**row.get('metadata',{})}
-                    try:language=self.sources.original_language(metadata)
-                    except Exception:
-                        attempts=min(int(row.get('retry_attempts',0))+1,7)
-                        self.save(row,reason='音轨语言未知，等待 TMDB 原始语言确认',retry_attempts=attempts,
-                                  next_attempt_at=now+min(3600,60*2**(attempts-1)));return
-                    if language in CHINESE_LANGUAGES:
-                        self.save(row,state='native_language',reason='TMDB 确认为中文原声，无需翻译',metadata=metadata);return
-                # Re-read external readiness immediately before extraction / model work.
-                try:
-                    self.refresh_readiness()
-                    reason=self.block_reason(path)
+                # Refresh download/write blockers, then revalidate file and sidecars.
+                try:self.refresh_readiness()
                 except Exception as exc:
-                    self.save(row,state='waiting',reason='等待上游就绪状态恢复：'+self.safe_error(exc));return
-                if reason:self.save(row,reason=reason);return
-                self.prepare(row,info,sidecars)
+                    self.save(row,state='waiting',reason='等待上游就绪状态恢复：'+self.safe_error(exc),detection=None);return
+                result=self.inspect_candidate(row)
+                if result:self.prepare(row,*result)
             except Exception as exc:
                 self.save(row,state='error',reason=self.safe_error(exc))
-                log.warning('Library candidate deferred: %s',type(exc).__name__)
-            return  # At most one media probe/start per cycle.
+                log.warning('Library start deferred: %s',type(exc).__name__)
 
     def tick(self):
         if self.apply_storage_settings():return
@@ -384,9 +444,9 @@ class LibraryWorker:
                 # Rotate failed attempts so an unavailable batch cannot hide older work.
                 self.save(row,refresh_pending=True)
         self.discover()
-        if (self.store.setting('enabled',self.config.get('enabled',False)) and not self.model_settings.state()['pending']
-                and not self.directories.read()['pending'] and not (self.storage and self.storage.state()['pending'])):
-            self.process_one()
+        if not self.directories.read()['pending'] and not (self.storage and self.storage.state()['pending']):
+            self.process_one(start=bool(self.store.setting('enabled',self.config.get('enabled',False)))
+                             and not self.model_settings.state()['pending'])
 
     def apply_storage_settings(self):
         if not self.storage or not self.storage.state()['pending']:return False

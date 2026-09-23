@@ -218,3 +218,18 @@ assert(!/等待就绪|无需操作/.test(taskText()));
 rows[0].progress.progress=null;await context.refresh();
 assert.match(taskText(),/正在读取/);assert(!/0%/.test(taskText()));
 ''')
+
+
+def test_detecting_and_ready_lists_and_counts_are_distinct():
+    run_js(LIST_FIXTURE + r'''
+snapshot.counts={waiting:54,ready:2};
+rows.push({path:'/video/Detect.mkv',state:'waiting',reason:'检测排队中'});
+await loadList();
+assert.equal($('pending').textContent,2);
+assert.match(taskText(),/待检测/);assert(!taskText().includes('就绪后自动开始'));
+$('view-ready').onclick();await flush();
+assert(calls.some(x=>x.url.includes('view=ready')));
+rows[0]={path:'/video/Ready.mkv',state:'ready',reason:'检测通过，等待翻译名额'};await context.refresh();
+assert.match(taskText(),/待翻译/);assert.match(taskText(),/等待翻译名额/);
+$('view-waiting').onclick();await flush();assert.match($('list-hint').textContent,/尚未确认/);
+''')

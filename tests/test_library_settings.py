@@ -88,7 +88,7 @@ def test_pending_settings_apply_after_finish_before_next_task(worker,monkeypatch
     monkeypatch.setattr(worker,'finish',lambda:events.append('finish'))
     monkeypatch.setattr(worker,'apply_pending_settings',lambda:events.append('settings'))
     monkeypatch.setattr(worker,'discover',lambda:None)
-    monkeypatch.setattr(worker,'process_one',lambda:events.append('start'))
+    monkeypatch.setattr(worker,'process_one',lambda **kwargs:events.append('start'))
     from app.engines.providers.codex_cli import CodexCliProvider
     monkeypatch.setattr(CodexCliProvider,'check_logged_in',lambda:True)
     worker.tick()

@@ -33,6 +33,7 @@ class EmbySelection:
     def describe(self, item):
         path = self.path(item)
         existing = self.worker.store.get(path) if path else None
+        reopenable = existing and existing['state']=='historical' and not existing.get('project_id')
         streams = item.get('MediaStreams') or []
         languages = lambda kind: list(dict.fromkeys(str(s.get('Language') or 'und') for s in streams if s.get('Type') == kind))
         result = {'id': str(item.get('Id', '')), 'name': item.get('Name') or '未命名',
@@ -40,8 +41,9 @@ class EmbySelection:
                   'series_name': item.get('SeriesName'), 'season': item.get('ParentIndexNumber'),
                   'episode': item.get('IndexNumber'), 'audio_languages': languages('Audio'),
                   'subtitle_languages': languages('Subtitle'),
-                  'selectable': bool(path and not existing), 'state': existing.get('state') if existing else None,
-                  'reason': ('已有任务记录，请在原记录查看或重新检查' if existing else
+                  'selectable': bool(path and (not existing or reopenable)), 'state': existing.get('state') if existing else None,
+                  'reason': ('旧媒体已自动排除，可手动添加后重新检测' if reopenable else
+                             '已有任务记录，请在原记录查看或重新检查' if existing else
                              '' if path or item.get('Type') == 'Series' else '文件未挂载、不可读或不是本地视频'),
                   'path': map_path(str(path), self.worker.config.get('host_path_maps', {})) if path else ''}
         return result
@@ -98,7 +100,7 @@ class EmbySelection:
                        'metadata': emby_metadata(item, self.worker.sources.item), 'output_path': str(bilingual_sidecar_path(path))}
                 actual, inserted = self.worker.store.insert_request(row)
                 results.append({'id': item_id, 'status': 'queued' if inserted else 'existing',
-                                'state': actual['state'], 'message': '已加入待处理，检查通过后翻译' if inserted else '已有任务记录，未重复添加'})
+                                'state': actual['state'], 'message': '已加入待检测，确认需要翻译后排队' if inserted else '已有任务记录，未重复添加'})
             except Exception as exc:
                 results.append({'id': item_id, 'status': 'error', 'message': self.worker.safe_error(exc)})
         self.worker.wake.set()

@@ -37,10 +37,17 @@ class Store:
         """Atomically deduplicate manual selections without resetting existing work."""
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
-            alias = db.execute("SELECT payload FROM media WHERE path=? OR json_extract(payload,'$.fingerprint')=json(?) LIMIT 1",
-                               (row['path'], json.dumps(row['fingerprint']))).fetchone()
+            alias = db.execute("SELECT payload FROM media WHERE path=? OR json_extract(payload,'$.fingerprint')=json(?) "
+                               "ORDER BY CASE WHEN path=? THEN 0 ELSE 1 END LIMIT 1",
+                               (row['path'], json.dumps(row['fingerprint']),row['path'])).fetchone()
             if alias:
-                return json.loads(alias[0]), False
+                existing=json.loads(alias[0])
+                if existing['state']=='historical' and row.get('manual_requested') and not existing.get('project_id'):
+                    # Explicit selection can override an automatic history exclusion.
+                    db.execute('UPDATE media SET path=?,state=?,updated=?,payload=? WHERE path=?',
+                               (row['path'],row['state'],row['updated'],json.dumps(row,ensure_ascii=False),existing['path']))
+                    return row, True
+                return existing, False
             inserted = db.execute('INSERT OR IGNORE INTO media VALUES(?,?,?,?)',
                 (row['path'], row['state'], row['updated'], json.dumps(row, ensure_ascii=False))).rowcount == 1
             actual = db.execute('SELECT payload FROM media WHERE path=?', (row['path'],)).fetchone()
@@ -58,7 +65,7 @@ class Store:
         """Retry oldest checked arrivals first; priority cannot pin a blocked page."""
         with self.db() as db:
             return [json.loads(row[0]) for row in db.execute(
-                "SELECT payload FROM media WHERE state='waiting' "
+                "SELECT payload FROM media WHERE state IN ('waiting','ready') "
                 "AND COALESCE(json_extract(payload,'$.next_attempt_at'),0)<=? "
                 "ORDER BY updated ASC, COALESCE(json_extract(payload,'$.priority'),0) DESC LIMIT ?",
                 (now,limit))]

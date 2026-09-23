@@ -181,7 +181,7 @@ def library_storage_update(data:dict):
 def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
     if not 1<=limit<=200 or offset<0:raise HTTPException(400,'分页参数无效')
     views={'processed':['translating','publishing','done','error','changed','missing','cancelled'],
-           'waiting':['waiting'],'skipped':['skipped','native_language']}
+           'waiting':['waiting'],'ready':['ready'],'skipped':['skipped','native_language','historical']}
     if view not in {'all',*views}:raise HTTPException(400,'列表类型无效')
     states=views.get(view)
     counts=worker.store.counts()
@@ -193,10 +193,12 @@ def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
         total=sum(counts.get(s,0) for s in states) if states else sum(counts.values())
     for row in rows:
         from app.library.artwork import artwork_links
+        row.pop('detection',None)  # Probe metadata stays in the ledger, not the browser response.
         row.update(artwork_links(row))
         mappings=worker.config.get('host_path_maps',{})
-        if row['state'] not in {'done','skipped','native_language','cancelled'}:
-            row['output_path']=str(Path(row['path']).with_suffix('.srt'))
+        if row['state'] not in {'done','skipped','native_language','historical','cancelled'}:
+            from app.library.publish import bilingual_sidecar_path
+            row['output_path']=str(bilingual_sidecar_path(row['path']))
         row['server_source_path']=map_path(row['path'],mappings)
         row['server_output_path']=map_path(row.get('output_path',''),mappings)
         if row.get('preparation_progress'):
@@ -279,5 +281,5 @@ def library_retry(body:Retry):
     publishing=row.get('retry_stage')=='publish' and bool(row.get('project_id'))
     worker.save(row,state='publishing' if publishing else 'waiting',
                 reason='等待重新保存字幕' if publishing else '等待重新检查',
-                preparation_progress=None,next_attempt_at=0,retry_attempts=0)
+                preparation_progress=None,detection=None,next_attempt_at=0,retry_attempts=0)
     worker.wake.set();return {'scheduled':True}

@@ -60,7 +60,7 @@ h3 { line-height: 1.45; }
 #attention[data-active=true] { color: var(--danger); }
 .monitor-note { color: var(--muted); font-size: 12px; margin: 0 0 0 auto; }
 .task-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 24px; border-bottom: 1px solid var(--line); margin-top: 32px; }
-.list-switch { display: flex; align-items: center; gap: 34px; }
+.list-switch { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
 .list-switch button { border: 0; border-radius: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--muted); padding: 14px 8px 16px; font-size: 16px; white-space: nowrap; }
 .list-switch button:hover:not(:disabled) { background: transparent; color: var(--accent); border-color: #bbd9df; }
 .list-switch button[aria-pressed=true] { color: var(--accent); border-color: var(--accent); }
@@ -289,7 +289,7 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
   .monitor .label { font-size: 12px; }
   .monitor strong { font-size: 20px; }
   .task-toolbar { margin-top: 18px; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
-  .list-switch { width: 100%; justify-content: space-between; gap: 8px; }
+  .list-switch { width: 100%; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 8px; }
   .list-switch button { padding: 11px 2px; font-size: 13px; }
   .list-switch span { margin-left: 4px; font-size: 11px; min-width: 20px; padding: 0 5px; }
   .task-filter { width: 100%; }
