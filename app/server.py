@@ -199,7 +199,9 @@ def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
             row['output_path']=str(Path(row['path']).with_suffix('.srt'))
         row['server_source_path']=map_path(row['path'],mappings)
         row['server_output_path']=map_path(row.get('output_path',''),mappings)
-        if row.get('project_id'):
+        if row.get('preparation_progress'):
+            row['progress']=row['preparation_progress']
+        elif row.get('project_id'):
             from app.engines.scheduler import get_progress
             row['progress']=get_progress(row['project_id'])
     return {'items':rows,'counts':counts,'total':total,
@@ -276,5 +278,6 @@ def library_retry(body:Retry):
     if row['state'] not in {'error','changed','missing','skipped','native_language'}:raise HTTPException(409,'当前任务不能重试')
     publishing=row.get('retry_stage')=='publish' and bool(row.get('project_id'))
     worker.save(row,state='publishing' if publishing else 'waiting',
-                reason='等待重新保存字幕' if publishing else '等待重新检查',next_attempt_at=0,retry_attempts=0)
+                reason='等待重新保存字幕' if publishing else '等待重新检查',
+                preparation_progress=None,next_attempt_at=0,retry_attempts=0)
     worker.wake.set();return {'scheduled':True}

@@ -18,7 +18,7 @@ function api(path,body){return request('library/'+path,body);}
 function error(message){$('error').textContent=message;$('error').hidden=!message;}
 
 function icon(name){const node=el('span',undefined,'icon icon-'+name);node.setAttribute('aria-hidden','true');return node;}
-const stages={asr:'语音识别',translate:'翻译与复核',subtitle_extract:'提取字幕',filter:'整理字幕',export:'保存字幕'};
+const stages={asr:'语音识别',translate:'翻译与复核',subtitle_extract:'正在提取字幕',filter:'整理字幕',export:'保存字幕'};
 function progressLabel(row){return row.state==='done'?'字幕已保存':row.state==='publishing'?'等待保存':row.state==='translating'?(stages[row.progress?.stage]||'正在处理'):names[row.state]||row.state;}
 function renderProgress(row,body){
   if(!['translating','publishing','done','cancelled','error','changed','missing'].includes(row.state)){
@@ -29,7 +29,7 @@ function renderProgress(row,body){
   const box=el('div',undefined,'task-progress'),line=el('div'),bar=el('progress');
   const stopped=['cancelled','error','changed','missing'].includes(row.state);
   const label=stopped?(names[row.state]+' · 最后进度'):progressLabel(row);
-  line.append(el('span',label,'task-progress-label'),el('strong',value!==null?Math.round(value)+'%':stopped?'暂无记录':'等待进度更新'));
+  line.append(el('span',label,'task-progress-label'),el('strong',value!==null?Math.round(value)+'%':stopped?'暂无记录':data.stage==='subtitle_extract'?'正在读取…':'等待进度更新'));
   bar.max=100;bar.setAttribute('aria-label',label);
   if(value!==null)bar.value=value;
   else {bar.value=0;bar.setAttribute('aria-hidden','true');box.setAttribute('data-unknown','true');}
@@ -108,7 +108,7 @@ function renderRows(rows,total){
         button.onclick=async()=>{button.disabled=true;try{await api('retry',{path:row.path});rowsSignature='';await refresh();}catch(e){error(e.message);}finally{button.disabled=false;}};
         side.append(focusable(button,'retry'));
       }
-      if(!side.children.length)side.append(el('span',row.state==='waiting'?'就绪后自动开始':'无需操作','hint'));
+      if(!side.children.length)side.append(el('span',row.state==='waiting'?'就绪后自动开始':row.state==='translating'?'处理中':'无需操作','hint'));
       article.append(side);articles.push(article);
     }
     $('tasks').replaceChildren(...articles);rowDetails=nextDetails;rowsSignature=signature;

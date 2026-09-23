@@ -21,6 +21,7 @@ from .store import Store
 from .settings import LibrarySettings
 from .directories import DirectorySettings
 from .storage import StoragePaths
+from .extraction import extract_subtitles
 
 log=logging.getLogger(__name__)
 TEXT_CODECS={'subrip','srt','ass','ssa','mov_text','webvtt','text'}
@@ -203,6 +204,11 @@ class LibraryWorker:
         from app.utils.translation_delivery import translation_delivery_lock
         from app.utils.project_store import mutate_project
         for row in self.store.rows(['translating','publishing'],limit=5):
+            # prepare runs synchronously in this worker. A persisted preparation here
+            # therefore survived an interrupted process, not an active extraction.
+            if row.get('preparation_progress'):
+                self.save(row,state='error',reason='字幕提取被中断，请重新检查',retry_stage=None)
+                continue
             path=Path(row['path']);pid=row['project_id']
             if not path.exists() or fingerprint(path)!=row['fingerprint']:
                 if tasks.is_task_registered(pid):tasks.cancel_task(pid)
@@ -269,21 +275,31 @@ class LibraryWorker:
         source_label='语音识别'
         if sidecars or usable:
             source=sidecars[0] if sidecars else path
+            source_label=str(source) if sidecars else '内嵌字幕 #'+str(usable[0]['index'])
+            self.save(row,state='translating',reason='正在提取字幕',project_id=None,
+                      subtitle_source=source_label,metadata=metadata,retry_stage=None,
+                      preparation_progress={'stage':'subtitle_extract','progress':None,
+                                            'message':'正在提取字幕，准备读取源文件'})
+            def report(position,total,elapsed):
+                percent=min(99,int(position*100/total)) if position is not None and total>0 else None
+                reading=(f'读取位置 {position/1024**2:.1f} / {total/1024**2:.1f} MiB · ' if position is not None else '')
+                self.save(row,preparation_progress={'stage':'subtitle_extract','progress':percent,
+                    'message':f'正在提取字幕 · {reading}已用 {elapsed} 秒',
+                    'updated_at':datetime.now(timezone.utc).isoformat()})
             cmd=[get_ffmpeg_path(),'-nostdin','-v','error','-threads','1','-i',str(source)]
             if not sidecars:cmd+=['-map','0:'+str(usable[0]['index'])]
             cmd+=['-vn','-an','-c:s','srt','-y',str(pdir/'raw.srt')]
-            subprocess.run(cmd,check=True,capture_output=True,timeout=900)
+            extract_subtitles(cmd,source,report,self.stop_event)
             if not parse_srt_file(str(pdir/'raw.srt')):raise RuntimeError('源字幕为空')
             (pdir/'filtered.srt').write_bytes((pdir/'raw.srt').read_bytes())
             project['status']='asr_done'
-            source_label=str(source) if sidecars else '内嵌字幕 #'+str(usable[0]['index'])
         elif selected_audio is None:
             raise RuntimeError('未找到可用于完整对白识别的音轨')
         if fingerprint(path)!=row['fingerprint'] or self.block_reason(path):raise RuntimeError('提取期间视频状态变化')
         project['library_subtitle_source']=source_label
         atomic_write_json(pdir/'project.json',project)
         self.save(row,state='translating',reason='正在翻译',project_id=pid,subtitle_source=source_label,metadata=metadata,
-                  retry_stage=None,next_attempt_at=0,retry_attempts=0)
+                  preparation_progress=None,retry_stage=None,next_attempt_at=0,retry_attempts=0)
         if project['status']=='asr_done':tasks.start_translate(pid,tasks.TranslateRequest(target_language='简体中文'))
         else:tasks.start_transcribe_translate(pid,tasks.FullPipelineRequest(workflow_mode='translate_only'))
 

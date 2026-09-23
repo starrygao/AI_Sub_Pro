@@ -207,3 +207,14 @@ rows[0].state='done';await context.refresh();
 assert.equal(descendants($('tasks')).find(e=>e.tagName==='PROGRESS').value,100);
 assert(descendants($('tasks')).some(e=>e.textContent==='100%'));
 ''')
+
+
+def test_extraction_shows_its_own_progress_before_a_project_exists():
+    run_js(LIST_FIXTURE + r'''
+rows.push({path:'/video/Episode.mkv',state:'translating',reason:'正在提取字幕',project_id:null,progress:{progress:63,stage:'subtitle_extract',message:'正在提取字幕 · 已用 20 秒'}});
+await loadList();
+assert.match(taskText(),/提取字幕/);assert.match(taskText(),/63%/);assert.match(taskText(),/已用 20 秒/);
+assert(!/等待就绪|无需操作/.test(taskText()));
+rows[0].progress.progress=null;await context.refresh();
+assert.match(taskText(),/正在读取/);assert(!/0%/.test(taskText()));
+''')
