@@ -54,12 +54,12 @@ class LibraryWorker:
             return any(real.is_relative_to(Path(p).resolve()) for p in self.config.get('allowed_roots',self.roots))
         except (OSError,RuntimeError):return False
 
-    def observe(self,path,metadata):
+    def observe(self,path,metadata,*,manual=False):
         path=Path(path)
         if path.suffix.lower() not in VIDEO_EXTENSIONS or not self.allowed(path):return
         try:current=fingerprint(path)
         except OSError:return
-        if not self.eligible_new_path(path,current):return
+        if not manual and not self.eligible_new_path(path,current):return
         now=time.time();old=self.store.get(path)
         try:
             created=datetime.fromisoformat(metadata.get('date_created','').replace('Z','+00:00')).timestamp()
@@ -68,6 +68,8 @@ class LibraryWorker:
         if not old or old.get('fingerprint')!=current:
             row={'path':str(path),'state':'waiting','reason':'等待文件稳定','fingerprint':current,
                  'stable_since':now,'updated':now,'priority':priority,'metadata':metadata,'output_path':str(path.with_suffix('.srt'))}
+            if manual:
+                row.update(manual_requested=True,manual_requested_at=(old or {}).get('manual_requested_at',now))
             if old and (old.get('output_hash') or old.get('stale_output_hash')):
                 # A replacement can change across many scans before becoming stable.
                 row['stale_output_hash']=old.get('output_hash') or old['stale_output_hash']
@@ -120,6 +122,10 @@ class LibraryWorker:
         if self.thread:self.thread.join(timeout=5)
 
     def eligible_new_path(self,path,current=None):
+        selected=self.store.get(path)
+        if (selected and selected.get('manual_requested') and selected.get('fingerprint')==current
+                and self.allowed(path)):
+            return True
         if self.manual_roots and not any(Path(path).is_relative_to(root) for root in self.roots):return False
         if not self.config.get('new_only',False):return True
         baseline=self.store.setting('baseline',{})
@@ -294,10 +300,12 @@ class LibraryWorker:
         rows=self.store.waiting_ready(now)
         for row in rows:
             path=Path(row['path'])
+            if row.get('manual_requested') and not self.allowed(path):
+                self.save(row,state='missing',reason='手动选择的视频不可读或已不在允许的媒体目录内');continue
             if not self.eligible_new_path(path,row.get('fingerprint')):continue
             if not path.exists():self.save(row,state='missing',reason='视频已移动或删除');continue
             current=fingerprint(path)
-            if current!=row['fingerprint']:self.observe(path,row.get('metadata',{}));continue
+            if current!=row['fingerprint']:self.observe(path,row.get('metadata',{}),manual=bool(row.get('manual_requested')));continue
             reason=self.block_reason(path)
             ok,message=ready_file(path,row,now=now,quiet_seconds=int(self.config.get('quiet_seconds',300)))
             if reason or not ok:

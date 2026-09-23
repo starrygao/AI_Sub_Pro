@@ -6,7 +6,7 @@ import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -226,6 +226,41 @@ def library_scan():
 
 class Retry(BaseModel):
     path:str
+
+
+EmbyId = Annotated[str, Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')]
+
+
+class EmbyItems(BaseModel):
+    model_config = {'extra': 'forbid'}
+    ids: list[EmbyId] = Field(min_length=1, max_length=50)
+
+
+def emby_selection_call(method, *args, **kwargs):
+    from app.library.selection import EmbySelection
+    try:
+        return getattr(EmbySelection(worker), method)(*args, **kwargs)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, 'Emby 暂不可用：' + worker.safe_error(exc)) from exc
+
+
+@app.get('/api/library/emby/search')
+def library_emby_search(q: str = Query(min_length=1, max_length=200), kind: Literal['all','movie','series'] = 'all',
+                        offset: int = Query(default=0, ge=0), limit: int = Query(default=30, ge=1, le=50)):
+    return emby_selection_call('search', q, kind=kind, offset=offset, limit=limit)
+
+
+@app.get('/api/library/emby/episodes')
+def library_emby_episodes(series_id: EmbyId, offset: int = Query(default=0, ge=0),
+                          limit: int = Query(default=30, ge=1, le=50)):
+    return emby_selection_call('episodes', series_id, offset=offset, limit=limit)
+
+
+@app.post('/api/library/emby/enqueue')
+def library_emby_enqueue(body: EmbyItems):
+    return emby_selection_call('enqueue', body.ids)
 
 @app.post('/api/library/retry')
 def library_retry(body:Retry):

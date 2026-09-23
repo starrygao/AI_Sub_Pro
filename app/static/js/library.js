@@ -39,7 +39,7 @@ function renderProgress(row,body){
 function renderRoots(s){
   const roots=s.server_roots||s.roots||[],groups=new Map();
   for(const path of roots){const split=path.lastIndexOf('/'),parent=path.slice(0,split)||'/',name=path.slice(split+1)||'/';if(!groups.has(parent))groups.set(parent,[]);groups.get(parent).push(name);}
-  $('scope-summary').textContent=s.new_only?'仅处理缺少中文字幕的新增视频':'检查监控目录内缺少中文字幕的视频';
+  $('scope-summary').textContent=s.new_only?'自动处理新增；支持从 Emby 手动添加':'检查监控目录内缺少中文字幕的视频';
   $('root-count').textContent='监控 '+roots.length+' 个文件夹 · '+(s.new_only?'仅处理新增':'检查全部视频');
   const baseline=s.baseline||{};
   $('scope').textContent=s.new_only?(baseline.completed_at?'仅处理新增视频：无内嵌中文字幕、无外挂中文字幕，且非中文原声。已排除 '+Number(baseline.count||0).toLocaleString()+' 个现有视频（'+new Date(baseline.completed_at*1000).toLocaleString()+' 建立记录）。':'正在记录现有视频，完成前不会启动翻译。'):'检查监控目录内缺少中文字幕的视频；中文原声默认跳过。';
@@ -93,7 +93,7 @@ function renderRows(rows,total){
       const details=el('details',undefined,'task-files'),summary=el('summary','文件信息');
       const focusable=(node,action)=>{node.setAttribute('data-task-path',row.path);node.setAttribute('data-task-action',action);if(row.path===focusPath&&action===focusAction)restoreFocus=node;return node;};
       details.open=expandedPaths.has(row.path);details.append(focusable(summary,'files'));
-      for(const [label,value] of [['视频',row.server_source_path||row.path],[row.state==='done'?'已保存字幕':'计划保存',['skipped','native_language','cancelled'].includes(row.state)?'':row.server_output_path||row.output_path],['字幕来源',row.subtitle_source],['处理说明',[row.reason,row.progress?.message].filter(Boolean).join(' · ')]]){
+      for(const [label,value] of [['视频',row.server_source_path||row.path],[row.state==='done'?'已保存字幕':'计划保存',['skipped','native_language','cancelled'].includes(row.state)?'':row.server_output_path||row.output_path],['添加方式',row.manual_requested?'从 Emby 手动添加':'自动发现'],['字幕来源',row.subtitle_source],['处理说明',[row.reason,row.progress?.message].filter(Boolean).join(' · ')]]){
         if(value){const p=el('p',label,'path');p.append(el('span',value));details.append(p);}
       }
       if(meta.tmdb_id)details.append(el('div','TMDB '+meta.tmdb_id+' · '+(meta.metadata_source||'影视信息'),'metadata'));

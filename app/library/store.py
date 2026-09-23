@@ -33,6 +33,19 @@ class Store:
             db.execute('INSERT INTO media VALUES(?,?,?,?) ON CONFLICT(path) DO UPDATE SET state=excluded.state,updated=excluded.updated,payload=excluded.payload',
                        (row['path'],row['state'],row['updated'],json.dumps(row,ensure_ascii=False)))
 
+    def insert_request(self, row):
+        """Atomically deduplicate manual selections without resetting existing work."""
+        with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            alias = db.execute("SELECT payload FROM media WHERE path=? OR json_extract(payload,'$.fingerprint')=json(?) LIMIT 1",
+                               (row['path'], json.dumps(row['fingerprint']))).fetchone()
+            if alias:
+                return json.loads(alias[0]), False
+            inserted = db.execute('INSERT OR IGNORE INTO media VALUES(?,?,?,?)',
+                (row['path'], row['state'], row['updated'], json.dumps(row, ensure_ascii=False))).rowcount == 1
+            actual = db.execute('SELECT payload FROM media WHERE path=?', (row['path'],)).fetchone()
+            return json.loads(actual[0]), inserted
+
     def rows(self,states=None,limit=100,offset=0,oldest=False):
         where=' WHERE state IN ('+','.join('?' for _ in states)+')' if states else ''
         with self.db() as db:
@@ -93,7 +106,8 @@ class Store:
     def exclude_unstarted_outside_roots(self, roots):
         with self.db() as db:
             for path, payload in db.execute('SELECT path,payload FROM media').fetchall():
-                if not json.loads(payload).get('project_id') and not any(Path(path).is_relative_to(root) for root in roots):
+                row = json.loads(payload)
+                if not row.get('project_id') and not row.get('manual_requested') and not any(Path(path).is_relative_to(root) for root in roots):
                     db.execute('DELETE FROM media WHERE path=?', (path,))
 
     def exclude_baseline_rows(self):
@@ -103,6 +117,7 @@ class Store:
             rows=db.execute("SELECT m.path,m.payload FROM media m JOIN baseline_media b ON m.path=b.path WHERE m.state NOT IN ('done','cancelled')").fetchall()
             for path,payload in rows:
                 row=json.loads(payload)
+                if row.get('manual_requested'):continue
                 if row.get('project_id'):
                     if row['state'] in {'translating','publishing'}:cancelled.append(row['project_id'])
                     row.update(state='cancelled',reason='现有视频不补翻译，任务已停止',updated=time.time())

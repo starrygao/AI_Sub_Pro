@@ -336,3 +336,37 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
   footer strong { font-size: 12px; white-space: nowrap; }
 }
 @media (prefers-reduced-motion:reduce) { *, *::before { transition: none !important; } }
+
+/* Emby selection stays within the existing task console. */
+#emby-dialog { width: min(850px,calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 28px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); color: var(--ink); }
+#emby-dialog::backdrop { background: rgb(15 35 42 / .4); }
+#emby-dialog .eyebrow { color: var(--accent); font-size: 12px; margin: 0 0 4px; }
+#emby-dialog fieldset { min-width: 0; padding: 0; margin: 20px 0 0; border: 0; }
+.emby-search { display: grid; grid-template-columns: minmax(0,1fr) 100px auto; align-items: end; gap: 12px; }
+.emby-search button { margin-bottom: 0; }
+.emby-browse-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin-top: 16px; }
+.emby-browse-heading h3 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
+.emby-results { max-height: min(40dvh,420px); overflow-y: auto; overscroll-behavior: contain; }
+.emby-result { display: flex; align-items: center; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.emby-result:first-child { border-top: 1px solid var(--line); }
+.emby-result-body { flex: 1; min-width: 0; }
+.emby-result h4 { margin: 0; font-size: 16px; }
+.emby-result p { margin: 5px 0 0; }
+.emby-result button { flex-shrink: 0; }
+.emby-choice { display: flex; align-items: start; gap: 10px; font-weight: 600; cursor: pointer; overflow-wrap: anywhere; }
+.emby-choice input { width: 18px; height: 18px; margin: 4px 0 0; flex-shrink: 0; accent-color: var(--accent); }
+.emby-file { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.emby-selection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; padding-top: 12px; }
+#emby-selection-count { font-size: 13px; color: var(--muted); margin-left: auto; }
+.emby-outcomes { font-size: 13px; padding-left: 20px; max-height: 160px; overflow: auto; overflow-wrap: anywhere; }
+.emby-footer { flex-wrap: wrap; }
+@media (max-width:1100px) { .task-intro .actions { flex-wrap: wrap; justify-content: flex-end; } }
+@media (max-width:560px) {
+  #emby-dialog { padding: 20px; }
+  .emby-search { grid-template-columns: minmax(0,1fr) auto; }
+  .emby-search label:first-child { grid-column: 1 / -1; }
+  .emby-result { gap: 10px; }
+  .emby-result button { padding-inline: 10px; font-size: 13px; }
+  #emby-selection-count { margin-left: 0; }
+  .task-intro .actions { justify-content: flex-start; }
+}
