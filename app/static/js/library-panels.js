@@ -15,6 +15,7 @@
     'setting-full-doc':['translation','full_doc_mode'],
   };
   let panel = 'tasks', pid = '', settings = null, catalog = {}, serverStatus = null;
+  let expandedQualityProject = '';
   let saving = false, settingsLoading = false, detailRequest = 0, detailPending = 0, previewKey = '', blocks = [], shown = 0;
   let polishCatalog = {}, modelCatalogs = {}, polishLoading = false, polishError = '', polishRequest = 0;
   let modelsRefreshing = false;
@@ -183,7 +184,7 @@
   function fact(label, value) {
     if (value) $('project-facts').append(el('dt', label), el('dd', value));
   }
-  function renderProject(project, progress, workflow) {
+  function renderProject(project, progress, workflow, quality) {
     $('project-title').textContent = project.name || '翻译详情';
     $('project-meta').textContent = [project.show_title, project.tmdb_id ? 'TMDB ' + project.tmdb_id : '', project.target_language].filter(Boolean).join(' · ');
     const states = {created:'待处理', ready:'已就绪', processing:'处理中', asr_done:'识别完成', completed:'已完成', translated:'翻译完成', error:'需要处理', cancelled:'已停止'};
@@ -194,6 +195,33 @@
     fact('视频路径', project.video_path); fact('目标语言', project.target_language);
     fact('影视信息', project.tmdb_id ? [project.show_title, 'TMDB ' + project.tmdb_id, project.metadata_source].filter(Boolean).join(' · ') : '尚未关联');
     fact('最近更新', progress.updated_at ? new Date(progress.updated_at).toLocaleString() : '');
+    if (quality.status === 'unavailable') {
+      fact('质量复核', '质量报告暂时无法读取，可稍后重试。');
+    } else if (quality.status === 'missing') {
+      fact('质量复核', '质量报告尚未生成。');
+    } else {
+      const issues = Array.isArray(quality.issues) ? quality.issues : [];
+      const delivered = ['translated', 'completed'].includes(project.status);
+      fact('质量复核', delivered && issues.length ? '已交付，仍有质量问题，建议复核。' : quality.summary?.conclusion);
+      if (delivered && issues.length) fact('检查结论', quality.summary?.conclusion);
+      if (issues.length) {
+        const details = el('details'), list = el('ol'), value = el('dd');
+        const qualityProject = pid;
+        details.open = expandedQualityProject === qualityProject;
+        details.ontoggle = () => { expandedQualityProject = details.open ? qualityProject : ''; };
+        details.append(el('summary', '查看 ' + issues.length + ' 项具体问题'));
+        for (const issue of issues) {
+          const item = el('li');
+          const label = Number.isInteger(issue.block_id) ? '源字幕第 ' + issue.block_id + ' 条' : '整体检查';
+          item.append(el('p', label + '：' + (issue.message || '建议复核')));
+          if (issue.source_text) item.append(el('p', '原文：' + issue.source_text));
+          if (issue.translation) item.append(el('p', '译文：' + issue.translation));
+          list.append(item);
+        }
+        details.append(list); value.append(details);
+        $('project-facts').append(el('dt', '质量问题'), value);
+      }
+    }
     const stageNames = {asr:'语音识别', translate:'翻译与复核', burn:'字幕压制', download:'下载', subtitle_extract:'提取字幕', filter:'整理字幕', export:'保存字幕'};
     const stageStates = {pending:'等待中', running:'进行中', succeeded:'已完成', completed:'已完成', failed:'失败', cancelled:'已暂停', queued:'排队中', skipped:'已跳过'};
     $('project-stages').replaceChildren();
@@ -225,9 +253,12 @@
     if (initial) { $('project-loading').hidden = false; $('project-content').hidden = true; $('project-title').textContent = '翻译详情'; $('project-meta').textContent = ''; }
     $('project-reload').hidden = true; notice('project-error', '');
     try {
-      const [project, progress, workflow] = await Promise.all(['', '/progress', '/workflow-state'].map(suffix => request('projects/' + id + suffix)));
+      const [project, progress, workflow, quality] = await Promise.all([
+        ...['', '/progress', '/workflow-state'].map(suffix => request('projects/' + id + suffix)),
+        request('projects/' + id + '/quality-report').catch(() => ({status:'unavailable'})),
+      ]);
       if (ticket !== detailRequest || panel !== 'project') return;
-      renderProject(project, progress, workflow); $('project-content').hidden = false;
+      renderProject(project, progress, workflow, quality); $('project-content').hidden = false;
       // Refresh the certified preview when a task changes state, without resetting reading position on each poll.
       const key = id + ':' + project.status;
       if (key !== previewKey) {

@@ -10,6 +10,19 @@ DELIVERY_BLOCKING_ISSUE_TYPES = frozenset({
 })
 
 
+def _has_confirmed_semantic_failure(issues: list) -> bool:
+    uncertain_ids = {
+        issue.get("block_id") for issue in issues
+        if issue.get("type") == "semantic_uncertain"
+    }
+    return any(
+        issue.get("type") == "semantic_mismatch"
+        and issue.get("severity") in {"error", "severe"}
+        and issue.get("block_id") not in uncertain_ids
+        for issue in issues
+    )
+
+
 def apply_advisory_delivery_policy(report: dict) -> None:
     """Retain QA evidence while allowing complete subtitles to be delivered.
 
@@ -18,6 +31,9 @@ def apply_advisory_delivery_policy(report: dict) -> None:
     """
     summary = report["summary"]
     gate = summary["quality_gate"]
+    # Version 3 restores automatic delivery with explicit QA warnings.
+    # Persisted version 2 reports retain their original validation contract.
+    gate["delivery_policy_version"] = 3
     if gate["passed"] or any(
         issue.get("type") in DELIVERY_BLOCKING_ISSUE_TYPES
         for issue in report["issues"]
@@ -34,8 +50,9 @@ def apply_advisory_delivery_policy(report: dict) -> None:
     report["status"] = "ok"
     summary["conclusion"] = (
         f"字幕已可交付：保留 {summary['issue_count']} 个质量提示，"
-        f"其中 {summary['unresolved_blocks']} 个位置建议复核；"
-        "无需先审核，可直接下载字幕。"
+        f"其中 {summary['error_count']} 项错误、{summary['warning_count']} 项提醒，"
+        f"涉及 {summary['unresolved_blocks']} 个待复核位置。"
+        "无需先审核，可直接下载字幕；具体问题、原文与译文见质量报告。"
     )
 
 
@@ -235,6 +252,10 @@ def validate_quality_report(
             and not any(
                 issue.get("type") in DELIVERY_BLOCKING_ISSUE_TYPES
                 for issue in issues
+            )
+            and not (
+                gate.get("delivery_policy_version") == 2
+                and _has_confirmed_semantic_failure(issues)
             )
         )
     elif passed:

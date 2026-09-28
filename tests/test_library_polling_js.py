@@ -48,7 +48,7 @@ context.location.hash='#project/deadbeef';
 const pending=[];
 context.request=path=>path.endsWith('/subtitles')?Promise.resolve({blocks:[]}):new Promise((resolve,reject)=>pending.push({path,resolve,reject}));
 const finishDetail=async(index,name,progress=48)=>{
- for(const item of pending.slice(index,index+3))item.resolve(item.path.endsWith('/workflow-state')?{stages:{}}:item.path.endsWith('/progress')?{progress,message:'fixture running'}:{name,status:'processing'});
+ for(const item of pending.slice(index,index+4))item.resolve(item.path.endsWith('/quality-report')?{status:'missing'}:item.path.endsWith('/workflow-state')?{stages:{}}:item.path.endsWith('/progress')?{progress,message:'fixture running'}:{name,status:'processing'});
  await flush();
 };
 vm.runInContext(code,context);await flush();

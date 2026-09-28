@@ -204,6 +204,39 @@ navigate('#settings');await flush();assert.equal($('panel-project').hidden,true)
 ''')
 
 
+def test_delivered_project_explains_qa_errors_without_hiding_subtitles():
+    run_js(r'''
+context.location.hash='#project/deadbeef';
+let unavailable=false;
+context.request=async path=>{
+ if(path.endsWith('/quality-report')){
+  if(unavailable)throw Error('offline');
+  return {status:'ok',summary:{quality_gate:{verdict:'passed_with_warnings'},conclusion:'字幕已可交付：1 项错误'},
+   issues:[{block_id:319,severity:'error',message:'信任方向颠倒',source_text:'I do not owe you trust.',translation:'我没义务赢得你的信任'}]};
+ }
+ if(path.endsWith('/progress'))return {progress:100,message:'已完成'};
+ if(path.endsWith('/workflow-state'))return {stages:{}};
+ if(path.endsWith('/subtitles'))return {blocks:[{index:1,text:'source',translation:'译文'}]};
+ return {id:'deadbeef',name:'已交付任务',status:'translated'};
+};
+vm.runInContext(code,context);await flush();
+const flatten=node=>[node.textContent,...node.children.map(flatten)].join(' ');
+let text=flatten($('project-facts'));
+assert.match(text,/已交付.*质量问题/);assert.match(text,/1 项错误/);
+assert.match(text,/源字幕第 319 条/);assert.match(text,/信任方向颠倒/);
+assert.match(text,/I do not owe you trust/);assert.match(text,/我没义务赢得你的信任/);
+const details=$('project-facts').children.flatMap(x=>x.children).find(x=>x.tagName==='DETAILS');
+assert(details);assert.equal(details.children[0].tagName,'SUMMARY');
+details.open=true;if(details.ontoggle)details.ontoggle();
+intervals[0]();await flush();
+assert.equal($('project-facts').children.flatMap(x=>x.children).find(x=>x.tagName==='DETAILS').open,true);
+assert.equal($('subtitle-preview').children.length,1);
+unavailable=true;intervals[0]();await flush();
+text=flatten($('project-facts'));assert.match(text,/质量报告暂时无法读取/);
+assert.doesNotMatch(text,/未发现质量问题/);assert.equal($('subtitle-preview').children.length,1);
+''')
+
+
 def test_model_sync_refreshes_both_dropdowns_without_resetting_unsaved_choices():
     run_js(r'''
 config.translation.polish_provider='codex_cli';config.translation.polish_model='gpt-5.5';config.translation.polish_effort='medium';
