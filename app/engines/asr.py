@@ -4,6 +4,7 @@ import sys
 import logging
 import time
 import math
+import re
 from pathlib import Path
 from typing import List, Optional, Callable
 from datetime import timedelta
@@ -342,9 +343,12 @@ def _transcribe_faster_whisper(
         language=language,
         vad_filter=vad_filter,
         beam_size=beam_size,
+        word_timestamps=True,
     )
     segments = [
-        {"start": seg.start, "end": seg.end, "text": seg.text}
+        {"start": seg.start, "end": seg.end, "text": seg.text,
+         "words": [{"start": w.start, "end": w.end, "word": w.word}
+                   for w in (getattr(seg, 'words', None) or [])]}
         for seg in segments_iter
     ]
     elapsed = time.time() - start
@@ -356,10 +360,50 @@ def _transcribe_faster_whisper(
     return _segments_to_blocks(segments)
 
 
+def _aligned_word_segments(segment: dict) -> list[dict]:
+    """Use complete word alignment to avoid displaying captions over silence.
+
+    Incomplete, out-of-bounds or non-monotonic alignment is not permission to
+    truncate a transcript. Keep the original segment for QA in that case.
+    """
+    words = segment.get('words')
+    if not isinstance(words, list) or not words:
+        return [segment]
+    try:
+        start, end = float(segment['start']), float(segment['end'])
+        aligned = []
+        previous_end = start
+        for word in words:
+            a, b = float(word['start']), float(word['end'])
+            text = word['word']
+            if (not isinstance(text, str) or not text.strip()
+                    or not math.isfinite(a) or not math.isfinite(b)
+                    or not start <= a < b <= end or a < previous_end):
+                return [segment]
+            aligned.append((a, b, text))
+            previous_end = b
+        compact = lambda text: re.sub(r'\s+', '', text)
+        if compact(''.join(w[2] for w in aligned)) != compact(segment['text']):
+            return [segment]
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return [segment]
+    groups = []
+    for a, b, text in aligned:
+        if (not groups or a - groups[-1]['end'] > 1
+                or b - groups[-1]['start'] > 7):
+            groups.append({'start': a, 'end': b, 'text': text})
+        else:
+            groups[-1]['end'] = b
+            groups[-1]['text'] += text
+    return groups
+
+
 def _segments_to_blocks(segments: list) -> List[SubtitleBlock]:
     """Convert whisper segments to SubtitleBlock list."""
     blocks = []
-    for seg in segments:
+    aligned_segments = [part for segment in segments if isinstance(segment, dict)
+                        for part in _aligned_word_segments(segment)]
+    for seg in aligned_segments:
         if not isinstance(seg, dict):
             continue
         raw_text = seg.get("text", "")

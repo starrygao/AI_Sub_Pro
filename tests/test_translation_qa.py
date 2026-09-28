@@ -2810,3 +2810,27 @@ def test_quality_checks_apply_manual_metadata_terms():
     manual = [issue for issue in report.issues if issue.type == "manual_term_missing"]
     assert manual
     assert manual[0].expected == "梯度下降"
+
+
+def test_long_source_duration_is_reported_without_model_rewrite():
+    from app.engines.translation_qa import run_quality_checks, repairable_quality_issues
+    block = _block(1, 'もう姉さんったら', '真是的，姐姐。')
+    block.end = block.start + timedelta(seconds=51)
+    report = run_quality_checks([block])
+    issue = next(i for i in report.issues if i.type == 'subtitle_duration_too_long')
+    assert issue.severity == 'warning'
+    assert issue not in repairable_quality_issues([issue])
+
+
+@pytest.mark.parametrize('source', ['HE CHUCKLES', 'HE EXHALES LOUDLY', 'SHE SIGHS',
+    'GLASS SMASHES', 'SNIGGERING', 'STRUGGLING', 'KETTLE BOILS NOISILY', 'BUZZER'])
+def test_uppercase_sdh_actions_are_not_semantic_dialogue(source):
+    from app.engines.translation_qa import classify_subtitle_source
+    assert classify_subtitle_source(source).kind == 'sound'
+
+
+@pytest.mark.parametrize('source', ['HE SIGHS WHEN I ASK HIM', 'THE GLASS SMASHES WHEN IT FALLS',
+    'I AM STRUGGLING', 'He chuckles at my jokes.'])
+def test_sdh_action_vocabulary_does_not_remove_real_sentences(source):
+    from app.engines.translation_qa import classify_subtitle_source
+    assert classify_subtitle_source(source).requires_translation

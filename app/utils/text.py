@@ -61,7 +61,10 @@ def is_interjection(text: str, language: str = "ja") -> bool:
     is_ja = lang.startswith("ja")
     is_en = lang.startswith("en")
     pool = JA_INTERJECTIONS if is_ja else EN_INTERJECTIONS if is_en else set()
-    lookup = clean if is_ja else clean.lower()
+    # Normalize kana only for comparison with known filler sounds. Short
+    # katakana also contains names (ミヤ) and words (ママ), not just effects.
+    lookup = (''.join(chr(ord(c) - 0x60) if 'ァ' <= c <= 'ヶ' else c
+                      for c in clean) if is_ja else clean.lower())
     # Direct match
     if lookup in pool:
         return True
@@ -73,12 +76,10 @@ def is_interjection(text: str, language: str = "ja") -> bool:
     if not (is_ja or is_en):
         return False
     # Repeated single char pattern: ああああ, おおお
-    if len(clean) >= 3 and len(set(clean.lower())) <= 2 and len(clean) <= 8:
+    if is_ja and re.fullmatch(r'([あぁうぅえぇおぉん])\1{2,}[ーっ]*', lookup):
         return True
-    # Japanese: katakana-only short strings are often sound effects
-    if is_ja and len(clean) <= 4:
-        if all("\u30A0" <= c <= "\u30FF" or c in "ーッ" for c in clean):
-            return True
+    if is_en and re.fullmatch(r'(?:a+h+|u+h+|h+m+|m{3,})', lookup):
+        return True
     return False
 
 

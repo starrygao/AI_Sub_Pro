@@ -2126,6 +2126,7 @@ function app() {
         too_many_lines: '行数过多',
         reading_speed: '阅读速度过快',
         reading_speed_too_fast: '阅读速度过快',
+        subtitle_duration_too_long: '字幕显示过久',
         bad_line_break: '断行需审校',
         sound_description_translated: '环境音误译',
         punctuation_style: '标点风格',

@@ -41,6 +41,7 @@ def test_faster_whisper_backend_passes_vad_and_beam(tmp_path, monkeypatch):
         "language": "en",
         "vad_filter": True,
         "beam_size": 7,
+        "word_timestamps": True,
     }
     assert len(blocks) == 1
     assert blocks[0].text == "hello"

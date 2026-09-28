@@ -42,7 +42,7 @@ def quality_issue_category(issue_type: str) -> str:
         return "needs_context"
     if issue_type == "semantic_qa_failed":
         return "check_failure"
-    if issue_type in {"reading_speed_too_fast", "line_too_long", "too_many_lines",
+    if issue_type in {"reading_speed_too_fast", "subtitle_duration_too_long", "line_too_long", "too_many_lines",
                       "weak_semantic_line_break", "repetition_not_compressed", "punctuation_style"}:
         return "readability"
     if "name" in issue_type or "term" in issue_type:
@@ -952,6 +952,16 @@ def _is_sound_description_line(source: str) -> bool:
     if not probe:
         return bool(_MUSIC_MARK_RE.search(source or ""))
 
+    # Uppercase SDH predicates may be unbracketed. Match the entire action,
+    # not a sound word embedded in ordinary dialogue.
+    if probe.isascii() and probe.isupper() and re.fullmatch(
+        r"(?:(?:HE|SHE|THEY) (?:CHUCKLES?|SIGH(?:S)?|EXHALES?|INHALES?)"
+        r"(?: (?:LOUDLY|SOFTLY|HEAVILY|QUIETLY))?|"
+        r"GLASS SMASHES|SNIGGERING|STRUGGLING|BUZZER|"
+        r"KETTLE BOILS(?: NOISILY)?)", probe,
+    ):
+        return True
+
     segments = list(_BRACKETED_TRANSLATION_SEGMENT_RE.finditer(probe))
     if segments:
         remainder = _BRACKETED_TRANSLATION_SEGMENT_RE.sub("", probe)
@@ -1009,7 +1019,7 @@ class SubtitleSourceDecision:
         return self.kind not in {"sound", "empty"}
 
 
-SUBTITLE_CLASSIFICATION_VERSION = 4
+SUBTITLE_CLASSIFICATION_VERSION = 5
 
 
 @lru_cache(maxsize=16384)
@@ -1823,6 +1833,13 @@ def run_quality_checks(
         translation = _clean_text(getattr(block, "translation", ""))
         if classify_subtitle_source(source).kind == "uncertain" and isinstance(block_id, int):
             unclassified_source_ids.append(block_id)
+        if _duration_seconds(block) > 10:
+            issues.append(QualityIssue(
+                type="subtitle_duration_too_long", severity="warning",
+                block_id=block_id if isinstance(block_id, int) else None,
+                message="字幕显示超过 10 秒，请核对语音时间轴；文字重译不能修正时间轴。",
+                source_text=source, translation=translation,
+            ))
         sound_description = _is_sound_description(source)
         qa_source = dialogue_only_qa_source_text(source)
 
@@ -2556,7 +2573,7 @@ def build_repair_items(blocks: Iterable, issues: list[QualityIssue]) -> list[dic
 def repairable_quality_issues(issues: list[QualityIssue]) -> list[QualityIssue]:
     repairable: list[QualityIssue] = []
     for issue in issues or []:
-        if issue.type == "sound_description_translated":
+        if issue.type in {"sound_description_translated", "subtitle_duration_too_long"}:
             continue
         if (
             issue.type in _EXPECTED_REPAIRABLE_CONSISTENCY_TYPES

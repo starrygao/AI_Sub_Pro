@@ -78,18 +78,27 @@ def filter_subtitles(
         repetitive = detect_repetitive(active_texts, threshold=repetitive_threshold)
         if repetitive:
             log.info("Found %d repetitive patterns", len(repetitive))
-            # Keep first occurrence, filter the rest
-            seen = set()
+            # Only suppress a local run, never identical dialogue in later
+            # scenes. Names and short Japanese answers remain meaningful.
+            runs = []
             for b in blocks:
                 if b.filtered:
                     continue
                 key = b.text.strip().lower()
-                if key in repetitive:
-                    if key in seen:
+                previous = runs[-1][-1] if runs else None
+                gap = (b.start - previous.end).total_seconds() if previous else None
+                if (previous is None or key != previous.text.strip().lower()
+                        or b.start < previous.start or gap > 1):
+                    runs.append([])
+                runs[-1].append(b)
+            for run in runs:
+                key = run[0].text.strip().lower()
+                if language.lower().startswith('ja') and len(key) <= 4:
+                    continue
+                if key in repetitive and len(run) >= repetitive_threshold:
+                    for b in run[1:]:
                         b.filtered = True
                         b.filter_reason = f"重复内容 (出现>={repetitive_threshold}次)"
-                    else:
-                        seen.add(key)
 
     # Step 4: Merge consecutive short blocks
     _merge_short_blocks(blocks)
@@ -140,7 +149,8 @@ def _merge_short_blocks(blocks: List[SubtitleBlock], gap_ms: int = 1000, min_wor
         gap = (nxt.start - curr.end).total_seconds() * 1000
         curr_short = len(curr.text.split()) < min_words or len(curr.text) < 8
         nxt_short = len(nxt.text.split()) < min_words or len(nxt.text) < 8
-        if gap < gap_ms and curr_short and nxt_short:
+        duration = (nxt.end - curr.start).total_seconds()
+        if 0 <= gap < gap_ms and 0 < duration <= 7 and curr_short and nxt_short:
             curr.text = f"{curr.text} {nxt.text}"
             curr.end = nxt.end
             nxt.filtered = True
