@@ -3,6 +3,7 @@
   const providerNames = {codex_cli:'Codex CLI', claude_cli:'Claude CLI', openai:'OpenAI', deepseek:'DeepSeek', gemini:'Gemini'};
   const effortNames = {auto:'自动', low:'低', medium:'中', high:'高', xhigh:'很高', max:'最大', ultra:'极高'};
   const fields = {
+    'setting-provider':['translation','primary_provider'],
     'setting-model':['translation','primary_model'],
     'setting-effort':['translation','primary_effort'],
     'setting-polish-provider':['translation','polish_provider'],
@@ -18,9 +19,10 @@
   let expandedQualityProject = '';
   let saving = false, settingsLoading = false, detailRequest = 0, detailPending = 0, previewKey = '', blocks = [], shown = 0;
   let polishCatalog = {}, modelCatalogs = {}, polishLoading = false, polishError = '', polishRequest = 0;
-  let modelsRefreshing = false;
+  let modelsRefreshing = false, primaryLoading = false, primaryError = '', primaryRequest = 0, cliRequest = 0;
 
   function catalogHint(info) {
+    if (info.source === 'static') return '使用 Claude 内置模型目录；实际可用性取决于服务器登录账号权限。';
     return info.source === 'remote' ? '已同步当前账号的模型列表；实际可用性取决于账号权限。'
       : info.source === 'cache' ? (info.stale || info.refresh_failed ? '暂未同步成功，使用 Codex 缓存列表。' : '已读取 Codex 当前模型列表。')
         + (info.verified_at ? ' 更新于 ' + new Date(info.verified_at).toLocaleString() : '')
@@ -85,20 +87,24 @@
   function dirty() { return Object.keys(changes()).length > 0; }
   function settingsState(s = serverStatus) {
     serverStatus = s;
-    $('settings-fields').disabled = saving || !settings;
-    $('settings-save').disabled = saving || modelsRefreshing || !settings || polishLoading || !!polishError || !dirty();
-    $('models-refresh').disabled = saving || modelsRefreshing || polishLoading || !settings;
+    $('settings-fields').disabled = saving || modelsRefreshing || !settings;
+    $('settings-save').disabled = saving || modelsRefreshing || !settings || primaryLoading || !!primaryError || polishLoading || !!polishError || !dirty();
+    $('models-refresh').disabled = saving || modelsRefreshing || primaryLoading || polishLoading || !settings;
     $('settings-reset').disabled = saving || !settings || !dirty();
     const update = s?.model_settings;
-    const current = [update?.current_model, effortNames[update?.current_effort]].filter(Boolean).join(' · ');
+    const current = [providerNames[update?.current_provider], update?.current_model, effortNames[update?.current_effort]].filter(Boolean).join(' · ');
     const currentPolish = update?.current_polish_provider ? [providerNames[update.current_polish_provider] || update.current_polish_provider, update.current_polish_model || update.current_model, effortNames[update.current_polish_effort]].filter(Boolean).join(' · ') : '未启用';
     notice('settings-availability', update?.error || (update?.pending ? '新设置已保存，等待生效。当前翻译：' + current + '；当前润色：' + currentPolish + '。正在处理的任务完成并保存字幕后，自动应用新设置。' : '可以随时修改并保存。正在处理的任务继续使用原设置，新设置用于后续任务。'));
     if (update && !update.pending && !dirty() && $('settings-feedback').textContent.startsWith('已保存')) $('settings-feedback').textContent = '设置已生效';
   }
   function populate() {
+    ++primaryRequest; primaryLoading = false; primaryError = '';
+    notice('primary-error', ''); $('primary-loading').hidden = true; $('primary-reload').hidden = true;
+    $('setting-model').disabled = false;
+    catalog = modelCatalogs[settings.translation.primary_provider] || catalog;
     for (const [id, [section, key]] of Object.entries(fields)) {
       const input = $(id), value = settings[section]?.[key];
-      if (id === 'setting-model' || id === 'setting-effort' || id.startsWith('setting-polish-')) continue;
+      if (id === 'setting-provider' || id === 'setting-model' || id === 'setting-effort' || id.startsWith('setting-polish-')) continue;
       if (input.type === 'checkbox') input.checked = !!value;
       else if (input.tagName === 'SELECT') options(id, [...input.options].map(o => o.value), value);
       else input.value = value;
@@ -108,10 +114,12 @@
     modelEfforts(settings.translation.primary_effort);
     const provider = settings.translation.primary_provider;
     const polishProvider = settings.translation.polish_provider || '';
-    const providers = Object.keys(providerNames).filter(name => name === provider || name === polishProvider || settings.credentials_configured?.[name]);
+    const providers = Object.keys(providerNames).filter(name => name === 'claude_cli' || name === 'codex_cli' || name === provider || name === polishProvider || settings.credentials_configured?.[name]);
+    options('setting-provider', providers, provider, providerNames);
     options('setting-polish-provider', ['', ...providers], polishProvider, {'':'不启用', ...providerNames});
     loadPolishModels(settings.translation.polish_model || '', settings.translation.polish_effort || 'auto');
     $('provider-label').textContent = providerNames[provider] || provider;
+    cliHints();
     $('asr-backend').textContent = settings.asr.backend;
     $('settings-feedback').textContent = '尚未修改';
     settingsState();
@@ -128,6 +136,65 @@
     } catch (e) { notice('settings-error', e.message); $('settings-reload').hidden = false; }
     finally { settingsLoading = false; $('settings-loading').hidden = true; }
   }
+  async function loadPrimaryModels(model = '', effort = 'auto') {
+    const ticket = ++primaryRequest, provider = $('setting-provider').value;
+    primaryLoading = true; primaryError = '';
+    $('setting-model').disabled = true; $('setting-effort').disabled = true;
+    $('primary-loading').hidden = false; $('primary-reload').hidden = true; notice('primary-error', '');
+    options('setting-model', [], model, {'':'请选择模型'});
+    options('setting-effort', ['auto'], effort, effortNames);
+    $('provider-label').textContent = providerNames[provider] || provider;
+    $('model-hint').textContent = '';
+    settingsState();
+    try {
+      const info = modelCatalogs[provider] || await request('models/' + encodeURIComponent(provider));
+      if (ticket !== primaryRequest) return;
+      const selected = model || info.models?.[0] || '';
+      if (!selected) throw Error('暂无可用翻译模型，请重试或选择其他服务。');
+      modelCatalogs[provider] = info; catalog = info;
+      options('setting-model', info.models || [], selected); modelEfforts(effort);
+      $('model-hint').textContent = catalogHint(info);
+    } catch (e) {
+      if (ticket === primaryRequest) { primaryError = e.message; notice('primary-error', e.message); $('primary-reload').hidden = false; }
+    } finally {
+      if (ticket === primaryRequest) {
+        primaryLoading = false; $('primary-loading').hidden = true;
+        $('setting-model').disabled = !!primaryError;
+        if (primaryError) $('setting-effort').disabled = true;
+        settingsState();
+      }
+    }
+  }
+  function selectedCliProviders() {
+    return [...new Set([$('setting-provider').value, $('setting-polish-provider').value])]
+      .filter(provider => provider === 'claude_cli' || provider === 'codex_cli');
+  }
+  function cliHints() {
+    ++cliRequest;
+    const providers = selectedCliProviders();
+    $('cli-settings').hidden = !providers.length;
+    $('cli-check').disabled = false; $('cli-status').textContent = '尚未检查当前选择';
+    $('cli-login-hint').textContent = providers.map(provider => provider === 'claude_cli'
+      ? 'Claude：在服务器运行 docker exec -it ai-sub-pro claude auth login，按提示在浏览器完成登录。'
+      : 'Codex：在服务器运行 docker exec -it ai-sub-pro codex login --device-auth。').join(' ');
+  }
+  $('cli-check').onclick = async () => {
+    const ticket = ++cliRequest, providers = selectedCliProviders();
+    $('cli-check').disabled = true; $('cli-status').textContent = '正在检查…';
+    const messages = await Promise.all(providers.map(async provider => {
+      try {
+        const state = await request('settings/' + provider.replace('_', '-') + '/status');
+        return providerNames[provider] + '：' + (!state.installed ? '未安装，请更新服务器镜像' : state.logged_in ? '已安装且已登录' : '已安装但未登录');
+      } catch (e) { return providerNames[provider] + '：检查失败，请重试'; }
+    }));
+    if (ticket === cliRequest) { $('cli-status').textContent = messages.join('；'); $('cli-check').disabled = false; }
+  };
+  $('setting-provider').onchange = () => {
+    cliHints();
+    const current = $('setting-provider').value === settings.translation.primary_provider;
+    return loadPrimaryModels(current ? settings.translation.primary_model : '', current ? settings.translation.primary_effort : 'auto');
+  };
+  $('primary-reload').onclick = () => loadPrimaryModels($('setting-model').value, $('setting-effort').value);
   $('setting-model').onchange = () => {
     const efforts = catalog.capabilities?.[$('setting-model').value]?.reasoning_efforts || [];
     const current = $('setting-effort').value;
@@ -136,7 +203,8 @@
   $('setting-polish-provider').onchange = () => {
     const provider = $('setting-polish-provider').value;
     const current = provider && provider === settings.translation.polish_provider;
-    const primary = provider && provider === settings.translation.primary_provider;
+    const primary = provider && provider === $('setting-provider').value;
+    cliHints();
     return loadPolishModels(current ? settings.translation.polish_model : primary ? $('setting-model').value : '', current ? settings.translation.polish_effort : primary ? $('setting-effort').value : 'auto');
   };
   $('setting-polish-model').onchange = () => {
@@ -154,10 +222,10 @@
     modelsRefreshing = true; settingsState(); notice('settings-error', '');
     $('models-refresh').textContent = '正在同步…';
     try {
-      const providers = [...new Set([settings.translation.primary_provider, $('setting-polish-provider').value].filter(Boolean))];
+      const providers = [...new Set([$('setting-provider').value, $('setting-polish-provider').value].filter(Boolean))];
       const responses = await Promise.all(providers.map(provider => request('models/' + encodeURIComponent(provider) + '?refresh=true')));
       providers.forEach((provider, index) => { modelCatalogs[provider] = responses[index]; });
-      catalog = modelCatalogs[settings.translation.primary_provider];
+      catalog = modelCatalogs[$('setting-provider').value];
       const selected = $('setting-model').value, effort = $('setting-effort').value;
       options('setting-model', catalog.models || [], selected); modelEfforts(effort);
       $('model-hint').textContent = catalogHint(catalog);
@@ -167,7 +235,7 @@
   };
   $('settings-form').onsubmit = async event => {
     event.preventDefault();
-    if (saving || !settings || polishLoading || polishError || !dirty() || !$('settings-form').reportValidity()) return;
+    if (saving || modelsRefreshing || !settings || primaryLoading || primaryError || polishLoading || polishError || !dirty() || !$('settings-form').reportValidity()) return;
     saving = true; settingsState(); notice('settings-error', ''); $('settings-save').textContent = '正在保存…';
     try {
       const patch = changes();

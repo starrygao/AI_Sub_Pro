@@ -1,4 +1,20 @@
 from unittest.mock import patch
+import subprocess
+import pytest
+
+
+@pytest.mark.parametrize('result', [
+    subprocess.CompletedProcess([], 1, '{"loggedIn": true}', ''),
+    subprocess.CompletedProcess([], 0, 'unknown output', ''),
+    subprocess.CompletedProcess([], 1, '', 'contact support@example.com'),
+    subprocess.TimeoutExpired('claude', 5),
+    FileNotFoundError('claude'),
+])
+def test_claude_login_probe_never_assumes_success_on_failure(result):
+    from app.engines.providers.claude_cli import ClaudeCliProvider
+    args = {'side_effect': result} if isinstance(result, Exception) else {'return_value': result}
+    with patch('app.engines.providers.claude_cli.subprocess.run', **args):
+        assert ClaudeCliProvider.check_logged_in() is False
 
 
 def test_claude_cli_models_include_fable_5():

@@ -65,7 +65,7 @@ class ClaudeCliProvider(BaseProvider):
 
     @staticmethod
     def check_logged_in() -> bool:
-        """Best-effort login probe. Falls back to optimistic True if probe commands don't exist."""
+        """Require positive login evidence; unavailable probes are not authentication."""
         for cmd in (["claude", "auth", "status"], ["claude", "auth", "whoami"]):
             try:
                 r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
@@ -74,7 +74,7 @@ class ClaudeCliProvider(BaseProvider):
                 except (TypeError, ValueError):
                     status = None
                 if isinstance(status, dict) and isinstance(status.get("loggedIn"), bool):
-                    return status["loggedIn"]
+                    return r.returncode == 0 and status["loggedIn"]
 
                 out = ((r.stdout or "") + (r.stderr or "")).lower()
                 if any(s in out for s in ("not logged", "not authenticated", "login required")):
@@ -83,8 +83,7 @@ class ClaudeCliProvider(BaseProvider):
                     return True
             except Exception:
                 continue
-        # Probe commands may not exist; surface real errors later during translate
-        return True
+        return False
 
     def test_connection(self) -> bool:
         return self.check_cli_available() and self.check_logged_in()

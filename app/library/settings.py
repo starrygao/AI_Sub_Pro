@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from app.config import Config
 
 FIELDS = {
-    'translation': {'primary_model', 'primary_effort', 'polish_provider', 'polish_model',
+    'translation': {'primary_provider', 'primary_model', 'primary_effort', 'polish_provider', 'polish_model',
                     'polish_effort', 'batch_size', 'semantic_qa_batch_size', 'full_doc_mode'},
     'asr': {'model_size', 'beam_size'},
 }
@@ -79,6 +79,7 @@ class LibrarySettings:
     def state(self):
         with self.lock:
             return {'pending': bool(self.store.setting('pending_model_settings', {})),
+                    'current_provider': Config.get('translation', 'primary_provider'),
                     'current_model': Config.get('translation', 'primary_model'),
                     'current_effort': Config.get('translation', 'primary_effort'),
                     'current_polish_provider': Config.get('translation', 'polish_provider'),

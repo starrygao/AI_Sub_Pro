@@ -1,5 +1,6 @@
 import json
-import importlib
+import subprocess
+import sys
 
 from app.config import DEFAULT_CONFIG
 
@@ -238,14 +239,24 @@ def test_config_honors_ai_sub_pro_data_dir_env(tmp_path, monkeypatch):
 
     runtime_dir = tmp_path / "runtime-data"
     monkeypatch.setenv("AI_SUB_PRO_DATA_DIR", str(runtime_dir))
-    reloaded = importlib.reload(cfg)
-    try:
-        assert reloaded.DATA_DIR == runtime_dir
-        assert reloaded.PROJECTS_DIR == runtime_dir / "projects"
-        assert reloaded.CONFIG_FILE == runtime_dir / "config.json"
-        assert reloaded.KB_FILE == runtime_dir / "knowledge.json"
-        assert reloaded.DATA_DIR.exists()
-        assert reloaded.PROJECTS_DIR.exists()
-    finally:
-        monkeypatch.delenv("AI_SUB_PRO_DATA_DIR", raising=False)
-        importlib.reload(cfg)
+    original_config = cfg.Config
+    # Import-time settings belong in a fresh process. Reloading this module
+    # leaves existing consumers bound to a different Config class.
+    result = subprocess.run(
+        [sys.executable, "-c", """
+import json
+from app import config as cfg
+print(json.dumps({key: str(getattr(cfg, key)) for key in
+    ('DATA_DIR', 'PROJECTS_DIR', 'CONFIG_FILE', 'KB_FILE')}))
+"""],
+        capture_output=True, text=True, check=True,
+    )
+    assert json.loads(result.stdout) == {
+        "DATA_DIR": str(runtime_dir),
+        "PROJECTS_DIR": str(runtime_dir / "projects"),
+        "CONFIG_FILE": str(runtime_dir / "config.json"),
+        "KB_FILE": str(runtime_dir / "knowledge.json"),
+    }
+    assert runtime_dir.is_dir()
+    assert (runtime_dir / "projects").is_dir()
+    assert cfg.Config is original_config

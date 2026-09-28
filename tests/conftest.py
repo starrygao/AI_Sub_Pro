@@ -3,6 +3,19 @@ from pathlib import Path
 
 
 @pytest.fixture
+def library_codex_config(monkeypatch):
+    """Media lifecycle tests use an installed CLI and isolated server defaults."""
+    import copy
+    from app.config import Config, DEFAULT_CONFIG
+    from app.engines.providers.codex_cli import CodexCliProvider
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config['translation'].update(primary_provider='codex_cli', primary_model='gpt-5.5', polish_provider='')
+    monkeypatch.setattr(Config, '_data', config)
+    monkeypatch.setattr(CodexCliProvider, 'check_cli_available', lambda: True)
+    monkeypatch.setattr(CodexCliProvider, 'check_logged_in', lambda: False)
+
+
+@pytest.fixture
 def tmp_project_dir(tmp_path, monkeypatch):
     """Isolated data/projects dir. Patches app.config paths + scheduler PROJECTS_DIR."""
     import app.config as cfg

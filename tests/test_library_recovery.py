@@ -208,3 +208,6 @@ def test_failed_emby_refresh_batch_rotates_to_remaining_pending_rows(library, mo
     worker.tick()
     worker.tick()
     assert {call.args[0] for call in refresh.call_args_list} == {str(i) for i in range(60)}
+
+
+pytestmark = pytest.mark.usefixtures("library_codex_config")

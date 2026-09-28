@@ -107,3 +107,6 @@ def test_new_arrivals_only_translate_without_chinese_subtitles_or_chinese_audio(
     worker.process_one()
     assert prepare.call_count==int(kind=='foreign')
     if kind!='foreign':assert worker.store.get(video)['state'] in {'skipped','native_language'}
+
+
+pytestmark = pytest.mark.usefixtures("library_codex_config")

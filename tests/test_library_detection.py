@@ -4,6 +4,11 @@ from app.library.worker import LibraryWorker
 
 
 def setup_worker(tmp_path, monkeypatch, *, new_only=False):
+    import copy
+    from app.config import Config, DEFAULT_CONFIG
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config['translation'].update(primary_provider='codex_cli', polish_provider='')
+    monkeypatch.setattr(Config, '_data', config)
     from app.engines.providers.codex_cli import CodexCliProvider
     from app.library import worker as module
     root=tmp_path/'media';root.mkdir()
@@ -11,6 +16,7 @@ def setup_worker(tmp_path, monkeypatch, *, new_only=False):
     if new_only:worker.establish_baseline()
     monkeypatch.setattr(module.os,'getloadavg',lambda:(0,0,0))
     monkeypatch.setattr(CodexCliProvider,'check_logged_in',lambda:True)
+    monkeypatch.setattr(CodexCliProvider,'check_cli_available',lambda:True)
     monkeypatch.setattr(worker,'refresh_readiness',lambda:None)
     monkeypatch.setattr(worker,'prepare',Mock())
     monkeypatch.setattr(worker,'probe',Mock(return_value={'streams':[{'codec_type':'audio','tags':{'language':'eng'}}]}))
@@ -112,8 +118,46 @@ def test_detection_does_not_require_model_login(tmp_path, monkeypatch):
     video=add(w,root,'foreign')
     w.process_one()
     assert w.store.get(video)['state']=='ready'
-    assert '尚未登录' in w.store.get(video)['reason']
+    assert '登录' in w.store.get(video)['reason']
     w.prepare.assert_not_called()
+
+
+def test_claude_primary_starts_without_codex_login_and_reports_selected_service(tmp_path, monkeypatch):
+    from app.config import Config
+    from app.engines.providers.claude_cli import ClaudeCliProvider
+    from app.engines.providers.codex_cli import CodexCliProvider
+    w, root = setup_worker(tmp_path, monkeypatch)
+    Config._data['translation'].update(primary_provider='claude_cli', primary_model='claude-opus-4-7')
+    codex = Mock(side_effect=AssertionError('Codex is not selected'))
+    monkeypatch.setattr(CodexCliProvider, 'check_logged_in', codex)
+    monkeypatch.setattr(ClaudeCliProvider, 'check_cli_available', lambda: True)
+    monkeypatch.setattr(ClaudeCliProvider, 'check_logged_in', lambda: True)
+    add(w, root, 'claude')
+    w.process_one()
+    w.prepare.assert_called_once()
+    assert w.status()['translation_ready'] is True
+    assert w.status()['translation_required_providers'] == ['claude_cli']
+    assert w.status()['codex_logged_in'] is None
+    codex.assert_not_called()
+
+
+def test_unavailable_claude_polish_blocks_start_but_keeps_detection(tmp_path, monkeypatch):
+    from app.config import Config
+    from app.engines.providers.claude_cli import ClaudeCliProvider
+    w, root = setup_worker(tmp_path, monkeypatch)
+    Config._data['translation'].update(polish_provider='claude_cli', polish_model='claude-opus-4-7')
+    monkeypatch.setattr(ClaudeCliProvider, 'check_cli_available', lambda: True)
+    monkeypatch.setattr(ClaudeCliProvider, 'check_logged_in', lambda: False)
+    video = add(w, root, 'polish')
+    w.process_one()
+    assert w.store.get(video)['state'] == 'ready'
+    assert '润色' in w.store.get(video)['reason']
+    assert 'claude' in w.store.get(video)['reason']
+    assert w.status()['translation_ready'] is False
+    w.prepare.assert_not_called()
+    monkeypatch.setattr(ClaudeCliProvider, 'check_logged_in', lambda: True)
+    w.process_one()
+    w.prepare.assert_called_once()
 
 
 def test_old_directory_without_arrival_evidence_waits_for_confirmation(tmp_path, monkeypatch):

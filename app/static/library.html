@@ -22,7 +22,7 @@
   <section class="watch-section" aria-label="监控文件夹与连接状态">
     <div class="watch-bar"><button id="watch-expand" class="watch-disclosure" aria-expanded="false" aria-controls="watch-content"><span class="icon icon-chevron" aria-hidden="true"></span><span class="icon icon-folder" aria-hidden="true"></span><span id="root-count">正在读取监控文件夹…</span></button><button id="watch-edit" class="text-button">编辑文件夹</button><span id="connection-summary" class="connection-summary">检查连接中</span></div>
     <div id="watch-content" hidden><h2 id="watch-title" class="sr-only">监控文件夹</h2><p id="scope" class="watch-scope" role="status">正在读取处理范围…</p><div id="roots" class="watch-roots"></div><p id="explanation" class="hint">文件稳定后才开始；每次只处理一个视频。</p>
-      <details class="connection-details"><summary>连接与运行信息</summary><div id="connections" class="connections"></div><dl class="runtime-facts"><div><dt>自动翻译</dt><dd id="enabled">载入中</dd></div><div><dt>Codex CLI</dt><dd id="auth">检查中</dd></div><div><dt>已保存字幕</dt><dd id="done">—</dd></div><div><dt>最近检查</dt><dd id="last">—</dd></div></dl><p class="hint">暂停自动翻译后，正在处理的任务会继续完成。</p></details>
+      <details class="connection-details"><summary>连接与运行信息</summary><div id="connections" class="connections"></div><dl class="runtime-facts"><div><dt>自动翻译</dt><dd id="enabled">载入中</dd></div><div><dt>翻译服务</dt><dd id="auth">检查中</dd></div><div><dt>已保存字幕</dt><dd id="done">—</dd></div><div><dt>最近检查</dt><dd id="last">—</dd></div></dl><p class="hint">暂停自动翻译后，正在处理的任务会继续完成。</p></details>
     </div>
   </section>
 </div>
@@ -36,12 +36,24 @@
     <p id="settings-availability" class="notice" role="status"></p>
     <fieldset id="settings-fields" disabled>
       <section class="settings-section" aria-labelledby="model-heading">
-        <div><h2 id="model-heading">翻译模型</h2><p>使用服务器已配置的翻译服务。</p><span id="provider-label" class="status">—</span></div>
+        <div><h2 id="model-heading">翻译模型</h2><p>选择服务器使用的翻译服务与模型。</p><span id="provider-label" class="status">—</span></div>
         <div class="form-grid">
+          <label class="form-field wide">主翻译服务<select id="setting-provider" required></select></label>
           <label class="form-field">主翻译模型<select id="setting-model" required></select></label>
           <label class="form-field">思考强度<select id="setting-effort"></select></label>
           <p id="model-hint" class="field-hint wide">模型是否可用取决于当前账号权限。</p>
+          <p id="primary-loading" class="field-hint wide" role="status" hidden>正在读取翻译模型…</p>
+          <p id="primary-error" class="failure-text wide" role="alert" hidden></p>
+          <button id="primary-reload" type="button" class="secondary" hidden>重新读取翻译模型</button>
           <button id="models-refresh" type="button" class="secondary">同步模型列表</button>
+        </div>
+      </section>
+      <section class="settings-section" aria-labelledby="cli-heading" id="cli-settings" hidden>
+        <div><h2 id="cli-heading">服务器登录状态</h2><p>CLI 服务使用服务器上的登录凭证。</p></div>
+        <div class="form-grid">
+          <p id="cli-login-hint" class="field-hint wide"></p>
+          <p id="cli-status" class="field-hint wide" role="status">尚未检查</p>
+          <button id="cli-check" type="button" class="secondary">检查登录状态</button>
         </div>
       </section>
       <section class="settings-section" aria-labelledby="polish-heading">

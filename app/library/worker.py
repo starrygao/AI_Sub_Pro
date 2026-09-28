@@ -40,6 +40,7 @@ class LibraryWorker:
         self.thread=None
         self.blocked={};self.blocked_inodes={}
         self.health={};self.last_scan=0;self.last_error='';self.authenticated=False
+        self.translation_status={'translation_ready':False,'translation_hint':'正在检查翻译服务'}
         saved_roots=self.store.setting('watch_roots')
         self.manual_roots=saved_roots is not None
         self.roots=saved_roots if self.manual_roots else config.get('roots',[])
@@ -487,10 +488,9 @@ class LibraryWorker:
                     if current and current['state'] in {'waiting','ready'} and not current.get('manual_hard_subtitle'):
                         self.save(current,state='error',reason=self.safe_error(exc),detection=None)
                 log.warning('Library candidate deferred: %s',type(exc).__name__)
-        from app.engines.providers.codex_cli import CodexCliProvider
-        self.authenticated=CodexCliProvider.check_logged_in()
+        self.check_translation_readiness()
         queued_reason=('自动翻译已暂停或设置待生效，检测结果已保留' if not start else
-                       'Codex 尚未登录，等待登录后翻译' if not self.authenticated else
+                       self.translation_status['translation_hint'] if not self.authenticated else
                        busy_reason.replace('后检测','后翻译') or '检测通过，等待翻译名额')
         for row in self.store.rows(['ready'],limit=100):
             with self.media_lock(row['path']):
@@ -519,12 +519,17 @@ class LibraryWorker:
             self.save(row,state='error',reason=self.safe_error(exc))
             log.warning('Library start deferred: %s',type(exc).__name__)
 
+    def check_translation_readiness(self):
+        from app.config import Config
+        from app.services.provider_readiness import _translation_readiness
+        self.translation_status=_translation_readiness(Config.to_dict())
+        self.authenticated=self.translation_status['translation_ready']
+
     def tick(self):
         self.controls.settle()
         if self.apply_storage_settings():return
         self.directories.apply()
-        from app.engines.providers.codex_cli import CodexCliProvider
-        self.authenticated=CodexCliProvider.check_logged_in()
+        self.check_translation_readiness()
         self.establish_baseline()
         self.refresh_readiness()
         self.finish()
@@ -572,7 +577,9 @@ class LibraryWorker:
     def status(self):
         return {'enabled':self.store.setting('enabled',self.config.get('enabled',False)),
                 'last_scan':self.last_scan,'error':self.last_error,'connections':self.health,
-                'codex_logged_in':self.authenticated,'counts':self.store.counts(),'roots':self.roots,
+                **self.translation_status,
+                'codex_logged_in':self.translation_status.get('codex_cli_logged_in'),
+                'counts':self.store.counts(),'roots':self.roots,
                 'server_roots':[map_path(p,self.config.get('host_path_maps',{})) for p in self.roots],
                 'new_only':self.config.get('new_only',False),'baseline':self.store.setting('baseline',{}),
                 'quiet_seconds':self.config.get('quiet_seconds',300),'scan_interval':self.config.get('scan_interval',60),

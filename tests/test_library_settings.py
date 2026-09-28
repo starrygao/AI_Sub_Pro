@@ -68,7 +68,7 @@ def test_pending_edits_merge_validate_and_can_be_reverted(worker):
     worker.model_settings.queue({'translation':{'primary_model':'gpt-5.5'}})
     worker.model_settings.queue({'asr':{'beam_size':3}})
     assert worker.model_settings.read()['settings']['translation']['primary_model']=='gpt-5.5'
-    for invalid in [{'translation':{'primary_effort':'wrong'}},{'asr':{'beam_size':0}},{'api_keys':{'openai':'never-store'}},{'translation':{'primary_provider':'openai'}}]:
+    for invalid in [{'translation':{'primary_effort':'wrong'}},{'asr':{'beam_size':0}},{'api_keys':{'openai':'never-store'}},{'translation':{'primary_provider':'unknown'}}]:
         with pytest.raises(HTTPException):worker.model_settings.queue(invalid)
     assert 'never-store' not in str(worker.store.setting('pending_model_settings',{}))
     worker.model_settings.queue({'translation':{'primary_model':original},'asr':{'beam_size':DEFAULT_CONFIG['asr']['beam_size']}})
@@ -110,3 +110,19 @@ def test_authenticated_endpoint_accepts_edits_while_automatic_task_runs(worker, 
     assert client.get('/api/library/settings').json()['settings']['translation']['primary_model']=='gpt-5.5'
     assert client.post('/api/library/settings',json={'api_keys':{'openai':'secret'}}).status_code==400
     assert client.post('/api/library/settings',json={},headers={'Origin':'http://other.test'}).status_code==403
+
+
+def test_primary_provider_switch_is_atomic_and_waits_for_running_task(worker):
+    original = Config.get('translation', 'primary_provider')
+    tasks.active_tasks['deadbeef'] = object()
+    desired = {'primary_provider': 'claude_cli', 'primary_model': 'claude-opus-4-7', 'primary_effort': 'high'}
+    result = worker.model_settings.queue({'translation': desired})
+    assert result['state']['current_provider'] == original
+    assert result['settings']['translation']['primary_provider'] == 'claude_cli'
+    assert not worker.apply_pending_settings()
+    assert Config.get('translation', 'primary_provider') == original
+    restored = LibraryWorker({'enabled': True}, Path(worker.store.path).parent)
+    tasks.active_tasks.clear()
+    assert restored.apply_pending_settings()
+    assert {key: Config.get('translation', key) for key in desired} == desired
+    assert restored.model_settings.state()['current_provider'] == 'claude_cli'

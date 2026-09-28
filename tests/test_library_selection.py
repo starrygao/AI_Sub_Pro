@@ -239,3 +239,6 @@ def test_outside_symlink_cannot_choose_an_unmounted_subtitle_output_folder(setup
     item['Path'] = str(alias)
     assert EmbySelection(worker).enqueue(['1'])['items'][0]['status'] == 'unavailable'
     assert worker.store.counts() == {}
+
+
+pytestmark = pytest.mark.usefixtures("library_codex_config")

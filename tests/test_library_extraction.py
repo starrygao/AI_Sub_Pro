@@ -125,3 +125,6 @@ def test_failed_extraction_remains_visible_and_retry_clears_old_progress(tmp_pat
     server.library_retry(server.Retry(path=str(video)))
     row = server.library_tasks(view='waiting')['items'][0]
     assert row['state'] == 'waiting' and row['preparation_progress'] is None
+
+
+pytestmark = pytest.mark.usefixtures("library_codex_config")

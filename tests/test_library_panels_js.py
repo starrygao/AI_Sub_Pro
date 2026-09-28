@@ -118,10 +118,10 @@ assert.equal($('directory-dialog').open,true);
 
 def test_polish_can_be_enabled_edited_reset_and_disabled_without_changing_primary():
     run_js(r'''
-config.providers={claude_cli:{enabled:true}}; // A default flag does not prove the CLI is configured.
+config.providers={claude_cli:{enabled:true}}; // Both shipped CLIs stay selectable before login.
 vm.runInContext(code,context);await flush();
 assert.equal($('setting-polish-provider').value,'');
-assert.deepEqual($('setting-polish-provider').options.map(option=>option.value),['','codex_cli']);
+assert.deepEqual($('setting-polish-provider').options.map(option=>option.value),['','codex_cli','claude_cli']);
 assert.equal($('polish-model-fields').hidden,true);
 assert.equal($('settings-save').disabled,true);
 $('setting-polish-provider').value='codex_cli';await $('setting-polish-provider').onchange();
@@ -262,4 +262,60 @@ assert.match($('model-hint').textContent,/已同步/);assert.equal(saved.length,
 context.request=async()=>{throw Error('offline')};
 await $('models-refresh').onclick();
 assert.equal($('setting-model').value,'new-model');assert.match($('settings-error').textContent,/同步失败/);
+''')
+
+
+def test_claude_is_selectable_without_api_key_and_switch_saves_provider_with_model():
+    run_js(r'''
+const original=context.request;
+context.request=async path=>path.startsWith('models/claude_cli') ? {source:'static',models:['claude-opus-4-7'],capabilities:{'claude-opus-4-7':{reasoning_efforts:['high']}}} : original(path);
+vm.runInContext(code,context);await flush();
+assert($('setting-provider').options.some(x=>x.value==='claude_cli'));
+assert($('setting-polish-provider').options.some(x=>x.value==='claude_cli'));
+$('setting-provider').value='claude_cli';await $('setting-provider').onchange();
+assert.equal($('setting-model').value,'claude-opus-4-7');
+assert.equal($('setting-effort').value,'auto');
+assert.match($('cli-login-hint').textContent,/claude auth login/);
+await submit();await flush();
+assert.deepEqual(saved,[{translation:{primary_provider:'claude_cli',primary_model:'claude-opus-4-7',primary_effort:'auto'}}]);
+assert.equal($('setting-provider').value,'claude_cli');
+assert.equal($('setting-model').value,'claude-opus-4-7');
+''')
+
+
+def test_primary_catalog_loading_failure_retry_and_reset_ignore_stale_response():
+    run_js(r'''
+let rejectModels,resolveModels;
+const original=context.request;
+context.request=path=>path==='models/claude_cli' ? new Promise((resolve,reject)=>{resolveModels=resolve;rejectModels=reject;}) : original(path);
+vm.runInContext(code,context);await flush();
+$('setting-provider').value='claude_cli';let pending=$('setting-provider').onchange();
+assert.equal($('settings-save').disabled,true);await submit();assert.equal(saved.length,0);
+rejectModels(Error('offline'));await pending;
+assert.equal($('primary-reload').hidden,false);assert.equal($('settings-save').disabled,true);
+pending=$('primary-reload').onclick();
+$('settings-reset').onclick();await flush();
+resolveModels({models:['claude-opus-4-7'],capabilities:{}});await pending;
+assert.equal($('setting-provider').value,'codex_cli');
+assert.equal($('setting-model').value,'gpt-5.5');
+assert.equal($('primary-error').hidden,true);
+assert.equal($('settings-save').disabled,true);
+''')
+
+
+def test_cli_status_checks_selected_primary_and_polish_without_model_calls():
+    run_js(r'''
+const original=context.request;const probes=[];
+context.request=async path=>{
+ if(path.startsWith('settings/')){probes.push(path);return {installed:true,logged_in:path.includes('codex')};}
+ if(path==='models/claude_cli')return {models:['claude-opus-4-7']};
+ return original(path);
+};
+vm.runInContext(code,context);await flush();
+$('setting-polish-provider').value='claude_cli';await $('setting-polish-provider').onchange();
+await $('cli-check').onclick();
+assert.deepEqual(probes.sort(),['settings/claude-cli/status','settings/codex-cli/status']);
+assert.match($('cli-status').textContent,/Claude CLI.*未登录/);
+assert.match($('cli-status').textContent,/Codex CLI.*已登录/);
+assert.equal(saved.length,0);
 ''')

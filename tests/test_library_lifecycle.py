@@ -1,3 +1,4 @@
+import pytest
 import json
 from pathlib import Path
 from unittest.mock import Mock
@@ -127,3 +128,6 @@ def test_existing_same_name_foreign_srt_can_be_used_without_output_collision(tmp
     assert source.read_text()=='Original foreign subtitle'
     prepare.assert_called_once()
     assert source in prepare.call_args.args[2]
+
+
+pytestmark = pytest.mark.usefixtures("library_codex_config")

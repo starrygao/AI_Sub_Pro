@@ -247,3 +247,6 @@ def test_real_chinese_subtitle_attachment_respects_full_vs_partial(tmp_path, mon
     if not partial:
         assert worker.store.get(video)['state'] == 'skipped'
         assert '附件' in worker.store.get(video)['reason']
+
+
+pytestmark = pytest.mark.usefixtures("library_codex_config")

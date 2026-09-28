@@ -19,6 +19,19 @@ const loadList=async()=>{vm.runInContext(fs.readFileSync('app/static/js/library.
 '''
 
 
+def test_status_uses_selected_translation_services_instead_of_codex_login():
+    run_js(LIST_FIXTURE + r'''
+Object.assign(snapshot,{codex_logged_in:null,translation_ready:true,translation_hint:'Claude CLI 已配置'});
+await loadList();
+assert.equal($('auth').textContent,'已就绪');
+assert.equal($('error').hidden,true);
+Object.assign(snapshot,{translation_ready:false,translation_hint:'润色引擎：请运行 claude 完成登录'});
+await context.refresh();
+assert.equal($('auth').textContent,'未就绪');
+assert.match($('error').textContent,/claude/);assert(!$('error').textContent.includes('codex login'));
+''')
+
+
 def test_task_title_prioritizes_work_identity_and_retains_filename_fallback():
     run_js(LIST_FIXTURE + r'''
 rows.push({path:'/video/American.Hostage.S02E03.2160p.WEB-DL.mkv',state:'translating',project_id:'deadbeef',metadata:{show_title:'美国人质',season_number:2,episode_number:3},progress:{progress:37,stage:'translate'}});
