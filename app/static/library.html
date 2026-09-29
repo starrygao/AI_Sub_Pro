@@ -5,11 +5,11 @@
 <link rel="icon" href="/static/favicon.ico?v=1" sizes="16x16 32x32">
 <link rel="icon" href="/static/favicon.svg?v=1" type="image/svg+xml">
 <meta name="theme-color" content="#153f42">
-<link rel="stylesheet" href="/static/css/library.css?v=console-13"><script defer src="/static/js/library.js?v=console-14"></script><script defer src="/static/js/library-knowledge.js?v=console-10"></script><script defer src="/static/js/library-panels.js?v=console-12"></script><script defer src="/static/js/library-directories.js?v=console-6"></script><script defer src="/static/js/library-selection.js?v=console-1"></script><script defer src="/static/js/library-cleanup.js?v=3"></script><script defer src="/static/js/library-controls.js?v=1"></script></head>
-<body><header><a class="brand" href="#tasks">AI Sub Pro</a><nav class="console-nav" aria-label="主导航"><a id="nav-tasks" href="#tasks" aria-current="page">字幕任务</a><a id="nav-system" href="#system">设置</a><a id="nav-knowledge" href="#knowledge">知识库</a></nav><div class="header-actions"><button id="logout" class="secondary">退出登录</button></div></header>
+<link rel="stylesheet" href="/static/css/library.css?v=console-14"><script defer src="/static/js/library.js?v=console-14"></script><script defer src="/static/js/library-knowledge.js?v=console-10"></script><script defer src="/static/js/library-panels.js?v=console-13"></script><script defer src="/static/js/library-proxy.js?v=1"></script><script defer src="/static/js/library-directories.js?v=console-6"></script><script defer src="/static/js/library-selection.js?v=console-1"></script><script defer src="/static/js/library-cleanup.js?v=3"></script><script defer src="/static/js/library-controls.js?v=1"></script></head>
+<body><header><a class="brand" href="#tasks">AI Sub Pro</a><nav class="console-nav" aria-label="主导航"><a id="nav-tasks" href="#tasks" aria-current="page">字幕任务</a><a id="nav-system" href="#watch">设置</a><a id="nav-knowledge" href="#knowledge">知识库</a></nav><div class="header-actions"><button id="logout" class="secondary">退出登录</button></div></header>
 <main><div id="error" role="alert" hidden></div>
 <div id="panel-tasks">
-  <section class="intro task-intro"><div><h1 id="tasks-title" tabindex="-1">字幕任务</h1><p>为你的媒体库，补齐每一句对白。</p></div><div class="actions"><button id="toggle" class="secondary automation-toggle" disabled>读取状态…</button><button id="emby-open" class="secondary">从 Emby 添加</button><button id="scan" class="scan-button">检查新文件</button></div></section>
+  <section class="intro task-intro"><div><h1 id="tasks-title" tabindex="-1">字幕任务</h1><p>为你的媒体库，补齐每一句对白。</p><a class="watch-shortcut" href="#watch">监控目录与范围 →</a></div><div class="actions"><button id="toggle" class="secondary automation-toggle" disabled>读取状态…</button><button id="emby-open" class="secondary">从 Emby 添加</button><button id="scan" class="scan-button">检查新文件</button></div></section>
   <section class="monitor" aria-label="运行状态"><div><span class="label">处理中</span><strong id="running">—</strong></div><div><span class="label">待翻译</span><strong id="pending">—</strong></div><div><span class="label">需关注</span><strong id="attention">—</strong></div><p id="scope-summary" class="monitor-note">仅处理缺少中文字幕的新增视频</p></section>
   <section class="task-section" aria-label="字幕任务列表">
     <div class="task-toolbar"><div class="list-switch" role="group" aria-label="任务列表"><button id="view-processed" aria-pressed="true">处理记录 <span id="count-processed">—</span></button><button id="view-waiting" aria-pressed="false">待检测 <span id="count-waiting">—</span></button><button id="view-ready" aria-pressed="false">待翻译 <span id="count-ready">—</span></button><button id="view-skipped" aria-pressed="false">已跳过 <span id="count-skipped">—</span></button></div><label class="task-filter"><span class="sr-only">筛选任务</span><select id="filter"><option value="">全部处理记录</option><option value="translating">正在翻译</option><option value="publishing">等待保存</option><option value="done">已保存</option><option value="error">需要处理</option><option value="changed">视频已变化</option><option value="missing">文件已移走</option><option value="paused">已暂停</option><option value="pausing">正在暂停</option><option value="cancelling">正在取消</option><option value="cancelled">已取消</option></select></label></div>
@@ -19,15 +19,42 @@
     <div class="task-columns" aria-hidden="true"><span>视频</span><span>标题 / 文件</span><span>任务状态</span><span>进度</span><span>操作</span></div>
     <p id="empty" class="empty" role="status">正在读取媒体库任务…</p><div id="tasks"></div><div class="pagination"><button id="prev" class="secondary" hidden>上一页</button><span id="page"></span><button id="more" class="secondary" hidden>下一页</button></div>
   </section>
+
+</div>
+<section id="panel-watch" hidden aria-labelledby="watch-title">
+  <nav class="settings-tabs" aria-label="设置分类"><a href="#watch" aria-current="page">监控目录</a><a href="#proxy">网络代理</a><a href="#settings">模型与处理</a><a href="#system">存储与清理</a></nav>
+  <div class="intro"><div><p class="eyebrow">控制台 / 设置</p><h1 id="watch-title" tabindex="-1">监控目录</h1><p>管理自动发现视频的文件夹，随时查看处理范围。</p></div></div>
   <section class="watch-section" aria-label="监控文件夹与连接状态">
-    <div class="watch-bar"><button id="watch-expand" class="watch-disclosure" aria-expanded="false" aria-controls="watch-content"><span class="icon icon-chevron" aria-hidden="true"></span><span class="icon icon-folder" aria-hidden="true"></span><span id="root-count">正在读取监控文件夹…</span></button><button id="watch-edit" class="text-button">编辑文件夹</button><span id="connection-summary" class="connection-summary">检查连接中</span></div>
-    <div id="watch-content" hidden><h2 id="watch-title" class="sr-only">监控文件夹</h2><p id="scope" class="watch-scope" role="status">正在读取处理范围…</p><div id="roots" class="watch-roots"></div><p id="explanation" class="hint">文件稳定后才开始；每次只处理一个视频。</p>
+    <div class="watch-bar"><button id="watch-expand" class="watch-disclosure" aria-expanded="true" aria-controls="watch-content"><span class="icon icon-chevron" aria-hidden="true"></span><span class="icon icon-folder" aria-hidden="true"></span><span id="root-count">正在读取监控文件夹…</span></button><button id="watch-edit" class="text-button">编辑文件夹</button><span id="connection-summary" class="connection-summary">检查连接中</span></div>
+    <div id="watch-content"><h2 id="watch-list-title" class="sr-only">监控文件夹</h2><p id="scope" class="watch-scope" role="status">正在读取处理范围…</p><div id="roots" class="watch-roots"></div><p id="explanation" class="hint">文件稳定后才开始；每次只处理一个视频。</p>
       <details class="connection-details"><summary>连接与运行信息</summary><div id="connections" class="connections"></div><dl class="runtime-facts"><div><dt>自动翻译</dt><dd id="enabled">载入中</dd></div><div><dt>翻译服务</dt><dd id="auth">检查中</dd></div><div><dt>已保存字幕</dt><dd id="done">—</dd></div><div><dt>最近检查</dt><dd id="last">—</dd></div></dl><p class="hint">暂停自动翻译后，正在处理的任务会继续完成。</p></details>
     </div>
   </section>
-</div>
+</section>
+<section id="panel-proxy" hidden aria-labelledby="proxy-title">
+  <nav class="settings-tabs" aria-label="设置分类"><a href="#watch">监控目录</a><a href="#proxy" aria-current="page">网络代理</a><a href="#settings">模型与处理</a><a href="#system">存储与清理</a></nav>
+  <div class="intro"><div><p class="eyebrow">控制台 / 设置</p><h1 id="proxy-title" tabindex="-1">网络代理</h1><p>查看并修改字幕服务访问模型与外部服务使用的代理。</p></div></div>
+  <p id="proxy-loading" class="notice" role="status">正在读取代理设置…</p>
+  <p id="proxy-error" class="notice failure" role="alert" tabindex="-1" hidden></p>
+  <button id="proxy-reload" class="secondary" hidden>重新读取代理设置</button>
+  <form id="proxy-form" hidden>
+    <div class="proxy-current"><span class="label">当前生效的代理</span><code id="proxy-current">正在读取…</code><p id="proxy-source" class="hint"></p></div>
+    <p id="proxy-availability" class="notice" role="status"></p>
+    <fieldset id="proxy-fields" disabled>
+      <section class="settings-section" aria-labelledby="proxy-server-heading">
+        <div><h2 id="proxy-server-heading">代理服务器</h2><p>这是实际转发请求的地址。</p></div>
+        <div class="form-grid"><label class="form-field wide">HTTP / HTTPS 代理地址<input id="proxy-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" maxlength="2048" placeholder="http://127.0.0.1:7890" aria-describedby="proxy-address-hint"><span id="proxy-address-hint" class="field-hint">例如 http://192.168.31.4:7890。只填写协议、主机和端口；留空并保存后使用直连。</span></label><p class="field-hint wide">127.0.0.1 指字幕服务所在服务器，不是打开此页面的电脑。新地址会在当前任务结束后应用。</p></div>
+      </section>
+      <section class="settings-section" aria-labelledby="proxy-dashboard-heading">
+        <div><h2 id="proxy-dashboard-heading">代理管理页面</h2><p>用于查看线路或切换节点。</p></div>
+        <div class="form-grid"><label class="form-field wide">管理页面地址（可选）<input id="proxy-dashboard" type="url" inputmode="url" autocomplete="off" spellcheck="false" maxlength="2048" placeholder="http://192.168.31.4:9097/ui/#/proxies" aria-describedby="proxy-dashboard-hint"><span id="proxy-dashboard-hint" class="field-hint">这是浏览器入口，与上方代理服务器地址分别保存。</span></label><div class="wide"><a id="proxy-dashboard-open" class="button-link secondary" target="_blank" rel="noopener noreferrer" hidden>打开代理管理页面 ↗</a></div></div>
+      </section>
+    </fieldset>
+    <div class="settings-footer"><div class="actions"><button id="proxy-save" type="submit" disabled>保存代理设置</button><button id="proxy-reset" type="button" class="secondary" disabled>撤销更改</button></div><p id="proxy-feedback" role="status">尚未修改</p></div>
+  </form>
+</section>
 <section id="panel-settings" hidden aria-labelledby="settings-title">
-  <nav class="settings-tabs" aria-label="设置分类"><a href="#system">存储与清理</a><a href="#settings" aria-current="page">模型与处理</a></nav>
+  <nav class="settings-tabs" aria-label="设置分类"><a href="#watch">监控目录</a><a href="#proxy">网络代理</a><a href="#settings" aria-current="page">模型与处理</a><a href="#system">存储与清理</a></nav>
   <div class="intro"><div><p class="eyebrow">控制台 / 设置</p><h1 id="settings-title" tabindex="-1">模型与高级设置</h1><p>管理翻译模型与字幕处理参数。保存后用于后续任务。</p></div></div>
   <p id="settings-loading" class="notice" role="status">正在读取设置…</p>
   <p id="settings-error" class="notice failure" role="alert" hidden></p>
@@ -92,7 +119,7 @@
 
 </section>
 <section id="panel-system" hidden aria-labelledby="system-title">
-  <nav class="settings-tabs" aria-label="设置分类"><a href="#system" aria-current="page">存储与清理</a><a href="#settings">模型与处理</a></nav>
+  <nav class="settings-tabs" aria-label="设置分类"><a href="#watch">监控目录</a><a href="#proxy">网络代理</a><a href="#settings">模型与处理</a><a href="#system" aria-current="page">存储与清理</a></nav>
   <div class="intro"><div><p class="eyebrow">控制台 / 设置</p><h1 id="system-title" tabindex="-1">存储与清理</h1><p>查看服务器文件占用，管理保存位置和自动清理。</p></div></div>
   <section class="storage-overview" aria-labelledby="storage-heading"><div><h2 id="storage-heading">当前占用</h2><strong id="storage-total">正在统计…</strong><p id="storage-disk" class="hint"></p></div><p class="hint">统计本服务数据、临时文件与模型目录，不含原视频和媒体目录中的字幕。按文件大小统计，硬链接不重复计入。</p></section>
   <div class="storage-table-wrap"><table class="storage-table"><caption class="sr-only">文件分类占用</caption><thead><tr><th scope="col">文件类别</th><th scope="col">占用</th><th scope="col">可清理</th><th scope="col">文件数</th></tr></thead><tbody id="storage-categories"></tbody></table></div>

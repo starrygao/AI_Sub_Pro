@@ -117,13 +117,10 @@ assert.equal(context.document.activeElement,action('detail'));
 ''')
 
 
-def test_monitoring_directory_disclosure_is_reachable_and_stays_open_on_refresh():
+def test_monitoring_directories_start_expanded_and_preserve_disclosure_on_refresh():
     run_js(LIST_FIXTURE + r'''
 snapshot.server_roots=['/vol2/media/电视剧'];
 await loadList();
-assert.equal($('watch-content').hidden,true);
-assert.equal($('watch-expand').getAttribute('aria-expanded'),'false');
-$('watch-expand').onclick();
 assert.equal($('watch-content').hidden,false);
 assert.equal($('watch-expand').getAttribute('aria-expanded'),'true');
 await context.refresh();
@@ -131,8 +128,11 @@ assert.equal($('watch-content').hidden,false);
 assert(descendants($('roots')).some(e=>e.textContent==='/vol2/media'));
 assert(descendants($('roots')).some(e=>e.textContent==='电视剧'));
 $('watch-expand').onclick();
+await context.refresh();
 assert.equal($('watch-content').hidden,true);
 assert.equal($('watch-expand').getAttribute('aria-expanded'),'false');
+$('watch-expand').onclick();
+assert.equal($('watch-content').hidden,false);
 ''')
 
 

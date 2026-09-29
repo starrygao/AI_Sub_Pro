@@ -19,6 +19,7 @@ from .publish import publish_sidecar, archive_stale_sidecar, bilingual_sidecar_p
 from .sources import Sources
 from .store import Store
 from .settings import LibrarySettings
+from .proxy import ProxySettings
 from .directories import DirectorySettings
 from .storage import StoragePaths
 from .extraction import extract_subtitles
@@ -34,6 +35,7 @@ class LibraryWorker:
         data_dir=Path(data_dir);data_dir.mkdir(parents=True,exist_ok=True)
         self.store=Store(data_dir/'library.sqlite3')
         self.model_settings=LibrarySettings(self.store)
+        self.proxy_settings=ProxySettings(self)
         self.sources=Sources(config)
         self.stop_event=threading.Event()
         self.wake=threading.Event()
@@ -535,6 +537,7 @@ class LibraryWorker:
         self.finish()
         self.cleanup.tick()
         self.apply_pending_settings()
+        self.proxy_settings.apply()
         for row in self.store.pending_refresh():
             try:
                 self.sources.refresh_subtitles(row.get('metadata',{}).get('emby_id',''))
@@ -545,7 +548,8 @@ class LibraryWorker:
         self.discover()
         if not self.directories.read()['pending'] and not (self.storage and self.storage.state()['pending']):
             self.process_one(start=bool(self.store.setting('enabled',self.config.get('enabled',False)))
-                             and not self.model_settings.state()['pending'])
+                             and not self.model_settings.state()['pending']
+                             and not self.proxy_settings.read()['pending'])
 
     def apply_storage_settings(self):
         if not self.storage or not self.storage.state()['pending']:return False

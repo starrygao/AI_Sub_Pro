@@ -349,17 +349,19 @@
   $('project-reload').onclick = () => { previewKey = ''; loadProject(true); };
   function route(focus = true) {
     const match = /^#project\/([a-f0-9]{8})$/.exec(location.hash);
-    panel = match ? 'project' : location.hash === '#settings' ? 'settings' : location.hash === '#knowledge' ? 'knowledge' : location.hash === '#system' ? 'system' : 'tasks';
+    const destination = location.hash.slice(1);
+    panel = match ? 'project' : ['settings', 'knowledge', 'system', 'watch', 'proxy'].includes(destination) ? destination : 'tasks';
     pid = match ? match[1] : ''; detailRequest++;
-    for (const name of ['tasks', 'settings', 'project', 'knowledge', 'system']) $('panel-' + name).hidden = name !== panel;
+    for (const name of ['tasks', 'settings', 'project', 'knowledge', 'system', 'watch', 'proxy']) $('panel-' + name).hidden = name !== panel;
     for (const name of ['tasks', 'knowledge', 'system']) {
-      if (name === (panel === 'project' ? 'tasks' : panel === 'settings' ? 'system' : panel)) $('nav-' + name).setAttribute('aria-current', 'page');
+      if (name === (panel === 'project' ? 'tasks' : ['settings', 'watch', 'proxy'].includes(panel) ? 'system' : panel)) $('nav-' + name).setAttribute('aria-current', 'page');
       else $('nav-' + name).removeAttribute('aria-current');
     }
-    document.title = (panel === 'settings' ? '模型设置' : panel === 'project' ? '翻译详情' : panel === 'knowledge' ? '知识库' : panel === 'system' ? '存储与清理' : '字幕任务') + ' · AI Sub Pro';
-    if (focus) $(panel + '-title').focus({preventScroll:true});
+    document.title = ({settings:'模型设置', project:'翻译详情', knowledge:'知识库', system:'存储与清理', watch:'监控目录', proxy:'网络代理', tasks:'字幕任务'}[panel]) + ' · AI Sub Pro';
+    if (focus) { window.scrollTo?.({top:0, behavior:'auto'}); $(panel + '-title').focus({preventScroll:true}); }
     if (panel === 'settings' && !settings) loadSettings();
     if (panel === 'knowledge') window.LibraryKnowledge?.open();
+    if (panel === 'proxy') window.LibraryProxy?.open();
     if (panel === 'project') { previewKey = ''; loadProject(true); window.LibraryKnowledge?.project(pid); }
   }
   window.LibraryPanels = {statusChanged:settingsState};

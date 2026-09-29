@@ -158,6 +158,17 @@ def library_directories():
             'storage': worker.storage.state() if worker.storage else {'supported': False, 'error': '当前部署尚未启用网页目录管理。'}}
 
 
+@app.get('/api/library/proxy')
+def library_proxy():
+    return worker.proxy_settings.read()
+
+
+@app.post('/api/library/proxy')
+def library_proxy_update(data: dict):
+    try:return worker.proxy_settings.queue(data)
+    except ValueError as exc:raise HTTPException(400, str(exc))
+
+
 class WatchFolders(BaseModel):
     roots:list[str]
 

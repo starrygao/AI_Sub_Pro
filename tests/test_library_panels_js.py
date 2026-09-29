@@ -110,9 +110,52 @@ await $('storage-edit').onclick();assert.equal($('directory-dialog').open,true);
 assert.equal($('storage-data').value,'/vol2/data');$('directory-close').onclick();
 navigate('#settings');await flush();
 assert.equal($('panel-settings').hidden,false);assert.equal($('settings-form').hidden,false);
-navigate('#tasks');await $('watch-edit').onclick();
-assert.equal($('panel-tasks').hidden,false);assert.equal($('watch-paths').value,'/vol2/media');
+navigate('#watch');await $('watch-edit').onclick();
+assert.equal($('panel-watch').hidden,false);assert.equal($('panel-tasks').hidden,true);
+assert.equal($('nav-system').attrs['aria-current'],'page');
+assert.equal($('watch-paths').value,'/vol2/media');
 assert.equal($('directory-dialog').open,true);
+''')
+
+
+def test_proxy_settings_retry_keep_drafts_and_save_only_changed_fields():
+    run_js(r'''
+context.location.hash='#proxy';let failLoad=true,proxyFailSave=false;
+let proxy={current:{proxy_url:'http://127.0.0.1:7890',dashboard_url:''},desired:{proxy_url:'http://127.0.0.1:7890',dashboard_url:''},pending:false,source:'environment'};
+context.api=async(path,body)=>{
+ assert.equal(path,'proxy');
+ if(failLoad)throw Error('Proxy unavailable');
+ if(body){if(proxyFailSave)throw Error('Save failed');saved.push(JSON.parse(JSON.stringify(body)));Object.assign(proxy.desired,body);proxy.pending='proxy_url' in body;proxy.current.dashboard_url=proxy.desired.dashboard_url;}
+ return structuredClone(proxy);
+};
+vm.runInContext(fs.readFileSync('app/static/js/library-proxy.js','utf8'),context);await flush();
+assert.equal($('proxy-form').hidden,true);assert.equal($('proxy-fields').disabled,true);
+assert.equal($('proxy-reload').hidden,false);assert.match($('proxy-error').textContent,/unavailable/);
+failLoad=false;await $('proxy-reload').onclick();
+assert.equal($('proxy-form').hidden,false);assert.equal($('proxy-save').disabled,true);
+assert.equal($('proxy-dashboard-open').hidden,true);
+$('proxy-dashboard').value='http://192.168.31.4:9097/ui/#/proxies';$('proxy-form').handlers.input();
+await window.LibraryProxy.open(); // Navigation/refresh must retain an unsaved draft.
+assert.equal($('proxy-dashboard').value,'http://192.168.31.4:9097/ui/#/proxies');
+proxyFailSave=true;await $('proxy-form').onsubmit({preventDefault(){}});
+assert.equal(saved.length,0);assert.match($('proxy-error').textContent,/Save failed/);
+assert.equal(context.document.activeElement,$('proxy-error'));
+assert.equal($('proxy-save').disabled,false);
+proxyFailSave=false;await $('proxy-form').onsubmit({preventDefault(){}});
+assert.deepEqual(saved,[{dashboard_url:'http://192.168.31.4:9097/ui/#/proxies'}]);
+assert.equal($('proxy-dashboard-open').href,'http://192.168.31.4:9097/ui/#/proxies');
+assert.equal($('proxy-save').disabled,true);
+$('proxy-url').value='http://new-proxy:7890';$('proxy-form').handlers.input();
+await $('proxy-form').onsubmit({preventDefault(){}});
+assert.match($('proxy-feedback').textContent,/等待生效/);
+assert.equal($('proxy-current').textContent,'http://127.0.0.1:7890');
+$('proxy-url').value='http://draft-proxy:7890';$('proxy-form').handlers.input();
+proxy.current.proxy_url=proxy.desired.proxy_url;proxy.pending=false;
+intervals[0]();await flush();
+assert.equal($('proxy-url').value,'http://draft-proxy:7890');
+assert.equal($('proxy-current').textContent,'http://new-proxy:7890');
+$('proxy-reset').onclick();assert.equal($('proxy-url').value,'http://new-proxy:7890');
+assert.equal($('proxy-save').disabled,true);
 ''')
 
 
