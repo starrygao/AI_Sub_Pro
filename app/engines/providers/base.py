@@ -3,10 +3,14 @@ from abc import ABC, abstractmethod
 from typing import List, Dict
 
 
+class ProviderUnavailableError(RuntimeError):
+    """The provider cannot serve this task; per-subtitle retries cannot help."""
+
+
 class BaseProvider(ABC):
     @abstractmethod
     def translate_batch(self, items: List[Dict], system_prompt: str, retries: int = 3) -> List[Dict]:
-        """items: [{id, original}]. Returns equal-length [{id, translation, error}]."""
+        """Return equal-length [{id, translation, error}]; service failures may raise ProviderUnavailableError."""
 
     @abstractmethod
     def test_connection(self) -> bool: ...

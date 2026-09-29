@@ -23,10 +23,8 @@ def test_codex_cli_provider_cli_not_installed():
 
     with patch.object(CodexCliProvider, "check_cli_available", return_value=False):
         p = CodexCliProvider({"model": "gpt-5.5"})
-        result = p.translate_batch([{"id": 1, "original": "hi"}], "sys")
-
-    assert result[0]["translation"] == ""
-    assert "未安装" in result[0]["error"] or "not installed" in result[0]["error"].lower()
+        with pytest.raises(RuntimeError, match="未安装"):
+            p.translate_batch([{"id": 1, "original": "hi"}], "sys")
 
 
 def test_codex_cli_provider_not_logged_in():
@@ -35,10 +33,8 @@ def test_codex_cli_provider_not_logged_in():
     with patch.object(CodexCliProvider, "check_cli_available", return_value=True), \
          patch.object(CodexCliProvider, "check_logged_in", return_value=False):
         p = CodexCliProvider({"model": "gpt-5.5"})
-        result = p.translate_batch([{"id": 1, "original": "hi"}], "sys")
-
-    assert result[0]["translation"] == ""
-    assert "登录" in result[0]["error"] or "login" in result[0]["error"].lower() or "auth" in result[0]["error"].lower()
+        with pytest.raises(RuntimeError, match="codex login"):
+            p.translate_batch([{"id": 1, "original": "hi"}], "sys")
 
 
 def test_codex_cli_available_probe_treats_oserror_as_unavailable():
@@ -351,7 +347,7 @@ def test_codex_cli_provider_parse_fails_entire_batch_on_invalid_result_shape(
     assert all(error_fragment in item["error"] for item in out)
 
 
-def test_codex_cli_provider_redacts_cli_error_secrets():
+def test_codex_cli_provider_redacts_cli_error_secrets(caplog):
     from app.engines.providers.codex_cli import CodexCliProvider
 
     p = CodexCliProvider({"model": "gpt-5.5"})
@@ -359,13 +355,17 @@ def test_codex_cli_provider_redacts_cli_error_secrets():
     with patch.object(CodexCliProvider, "check_cli_available", return_value=True), \
          patch.object(CodexCliProvider, "check_logged_in", return_value=True), \
          patch.object(p, "_invoke", side_effect=RuntimeError(raw_error)):
-        result = p.translate_batch([{"id": 1, "original": "hi"}], "sys", retries=1)
+        with pytest.raises(RuntimeError) as caught:
+            p.translate_batch([{"id": 1, "original": "hi"}], "sys", retries=1)
 
-    error = result[0]["error"]
+    error = str(caught.value)
     assert "secret123" not in error
     assert "token123" not in error
     assert "api_key=<redacted>" in error
     assert "Authorization: <redacted>" in error
+    assert "secret123" not in caplog.text
+    assert "token123" not in caplog.text
+    assert caught.value.__suppress_context__
 
 
 def test_codex_cli_provider_kills_process_group_on_timeout(monkeypatch):

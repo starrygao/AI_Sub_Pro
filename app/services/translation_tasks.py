@@ -31,6 +31,7 @@ from app.utils.media import (
     resolve_font,
 )
 from app.services.provider_readiness import require_translation_ready
+from app.engines.providers.base import ProviderUnavailableError
 from app.services.project_defaults import (
     _apply_safe_defaults,
     _is_forced_or_commentary_subtitle,
@@ -1904,6 +1905,8 @@ def _retry_missing_translations_before_quality(
         prompt = f"{prompt}\n\n{_FINAL_MISSING_TRANSLATION_RETRY_NOTE}"
         try:
             raw_results = primary.translate_batch(items, prompt)
+        except ProviderUnavailableError:
+            raise
         except Exception as exc:
             err = _safe_error_message(exc)
             for block in batch_blocks:
@@ -4068,6 +4071,8 @@ def _run_semantic_quality_checks(
                 raw_list,
                 batch,
             )
+        except ProviderUnavailableError:
+            raise
         except Exception as exc:
             message = _safe_error_message(exc)
             failed_ids = [item["id"] for item in batch]
@@ -5473,6 +5478,8 @@ def _run_targeted_semantic_verification(
                                 pending,
                                 retry_prompt,
                             )
+                        except ProviderUnavailableError:
+                            raise
                         except Exception as exc:
                             raw_results = []
                             provider_error = (
@@ -6875,6 +6882,8 @@ def _auto_repair_quality_issues(
         mutation_occurred = False
         if repair_trace is not None:
             repair_trace["failure"] = "provider_or_repair_error"
+        if isinstance(e, ProviderUnavailableError):
+            raise
         return finish_outcome(False)
 
 
@@ -8393,6 +8402,8 @@ def _persist_translation_quality_report(
             markdown_path=root / "translation_qa_report.md",
         )
         return repaired
+    except ProviderUnavailableError:
+        raise
     except Exception as e:
         log.exception("translation QA report failed for %s", pid)
         raise RuntimeError(f"translation QA report failed: {_safe_error_message(e)}") from e
