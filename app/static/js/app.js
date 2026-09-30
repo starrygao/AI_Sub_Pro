@@ -24,14 +24,19 @@ function app() {
       trailer: {max_video_height: 1080},
       asr: {mode: 'speed', backend: 'auto'},
       translation: {
+        primary_provider: 'omp_cli',
+        primary_model: 'openai-codex/gpt-6-astra',
+        polish_provider: '',
+        polish_model: '',
         quality_mode: 'professional',
-        primary_effort: 'auto',
+        primary_effort: 'medium',
         polish_effort: 'auto',
         use_translation_memory: true,
         use_phrase_library: true,
         qa_auto_repair: true,
       },
       providers: {
+        omp_cli: { enabled: true, timeout_sec: 180 },
         claude_cli: { enabled: true, timeout_sec: 180 },
         codex_cli: { enabled: true, timeout_sec: 180 },
       },
@@ -126,7 +131,11 @@ function app() {
     sysCheckRequestSeq: 0,
     asrInstallPromptToastKeys: {},
     settingsSaving: false,
+    ompCliConfigured: false,
     showKeys: { openai: false, deepseek: false, gemini: false, primary: false, polish: false, tmdb: false },
+    ompCliStatus: null,
+    ompCliChecking: false,
+    ompCliCheckedModels: '',
     claudeCliStatus: null,  // null | {installed, logged_in}
     claudeCliChecking: false,
     codexCliStatus: null,  // null | {installed, logged_in}
@@ -377,6 +386,8 @@ function app() {
       if (nextView === 'knowledge') this.loadKbProjects();
       if (nextView === 'settings' && this.settingsUsesLocalCli()) {
         await Promise.all([
+          this.refreshCliProviderModelCatalog('omp_cli'),
+          this.checkOmpCliStatus(),
           this.refreshCliProviderModelCatalog('claude_cli'),
           this.refreshCliProviderModelCatalog('codex_cli'),
           this.checkClaudeCliStatus(),
@@ -814,7 +825,7 @@ function app() {
         : projectOrMessage;
       const message = this.redactSecretText(raw);
       const lower = message.toLowerCase();
-      if (/api|key|provider|openai|deepseek|gemini|claude|codex/.test(lower)) {
+      if (/api|key|provider|openai|deepseek|gemini|claude|codex|omp/.test(lower)) {
         return '打开设置页检查翻译 provider、登录状态和 API 密钥。';
       }
       if (/ffmpeg|ffprobe|subtitles filter/.test(lower)) {
@@ -921,6 +932,10 @@ function app() {
         app_info: mergeSection('app_info'),
         providers: {
           ...mergeSection('providers'),
+          omp_cli: {
+            ...(this.isPlainObject(current.providers?.omp_cli) ? current.providers.omp_cli : {}),
+            ...(this.isPlainObject(incoming.providers?.omp_cli) ? incoming.providers.omp_cli : {}),
+          },
           claude_cli: {
             ...(this.isPlainObject(current.providers?.claude_cli) ? current.providers.claude_cli : {}),
             ...(this.isPlainObject(incoming.providers?.claude_cli) ? incoming.providers.claude_cli : {}),
@@ -931,7 +946,7 @@ function app() {
           },
         },
       };
-      const allowedProviders = ['openai', 'deepseek', 'gemini', 'claude_cli', 'codex_cli'];
+      const allowedProviders = ['openai', 'deepseek', 'gemini', 'omp_cli', 'claude_cli', 'codex_cli'];
       const normalizeProvider = (value, fallback, allowEmpty = true) => {
         if (typeof value !== 'string') return fallback;
         const trimmed = value.trim();
@@ -939,18 +954,19 @@ function app() {
         return allowedProviders.includes(trimmed) ? trimmed : fallback;
       };
       normalized.translation.primary_provider = normalizeProvider(
-        normalized.translation.primary_provider, 'openai', false
+        normalized.translation.primary_provider, 'omp_cli', false
       );
       normalized.translation.polish_provider = normalizeProvider(
         normalized.translation.polish_provider, ''
       );
-      const allowedEfforts = ['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+      const allowedEfforts = ['auto', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
       for (const field of ['primary_effort', 'polish_effort']) {
         const effort = typeof normalized.translation[field] === 'string'
           ? normalized.translation[field].trim().toLowerCase()
           : '';
         normalized.translation[field] = allowedEfforts.includes(effort) ? effort : 'auto';
       }
+      delete normalized.providers.omp_cli.model;
       delete normalized.providers.claude_cli.model;
       delete normalized.providers.codex_cli.model;
       const allowedAsrModes = ['speed', 'accuracy', 'offline'];
@@ -983,8 +999,13 @@ function app() {
     settingsPayload() {
       const payload = JSON.parse(JSON.stringify(this.settings || {}));
       if (payload && typeof payload === 'object') delete payload.app_info;
+      if (this.isPlainObject(payload?.providers?.omp_cli)) delete payload.providers.omp_cli.model;
       if (this.isPlainObject(payload?.providers?.claude_cli)) delete payload.providers.claude_cli.model;
       if (this.isPlainObject(payload?.providers?.codex_cli)) delete payload.providers.codex_cli.model;
+      // Unrelated saves must not change legacy translation certificate identities.
+      if (!this.ompCliConfigured && !this.settingsUsesOmpCli() && this.isPlainObject(payload.providers)) {
+        delete payload.providers.omp_cli;
+      }
       return payload;
     },
 
@@ -1597,6 +1618,7 @@ function app() {
     async loadSettings() {
       try {
         const data = await this.api('/api/settings');
+        this.ompCliConfigured = this.isPlainObject(data.providers?.omp_cli);
         this.credentialsConfigured = data.credentials_configured || {};
         this.credentialsToClear = [];
         this.settings = this.normalizeSettings(data);
@@ -1894,6 +1916,7 @@ function app() {
     },
 
     systemTranslationActionText() {
+      if (this.sysCheck?.translation_provider === 'omp_cli') return '检查 OMP CLI 设置';
       if (this.sysCheck?.translation_provider === 'claude_cli') return '检查 Claude CLI 设置';
       if (this.sysCheck?.translation_provider === 'codex_cli') return '检查 Codex CLI 设置';
       return '去配置 API 密钥';
@@ -4684,6 +4707,7 @@ function app() {
       this.settingsSaving = true;
       try {
         const saved = await this.api('/api/settings', 'POST', {...this.settingsPayload(), clear_credentials: this.credentialsToClear});
+        this.ompCliConfigured = this.ompCliConfigured || this.settingsUsesOmpCli();
         this.credentialsConfigured = saved.credentials_configured || this.credentialsConfigured;
         this.credentialsToClear = [];
         for (const provider of ['openai', 'deepseek', 'gemini']) this.settings.api_keys[provider] = '';
@@ -4692,6 +4716,9 @@ function app() {
         this.applyWorkflowDefaultsFromSettings();
         this.toast('设置已保存');
         await this.refreshSystemCheck({ force: true });
+        if (this.settingsUsesOmpCli()) {
+          await this.checkOmpCliStatus();
+        }
         if (this.settingsUsesClaudeCli()) {
           await this.checkClaudeCliStatus();
         }
@@ -4765,6 +4792,7 @@ function app() {
           openai: 'gpt-4o-mini',
           deepseek: 'deepseek-flash',
           gemini: 'gemini-2.5-flash',
+          omp_cli: this.translationModelForProvider('omp_cli', 'openai-codex/gpt-6-astra'),
           claude_cli: this.translationModelForProvider('claude_cli', 'claude-opus-4-7'),
           codex_cli: this.translationModelForProvider('codex_cli', 'gpt-5.5'),
         };
@@ -5273,6 +5301,32 @@ function app() {
       this.trailerCreatedProjects = [];
       this.trailerLoading = false;
       this.trailerSubmitting = false;
+    },
+
+    currentOmpCliStatus() {
+      return this.ompCliCheckedModels === JSON.stringify(this.selectedOmpModels()) ? this.ompCliStatus : null;
+    },
+
+    async checkOmpCliStatus() {
+      if (this.ompCliChecking || !this.settingsUsesOmpCli()) return;
+      this.ompCliChecking = true;
+      const models = this.selectedOmpModels();
+      const selection = JSON.stringify(models);
+      try {
+        const states = await Promise.all(models.map(async model => ({
+          model, ...await this.api(`/api/settings/omp-cli/status?model=${encodeURIComponent(model)}`),
+        })));
+        this.ompCliStatus = {
+          installed: states.every(state => state.installed),
+          logged_in: states.every(state => state.logged_in),
+          hint: states.map(state => `${state.model}：${state.hint || (!state.installed ? '未安装 OMP CLI，请先安装' : state.logged_in ? '已配置认证；实际模型权限请测试连接' : '缺少认证，请登录该模型对应的 provider')}`).join('；'),
+        };
+      } catch (e) {
+        this.ompCliStatus = {installed: false, logged_in: false, error: e.message};
+      } finally {
+        this.ompCliCheckedModels = selection;
+        this.ompCliChecking = false;
+      }
     },
 
     // ===== Claude CLI provider status =====

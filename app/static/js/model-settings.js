@@ -14,6 +14,7 @@ globalThis.AISubProModelSettings = function () {
         openai: 'OpenAI',
         deepseek: 'DeepSeek',
         gemini: 'Gemini',
+        omp_cli: 'OMP CLI',
         claude_cli: 'Claude CLI',
         codex_cli: 'Codex CLI',
       }[provider] || provider || '翻译服务';
@@ -52,12 +53,24 @@ globalThis.AISubProModelSettings = function () {
         || translation.polish_provider === 'codex_cli';
     },
 
+    settingsUsesOmpCli() {
+      const translation = this.settings.translation || {};
+      return translation.primary_provider === 'omp_cli' || translation.polish_provider === 'omp_cli';
+    },
+
+    selectedOmpModels() {
+      const translation = this.settings.translation || {};
+      return [...new Set(['primary', 'polish']
+        .filter(target => translation[`${target}_provider`] === 'omp_cli')
+        .map(target => translation[`${target}_model`] || 'openai-codex/gpt-6-astra'))];
+    },
+
     settingsUsesLocalCli() {
-      return this.settingsUsesClaudeCli() || this.settingsUsesCodexCli();
+      return this.settingsUsesOmpCli() || this.settingsUsesClaudeCli() || this.settingsUsesCodexCli();
     },
 
     isLocalCliProvider(provider) {
-      return provider === 'claude_cli' || provider === 'codex_cli';
+      return ['omp_cli', 'claude_cli', 'codex_cli'].includes(provider);
     },
 
     translationModelForProvider(provider, fallback) {
@@ -74,6 +87,8 @@ globalThis.AISubProModelSettings = function () {
     reasoningEffortOptions(provider, model) {
       const labels = {
         auto: '自动（模型默认）',
+        off: '关闭',
+        minimal: '最低',
         low: '低',
         medium: '中',
         high: '高',
@@ -81,8 +96,14 @@ globalThis.AISubProModelSettings = function () {
         max: '最大',
         ultra: '极限（多代理）',
       };
-      const levels = this.modelCapability(provider, model)?.reasoning_efforts || [];
-      return ['auto', ...levels].map(value => ({ value, label: labels[value] }));
+      const capability = this.modelCapability(provider, model);
+      const translation = this.settings.translation || {};
+      // Keep saved efforts selectable while a dynamic CLI model's metadata is unavailable.
+      const levels = capability?.reasoning_efforts || ['primary', 'polish']
+        .filter(target => translation[`${target}_provider`] === provider && translation[`${target}_model`] === model)
+        .map(target => translation[`${target}_effort`])
+        .filter(value => value && labels[value]);
+      return [...new Set(['auto', ...levels])].map(value => ({ value, label: labels[value] || value }));
     },
 
     normalizeReasoningEffort(targetKey) {
@@ -90,6 +111,7 @@ globalThis.AISubProModelSettings = function () {
       const isPrimary = targetKey === 'primary';
       const provider = this.settings.translation[isPrimary ? 'primary_provider' : 'polish_provider'];
       const model = this.settings.translation[isPrimary ? 'primary_model' : 'polish_model'];
+      if (!this.modelCapability(provider, model)) return;
       const effortField = isPrimary ? 'primary_effort' : 'polish_effort';
       const current = typeof this.settings.translation[effortField] === 'string'
         ? this.settings.translation[effortField].trim().toLowerCase()
@@ -217,7 +239,7 @@ globalThis.AISubProModelSettings = function () {
         // Share a provider request between translation and polishing, while each
         // stage keeps its own sequence guard and selection.
         if (!this.modelFetches[provider]) {
-          this.modelFetches[provider] = this.api(`/api/models/${provider}`)
+          this.modelFetches[provider] = this.api(`/api/models/${provider}${options.force ? '?refresh=true' : ''}`)
             .finally(() => { delete this.modelFetches[provider]; });
         }
         const response = await this.modelFetches[provider];

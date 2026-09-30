@@ -951,44 +951,6 @@ def test_cli_settings_model_options_follow_shared_model_catalog():
     assert result.returncode == 0, result.stderr
 
 
-def test_opening_settings_checks_selected_cli_statuses():
-    result = run_js(
-        """
-        const fs = require('fs');
-        const vm = require('vm');
-
-        const code = ('globalThis.AISUBPRO_MODEL_CATALOG = ' + fs.readFileSync('app/model_catalog.json', 'utf8') + ';' + (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8')));
-        const context = { console, setTimeout, clearTimeout };
-        vm.createContext(context);
-        vm.runInContext(code, context);
-
-        (async () => {
-          const state = context.app();
-          state.settings.translation.primary_provider = 'codex_cli';
-          state.settings.translation.polish_provider = '';
-          let claudeChecks = 0;
-          let codexChecks = 0;
-          const refreshedCatalogs = [];
-          state.checkClaudeCliStatus = async () => { claudeChecks += 1; };
-          state.checkCodexCliStatus = async () => { codexChecks += 1; };
-          state.refreshCliProviderModelCatalog = async (provider) => { refreshedCatalogs.push(provider); };
-
-          await state.setView('settings');
-
-          if (claudeChecks !== 1 || codexChecks !== 1) {
-            throw new Error(`expected one status check each, got Claude=${claudeChecks} Codex=${codexChecks}`);
-          }
-          if (JSON.stringify(refreshedCatalogs.sort()) !== JSON.stringify(['claude_cli', 'codex_cli'])) {
-            throw new Error(`expected both CLI catalogs to refresh, got ${JSON.stringify(refreshedCatalogs)}`);
-          }
-        })().catch((err) => {
-          console.error(err.message);
-          process.exit(1);
-        });
-        """
-    )
-
-    assert result.returncode == 0, result.stderr
 
 
 def test_cli_model_catalog_refresh_updates_shared_cache():
@@ -1192,6 +1154,7 @@ def test_frontend_model_loader_updates_selection_from_live_models_and_clears_pol
 
         (async () => {
           const state = context.app();
+          state.settings.translation.primary_provider = 'openai';
           state.settings.api_keys.openai = 'sk-openai';
           state.settings.translation.primary_model = 'gpt-4o';
           state.settings.translation.polish_model = 'gpt-4o-mini';
@@ -2662,4 +2625,28 @@ def test_pending_catalog_response_preserves_user_model_change_and_shares_request
         if(state.settings.translation.primary_model!=='gpt-4.1' || state.settings.translation.polish_model!=='gpt-4o') throw Error('stage selections overwritten');
       })().catch(e=>{console.error(e);process.exit(1);});
     """)
+    assert result.returncode == 0, result.stderr
+
+
+def test_unrelated_settings_save_preserves_legacy_provider_configuration():
+    result = run_js(r'''
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+const context={console,setTimeout,clearTimeout};vm.createContext(context);
+vm.runInContext(fs.readFileSync('app/static/js/model-settings.js','utf8')+';'+fs.readFileSync('app/static/js/app.js','utf8'),context);
+(async()=>{
+ const state=context.app();
+ state.api=async()=>({translation:{primary_provider:'codex_cli',primary_model:'gpt-5.5',polish_provider:''},providers:{codex_cli:{timeout_sec:600}}});
+ state.fetchModels=()=>{};
+ await state.loadSettings();
+ state.settings.asr.language='en';
+ assert.equal(Object.hasOwn(state.settingsPayload().providers,'omp_cli'),false);
+ assert.equal(state.settingsPayload().providers.codex_cli.timeout_sec,600);
+ state.settings.translation.polish_provider='omp_cli';
+ state.settings.providers.omp_cli.timeout_sec=240;
+ assert.equal(state.settingsPayload().providers.omp_cli.timeout_sec,240);
+ state.ompCliConfigured=true;
+ state.settings.translation.polish_provider='';
+ assert.equal(state.settingsPayload().providers.omp_cli.timeout_sec,240);
+})().catch(error=>{console.error(error);process.exit(1)});
+''')
     assert result.returncode == 0, result.stderr

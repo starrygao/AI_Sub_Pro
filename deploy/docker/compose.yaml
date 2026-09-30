@@ -35,6 +35,7 @@ services:
     volumes:
       - ${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/config:/config:ro
       - ${AISUB_STORAGE_ROOT:-/vol2/1000/docker/ai-sub-pro}:/storage
+      - ${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/omp:/omp
       - ${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/codex:/codex
       - ${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/claude:/claude
       - ${AISUB_ROOT:-/vol1/1000/docker/ai-sub-pro}/readiness:/readiness:ro

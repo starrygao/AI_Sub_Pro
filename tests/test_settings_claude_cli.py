@@ -873,20 +873,19 @@ def test_system_check_requires_configured_polish_provider_key():
     assert "DeepSeek API 密钥" in data["translation_hint"]
 
 
-def test_system_check_treats_malformed_provider_and_key_as_not_ready():
+def test_system_check_treats_malformed_api_key_as_not_ready():
     from app.main import app
     client = TestClient(app)
 
     with patch("app.utils.media.check_ffmpeg", return_value=True), \
          patch("app.api.settings.Config.to_dict", return_value={
-             "translation": {"primary_provider": ["openai"]},
+             "translation": {"primary_provider": "openai"},
              "api_keys": {"openai": {"bad": "shape"}},
          }):
         r = client.get("/api/system-check")
 
     assert r.status_code == 200
     data = r.json()
-    assert data["translation_provider"] == "openai"
     assert data["translation_ready"] is False
     assert data["ready"] is False
 

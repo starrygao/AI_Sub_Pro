@@ -58,9 +58,9 @@ DEFAULT_CONFIG = {
         "use_demucs": True,
     },
     "translation": {
-        "primary_provider": "openai",
-        "primary_model": "gpt-4o",
-        "primary_effort": "auto",
+        "primary_provider": "omp_cli",
+        "primary_model": "openai-codex/gpt-6-astra",
+        "primary_effort": "medium",
         "polish_provider": "",
         "polish_model": "",
         "polish_effort": "auto",

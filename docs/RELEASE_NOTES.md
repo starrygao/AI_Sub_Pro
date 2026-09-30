@@ -1,3 +1,11 @@
+## Unreleased
+
+- Default new configurations to OMP CLI. Desktop and server settings independently select OMP, Codex, or Claude for translation and polishing while preserving existing choices.
+- Run OMP in an isolated, tool-free, session-free JSON mode with dynamic model discovery, reasoning levels, and model-specific credential checks. Protocol and authentication failures never become empty subtitles.
+- Pin and verify the OMP 18.4.4 Linux binary in Docker and persist its login separately. Server model and CLI changes continue to apply after the current task finishes.
+- Make model synchronization refresh OMP's upstream catalog instead of only bypassing the application cache. Preserve selected models and discover GPT-6.1 Sol through the updated CLI.
+- Match OMP readiness checks to the effective primary model when the polishing model is empty, and keep Cursor inference models available while isolating coding-tool configuration.
+
 ## v1.3.42
 
 `AI_Sub_Pro_v1.3.42.dmg`

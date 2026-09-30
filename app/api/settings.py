@@ -47,6 +47,8 @@ class TestTmdbKeyRequest(BaseModel):
 
 
 def _test_key_failure_message(provider: str) -> str:
+    if provider == "omp_cli":
+        return "OMP CLI 检测失败，请确认已安装，且所选模型的服务已登录"
     if provider == "claude_cli":
         return "Claude CLI 检测失败，请确认已安装、已登录且模型名称有效"
     if provider == "codex_cli":
@@ -315,13 +317,13 @@ def _validate_settings_update(data: dict) -> None:
             "translation",
             translation,
             "primary_effort",
-            allowed={"auto", "low", "medium", "high", "xhigh", "max", "ultra"},
+            allowed={"auto", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
         )
         _validate_choice_field(
             "translation",
             translation,
             "polish_effort",
-            allowed={"auto", "low", "medium", "high", "xhigh", "max", "ultra"},
+            allowed={"auto", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
         )
         _require_non_blank_str("translation", translation, "target_language")
         _require_int("translation", translation, "batch_size", min_value=0, max_value=200)
@@ -397,7 +399,7 @@ def _validate_settings_update(data: dict) -> None:
     if not isinstance(providers, dict):
         return
 
-    for provider_name in ("claude_cli", "codex_cli"):
+    for provider_name in ("omp_cli", "claude_cli", "codex_cli"):
         provider_cfg = providers.get(provider_name)
         if provider_name in providers and not isinstance(provider_cfg, dict):
             raise HTTPException(status_code=400, detail=f"Settings section providers.{provider_name} must be an object")
@@ -442,6 +444,14 @@ def test_api_key(req: TestKeyRequest):
     """Test if an API key / provider is usable."""
     provider = _validate_provider_field("provider", req.provider, allow_empty=False)
     try:
+        if provider == "omp_cli":
+            from app.engines.providers.omp_cli import OmpCliProvider, DEFAULT_OMP_CLI_MODEL
+            p = OmpCliProvider({"model": req.model or DEFAULT_OMP_CLI_MODEL, "timeout_sec": 15})
+            ok = p.test_connection()
+            return {
+                "success": ok,
+                "message": "OK" if ok else _test_key_failure_message(provider),
+            }
         if provider == "claude_cli":
             from app.engines.providers.claude_cli import ClaudeCliProvider
             p = ClaudeCliProvider({"model": req.model or "claude-opus-4-7", "timeout_sec": 15})
@@ -488,6 +498,23 @@ async def test_tmdb_key(req: TestTmdbKeyRequest):
         safe_detail = redact_error_message(safe_detail).replace(api_key, "<redacted>")
         log.warning("TMDB key test failed: %s", safe_detail)
         return {"success": False, "message": "连接失败，请检查 TMDB API 密钥或网络设置"}
+
+
+@router.get("/settings/omp-cli/status")
+def omp_cli_status(model: str = ""):
+    """Check selected-model availability without starting an inference request."""
+    from app.engines.providers.omp_cli import DEFAULT_OMP_CLI_MODEL
+    check = _provider_readiness("omp_cli", role_label="", cfg={
+        "translation": {
+            "primary_provider": "omp_cli",
+            "primary_model": model.strip() or DEFAULT_OMP_CLI_MODEL,
+        },
+    })
+    return {
+        "installed": check["omp_cli_installed"],
+        "logged_in": check["omp_cli_logged_in"],
+        "hint": check["translation_hint"],
+    }
 
 
 @router.get("/settings/claude-cli/status")
@@ -637,6 +664,9 @@ def list_models(provider: str, refresh: bool = False):
 
     provider = _validate_provider_field("provider", provider, allow_empty=False)
 
+    if provider == "omp_cli":
+        from app.engines.omp_models import catalog
+        return catalog(force=refresh)
     if provider == "codex_cli":
         from app.engines.codex_models import catalog
         return catalog(force=refresh)

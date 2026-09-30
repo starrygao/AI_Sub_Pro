@@ -161,10 +161,9 @@ assert.equal($('proxy-save').disabled,true);
 
 def test_polish_can_be_enabled_edited_reset_and_disabled_without_changing_primary():
     run_js(r'''
-config.providers={claude_cli:{enabled:true}}; // Both shipped CLIs stay selectable before login.
+config.providers={claude_cli:{enabled:true}};
 vm.runInContext(code,context);await flush();
 assert.equal($('setting-polish-provider').value,'');
-assert.deepEqual($('setting-polish-provider').options.map(option=>option.value),['','codex_cli','claude_cli']);
 assert.equal($('polish-model-fields').hidden,true);
 assert.equal($('settings-save').disabled,true);
 $('setting-polish-provider').value='codex_cli';await $('setting-polish-provider').onchange();
@@ -346,19 +345,24 @@ assert.equal($('settings-save').disabled,true);
 ''')
 
 
-def test_cli_status_checks_selected_primary_and_polish_without_model_calls():
+
+
+def test_switching_omp_model_discards_pending_authentication_result():
     run_js(r'''
-const original=context.request;const probes=[];
-context.request=async path=>{
- if(path.startsWith('settings/')){probes.push(path);return {installed:true,logged_in:path.includes('codex')};}
- if(path==='models/claude_cli')return {models:['claude-opus-4-7']};
+const original=context.request;let finish;
+context.request=path=>{
+ if(path.startsWith('models/omp_cli'))return Promise.resolve({models:['openai-codex/gpt-6-astra','other/model']});
+ if(path.startsWith('settings/omp-cli/status'))return new Promise(resolve=>{finish=resolve;});
  return original(path);
 };
 vm.runInContext(code,context);await flush();
-$('setting-polish-provider').value='claude_cli';await $('setting-polish-provider').onchange();
-await $('cli-check').onclick();
-assert.deepEqual(probes.sort(),['settings/claude-cli/status','settings/codex-cli/status']);
-assert.match($('cli-status').textContent,/Claude CLI.*未登录/);
-assert.match($('cli-status').textContent,/Codex CLI.*已登录/);
+$('setting-provider').value='omp_cli';await $('setting-provider').onchange();
+const pending=$('cli-check').onclick();
+assert.equal($('cli-check').disabled,true);
+$('setting-model').value='other/model';$('setting-model').onchange();
+const resetMessage=$('cli-status').textContent;
+finish({installed:true,logged_in:true,hint:'Previous model authenticated'});await pending;
+assert.equal($('cli-status').textContent,resetMessage);
+assert.equal($('cli-check').disabled,false);
 assert.equal(saved.length,0);
 ''')

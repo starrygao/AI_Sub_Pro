@@ -1,13 +1,25 @@
 FROM node:22-bookworm-slim AS codex
 RUN npm install --prefix /opt/codex @openai/codex@0.155.1
 RUN npm install --prefix /opt/claude @anthropic-ai/claude-code@2.1.283
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
+# Official v18.4.4 release assets; fail closed if their published bytes change.
+RUN case "$(dpkg --print-architecture)" in \
+      amd64) asset=omp-linux-x64; sha=24c830fceb0bd6884bf5bf2c7a2b7407bc23fafe655e924c695ef9be308e46f3 ;; \
+      arm64) asset=omp-linux-arm64; sha=602eefddc0fd87043f8f08d8628d72592e5802c003a05f203f1ecbc63a8fdd30 ;; \
+      *) echo "Unsupported OMP architecture" >&2; exit 1 ;; \
+    esac && mkdir -p /opt/omp && \
+    curl --fail --location --retry 3 "https://github.com/can1357/oh-my-pi/releases/download/v18.4.4/${asset}" -o /opt/omp/omp && \
+    printf '%s  /opt/omp/omp\n' "$sha" | sha256sum --check --strict && chmod 755 /opt/omp/omp
 
 FROM python:3.12-slim-bookworm
 ARG DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
-RUN sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources && apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && apt-get install -y --no-install-recommends ffmpeg util-linux libgomp1 ca-certificates git && rm -rf /var/lib/apt/lists/*
+RUN sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources && apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && apt-get install -y --no-install-recommends ffmpeg util-linux libgomp1 libstdc++6 ca-certificates git && rm -rf /var/lib/apt/lists/*
 COPY --from=codex /usr/local/bin/node /usr/local/bin/node
 COPY --from=codex /opt/codex /opt/codex
 COPY --from=codex /opt/claude /opt/claude
+COPY --from=codex /opt/omp/omp /opt/omp/omp
+COPY deploy/docker/omp.sh /usr/local/bin/omp
+RUN chmod 755 /usr/local/bin/omp /opt/omp/omp
 RUN ln -s /opt/codex/node_modules/.bin/codex /usr/local/bin/codex
 RUN ln -s /opt/claude/node_modules/.bin/claude /usr/local/bin/claude
 WORKDIR /app
@@ -20,6 +32,7 @@ RUN chmod a+r /app/entrypoint.py && mkdir -p /run/aisub-storage && chmod 1777 /r
     ln -s /run/aisub-storage/data /data && ln -s /run/aisub-storage/models /models && \
     rm -rf /tmp && ln -s /run/aisub-storage/temporary /tmp
 ENV AI_SUB_PRO_DATA_DIR=/data AISUBPRO_LIBRARY_CONFIG=/config/library.json CODEX_HOME=/codex CLAUDE_CONFIG_DIR=/claude \
+    PI_CONFIG_DIR=/omp PI_CODING_AGENT_DIR=/omp/agent \
     HF_HOME=/models HF_HUB_DISABLE_TELEMETRY=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
     AISUBPRO_ASR_CPU_THREADS=1 AISUBPRO_FFMPEG=/usr/bin/ffmpeg AISUBPRO_FFPROBE=/usr/bin/ffprobe \
     PYTHONUNBUFFERED=1

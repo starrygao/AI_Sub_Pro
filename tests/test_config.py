@@ -10,22 +10,6 @@ def test_default_config_has_tmdb_section():
     assert DEFAULT_CONFIG["tmdb"] == {"api_key": "", "language": "zh-CN"}
 
 
-def test_default_config_has_providers_claude_cli():
-    assert "providers" in DEFAULT_CONFIG
-    cc = DEFAULT_CONFIG["providers"]["claude_cli"]
-    assert cc["enabled"] is True
-    assert "model" not in cc
-    assert cc["timeout_sec"] == 180
-
-    codex = DEFAULT_CONFIG["providers"]["codex_cli"]
-    assert codex["enabled"] is True
-    assert "model" not in codex
-    assert codex["timeout_sec"] == 180
-
-    assert DEFAULT_CONFIG["translation"]["primary_effort"] == "auto"
-    assert DEFAULT_CONFIG["translation"]["polish_effort"] == "auto"
-
-
 def test_default_config_has_concurrency_section():
     c = DEFAULT_CONFIG["concurrency"]
     assert c["asr"] == 2

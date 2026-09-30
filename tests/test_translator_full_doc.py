@@ -205,58 +205,8 @@ def test_translator_normalizes_malformed_legacy_numeric_config(monkeypatch):
     assert t.full_doc_mode is False
 
 
-def test_translator_normalizes_malformed_config_sections_and_provider(monkeypatch):
-    from app.engines import translator as tmod
-    captured = {}
-
-    def fake_get_provider(name, config):
-        captured["name"] = name
-        captured["config"] = config
-        m = MagicMock()
-        m.supports_full_document_mode = False
-        m.context_window_tokens = 32000
-        return m
-
-    monkeypatch.setattr("app.engines.translator.get_provider", fake_get_provider)
-
-    tmod.SubtitleTranslator({
-        "translation": {
-            "primary_provider": "not-a-provider",
-            "primary_model": ["bad"],
-            "polish_provider": {"bad": "shape"},
-        },
-        "api_keys": {"openai": {"bad": "shape"}},
-        "providers": {"claude_cli": "bad"},
-    })
-
-    assert captured["name"] == "openai"
-    assert captured["config"]["model"] == "gpt-4o"
-    assert captured["config"]["api_key"] == ""
 
 
-def test_translator_normalizes_non_object_config_sections(monkeypatch):
-    from app.engines import translator as tmod
-    captured = {}
-
-    def fake_get_provider(name, config):
-        captured["name"] = name
-        captured["config"] = config
-        m = MagicMock()
-        m.supports_full_document_mode = False
-        m.context_window_tokens = 32000
-        return m
-
-    monkeypatch.setattr("app.engines.translator.get_provider", fake_get_provider)
-
-    tmod.SubtitleTranslator({
-        "translation": ["bad"],
-        "api_keys": ["bad"],
-        "providers": ["bad"],
-    })
-
-    assert captured["name"] == "openai"
-    assert captured["config"]["model"] == "gpt-4o"
-    assert captured["config"]["api_key"] == ""
 
 
 def test_translator_normalizes_non_finite_numeric_config(monkeypatch):

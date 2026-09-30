@@ -38,7 +38,7 @@ TMDB 与 YouTube 元数据创建预告片翻译项目。
 - 自动提取可用的内嵌字幕轨。
 - 使用本地 Whisper 后端转写音频：`mlx-whisper`、`faster-whisper` 或
   `openai-whisper`。
-- 使用 OpenAI 兼容接口、Claude CLI 或 Codex CLI 翻译和润色字幕。
+- 使用 OMP CLI（新安装默认）、OpenAI 兼容接口、Claude CLI 或 Codex CLI 翻译和润色字幕。
 - 维护本地知识库，用于人名、术语、风格规则和上下文词汇表。
 - 应用显示语言可跟随系统，也可以手动切换为简体中文或 English。
 - 搜索 TMDB，使用 `yt-dlp` 下载预告片，并生成预告片翻译项目。
@@ -80,6 +80,29 @@ npm run build:css
 ```
 
 如果浏览器没有自动打开，请访问 `http://127.0.0.1:18090`。
+
+### 翻译 CLI 配置
+
+桌面安装包保持使用外部翻译 CLI：请按当前操作系统单独安装，让应用运行环境的
+`PATH` 能找到 `omp`。[OMP 官方安装说明](https://github.com/can1357/oh-my-pi/tree/v18.4.4#install)
+提供各平台二进制；已安装 Bun 1.3.14 或更新版本时，也可以固定版本安装：
+
+```sh
+bun install -g @oh-my-pi/pi-coding-agent@18.4.4
+omp --version
+omp login openai-codex
+```
+
+在「设置」中为主翻译和润色分别选择 **OMP CLI**。新安装默认模型为
+`openai-codex/gpt-6-astra`、推理强度 `medium`；升级保留已保存的服务、模型与质量设置。
+OMP 模型名包含 provider 前缀。从 Codex 切换时需要单独登录 OMP，应用不会复制或共享
+Codex 的刷新 token。
+
+OMP 默认把认证保存在 `~/.omp/agent/agent.db`，可用 `PI_CODING_AGENT_DIR` 指定其他
+agent 目录。请使用运行应用的同一个系统用户及环境登录，并在设置中检查当前所选模型的
+登录状态。缺少 CLI 或认证时会明确提示，不会静默换用其他服务；服务器任务会保持排队，
+直到主翻译和润色服务都就绪。状态检查不等于额度或实际翻译验证。
+Linux 固定版本安装、认证持久化及远程浏览器登录详见 [Docker 部署说明](deploy/docker/README.md)。
 
 后端开发模式：
 

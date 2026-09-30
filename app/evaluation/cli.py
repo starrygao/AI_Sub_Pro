@@ -21,9 +21,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json-out", required=True, type=Path)
     parser.add_argument("--markdown-out", required=True, type=Path)
     parser.add_argument("--execute", action="store_true", help="Run the production translator; may use paid provider calls")
-    parser.add_argument("--provider", choices=["openai", "deepseek", "gemini", "claude_cli", "codex_cli"])
+    parser.add_argument("--provider", choices=["omp_cli", "openai", "deepseek", "gemini", "claude_cli", "codex_cli"])
     parser.add_argument("--model")
-    parser.add_argument("--effort", default="auto", choices=["auto", "low", "medium", "high", "xhigh", "max", "ultra"])
+    parser.add_argument("--effort", default="auto", choices=["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"])
     parser.add_argument("--baseline", type=Path, help="Compare deterministic metrics with a previous JSON report")
     args = parser.parse_args(argv)
     if args.execute and not (args.provider and args.model):

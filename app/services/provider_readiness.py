@@ -2,6 +2,7 @@
 
 
 _PROVIDER_LABELS = {
+    "omp_cli": "OMP CLI",
     "openai": "OpenAI",
     "deepseek": "DeepSeek",
     "gemini": "Gemini",
@@ -15,6 +16,53 @@ def _dict_section(cfg: dict, key: str) -> dict:
 
 def _provider_readiness(provider: str, *, role_label: str, cfg: dict) -> dict:
     label = _PROVIDER_LABELS.get(provider, provider)
+
+    if provider == "omp_cli":
+        from app.engines.providers.omp_cli import OmpCliProvider, DEFAULT_OMP_CLI_MODEL
+
+        translation = _dict_section(cfg, "translation")
+        primary_provider = _configured_translation_providers(translation)[0][1]
+        primary_value = translation.get("primary_model")
+        primary_model = (
+            primary_value.strip() if isinstance(primary_value, str) and primary_value.strip()
+            else DEFAULT_OMP_CLI_MODEL if primary_provider == "omp_cli" else "gpt-4o"
+        )
+        models = [primary_model] if primary_provider == "omp_cli" else []
+        polish_provider = translation.get("polish_provider")
+        if isinstance(polish_provider, str) and polish_provider.strip() == "omp_cli":
+            polish_value = translation.get("polish_model")
+            polish_model = (
+                polish_value.strip() if isinstance(polish_value, str) and polish_value.strip()
+                else primary_model
+            )
+            if polish_model not in models:
+                models.append(polish_model)
+        try:
+            installed = OmpCliProvider.check_cli_available()
+        except Exception:
+            installed = False
+        try:
+            logged_in = installed and all(OmpCliProvider.check_logged_in(model) for model in models)
+        except Exception:
+            logged_in = False
+        if logged_in:
+            hint = f"{role_label}OMP CLI 已就绪"
+        elif installed:
+            hint = f"{role_label}所选 OMP 模型不可用，请运行 omp login 登录对应服务，并检查模型选择"
+        else:
+            hint = f"{role_label}未检测到 omp 命令，请先安装 OMP CLI"
+        return {
+            "translation_provider": provider,
+            "translation_label": label,
+            "translation_ready": bool(logged_in),
+            "translation_hint": hint,
+            "omp_cli_installed": installed,
+            "omp_cli_logged_in": bool(logged_in),
+            "claude_cli_installed": None,
+            "claude_cli_logged_in": None,
+            "codex_cli_installed": None,
+            "codex_cli_logged_in": None,
+        }
 
     if provider == "claude_cli":
         from app.engines.providers.claude_cli import ClaudeCliProvider
@@ -93,7 +141,7 @@ def _provider_readiness(provider: str, *, role_label: str, cfg: dict) -> dict:
 def _configured_translation_providers(translation: dict) -> list[tuple[str, str]]:
     raw_primary = translation.get("primary_provider")
     primary_value = raw_primary.strip() if isinstance(raw_primary, str) else ""
-    primary = primary_value if primary_value in _PROVIDER_LABELS else "openai"
+    primary = primary_value if primary_value in _PROVIDER_LABELS else "omp_cli"
 
     raw_polish = translation.get("polish_provider")
     polish_value = raw_polish.strip() if isinstance(raw_polish, str) else ""
@@ -115,7 +163,7 @@ def _translation_readiness(cfg: dict) -> dict:
     ready = not blocking
 
     primary_check = provider_checks[0] if provider_checks else _provider_readiness(
-        "openai", role_label="主翻译引擎：", cfg=cfg
+        "omp_cli", role_label="主翻译引擎：", cfg=cfg
     )
     status_source = blocking[0] if blocking else primary_check
     hints = [check["translation_hint"] for check in blocking]
@@ -131,6 +179,9 @@ def _translation_readiness(cfg: dict) -> dict:
     codex_checks = [check for check in provider_checks if check["translation_provider"] == "codex_cli"]
     codex_installed = codex_checks[0]["codex_cli_installed"] if codex_checks else None
     codex_logged_in = codex_checks[0]["codex_cli_logged_in"] if codex_checks else None
+    omp_checks = [check for check in provider_checks if check["translation_provider"] == "omp_cli"]
+    omp_installed = omp_checks[0]["omp_cli_installed"] if omp_checks else None
+    omp_logged_in = omp_checks[0]["omp_cli_logged_in"] if omp_checks else None
 
     return {
         "translation_provider": status_source["translation_provider"],
@@ -146,6 +197,8 @@ def _translation_readiness(cfg: dict) -> dict:
         "claude_cli_logged_in": claude_logged_in,
         "codex_cli_installed": codex_installed,
         "codex_cli_logged_in": codex_logged_in,
+        "omp_cli_installed": omp_installed,
+        "omp_cli_logged_in": omp_logged_in,
     }
 
 

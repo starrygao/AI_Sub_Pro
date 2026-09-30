@@ -1,7 +1,7 @@
 'use strict';
 (() => {
-  const providerNames = {codex_cli:'Codex CLI', claude_cli:'Claude CLI', openai:'OpenAI', deepseek:'DeepSeek', gemini:'Gemini'};
-  const effortNames = {auto:'自动', low:'低', medium:'中', high:'高', xhigh:'很高', max:'最大', ultra:'极高'};
+  const providerNames = {omp_cli:'OMP CLI', codex_cli:'Codex CLI', claude_cli:'Claude CLI', openai:'OpenAI', deepseek:'DeepSeek', gemini:'Gemini'};
+  const effortNames = {auto:'自动', off:'关闭', minimal:'最低', low:'低', medium:'中', high:'高', xhigh:'很高', max:'最大', ultra:'极高'};
   const fields = {
     'setting-provider':['translation','primary_provider'],
     'setting-model':['translation','primary_model'],
@@ -22,9 +22,9 @@
   let modelsRefreshing = false, primaryLoading = false, primaryError = '', primaryRequest = 0, cliRequest = 0;
 
   function catalogHint(info) {
-    if (info.source === 'static') return '使用 Claude 内置模型目录；实际可用性取决于服务器登录账号权限。';
-    return info.source === 'remote' ? '已同步当前账号的模型列表；实际可用性取决于账号权限。'
-      : info.source === 'cache' ? (info.stale || info.refresh_failed ? '暂未同步成功，使用 Codex 缓存列表。' : '已读取 Codex 当前模型列表。')
+    if (info.source === 'static') return '使用内置模型目录；实际可用性取决于服务器对应服务的账号权限。';
+    return info.source === 'remote' ? '已同步服务端模型列表；实际调用权限需另行验证。'
+      : info.source === 'cache' ? (info.stale || info.refresh_failed ? '暂未同步成功，使用缓存模型列表。' : '已读取当前模型列表。')
         + (info.verified_at ? ' 更新于 ' + new Date(info.verified_at).toLocaleString() : '')
       : '暂未获取当前模型列表，使用内置目录；可点击同步重试。';
   }
@@ -114,7 +114,7 @@
     modelEfforts(settings.translation.primary_effort);
     const provider = settings.translation.primary_provider;
     const polishProvider = settings.translation.polish_provider || '';
-    const providers = Object.keys(providerNames).filter(name => name === 'claude_cli' || name === 'codex_cli' || name === provider || name === polishProvider || settings.credentials_configured?.[name]);
+    const providers = Object.keys(providerNames).filter(name => ['omp_cli', 'claude_cli', 'codex_cli'].includes(name) || name === provider || name === polishProvider || settings.credentials_configured?.[name]);
     options('setting-provider', providers, provider, providerNames);
     options('setting-polish-provider', ['', ...providers], polishProvider, {'':'不启用', ...providerNames});
     loadPolishModels(settings.translation.polish_model || '', settings.translation.polish_effort || 'auto');
@@ -167,25 +167,33 @@
   }
   function selectedCliProviders() {
     return [...new Set([$('setting-provider').value, $('setting-polish-provider').value])]
-      .filter(provider => provider === 'claude_cli' || provider === 'codex_cli');
+      .filter(provider => ['omp_cli', 'claude_cli', 'codex_cli'].includes(provider));
   }
   function cliHints() {
     ++cliRequest;
     const providers = selectedCliProviders();
     $('cli-settings').hidden = !providers.length;
     $('cli-check').disabled = false; $('cli-status').textContent = '尚未检查当前选择';
-    $('cli-login-hint').textContent = providers.map(provider => provider === 'claude_cli'
-      ? 'Claude：在服务器运行 docker exec -it ai-sub-pro claude auth login，按提示在浏览器完成登录。'
-      : 'Codex：在服务器运行 docker exec -it ai-sub-pro codex login --device-auth。').join(' ');
+    $('cli-login-hint').textContent = providers.map(provider => ({
+      omp_cli: 'OMP：默认 OpenAI Codex 模型在服务器运行 docker exec -it ai-sub-pro omp login openai-codex。其他 provider/model 型号需配置对应服务的认证，不共用同一账户权限。',
+      claude_cli: 'Claude：在服务器运行 docker exec -it ai-sub-pro claude auth login，按提示在浏览器完成登录。',
+      codex_cli: 'Codex：在服务器运行 docker exec -it ai-sub-pro codex login --device-auth。',
+    })[provider]).join(' ');
   }
   $('cli-check').onclick = async () => {
-    const ticket = ++cliRequest, providers = selectedCliProviders();
+    const ticket = ++cliRequest;
+    const selections = [...new Map(['setting-', 'setting-polish-'].map(prefix => {
+      const provider = $(prefix + 'provider').value, model = $(prefix + 'model').value;
+      return [provider === 'omp_cli' ? provider + ':' + model : provider, {provider, model}];
+    }).filter(([, {provider}]) => selectedCliProviders().includes(provider))).values()];
     $('cli-check').disabled = true; $('cli-status').textContent = '正在检查…';
-    const messages = await Promise.all(providers.map(async provider => {
+    const messages = await Promise.all(selections.map(async ({provider, model}) => {
+      const label = providerNames[provider] + (provider === 'omp_cli' ? ' · ' + model : '');
       try {
-        const state = await request('settings/' + provider.replace('_', '-') + '/status');
-        return providerNames[provider] + '：' + (!state.installed ? '未安装，请更新服务器镜像' : state.logged_in ? '已安装且已登录' : '已安装但未登录');
-      } catch (e) { return providerNames[provider] + '：检查失败，请重试'; }
+        const query = provider === 'omp_cli' ? '?model=' + encodeURIComponent(model || 'openai-codex/gpt-6-astra') : '';
+        const state = await request('settings/' + provider.replace('_', '-') + '/status' + query);
+        return label + '：' + (!state.installed ? '未安装，请更新服务器镜像' : state.logged_in ? '已配置认证，实际模型权限需验证' : '已安装但缺少认证') + (state.hint ? '；' + state.hint : '');
+      } catch (e) { return label + '：检查失败，请重试'; }
     }));
     if (ticket === cliRequest) { $('cli-status').textContent = messages.join('；'); $('cli-check').disabled = false; }
   };
@@ -196,6 +204,7 @@
   };
   $('primary-reload').onclick = () => loadPrimaryModels($('setting-model').value, $('setting-effort').value);
   $('setting-model').onchange = () => {
+    cliHints();
     const efforts = catalog.capabilities?.[$('setting-model').value]?.reasoning_efforts || [];
     const current = $('setting-effort').value;
     modelEfforts(current === 'auto' || efforts.includes(current) ? current : 'auto');
@@ -208,6 +217,7 @@
     return loadPolishModels(current ? settings.translation.polish_model : primary ? $('setting-model').value : '', current ? settings.translation.polish_effort : primary ? $('setting-effort').value : 'auto');
   };
   $('setting-polish-model').onchange = () => {
+    cliHints();
     const efforts = polishCatalog.capabilities?.[$('setting-polish-model').value]?.reasoning_efforts || [];
     const current = $('setting-polish-effort').value;
     modelEfforts(current === 'auto' || efforts.includes(current) ? current : 'auto', 'polish');

@@ -45,8 +45,8 @@ Current packaging support:
 - Extract embedded subtitle tracks when available.
 - Transcribe audio with local Whisper backends: `mlx-whisper`,
   `faster-whisper`, or `openai-whisper`.
-- Translate and polish subtitles with OpenAI-compatible providers, Claude CLI,
-  or Codex CLI.
+- Translate and polish subtitles with OMP CLI (the default for new installations),
+  OpenAI-compatible providers, Claude CLI, or Codex CLI.
 - Maintain a local knowledge base for names, terms, style rules, and glossary
   context.
 - Switch the app display language between system default, Simplified Chinese,
@@ -91,6 +91,34 @@ npm run build:css
 ```
 
 Open `http://127.0.0.1:18090` if the browser does not open automatically.
+
+### Translation CLI setup
+
+Desktop packages keep translation CLIs external: install them separately for your
+operating system and make `omp` available on the application's `PATH`. OMP's
+[official installation guide](https://github.com/can1357/oh-my-pi/tree/v18.4.4#install)
+offers platform-specific binaries; with Bun 1.3.14 or newer, a pinned install is:
+
+```sh
+bun install -g @oh-my-pi/pi-coding-agent@18.4.4
+omp --version
+omp login openai-codex
+```
+
+In Settings, choose **OMP CLI** for translation and, independently, polishing.
+New installations default to `openai-codex/gpt-6-astra` with `medium` reasoning;
+upgrades preserve saved providers, models, and quality settings. Model selectors
+include the OMP provider prefix. Changing from Codex requires a separate OMP login:
+the app does not copy or share Codex refresh tokens.
+
+OMP normally stores credentials in `~/.omp/agent/agent.db`; an explicit
+`PI_CODING_AGENT_DIR` relocates the agent directory. Log in under the same OS user
+and environment that runs the app. Check the selected model's login status in
+Settings before translating. Missing CLI/authentication is reported rather than
+silently switching providers; server jobs remain queued until both the translation
+and polishing providers are ready. A status check is not a quota or translation test.
+For pinned Linux binaries, persistent authentication, and remote browser login,
+see the [Docker deployment guide](deploy/docker/README.md).
 
 See the [usage guide](docs/USAGE.md) for provider setup, trailer projects,
 knowledge-base workflows, exports, and troubleshooting.

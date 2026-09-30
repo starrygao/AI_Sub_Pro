@@ -3,6 +3,17 @@
   "verified_at": "2026-09-11",
   "unknown_context_window_tokens": 32000,
   "providers": {
+    "omp_cli": {
+      "models": {
+        "openai-codex/gpt-6-astra": {
+          "context_window_tokens": 272000,
+          "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+          "temperature": null,
+          "token_limit_parameter": null,
+          "source": "OMP 18.4.3 CLI model metadata (2026-09-29)"
+        }
+      }
+    },
     "openai": {
       "models": {
         "gpt-6-astra": {

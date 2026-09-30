@@ -14,9 +14,9 @@ if tmdb_secret.is_file():
 path=Path(os.environ['AI_SUB_PRO_DATA_DIR'])/'config.json'
 path.parent.mkdir(parents=True,exist_ok=True)
 if not path.exists():
-    config={'translation':{'primary_provider':'codex_cli','primary_model':'gpt-5.5','primary_effort':'medium',
+    config={'translation':{'primary_provider':'omp_cli','primary_model':'openai-codex/gpt-6-astra','primary_effort':'medium',
                            'polish_provider':'','batch_size':20,'full_doc_mode':True},
-            'providers':{'codex_cli':{'timeout_sec':600}},
+            'providers':{'omp_cli':{'timeout_sec':600}},
             'asr':{'backend':'faster_whisper','model_size':'small','use_demucs':False,'beam_size':3},
             'concurrency':{'asr':1,'translate':1,'download':1,'burn':1}}
     path.write_text(json.dumps(config,ensure_ascii=False));path.chmod(0o600)

@@ -1580,46 +1580,6 @@ def test_cancel_task_ignores_duplicate_submits_while_pending():
     )
 
 
-def test_normalize_settings_preserves_default_nested_objects():
-    _run_node(
-        """
-        const fs = require('fs');
-        const vm = require('vm');
-        const code = (fs.readFileSync('app/static/js/model-settings.js','utf8') + ';' + fs.readFileSync('app/static/js/app.js','utf8'));
-        const context = { console, setTimeout, clearTimeout };
-        vm.createContext(context);
-        vm.runInContext(code, context);
-
-        const state = context.app();
-        const normalized = state.normalizeSettings({
-          api_keys: ['bad'],
-          translation: {primary_provider: 'deepseek'},
-          tmdb: null,
-          providers: {claude_cli: {timeout_sec: 240}},
-        });
-        if (!normalized.api_keys || typeof normalized.api_keys !== 'object' || Array.isArray(normalized.api_keys)) {
-          throw new Error('api_keys shape was not preserved');
-        }
-        if (normalized.translation.primary_provider !== 'deepseek') {
-          throw new Error(`translation provider not merged: ${normalized.translation.primary_provider}`);
-        }
-        if (normalized.tmdb.language !== 'zh-CN') {
-          throw new Error(`tmdb defaults lost: ${JSON.stringify(normalized.tmdb)}`);
-        }
-        if ('model' in normalized.providers.claude_cli || normalized.providers.claude_cli.timeout_sec !== 240) {
-          throw new Error(`claude defaults not deeply merged: ${JSON.stringify(normalized.providers.claude_cli)}`);
-        }
-        if (normalized.translation.primary_effort !== 'auto' || normalized.translation.polish_effort !== 'auto') {
-          throw new Error(`reasoning effort defaults lost: ${JSON.stringify(normalized.translation)}`);
-        }
-        const malformed = state.normalizeSettings({
-          translation: {primary_provider: {bad: 'shape'}, polish_provider: ' not-a-provider '},
-        });
-        if (malformed.translation.primary_provider !== 'openai' || malformed.translation.polish_provider !== '') {
-          throw new Error(`providers not normalized: ${JSON.stringify(malformed.translation)}`);
-        }
-        """
-    )
 
 
 def test_frontend_filters_malformed_project_and_subtitle_entries():

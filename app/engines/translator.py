@@ -176,7 +176,7 @@ def _coerce_text_setting(value, default: str = "") -> str:
     return value or default
 
 
-def _coerce_provider_name(value, default: str = "openai", *, allow_empty: bool = False) -> str:
+def _coerce_provider_name(value, default: str = "omp_cli", *, allow_empty: bool = False) -> str:
     if value is None:
         return "" if allow_empty else default
     if not isinstance(value, str):
@@ -437,12 +437,15 @@ class SubtitleTranslator:
         self._accumulate_quality_trace = False
 
         # Primary provider — routed through the factory.
-        primary_name = _coerce_provider_name(trans_cfg.get("primary_provider"), "openai")
-        primary_model = _coerce_text_setting(trans_cfg.get("primary_model"), "gpt-4o")
+        primary_name = _coerce_provider_name(trans_cfg.get("primary_provider"), "omp_cli")
+        primary_model = _coerce_text_setting(
+            trans_cfg.get("primary_model"),
+            "openai-codex/gpt-6-astra" if primary_name == "omp_cli" else "gpt-4o",
+        )
         primary_effort = _coerce_choice_setting(
             trans_cfg.get("primary_effort"),
-            {"auto", "low", "medium", "high", "xhigh", "max", "ultra"},
-            "auto",
+            {"auto", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
+            "medium" if primary_name == "omp_cli" else "auto",
         )
         primary_config = self._build_provider_config(
             primary_name, primary_model, primary_effort, api_keys, providers_cfg
@@ -459,7 +462,7 @@ class SubtitleTranslator:
         polish_model = _coerce_text_setting(trans_cfg.get("polish_model"), primary_model)
         polish_effort = _coerce_choice_setting(
             trans_cfg.get("polish_effort"),
-            {"auto", "low", "medium", "high", "xhigh", "max", "ultra"},
+            {"auto", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
             "auto",
         )
         if polish_name:
@@ -483,11 +486,11 @@ class SubtitleTranslator:
     ) -> dict:
         """Compose a provider config dict from the various config sections.
 
-        Local CLI providers are subscription-auth subprocess providers — they take
+        Local CLI providers own their authentication — they take
         {model, effort, timeout_sec} and explicitly NO api_key. OpenAI-compat providers
         take {provider, model, api_key}.
         """
-        if name in ("claude_cli", "codex_cli"):
+        if name in ("omp_cli", "claude_cli", "codex_cli"):
             raw_cli = providers_cfg.get(name)
             cli = raw_cli if isinstance(raw_cli, dict) else {}
             return {
