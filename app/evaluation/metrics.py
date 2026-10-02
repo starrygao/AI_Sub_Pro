@@ -5,7 +5,7 @@ import re
 from typing import Any
 
 from app.evaluation.corpus import CorpusCase
-from app.engines.entity_registry import aligned_name_span, build_entity_registry
+from app.engines.entity_registry import aligned_name_span, build_entity_registry, corroborated_dotted_forms
 
 
 _TAG_RE = re.compile(r"</?[a-zA-Z][^>]*>")
@@ -90,6 +90,8 @@ _SOURCE_PERSON_TITLE_TOKENS = {
     "Princess",
     "Prof",
     "Sergeant",
+    "Aunt",
+    "Uncle",
 }
 _SOURCE_ORG_UNIT_TOKENS = {
     "Agency",
@@ -389,6 +391,9 @@ def _is_supported_proper_name(source_text: str, start: int, name: str) -> bool:
     if len(tokens) < 2:
         return False
     if any(len(token) < 2 for token in tokens):
+        return False
+    contraction = re.fullmatch(r"(.+)['’](?:s|re|ve|ll|d|m)", tokens[0], re.I)
+    if contraction and contraction.group(1).casefold() in _COMMON_TITLE_WORDS:
         return False
     if all(token.strip(".") in _SOURCE_PERSON_TITLE_TOKENS for token in tokens):
         return False
@@ -827,6 +832,14 @@ def _long_name_signature(
         if len(set(titles)) == 1 and (not shared_anchor or len(shared_anchor) < 3):
             span = aligned_name_span(proper_name, "", translation)
             return (_cjk_compact_text(span[0]) if span and not _is_source_title_only(proper_name) else "") + titles[0]
+    if (not has_title_context and not _has_source_person_title(proper_name)
+            and not _has_source_org_unit(proper_name)
+            and re.search(r"[\u3400-\u9fff][·・][\u3400-\u9fff]", translation)):
+        # A shared suffix is not a full-name boundary. If the bounded
+        # aligner rejects an unknown CJK prefix, do not reconstruct its
+        # truncated suffix through the legacy shared-anchor fallback.
+        span = aligned_name_span(proper_name, "", translation)
+        return _cjk_compact_text(span[0]) if span else ""
     if not shared_anchor or shared_anchor not in cjk_text:
         span = aligned_name_span(proper_name, "", translation)
         return _cjk_compact_text(span[0]) if span else ""
@@ -986,6 +999,7 @@ def proper_name_consistency_score(
     }
 
     issues = []
+    entities = build_entity_registry(normalized_source_by_id, normalized_candidate_by_id)
     repeated_names = _repeated_proper_names(normalized_source_by_id)
     for proper_name in repeated_names:
         matcher = re.compile(rf"\b{re.escape(proper_name)}\b")
@@ -1039,10 +1053,21 @@ def proper_name_consistency_score(
                 has_title_context,
             )
 
+        anchored_forms = set(corroborated_dotted_forms(
+            proper_name, ((item["source_text"], item["translation"]) for item in observations)
+        )) if " " in proper_name and not has_title_context else set()
+        shared_forms = {shared_anchor} if _is_short_source_name(proper_name) and shared_anchor else set()
+        for item in observations:
+            explicit = aligned_name_span(
+                proper_name, item["source_text"], item["translation"], known_forms=shared_forms)
+            if explicit and explicit[1] in {"speaker_label", "standalone_address"}:
+                anchored_forms.add(explicit[0])
+        known_forms = anchored_forms or shared_forms
         target_forms = []
         for item in observations:
             aligned = aligned_name_span(
                 proper_name, item["source_text"], item["translation"],
+                known_forms=known_forms,
                 source_aliases=[name for name in _extract_proper_names(item["source_text"])
                                 if name.endswith(" " + proper_name)],
             )
@@ -1064,6 +1089,10 @@ def proper_name_consistency_score(
                 signature = _cjk_compact_text(aligned[0])
                 item["target_span"] = aligned[0]
                 item["evidence"] = aligned[1]
+            elif anchored_forms and not aligned and not has_title_context:
+                # Missing an independently observed identity is not evidence
+                # that another person's name in this cue translates it.
+                signature = ""
             elif _is_short_source_name(proper_name):
                 signature = shared_anchor
             else:
@@ -1078,13 +1107,21 @@ def proper_name_consistency_score(
             if signature and signature not in target_forms:
                 target_forms.append(signature)
 
-        # An explicitly dotted full target licenses its surname address;
-        # different full names still remain distinct observations.
-        surnames = {t.split("·")[-1] for t in
-                    [o.get("target_span", "") for o in observations] if "·" in t}
-        if surnames:
-            target_forms = [f for f in target_forms if f not in surnames]
-            observations = [o for o in observations if o.get("target_signature") not in surnames]
+        # A complete dotted name licenses its surname. A given-name-only
+        # rendering additionally needs that short identity elsewhere.
+        full_spans = [o.get("target_span", "") for o in observations if "·" in o.get("target_span", "")]
+        short_forms = {span.split("·")[-1] for span in full_spans}
+        independent_given = {
+            observation["target_signature"]
+            for entity in entities if proper_name in entity["aliases"]
+            for observation in entity["observations"]
+            if not matcher.search(observation["source_text"])
+        }
+        short_forms.update(span.split("·")[0] for span in full_spans
+                           if span.split("·")[0] in independent_given)
+        if short_forms:
+            target_forms = [form for form in target_forms if form not in short_forms]
+            observations = [o for o in observations if o.get("target_signature") not in short_forms]
         if len(target_forms) > 1:
             issues.append({
                 "source": proper_name,
@@ -1092,7 +1129,6 @@ def proper_name_consistency_score(
                 "observations": [o for o in observations if o["target_signature"]],
             })
 
-    entities = build_entity_registry(normalized_source_by_id, normalized_candidate_by_id)
     for entity in entities:
         if len(entity["target_forms"]) < 2:
             continue
@@ -1100,14 +1136,13 @@ def proper_name_consistency_score(
             # Initials, expanded given name and surname are address forms;
             # this deterministic pass cannot declare one a wrong identity.
             continue
-        parents = [name for name in repeated_names
-                   if re.search(r"(?<!\w)" + re.escape(entity["source"]) + r"(?!\w)", name, re.I)]
-        if parents and all(any(name.casefold() in o["source_text"].casefold() for name in parents)
-                           for o in entity["observations"]):
-            continue
-        # A reported full-name difference already includes its components.
+        # A full-name report only subsumes a component when its observed
+        # target variants actually cover every variant of that component.
         if any(re.search(r"(?<!\w)" + re.escape(entity["source"]) + r"(?!\w)",
-                         issue["source"], re.I) for issue in issues):
+                         issue["source"], re.I)
+               and all(any(form in parent_form for parent_form in issue["target_forms"])
+                       for form in entity["target_forms"])
+               for issue in issues):
             continue
         issues.append(entity)
     return {

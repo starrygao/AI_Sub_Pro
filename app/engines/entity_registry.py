@@ -14,7 +14,7 @@ from app.utils.subtitle_structure import visible_subtitle_text
 
 _TOKEN = r"(?:[A-Z]\.){2,}|[A-Z][A-Za-z]*(?:['’-][A-Za-z]+)*"
 _TOKEN_RE = re.compile(rf"(?<![A-Za-z])(?:{_TOKEN})(?![A-Za-z])")
-_LABEL_RE = re.compile(r"(?:^|\n)\s*[-–—]?\s*(?:[\[［【]([^\]］】]+)[\]］】]|([^:：\n]{1,48})[:：])")
+_LABEL_RE = re.compile(r"(?:^|\n|(?<=[\]］】]))\s*[-–—]?\s*(?:[\[［【]([^\]］】]+)[\]］】]|([^:：\n]{1,48})[:：])")
 _CONTEXT_MARKER_RE = re.compile(
     r"(?m)^(\s*[-–—]?\s*)(?:【(?:电话|广播|电视|新闻|无线电|旁白|画外音|主持人|DJ|酒保|人群|歌声)】\s*)+"
 )
@@ -39,6 +39,19 @@ _NOUN_HEADS = {
     "people": r"《[^》]{2,12}》",
 }
 _CONTEXT_PREFIX = re.compile(r"^(?:(?:听说过|么抓住|刚找到|不过|我们|你们|他们|她们|谁想|统治|掌控|消灭|摧毁|寻找|找到|传说中|我|你|他|她|在|的|是|把|就|能|让|要|去|而|和|与|这|那|了|都|会|再|叫|想)+)")
+# Only whole-cue title/address pairs can establish a non-phonetic name.
+# These are grammatical boundaries, not a dictionary of film identities.
+_ADDRESS_TITLES = (
+    (r"Mr\.?", r"先生"), (r"Mrs\.?|Ms\.?|Miss", r"女士|小姐|夫人"),
+    (r"Dr\.?|Doctor", r"医生|博士"), (r"Agent", r"探员|特工"),
+    (r"Officer", r"警官"), (r"Captain", r"队长|上尉|船长|舰长"),
+    (r"Sir", r"爵士"), (r"Prince", r"王子"), (r"Princess", r"公主"),
+    (r"Queen", r"女王"),
+    (r"Aunt", r"阿姨|姨妈|姑妈|姑姑|伯母|婶婶|舅妈"),
+    (r"Uncle", r"叔叔|叔父|伯伯|伯父|舅舅|舅父|姑父|姨父"),
+)
+_SOURCE_ADDRESS_TITLE_RE = re.compile("|".join(source for source, _ in _ADDRESS_TITLES), re.I)
+_TARGET_ADDRESS_TITLE_RE = re.compile("|".join(target for _, target in _ADDRESS_TITLES))
 
 
 def entity_matcher(name: str):
@@ -53,8 +66,16 @@ def speaker_labels(text: str) -> list[str]:
 def target_name_spans(source_name: str, translation: str) -> list[str]:
     """Plausible lexical spans, never the entire compact subtitle fallback."""
     text = visible_subtitle_text(translation)
+    for title in _TARGET_ADDRESS_TITLE_RE.finditer(text):
+        preceding = text[title.start() - 1] if title.start() else ""
+        if re.fullmatch(r"[\u3400-\u9fff]", preceding) and preceding not in _PHONETIC:
+            # The title supplies a real right boundary. If the name reaches
+            # it with an unknown character, a shorter phonetic prefix is
+            # not a complete name. Explicit observations align elsewhere.
+            return []
     text = re.sub(r"特工|探员|上校|少尉|博士|爵士|女士|女王|局长|行政长官", " ", text)
     text = re.sub(r"宝贝|感谢|证明|文章|调查|记得|所以|以为|可以|以及|以前", " ", text)
+    text = _TARGET_ADDRESS_TITLE_RE.sub(" ", text)
     spans = []
     if re.fullmatch(r"(?:[A-Z]\.){2,}", source_name):
         spans.extend(m.group() for m in entity_matcher(source_name).finditer(text))
@@ -65,11 +86,74 @@ def target_name_spans(source_name: str, translation: str) -> list[str]:
             if len(span) >= 2:
                 spans.append(span)
         return list(dict.fromkeys(spans))
+    complete = text.strip(" \r\n-–—.!?…。，？！")
+    if (" " in source_name
+            and re.fullmatch(rf"[{_PHONETIC}][\u3400-\u9fff]{{1,10}}(?:[·・][{_PHONETIC}]{{2,10}})+", complete)
+            and not _CONTEXT_PREFIX.match(complete)):
+        # A complete dotted target utterance supplies both boundaries,
+        # including internal characters outside the phonetic alphabet.
+        # This does not extend a substring through surrounding prose.
+        return [complete]
     for m in _PHONETIC_RE.finditer(text):
         span = m.group()
+        if "·" in span or "・" in span:
+            prefix = re.search(r"[\u3400-\u9fff]+$", text[:m.start()])
+            if prefix and _CONTEXT_PREFIX.sub("", prefix.group()):
+                # The phonetic alphabet cannot certify a boundary inside
+                # a Chinese name (道尔·科文 must not become 尔·科文).
+                # Only a recognized grammatical prefix may border this
+                # inferred full name; labels/whole addresses bypass this.
+                continue
         if 2 <= len(span) <= 14:
             spans.append(span)
     return list(dict.fromkeys(spans))
+
+
+def corroborated_dotted_forms(name: str, source_targets) -> set[str]:
+    """Recover full components from independent cue boundaries, not suffixes."""
+    candidates = []
+    anchors = set()
+    matcher = entity_matcher(name)
+    dotted = re.compile(rf"([\u3400-\u9fff]+)([·・])([{_PHONETIC}]{{2,12}})")
+    for source, target in source_targets:
+        remainder = matcher.sub("", visible_subtitle_text(source))
+        if any(word.casefold() not in _STOP and not _SOURCE_ADDRESS_TITLE_RE.fullmatch(word)
+               for word in _TOKEN_RE.findall(remainder)):
+            continue
+        matches = list(dotted.finditer(visible_subtitle_text(target)))
+        if len(matches) != 1:
+            continue
+        left, separator, right = matches[0].groups()
+        candidates.append((left, separator, right))
+        bounded = _CONTEXT_PREFIX.sub("", left)
+        if 2 <= len(bounded) <= 12 and bounded[0] in _PHONETIC:
+            anchors.add(bounded)
+    # Different surrounding clauses can independently reveal the same
+    # complete component. Identical repeated clauses supply no new boundary.
+    lefts = list(dict.fromkeys(left for left, _, _ in candidates))
+    for index, left in enumerate(lefts):
+        for previous in range(index):
+            other = lefts[previous]
+            count = 0
+            for first, second in zip(reversed(left), reversed(other)):
+                if first != second:
+                    break
+                count += 1
+            suffix = left[-count:] if count else ""
+            if 2 <= len(suffix) <= 12 and suffix[0] in _PHONETIC:
+                anchors.add(suffix)
+    forms = set()
+    for left, separator, right in candidates:
+        for anchor in anchors:
+            candidate = left[-len(anchor):]
+            if candidate == anchor or (
+                len(anchor) >= 3 and len(candidate) == len(anchor)
+                and candidate[:-1] == anchor[:-1]
+            ):
+                # A complete independently bounded component also locates
+                # a one-character ending variant; keep that variant intact.
+                forms.add(candidate + separator + right)
+    return forms
 
 
 def aligned_name_span(name: str, source: str, target: str, *,
@@ -93,21 +177,41 @@ def aligned_name_span(name: str, source: str, target: str, *,
     if source_body.strip(" \r\n-–—.!?…。，？！").casefold() == name.casefold():
         address = target_body.strip(" \r\n-–—.!?…。，？！")
         if re.fullmatch(r"[\u3400-\u9fff·]{2,12}", address):
+            bounded = [form for form in known_forms
+                       if form and address.endswith(form) and address != form
+                       and _CONTEXT_PREFIX.fullmatch(address[:-len(form)])]
+            if len(bounded) == 1:
+                return bounded[0], "standalone_address"
             return address, "standalone_address"
+    source_address = source_body.strip(" \r\n-–—.!?…。，？！")
+    target_address = target_body.strip(" \r\n-–—.!?…。，？！")
+    for source_title, target_title in _ADDRESS_TITLES:
+        if re.fullmatch(rf"(?:{source_title})\s+{re.escape(name)}", source_address, re.I):
+            match = re.fullmatch(rf"([\u3400-\u9fff·・]{{2,12}})(?:{target_title})", target_address)
+            if match:
+                return match.group(1), "standalone_address"
     if re.fullmatch(r"[A-Z]{2,8}", name) and entity_matcher(name).search(target_body):
         return entity_matcher(name).search(target_body).group(), "literal_source"
     # Only explicit labels/addresses elsewhere may resolve an ambiguous cue.
-    phonetic_spans = [match.group() for match in _PHONETIC_RE.finditer(target_body)]
+    phonetic_spans = [
+        match.group() for match in _PHONETIC_RE.finditer(_TARGET_ADDRESS_TITLE_RE.sub(" ", target_body))
+    ]
     known = [form for form in known_forms if form and target_body.count(form) == 1
              and not any(form in span and span != form for span in phonetic_spans)]
     if len(known) == 1:
         return known[0], "bounded_lexical_span"
+    if any(form and form in target_body for form in known_forms):
+        # An observed name embedded in a longer phonetic run is ambiguous.
+        # Do not reject the anchor and then invent a larger name from the
+        # same text (e.g. 比布鲁克林 or 得吉娜).
+        return None
     remainder = source_body
     for identity in sorted({name, *source_aliases}, key=len, reverse=True):
         remainder = entity_matcher(identity).sub("", remainder)
     other_names = [re.sub(r"['’]s$", "", match.group()).casefold()
                    for match in _TOKEN_RE.finditer(remainder)]
-    if any(len(word) >= 2 and word not in _STOP for word in other_names):
+    if any(len(word) >= 2 and word not in _STOP
+           and not _SOURCE_ADDRESS_TITLE_RE.fullmatch(word) for word in other_names):
         return None
     spans = target_name_spans(name, target_body)
     if len(spans) == 1:
@@ -138,18 +242,23 @@ def build_entity_registry(source_by_id: dict[str, str], target_by_id: dict[str, 
                 label_names.add(label.casefold())
         for match in re.finditer(r"(?=(?<![A-Za-z])((?:[A-Z]\.){2,}|[A-Z][a-z]+(?:['’-][A-Za-z]+)*)\s+([A-Z][a-z]+(?:['’-][A-Za-z]+)*)(?![A-Za-z]))", source):
             first, last = [re.sub(r"['’]s$", "", part) for part in match.groups()]
-            if first.casefold() not in _STOP and last.casefold() not in _STOP:
+            if (first.casefold() not in _STOP and last.casefold() not in _STOP
+                    and not _SOURCE_ADDRESS_TITLE_RE.fullmatch(first)
+                    and not _SOURCE_ADDRESS_TITLE_RE.fullmatch(last)):
                 full = f"{first} {last}"
                 full_names[first.casefold()].add(full)
                 full_names[last.casefold()].add(full)
         for match in _TOKEN_RE.finditer(source):
             name = re.sub(r"['’]s$", "", match.group())
             key = name.casefold()
-            if key in _STOP or len(name) < 2 or re.search(r"['’](?:m|ll|re|ve|d|t)$", key):
+            if (key in _STOP or len(name) < 2 or _SOURCE_ADDRESS_TITLE_RE.fullmatch(name)
+                    or re.search(r"['’](?:m|ll|re|ve|d|t)$", key)):
                 continue
-            # A capital at sentence start alone is not entity evidence.
-            prefix = source[:match.start()].strip()
-            interior = bool(prefix and prefix[-1] not in ".!?\n")
+            # Sentence/turn starts, quoted words and delivery labels do not
+            # provide independent capitalization evidence. Keep newlines:
+            # stripping them turns "- Heave!" into an interior mention.
+            prefix = _LABEL_RE.sub("", source[:match.start()].rsplit("\n", 1)[-1])
+            interior = bool(re.search(r"[A-Za-z][A-Za-z'’]*[, \t]+$", prefix))
             mentions[key].append((str(bid), name, interior))
             if key not in spellings or (spellings[key].isupper() and not name.isupper()):
                 spellings[key] = name
@@ -203,6 +312,36 @@ def build_entity_registry(source_by_id: dict[str, str], target_by_id: dict[str, 
                 observation["target_signature"] = matches[0].replace("·", "")
             aligned_observations.append(observation)
         observations = aligned_observations
+        # Repeated lexical observations can disprove a larger candidate,
+        # but cannot establish an explicit name or authorize replacement.
+        # Chinese grammar may share phonetic characters with names (比/得).
+        # Without a stronger boundary, abstain on a containing span rather
+        # than reporting that extra sentence text as a new spelling.
+        observed_counts = Counter(o["target_span"] for o in observations)
+        observations = [
+            observation for observation in observations
+            if observation["evidence"] != "bounded_lexical_span"
+            or not any(
+                count >= 2 and form != observation["target_span"]
+                and form in observation["target_span"]
+                for form, count in observed_counts.items()
+            )
+        ]
+        # An isolated shorter fragment inside prose cannot establish a
+        # missing name against corroborated complete forms. Keep independent
+        # labels/addresses and clause-boundary variants, including short ones.
+        established_lengths = [len(form) for form, count in observed_counts.items() if count >= 2]
+        if established_lengths:
+            shortest = min(established_lengths)
+            observations = [
+                observation for observation in observations
+                if observation["evidence"] != "bounded_lexical_span"
+                or observed_counts[observation["target_span"]] >= 2
+                or len(observation["target_span"]) >= shortest
+                or observation["target_span"] in explicit_forms
+                or re.search(r"(?:^|[，。！？：、\s])" + re.escape(observation["target_span"]),
+                             visible_subtitle_text(observation["translation"]))
+            ]
         counts = Counter(o["target_signature"] for o in observations)
         entities.append({"entity_id": f"source:{key}", "source": name,
             "aliases": aliases, "source_ids": ids, "type": "speaker" if key in label_names else "name_candidate",
@@ -225,7 +364,13 @@ def entity_context_json(entities: list[dict], *, relevant_source: str = "", limi
         not bool(relevant_source and entity_matcher(e["source"]).search(relevant_source)),
         not bool(e["aliases"]), -len(e["source_ids"]), e["source"].casefold()))
     for entity in candidates:
-        if not entity["aliases"] and entity["confidence"] != "explicit":
+        # Acronyms alone (e.g. a standalone instruction) are not addresses;
+        # they still qualify through a speaker label or a full-name alias.
+        independent_address = not entity["source"].isupper() and any(
+            observation.get("evidence") == "standalone_address"
+            for observation in entity.get("observations", ())
+        )
+        if not entity["aliases"] and entity["confidence"] != "explicit" and not independent_address:
             continue
         item = {key: entity[key] for key in ("source", "aliases", "provenance", "confidence")}
         item["observed_targets"] = entity["target_forms"][:6]

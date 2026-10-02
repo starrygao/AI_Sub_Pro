@@ -7837,6 +7837,7 @@ def _run_auto_repair_semantic_guard_case(
         semantic_groups,
         *,
         strict_quality_gate,
+        **_context,
     ):
         specs = issues_by_qa_call[min(1, len(issues_by_qa_call) - 1)]
         issues = [
@@ -8106,6 +8107,7 @@ def _run_auto_repair_group_guard_case(
         semantic_groups,
         *,
         strict_quality_gate,
+        **_context,
     ):
         specs = issues_by_qa_call[min(1, len(issues_by_qa_call) - 1)]
         issues = [
@@ -12028,6 +12030,7 @@ def test_semantic_qa_failed_same_hash_is_reverified_without_forced_rewrite(
         semantic_groups,
         *,
         strict_quality_gate,
+        **_context,
     ):
         targeted_calls.append(sorted(candidate_ids))
         verified = set(candidate_ids)
@@ -12241,6 +12244,7 @@ def test_convergence_scan_gives_new_issue_identity_a_repair_round(
         semantic_groups,
         *,
         strict_quality_gate,
+        **_context,
     ):
         verified = set(candidate_ids)
         return (

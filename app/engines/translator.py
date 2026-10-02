@@ -82,6 +82,52 @@ _SPEAKER_LINE_PROMPT_RULE = (
     "JSON 字符串中的换行必须写为 \\n。"
 )
 
+# Read-only evidence is bounded independently of mutable subtitle text. Keep
+# raw SDH here: omitted sound captions can still disambiguate spoken dialogue.
+_SUBTITLE_CONTEXT_CUES = 3
+_SUBTITLE_CONTEXT_TEXT_CHARS = 800
+
+
+def _subtitle_context_item(block) -> dict:
+    item = {"id": getattr(block, "index", None)}
+    for key, attr in (("original", "text"), ("draft", "translation")):
+        text = getattr(block, attr, "")
+        text = text if isinstance(text, str) else ""
+        item[key] = text[:_SUBTITLE_CONTEXT_TEXT_CHARS]
+        if len(text) > _SUBTITLE_CONTEXT_TEXT_CHARS:
+            item[f"{key}_truncated"] = True
+    return item
+
+
+def _subtitle_context_window(
+    blocks, position: int, radius: int = _SUBTITLE_CONTEXT_CUES, *, sound_only: bool = False,
+):
+    """Return bounded timeline neighbors, never promoting them to target IDs."""
+    radius = max(0, min(radius, 50))
+
+    def context(start, end):
+        rows = []
+        for block in blocks[start:end]:
+            source = getattr(block, "text", "")
+            if not isinstance(source, str) or not source.strip():
+                continue
+            block_id = getattr(block, "index", None)
+            if not isinstance(block_id, int) or isinstance(block_id, bool):
+                continue
+            if sound_only and classify_subtitle_source(source).kind != "sound":
+                continue
+            # Filtered ads/credits are not dialogue evidence. Source-confirmed
+            # sounds remain useful even when intentionally omitted from export.
+            if getattr(block, "filtered", False) and classify_subtitle_source(source).kind != "sound":
+                continue
+            rows.append(_subtitle_context_item(block))
+        return rows
+
+    return (
+        context(max(0, position - radius), position),
+        context(position + 1, position + radius + 1),
+    )
+
 _PHRASE_CONTEXT_KEYWORDS = {
     "medical": {
         "medical", "medicine", "doctor", "hospital", "clinic", "patient",
@@ -583,8 +629,19 @@ class SubtitleTranslator:
         if not active:
             return _FULL_DOC_FALLBACK_BATCH_SIZE
         window = _provider_context_window(self.primary)
-        # Mean chars per block -> approximate tokens per block (2 chars/token).
-        avg_tokens = max(1, (sum(len(b.text) for b in active) // len(active)) // 2)
+        # Estimate the actual item payload, including bounded read-only windows.
+        payload_chars = 0
+        for position, block in enumerate(blocks):
+            if not self._needs_translation(block):
+                continue
+            preceding, following = _subtitle_context_window(blocks, position, self.context_window)
+            payload_chars += len(json.dumps({
+                "id": block.index,
+                "original": block.text,
+                "preceding_context": preceding,
+                "following_context": following,
+            }, ensure_ascii=False))
+        avg_tokens = max(1, (payload_chars // len(active)) // 2)
         target_tokens = max(1, int(window * 0.4))
         per_batch = max(1, target_tokens // avg_tokens)
         return max(1, min(_FULL_DOC_FALLBACK_BATCH_SIZE, per_batch))
@@ -596,6 +653,17 @@ class SubtitleTranslator:
             return False
         # Rough token estimate: ~2 chars per token for mixed text.
         est_tokens = sum(len(b.text) for b in active) // 2
+        # Every dialogue cue is already a top-level item in full-doc mode.
+        # Count only omitted sound evidence, never duplicated dialogue windows.
+        est_tokens += sum(
+            len(json.dumps(row, ensure_ascii=False))
+            for position, block in enumerate(blocks)
+            if self._needs_translation(block)
+            for side in _subtitle_context_window(
+                blocks, position, self.context_window, sound_only=True
+            )
+            for row in side
+        ) // 2
         active_ids = {block.index for block in active}
         discourse_contexts = build_discourse_link_contexts(
             blocks,
@@ -644,9 +712,17 @@ class SubtitleTranslator:
             discourse_contexts_by_endpoint = index_discourse_link_contexts(
                 discourse_contexts
             )
+            position_by_id = {block.index: position for position, block in enumerate(blocks)}
             items = []
             for block in active:
                 item = {"id": block.index, "original": block.text}
+                preceding, following = _subtitle_context_window(
+                    blocks, position_by_id[block.index], self.context_window, sound_only=True
+                )
+                if preceding:
+                    item["preceding_context"] = preceding
+                if following:
+                    item["following_context"] = following
                 item_discourse_links = discourse_contexts_by_endpoint.get(
                     block.index,
                     [],
@@ -778,10 +854,6 @@ class SubtitleTranslator:
         # Collect translatable blocks
         active_indices = [i for i, b in enumerate(blocks) if self._needs_translation(b)]
         total = len(active_indices)
-        context_indices = [i for i, b in enumerate(blocks)
-                           if not b.filtered and b.text.strip()
-                           and classify_subtitle_source(b.text).requires_translation]
-        context_positions = {index: position for position, index in enumerate(context_indices)}
 
         if total == 0:
             log.warning("No blocks to translate")
@@ -805,23 +877,6 @@ class SubtitleTranslator:
                 batch_end = min(batch_start + effective_batch_size, total)
                 batch_indices = active_indices[batch_start:batch_end]
 
-                # Build context
-                context_before = []
-                context_start = context_positions[batch_indices[0]]
-                if context_start > 0:
-                    ctx_start = max(0, context_start - self.context_window)
-                    for ci in context_indices[ctx_start:context_start]:
-                        b = blocks[ci]
-                        if b.translation:
-                            context_before.append({"original": b.text, "translated": b.translation})
-
-                context_after = []
-                context_end = context_positions[batch_indices[-1]] + 1
-                if context_end < len(context_indices):
-                    ctx_end = min(len(context_indices), context_end + self.context_window)
-                    for ci in context_indices[context_end:ctx_end]:
-                        context_after.append(blocks[ci].text)
-
                 # Build batch items
                 items = []
                 mutable_ids = {
@@ -840,6 +895,9 @@ class SubtitleTranslator:
                 for ci in batch_indices:
                     b = blocks[ci]
                     item = {"id": b.index, "original": b.text}
+                    item["preceding_context"], item["following_context"] = _subtitle_context_window(
+                        blocks, ci, self.context_window
+                    )
                     item_discourse_links = (
                         discourse_contexts_by_endpoint.get(b.index, [])
                     )
@@ -849,7 +907,7 @@ class SubtitleTranslator:
 
                 # Build system prompt
                 system_prompt = self._build_prompt(
-                    target_lang, meta_info, kb_data, context_before, context_after, items=items
+                    target_lang, meta_info, kb_data, [], [], items=items
                 )
 
                 # Primary translation
@@ -878,8 +936,8 @@ class SubtitleTranslator:
                     target_lang,
                     meta_info,
                     kb_data,
-                    context_before,
-                    context_after,
+                    [],
+                    [],
                     callback=callback,
                     progress_pct=int((batch_start / total) * 100),
                 )
@@ -1176,8 +1234,14 @@ class SubtitleTranslator:
             "",
         ]
         from app.engines.entity_registry import entity_context_json, ENTITY_CONTEXT_RULE
-        entity_context = entity_context_json(getattr(self, "_document_entity_registry", []),
-            relevant_source="\n".join(str(item.get("original", "")) for item in items or []))
+        context_source = "\n".join(
+            str(row.get("original", ""))
+            for item in items or []
+            for row in [item, *item.get("preceding_context", []), *item.get("following_context", [])]
+        )
+        entity_context = entity_context_json(
+            getattr(self, "_document_entity_registry", []), relevant_source=context_source
+        )
         if entity_context:
             parts.extend([ENTITY_CONTEXT_RULE, entity_context])
 
@@ -1267,7 +1331,7 @@ class SubtitleTranslator:
 
         # Context window
         if context_before:
-            parts.append("\n已翻译的上文(供参考,保持连贯):")
+            parts.append("\n上文及已有译稿(只读参考,可能尚未翻译):")
             for ctx in context_before[-self.context_window:]:
                 parts.append(f"  原文: {ctx['original']}")
                 parts.append(f"  译文: {ctx['translated']}")
@@ -1327,6 +1391,10 @@ class SubtitleTranslator:
             "3. 不要保留原文语言,完全翻译为目标语言",
             "4. 已确认的纯音效已由程序排除。每个输入 id 必须返回非空译文；未知括号内容保留并翻译，混合内容必须保留对白和歌词。",
             "5. 保持上下文语气连贯",
+            "   preceding_context/following_context 是只读的有界源译上下文，只翻译顶层输入 id；"
+            "上下文 id 不得另行输出。带 truncated 标记的文本并不完整，不得据缺失部分推断语义。",
+            "   连续字幕须逐条拼接后仍连贯；相邻音效/动作描述可用于区分 Cheers 等多义对白，"
+            "但不必写进译文。原文省略的宾语、人称和性别没有明确上下文依据时不得擅自补出。",
             "6. 删除音乐装饰符号,不要输出 ♪、♫、♬、🎵、🎶",
             f"7. {_SPEAKER_LINE_PROMPT_RULE}",
             "8. 项目知识库和上下文选中的审定术语是硬约束；同一专名、地点或领域术语重复出现时必须使用同一译法",

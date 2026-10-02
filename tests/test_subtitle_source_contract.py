@@ -64,21 +64,3 @@ def test_unknown_source_translation_is_not_erased_by_target_sound_words():
     b = SubtitleBlock(1, timedelta(), timedelta(seconds=2), '[unfamiliar mechanism zorbles]', '[机械声]')
     qa.normalize_sound_description_translations([b])
     assert b.translation == '[机械声]'
-
-
-def test_recovery_keeps_neighboring_restored_dialogue_in_prompt(monkeypatch):
-    provider = Mock(supports_full_document_mode=True, context_window_tokens=100000)
-    provider.full_document_max_items = None
-    provider.translate_batch.side_effect = lambda items,prompt: [{'id':i['id'],'translation':'没问题。'} for i in items]
-    monkeypatch.setattr(tr,'get_provider',lambda *args:provider)
-    t=tr.SubtitleTranslator({'translation':{'primary_provider':'codex_cli','polish_provider':'','full_doc_mode':True,'context_window':3,'use_translation_memory':False,'use_phrase_library':False}})
-    t.resume_existing=True
-    captured=[]
-    def prompt(target,meta,kb,before,after,items=None):
-        captured.append((before,after))
-        return 'context fixture'
-    monkeypatch.setattr(t,'_build_prompt',prompt)
-    rows=[SubtitleBlock(i,timedelta(seconds=i),timedelta(seconds=i+1),s,v) for i,s,v in [
-        (1,'Can you help?','能帮我吗？'),(2,'Sure.',''),(3,'Thank you.','谢谢。')]]
-    t.translate(rows)
-    assert captured==[([{'original':'Can you help?','translated':'能帮我吗？'}],['Thank you.'])]

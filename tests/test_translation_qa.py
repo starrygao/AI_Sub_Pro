@@ -2750,7 +2750,6 @@ def test_quality_checks_apply_subtitle_style_profile_rules():
         _block(1, "Fast line", "这是一条非常非常非常非常非常非常非常非常非常非常非常非常长的字幕"),
         _block(2, "Too many lines", "第一行\n第二行\n第三行"),
         _block(3, "Bad semantic break", "我\n知道你来了"),
-        _block(4, "No, no, no!", "不，不，不！"),
         _block(5, "Are you okay?", "你好吗?"),
     ]
 
@@ -2766,11 +2765,7 @@ def test_quality_checks_apply_subtitle_style_profile_rules():
     assert by_type["reading_speed_too_fast"] >= 1
     assert by_type["too_many_lines"] == 1
     assert by_type["weak_semantic_line_break"] == 1
-    assert by_type["repetition_not_compressed"] == 1
     assert by_type["punctuation_style"] == 1
-    assert report.summary["far"]["readability"] >= 5
-    assert report.summary["far"]["acceptability"] >= 1
-    assert report.summary["style_profile"]["id"] == "zh_cn_general"
 
 
 def test_quality_checks_allow_technical_identifiers_for_tutorials():

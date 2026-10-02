@@ -5,6 +5,10 @@
 - Pin and verify the OMP 18.4.4 Linux binary in Docker and persist its login separately. Server model and CLI changes continue to apply after the current task finishes.
 - Make model synchronization refresh OMP's upstream catalog instead of only bypassing the application cache. Preserve selected models and discover GPT-6.1 Sol through the updated CLI.
 - Match OMP readiness checks to the effective primary model when the polishing model is empty, and keep Cursor inference models available while isolating coding-tool configuration.
+- Tighten name-span evidence so sentence-initial ordinary words, titles, and adjacent Chinese text do not become spurious name variants. Full-name deduplication must not hide genuine short-name inconsistencies.
+- Use bounded, read-only neighboring context in translation and targeted semantic review, retaining source sound cues. Targeted review shares project terminology and entity context without duplicating dialogue already present in full-document requests.
+- Recognize full-width sound-cue brackets and correct exhaling forms while preserving two-speaker line breaks and markers during cleanup.
+- Classify English residue as a content issue. Exempt source-backed brands, pronunciation exercises, and approved retained terms without exempting surrounding untranslated dialogue. Preserve source-supported consecutive repetition while checking the full displayed reading load.
 
 ## v1.3.42
 

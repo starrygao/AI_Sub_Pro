@@ -47,7 +47,7 @@ def quality_issue_category(issue_type: str) -> str:
         return "readability"
     if "name" in issue_type or "term" in issue_type:
         return "consistency"
-    if "structure" in issue_type or "format" in issue_type or "id" in issue_type:
+    if "structure" in issue_type or "format" in issue_type or "id" in issue_type.split("_"):
         return "format"
     return "content"
 
@@ -213,6 +213,18 @@ def _clean_text(value) -> str:
 
 
 _ENGLISH_RE = re.compile(r"[A-Za-z]{3,}")
+_MIXED_CASE_IDENTIFIER_RE = re.compile(r"[A-Za-z]*[a-z][A-Z][a-z][A-Za-z]*")
+_QUOTED_PRACTICE_WORD_RE = re.compile(
+    r"\b(?:say|repeat|pronounce|di['’])(?:\s+the\s+word)?\s*[:：]?\s*"
+    r"[\"“'](?P<word>[A-Za-z]{3,})[\"”']",
+    re.IGNORECASE,
+)
+_MARKED_PRONUNCIATION_RE = re.compile(
+    r"\s*\[(?:marcando\s+la|(?:emphasizing|stressing)(?:\s+the)?)\s+"
+    r"[\"“'](?P<sound>[A-Za-z])[\"”']\]\s*(?P<word>[A-Za-z]{3,})"
+    r"(?:\s*[,.;:!?…-]+\s*(?P=word))*[\s.,;:!?…-]*",
+    re.IGNORECASE,
+)
 _TRANSLATION_META_HEADER_RE = re.compile(
     r"(?:^|[\r\n])\s*(?:"
     r"translation|translated\s+text|here\s+is\s+the\s+translation|"
@@ -222,7 +234,7 @@ _TRANSLATION_META_HEADER_RE = re.compile(
 )
 _SOUND_RE = re.compile(r"^\s*[-–—]?\s*\[[^\]]+\]\s*$")
 _SOUND_SEQUENCE_RE = re.compile(r"^\s*(?:\[[^\]]+\]\s*)+$")
-_BRACKETED_TRANSLATION_SEGMENT_RE = re.compile(r"[\[【（(]([^\]】）)\r\n]{1,80})[\]】）)]")
+_BRACKETED_TRANSLATION_SEGMENT_RE = re.compile(r"[\[［【（(]([^\]］】）)\r\n]{1,80})[\]］】）)]")
 _ASS_OVERRIDE_RE = re.compile(r"\{\\[^}]+\}")
 _MUSIC_MARK_RE = re.compile(r"[♪♫♬🎵🎶]+")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -481,6 +493,7 @@ _SOUND_LABEL_KEYWORDS = (
     "叹气",
     "喘息",
     "吸气",
+    "呼气",
     "呼吸",
     "咳嗽",
     "呻吟",
@@ -549,7 +562,7 @@ _SOUND_LABEL_EN_RE = re.compile(
     r"speak(?:s|ing)?|talk(?:s|ing)?|plead(?:s|ing)?|"
     r"scoff(?:s|ing)?|clear(?:s|ing)? throat|throat|"
     r"sniff(?:s|ed|ing|l(?:e|es|ed|ing))?|"
-    r"inhale(?:s|d|ing)?|exhale(?:s|d|ing)?|gasp(?:s|ing)?|"
+    r"(?:inhal|exhal)(?:e[sd]?|ing)|gasp(?:s|ing)?|"
     r"yell(?:s|ing)?|whimper(?:s|ing)?|grunt(?:s|ing)?|growl(?:s|ing)?|"
     r"roar(?:s|ing)?|honk(?:s|ing)?|clink(?:s|ing)?|squawk(?:s|ing)?|"
     r"squeak(?:s|ing)?|shriek(?:s|ing)?|call(?:s|ing)?|cries|"
@@ -846,13 +859,55 @@ def _is_allowed_acronym_token(token: str) -> bool:
     return bool(token.isupper() and 3 <= len(token) <= 10)
 
 
-def _english_residue_match(translation: str, *, source: str = "", allow_technical_terms: bool = False):
+def _source_evidenced_retained_tokens(source: str) -> set[str]:
+    visible_source = visible_subtitle_text(source)
+    source_tokens = set(_ENGLISH_RE.findall(visible_source))
+    # Internal lower/upper/lower transitions distinguish identifier spelling
+    # from ordinary sentence capitalization; require the entire original token.
+    retained = {
+        token for token in source_tokens
+        if _MIXED_CASE_IDENTIFIER_RE.fullmatch(token)
+    }
+    practice_words = {
+        match.group("word").casefold()
+        for match in _QUOTED_PRACTICE_WORD_RE.finditer(visible_source)
+    }
+    marked = _MARKED_PRONUNCIATION_RE.fullmatch(visible_source)
+    if marked and marked.group("sound").casefold() in marked.group("word").casefold():
+        practice_words.add(marked.group("word").casefold())
+    retained.update(
+        token for token in source_tokens if token.casefold() in practice_words
+    )
+    return retained
+
+
+def _english_residue_match(
+    translation: str,
+    *,
+    source: str = "",
+    allow_technical_terms: bool = False,
+    allowed_retained_terms: Iterable[str] = (),
+):
     # Only exact source-backed addresses are exempt; surrounding English is
     # still checked. Mask spans rather than allowing their individual words.
     address_re = re.compile(r"(?<![\w.])(?:https?://)?(?:[\w-]+\.)+[A-Za-z]{2,}(?:/[^\s<>]*)?")
     addresses = {m.group(0) for m in address_re.finditer(source)}
     probe = address_re.sub(lambda m: " " if m.group(0) in addresses else m.group(0), translation or "")
+    # Approved targets authorize only their exact spans, never all component
+    # words elsewhere in the cue (e.g. a multi-word company name).
+    for term in sorted(set(allowed_retained_terms), key=len, reverse=True):
+        if term:
+            probe = re.sub(
+                rf"(?<![A-Za-z0-9_]){re.escape(term)}(?![A-Za-z0-9_])",
+                " ",
+                probe,
+            )
+    # Source membership alone would also exempt whole untranslated sentences.
+    # Exempt only distinctive identifier spelling or explicitly practiced words.
+    retained_tokens = _source_evidenced_retained_tokens(source)
     for match in _ENGLISH_RE.finditer(probe):
+        if match.group(0) in retained_tokens:
+            continue
         if _is_allowed_acronym_token(match.group(0)):
             continue
         if allow_technical_terms and _is_allowed_technical_token(match.group(0)):
@@ -1019,7 +1074,7 @@ class SubtitleSourceDecision:
         return self.kind not in {"sound", "empty"}
 
 
-SUBTITLE_CLASSIFICATION_VERSION = 5
+SUBTITLE_CLASSIFICATION_VERSION = 6
 
 
 @lru_cache(maxsize=16384)
@@ -1204,12 +1259,20 @@ def clean_sound_description_translation_text(
     if not isinstance(value, str) or not value:
         return ""
 
+    preserve_speaker_markers = (
+        classify_speaker_lines(dialogue_only_qa_source_text(source_text)) is not None
+        or classify_speaker_lines(value) is not None
+    )
+
     def clean_remainder(remainder: str) -> str:
         cleaned = re.sub(r"\s{2,}", " ", remainder).strip()
+        marker = re.match(r"^([-–—]\s*)", cleaned) if preserve_speaker_markers else None
         cleaned = re.sub(r"^(?:[-–—:：]\s*)+", "", cleaned).strip()
         cleaned = re.sub(r"(?:\s*[-–—])+$", "", cleaned).strip()
         cleaned = re.sub(r"^[、，,。.!！?？:：;；]+\s*", "", cleaned).strip()
-        return "" if _is_translation_separator_only(cleaned) else cleaned
+        if _is_translation_separator_only(cleaned):
+            return ""
+        return f"{marker.group(1)}{cleaned}" if marker else cleaned
 
     def clean_unbracketed(line: str) -> str:
         text = line.strip()
@@ -1783,6 +1846,44 @@ def _duration_seconds(block) -> float:
     return seconds if seconds > 0 else 0.0
 
 
+def _has_unsupported_repetition(source: str, translation: str) -> bool:
+    target_counts = [
+        match.group(0).count(match.group(1))
+        for match in _REPEATED_CJK_RE.finditer(translation)
+    ]
+    if not target_counts:
+        return False
+    # This is structural evidence, not cross-language semantic equivalence.
+    # Keep deliberate repetition unless the target adds runs or extra repeats;
+    # semantic QA still owns whether the repeated expression means the same.
+    tokens = re.findall(
+        r"[\u3400-\u9fff]|[^\W\d_\u3400-\u9fff]+(?:['’][^\W\d_\u3400-\u9fff]+)*",
+        visible_subtitle_text(source).casefold(),
+    )
+    source_counts = []
+    position = 0
+    while position < len(tokens):
+        for width in range(1, min(6, (len(tokens) - position) // 3) + 1):
+            phrase = tokens[position:position + width]
+            end = position + width
+            while tokens[end:end + width] == phrase:
+                end += width
+            count = (end - position) // width
+            if count >= 3:
+                source_counts.append(count)
+                position = end
+                break
+        else:
+            position += 1
+    return len(target_counts) > len(source_counts) or any(
+        target > original
+        for target, original in zip(
+            sorted(target_counts, reverse=True),
+            sorted(source_counts, reverse=True),
+        )
+    )
+
+
 def _weak_semantic_break(lines: list[str]) -> bool:
     if len(lines) < 2:
         return False
@@ -1815,6 +1916,11 @@ def run_quality_checks(
     kb_terms = _kb_terms(project_kb)
     manual_terms = manual_term_pairs(meta_info if isinstance(meta_info, dict) else {})
     context_terms = _context_selected_terms(trace)
+    approved_latin_terms = tuple(
+        (source, target)
+        for source, target in (*kb_terms, *manual_terms, *context_terms)
+        if _ENGLISH_RE.search(target)
+    )
     chinese_target = _is_chinese_target(target_language)
     technical_tutorial_context = _has_technical_tutorial_context(meta_info)
     active_style_profile = style_profile or infer_subtitle_style_profile(target_language, meta_info)
@@ -1930,6 +2036,11 @@ def run_quality_checks(
                 translation,
                 source=qa_source,
                 allow_technical_terms=technical_tutorial_context,
+                allowed_retained_terms=(
+                    term_target
+                    for term_source, term_target in approved_latin_terms
+                    if _term_present(qa_source, term_source)
+                ),
             )
         ):
             issues.append(QualityIssue(
@@ -2003,7 +2114,7 @@ def run_quality_checks(
                     translation=layout_translation,
                 ))
 
-            if _REPEATED_CJK_RE.search(translation):
+            if _has_unsupported_repetition(qa_source, translation):
                 issues.append(QualityIssue(
                     type="repetition_not_compressed",
                     severity="warning",
