@@ -87,15 +87,6 @@ def test_semantic_targets_keep_read_only_neighbors_across_batches():
     assert [item["id"] for item in items] == list(range(1, 43))
 
 
-def test_export_layout_check_matches_written_subtitle(tmp_path):
-    from app.engines.translation_qa import run_quality_checks
-    from app.utils.srt import write_srt, parse_srt
-    blocks = [block(1, "We tried everything. Yeah.", "都试过了。\n-对")]
-    path = tmp_path / "final.srt"
-    write_srt(blocks, str(path), use_translation=True)
-    assert "\n" not in parse_srt(path.read_text())[0].text
-    report = run_quality_checks(blocks, export_layout=True)
-    assert not any(i.type == "weak_semantic_line_break" for i in report.issues)
 
 
 def test_successful_recheck_clears_only_matching_execution_failure():

@@ -11,6 +11,9 @@ _DASH_CHARS = r"\-‐‑‒–—―"
 _DIALOGUE_MARKER_RE = re.compile(
     rf"^\s*[{_DASH_CHARS}](?![{_DASH_CHARS}])\s*\S"
 )
+_SECOND_SPEAKER_MARKER_RE = re.compile(
+    rf"^\s*[{_DASH_CHARS}](?:\s+\S|[^\x00-\x7f\s{_DASH_CHARS}])"
+)
 _SPEAKER_LABEL_RE = re.compile(r"^\s*[^:：\r\n]{1,48}[:：]\s*\S")
 _BRACKET_LABEL_RE = re.compile(r"^\s*[\[［【][^\]］】\r\n]{1,48}[\]］】]\s*\S")
 
@@ -46,7 +49,7 @@ def _clean_lines(value: str | Iterable[str]) -> list[str]:
 def classify_speaker_lines(
     value: str | Iterable[str],
 ) -> SpeakerLineStructure | None:
-    """Classify cues where every one of at least two lines is a speaker line."""
+    """Classify explicit speaker lines, including an unmarked first of two."""
     lines = _clean_lines(value)
     if len(lines) < 2:
         return None
@@ -56,6 +59,14 @@ def classify_speaker_lines(
             kinds.append("dialogue-marker")
         elif _SPEAKER_LABEL_RE.match(line) or _BRACKET_LABEL_RE.match(line):
             kinds.append("speaker-label")
+        elif (
+            len(lines) == 2
+            and not kinds
+            and _SECOND_SPEAKER_MARKER_RE.match(lines[1])
+        ):
+            # Only the second speaker needs a marker in this standard form.
+            # An ASCII hyphen inside a wrapped word is not a speaker boundary.
+            kinds.append("unmarked-speaker")
         else:
             return None
     return SpeakerLineStructure(tuple(kinds))

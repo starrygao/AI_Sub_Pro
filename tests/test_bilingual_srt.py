@@ -534,3 +534,148 @@ def test_header_cleanup_does_not_remove_dialogue_about_webvtt():
     from app.engines.translation_qa import classify_subtitle_source
     source = "I wrote WEBVTT on the board.\nX-TIMESTAMP-MAP is the name of a header."
     assert classify_subtitle_source(source).dialogue_text == source
+
+
+@pytest.mark.parametrize("source,translation", [
+    ("Go for it!\n- Ooh!", "上吧！\n- 哦！"),
+    ("<i>Go for it!</i>\n<i>– Ooh!</i>", "<i>上吧！</i>\n<i>– 哦！</i>"),
+    ("Go for it!\n- Ooh!", "上吧！\n-哦！"),
+])
+def test_srt_consumers_preserve_unmarked_first_speaker(tmp_path, source, translation):
+    from app.utils.srt import (
+        parse_srt_file, write_bilingual_srt, write_mono_srt, write_srt,
+    )
+
+    block = _make_block(331, source, translation)
+    for writer in (write_srt, write_mono_srt):
+        out = tmp_path / f"{writer.__name__}.srt"
+        writer([block], str(out), use_translation=True)
+        assert parse_srt_file(str(out))[0].text == translation
+        writer([block], str(out), use_translation=False)
+        assert parse_srt_file(str(out))[0].text == source
+
+    bilingual = tmp_path / "bilingual.srt"
+    write_bilingual_srt([block], str(bilingual))
+    assert parse_srt_file(str(bilingual))[0].text == (
+        translation.replace("\n", " ") + "\n" + source.replace("\n", " ")
+    )
+
+
+@pytest.mark.parametrize("translation", [
+    "上吧！哦！",
+    "上吧！\n哦！",
+    "上吧！- 哦！",
+])
+def test_format_contract_rejects_missing_second_speaker_boundary(translation):
+    from app.engines.translation_qa import run_quality_checks
+
+    report = run_quality_checks(
+        [_make_block(331, "Go for it!\n- Ooh!", translation)],
+        target_language="简体中文", max_chars=40,
+    )
+    issues = [
+        issue for issue in report.issues
+        if issue.type == "speaker_line_structure_mismatch"
+    ]
+    assert [(issue.block_id, issue.expected) for issue in issues] == [
+        (331, "2 speaker lines"),
+    ]
+    assert 331 in report.unresolved_blocks
+
+
+def test_format_contract_accepts_unmarked_first_speaker():
+    from app.engines.translation_qa import run_quality_checks
+
+    report = run_quality_checks(
+        [_make_block(331, "Go for it!\n- Ooh!", "上吧！\n- 哦！")],
+        target_language="简体中文", max_chars=40,
+    )
+    assert "speaker_line_structure_mismatch" not in report.summary["by_type"]
+
+
+@pytest.mark.parametrize("source,translation,mono,bilingual", [
+    ("A single visual\nwrap.", "普通视觉\n换行。", "普通视觉换行。",
+     "普通视觉换行。\nA single visual wrap."),
+    ("- Wait,\nthis is still me.", "- 等等，\n还是我。", "- 等等，还是我。",
+     "- 等等，还是我。\n- Wait, this is still me."),
+    ("A well-known\nco-worker.", "well-known\nco-worker", "well-known co-worker",
+     "well-known co-worker\nA well-known co-worker."),
+    ("A well\n-known co-worker.", "well\n-known", "well-known",
+     "well -known\nA well -known co-worker."),
+])
+def test_srt_consumers_do_not_invent_speakers_for_wraps_or_hyphens(
+    tmp_path, source, translation, mono, bilingual,
+):
+    from app.engines.translation_qa import run_quality_checks
+    from app.utils.srt import (
+        parse_srt_file, write_bilingual_srt, write_mono_srt, write_srt,
+    )
+
+    block = _make_block(1, source, translation)
+    report = run_quality_checks([block], target_language="简体中文", max_chars=40)
+    assert "speaker_line_structure_mismatch" not in report.summary["by_type"]
+    for writer in (write_srt, write_mono_srt):
+        out = tmp_path / f"{writer.__name__}.srt"
+        writer([block], str(out), use_translation=True)
+        assert parse_srt_file(str(out))[0].text == mono
+    out = tmp_path / "bilingual.srt"
+    write_bilingual_srt([block], str(out))
+    assert parse_srt_file(str(out))[0].text == bilingual
+
+
+@pytest.mark.parametrize("source,translation,clean_source,clean_translation", [
+    ("♪ I don't want ♪\nCome on!", "♪ 我不想 ♪\n加油！",
+     "I don't want\nCome on!", "我不想\n加油！"),
+    ("♪ I don't want ♪\nCome on!", "我不想\n加油！",
+     "I don't want\nCome on!", "我不想\n加油！"),
+    ("Come on!\n♫ Hold on ♫", "加油！\n坚持住",
+     "Come on!\nHold on", "加油！\n坚持住"),
+    ("♪ I don't\nwant to leave ♪\nCome on!", "我不想\n离开\n加油！",
+     "I don't\nwant to leave\nCome on!", "我不想\n离开\n加油！"),
+    ("<i>♪ I don't want ♪</i>\nCome on!", "<i>我不想</i>\n加油！",
+     "<i> I don't want </i>\nCome on!", "<i>我不想</i>\n加油！"),
+])
+def test_srt_consumers_preserve_explicit_music_dialogue_boundaries(
+    tmp_path, source, translation, clean_source, clean_translation,
+):
+    from app.utils.srt import (
+        parse_srt_file, write_bilingual_srt, write_mono_srt, write_srt,
+    )
+
+    block = _make_block(1013, source, translation)
+    for writer in (write_srt, write_mono_srt):
+        out = tmp_path / f"{writer.__name__}.srt"
+        writer([block], str(out), use_translation=True)
+        assert parse_srt_file(str(out))[0].text == clean_translation
+    out = tmp_path / "bilingual.srt"
+    write_bilingual_srt([block], str(out))
+    assert parse_srt_file(str(out))[0].text == (
+        clean_translation + "\n" + clean_source
+    )
+
+
+@pytest.mark.parametrize("source,translation,mono,bilingual", [
+    ("♪ I don't\nwant to leave ♪", "♪ 我不想\n离开 ♪", "我不想离开",
+     "我不想离开\nI don't want to leave"),
+    ("♪ I don't\nwant\n to leave ♪", "我不想\n就此\n离开", "我不想就此离开",
+     "我不想就此离开\nI don't want to leave"),
+    ("♪ I don't want ♪\nCome on!", "我不想加油！", "我不想加油！",
+     "我不想加油！\nI don't want\nCome on!"),
+    ("I don't want\nCome on!", "我不想\n加油！", "我不想加油！",
+     "我不想加油！\nI don't want Come on!"),
+])
+def test_music_boundaries_do_not_split_unmarked_text_or_identify_singers(
+    tmp_path, source, translation, mono, bilingual,
+):
+    from app.utils.srt import (
+        parse_srt_file, write_bilingual_srt, write_mono_srt, write_srt,
+    )
+
+    block = _make_block(1, source, translation)
+    for writer in (write_srt, write_mono_srt):
+        out = tmp_path / f"{writer.__name__}.srt"
+        writer([block], str(out), use_translation=True)
+        assert parse_srt_file(str(out))[0].text == mono
+    out = tmp_path / "bilingual.srt"
+    write_bilingual_srt([block], str(out))
+    assert parse_srt_file(str(out))[0].text == bilingual

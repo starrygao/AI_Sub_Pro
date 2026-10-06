@@ -672,6 +672,66 @@ _SAFE_UNBRACKETED_SOUND_LABELS = (
     "无清晰对话",
     "无清晰对白",
 )
+# Unbracketed SDH needs a complete acoustic event, not any short phrase
+# containing a word such as "calling", "stone", "phone" or "music".
+_UNBRACKETED_SOUND_QUALIFIER = (
+    r"(?:faintly|softly|quietly|loudly|heavily|lightly|deeply|"
+    r"hysterically|noisily|nearby|inside|outside|"
+    r"in\s+(?:the\s+)?(?:background|distance|car)|"
+    r"(?:on|at)\s+(?:the\s+)?door)"
+)
+_UNBRACKETED_VOCAL_SOUND = (
+    r"(?:chuckl(?:e|es|ing)|laugh(?:s|ing)?|laughter|"
+    r"sigh(?:s|ing)?|sob(?:s|bing)?|grunt(?:s|ing)?|gulp(?:s|ing)?|"
+    r"groan(?:s|ing)?|gasp(?:s|ing)?|whimper(?:s|ing)?|"
+    r"yelp(?:s|ing)?|scream(?:s|ing)?|shout(?:s|ing)?|"
+    r"scoff(?:s|ing)?|exhal(?:e|es|ing)|inhal(?:e|es|ing)|"
+    r"retch(?:es|ing)?|murmur(?:s|ing)?|whisper(?:s|ing)?|"
+    r"cheer(?:s|ing)?|jeer(?:s|ing)?|chant(?:s|ing)?|"
+    r"clamou?r(?:s|ing)?|roar(?:s|ing)?|cough(?:s|ing)?)"
+)
+_UNBRACKETED_MECHANICAL_SOUND_ACTION = (
+    r"(?:rings?|chimes?|buzz(?:es)?|vibrates?|beeps?|"
+    r"opens?|closes?|slams?|shatters?|clinks?|clatters?|"
+    r"clicks?|clacks?|jangles?|ticks?|crinkles?|wails?|"
+    r"approach(?:es)?|blares?|starts?|pours?|splashes?|"
+    r"screech(?:es)?|squeaks?|blows?|squawks?|roars?|"
+    r"patters?|whistles?|explodes?|whiz(?:zes)?)"
+)
+_UNBRACKETED_MECHANICAL_SOUND_DESCRIPTION_EN_RE = re.compile(
+    r"(?:(?:mobile|car|fire)\s+)?"
+    r"(?:phones?|lines?|doors?|doorbells?|bells?|bottles?|glass|"
+    r"keys?|keyboards?|locks?|lockers|bodycam|camera|laptop|"
+    r"reader|recorder|alarm|clock|crockery|can|plastic|objects|"
+    r"sirens?|engines?|water|car|tyres|tires|window|whistle|"
+    r"seagulls|fire|debris|fireworks)"
+    rf"\s+{_UNBRACKETED_MECHANICAL_SOUND_ACTION}"
+    rf"(?:\s+and\s+{_UNBRACKETED_MECHANICAL_SOUND_ACTION})*"
+    rf"(?:\s+{_UNBRACKETED_SOUND_QUALIFIER}){{0,2}}",
+    re.IGNORECASE,
+)
+_UNBRACKETED_SOUND_DESCRIPTION_EN_RE = re.compile(
+    rf"(?:(?:[A-Z][A-Za-z'’.-]*\s+){{1,3}})?{_UNBRACKETED_VOCAL_SOUND}"
+    rf"(?:\s+{_UNBRACKETED_SOUND_QUALIFIER}){{0,2}}|"
+    r"(?:(?:loud|heavy|laboured|rasping|indistinct|gentle|slow|"
+    r"distant|faint|two|three)\s+)*"
+    r"(?:applause|footsteps?|gunshots?|gunfire|explosions?|"
+    r"chatter|conversation|breathing|breath|siren(?:s)?|"
+    r"bang(?:s|ing)?|hammering|knock(?:s|ing)?|pounding|"
+    r"clatter(?:s|ing)?|hissing|whirring|hum of conversation)"
+    rf"(?:\s+(?:recedes?|improves?|trembles?|{_UNBRACKETED_SOUND_QUALIFIER}))?|"
+    rf"{_UNBRACKETED_MECHANICAL_SOUND_DESCRIPTION_EN_RE.pattern}|"
+    r"(?:guitar\s+strumming|running\s+water)|"
+    r"(?:(?:loud|gentle|slow|pounding|dance)\s+)*(?:music|song)"
+    r"\s+(?:plays?|playing|continues?|stops?|ends?|"
+    r"fades?(?:\s+up)?|drowns\s+speech)"
+    rf"(?:\s+{_UNBRACKETED_SOUND_QUALIFIER}){{0,2}}",
+    re.IGNORECASE,
+)
+_UNBRACKETED_SOUND_SPEECH_EN_RE = re.compile(
+    r"\b(?:not|never|[a-z]+n['’]t|do|does|did|can|could|may|might|"
+    r"will|would|shall|should|must)\b", re.IGNORECASE,
+)
 _CONTEXTUAL_SPEAKER_PREFIX_RE = re.compile(
     r"^\s*(?:[-–—]\s*)?"
     r"(?P<label>[A-Za-z][A-Za-z0-9 ./'&-]{0,44}|[\u3400-\u9fff]{1,12})"
@@ -684,10 +744,19 @@ _CONTEXTUAL_BRACKET_CUE_RE = re.compile(
     re.IGNORECASE,
 )
 _CONTEXTUAL_MARKER_RE = re.compile(
-    r"^\s*(?:【[^】\r\n]{1,12}】|\[[^\]\r\n]{1,20}\]|[（(][^）)\r\n]{1,20}[）)])"
+    r"^\s*(?:【(?P<corner>[^】\r\n]{1,20})】|"
+    r"\[(?P<bracket>[^\]\r\n]{1,20})\]|"
+    r"［(?P<wide_bracket>[^］\r\n]{1,20})］|"
+    r"[（(](?P<paren>[^）)\r\n]{1,20})[）)])"
 )
 _CONTEXTUAL_TARGET_LABEL_RE = re.compile(
-    r"^\s*(?:主持人|主持|司仪|DJ|酒保|电视|新闻|广播|旁白|画外音|电话|人群|歌声)[:：]\s*"
+    r"^\s*(?P<label>主持人|主持|司仪|DJ|酒保|电视|新闻|广播|旁白|画外音|电话|人群|众人|观众|歌声|"
+    r"PA|INTERCOM|LOUDSPEAKER|TV|TELEVISION|SCREEN|ON TV|"
+    r"NEWS|ANCHOR|REPORTER|NEWSCASTER|RADIO|BROADCAST|BROADCASTER|"
+    r"HOST|ANNOUNCER|EMCEE|PRESENTER|MC|M\.C\.|BARTENDER|"
+    r"VOICEOVER|VO|NARRATOR|OFFSCREEN|OFFCAMERA|OS|OFF SCREEN|OFF CAMERA|"
+    r"PHONE|CALLER|VOICEMAIL|CROWD|AUDIENCE|PATRONS|SINGER|VOCALIST)[:：]\s*",
+    re.IGNORECASE,
 )
 
 
@@ -725,6 +794,11 @@ def _is_chinese_target(target_language: str) -> bool:
 def _contextual_marker_from_label(label: str) -> str:
     text = _clean_text(label)
     if not text:
+        return ""
+    if (
+        _UNBRACKETED_SOUND_DESCRIPTION_EN_RE.fullmatch(text)
+        or _BRACKETED_ACTION_SOUND_EN_RE.fullmatch(text)
+    ):
         return ""
     if any(keyword in text for keyword in ("主持", "司仪", "报幕")):
         return "【主持人】"
@@ -798,12 +872,42 @@ def _contextual_marker_from_source(source: str) -> str:
 
 def _translation_with_contextual_marker(translation: str, marker: str) -> str:
     text = _clean_text(translation)
-    if not text or _CONTEXTUAL_MARKER_RE.match(text):
+    if not text:
         return text
-    label_match = _CONTEXTUAL_TARGET_LABEL_RE.match(text)
-    if label_match:
-        body = text[label_match.end():].strip()
-        return f"{marker}{body}" if body else marker
+    body = text
+    removed = False
+    while body:
+        bracket_match = _CONTEXTUAL_MARKER_RE.match(body)
+        label_match = _CONTEXTUAL_TARGET_LABEL_RE.match(body)
+        if bracket_match:
+            label = next(value for value in bracket_match.groups() if value is not None)
+            # Only known role labels can be redundant; a name or bracketed
+            # piece of dialogue is content, even if it contains a role word.
+            if not _CONTEXTUAL_TARGET_LABEL_RE.fullmatch(f"{label}:"):
+                break
+            prefix_end = bracket_match.end()
+        elif label_match:
+            label = label_match.group("label")
+            prefix_end = label_match.end()
+        else:
+            break
+        if label in {"众人", "观众"}:
+            label_marker = "【人群】"
+        else:
+            label_marker = (
+                f"【{label}】"
+                if _CJK_TEXT_RE.search(label) and label not in {"主持", "司仪"}
+                else _contextual_marker_from_label(label)
+            )
+        if label_marker != marker:
+            break
+        removed = True
+        body = body[prefix_end:].lstrip()
+    if removed:
+        return f"{marker}{body}"
+    # A different or unknown bracketed source label must not be overwritten.
+    if _CONTEXTUAL_MARKER_RE.match(text):
+        return text
     return f"{marker}{text}"
 
 
@@ -1074,7 +1178,7 @@ class SubtitleSourceDecision:
         return self.kind not in {"sound", "empty"}
 
 
-SUBTITLE_CLASSIFICATION_VERSION = 6
+SUBTITLE_CLASSIFICATION_VERSION = 7
 
 
 @lru_cache(maxsize=16384)
@@ -1183,30 +1287,39 @@ def _is_unbracketed_sound_description_label(value: str) -> bool:
         return False
     if _CJK_TEXT_RE.search(text):
         compact = _compact_subtitle_text(text)
-        return bool(compact and len(compact) <= 12)
-    words = re.findall(r"[A-Za-z]+", text)
-    letters = re.sub(r"[^A-Za-z]", "", text)
-    if _SENTENCE_END_PUNCT_RE.search(text) and letters != letters.upper():
-        return False
-    if words and words[0].casefold() in {
-        "a",
-        "an",
-        "the",
-        "this",
-        "that",
-        "these",
-        "those",
-        "my",
-        "your",
-        "his",
-        "her",
-        "our",
-        "their",
-    }:
-        return False
-    if len(words) <= 3:
+        return bool(
+            compact in _SAFE_UNBRACKETED_SOUND_LABELS
+            or _NOTE_WRAPPED_MUSIC_DESCRIPTION_CJK_RE.fullmatch(compact)
+        )
+    # Without brackets, length and a sound keyword are not evidence of SDH:
+    # short noun phrases can be spoken dialogue or a fragment of song lyrics.
+    # Uppercase presentation alone is insufficient: screen text and dialogue
+    # may also use capitals. Require each clause to be a known SDH event.
+    if re.fullmatch(_MUSIC_DESCRIPTION_EN_PATTERN, text, re.I) or re.fullmatch(
+        r"(?:no|without) (?:audible|discernible|intelligible) dialogue", text, re.I,
+    ):
         return True
-    return bool(letters and letters == letters.upper())
+    letters = re.sub(r"[^A-Za-z]", "", text)
+    if not letters or letters != letters.upper():
+        return False
+    if _UNBRACKETED_MECHANICAL_SOUND_DESCRIPTION_EN_RE.fullmatch(text):
+        return True
+    # Negation, modality and questions do not establish an audible event.
+    if _UNBRACKETED_SOUND_SPEECH_EN_RE.search(text):
+        return False
+    clauses = re.split(r"\s*(?:,|\band\b)\s*", text.rstrip(","), flags=re.I)
+    return bool(clauses) and all(
+        clause and (
+            not re.match(
+                r"(?:every|each|any|some|another|many|several|"
+                r"a|an|the|my|your|our|their|please|stop|keep|let)\b", clause, re.I,
+            )
+        ) and (
+            _UNBRACKETED_SOUND_DESCRIPTION_EN_RE.fullmatch(clause)
+            or _BRACKETED_ACTION_SOUND_EN_RE.fullmatch(clause)
+        )
+        for clause in clauses
+    )
 
 
 def _is_high_confidence_unbracketed_target_label(value: str) -> bool:
@@ -2056,7 +2169,7 @@ def run_quality_checks(
         if export_layout:
             from app.utils.srt import _subtitle_text
             layout_translation = _subtitle_text(
-                translation, single_line=True, is_translation=True,
+                translation, single_line=True, is_translation=True, source_text=source,
             )
         lines = _subtitle_lines(layout_translation) or ([layout_translation] if layout_translation else [])
         compact_translation = _compact_subtitle_text(layout_translation)

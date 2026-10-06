@@ -7,7 +7,7 @@ from datetime import timedelta
 from math import isfinite
 from typing import List, Optional
 
-from app.utils.subtitle_structure import classify_speaker_lines
+from app.utils.subtitle_structure import classify_speaker_lines, visible_subtitle_text
 from app.utils.subtitle_metadata import strip_subtitle_metadata
 
 
@@ -416,6 +416,7 @@ def write_srt(
                 getattr(b, "translation", "") if use_translation else getattr(b, "text", ""),
                 single_line=use_translation,
                 is_translation=use_translation,
+                source_text=getattr(b, "text", ""),
             )
             if not text:
                 _append_report_id(report.empty_text_ids, b)
@@ -460,6 +461,7 @@ def write_mono_srt(blocks, out_path: str, use_translation: bool = True) -> int:
             getattr(b, "translation", "") if use_translation else getattr(b, "text", ""),
             single_line=use_translation,
             is_translation=use_translation,
+            source_text=getattr(b, "text", ""),
         )
         if not text:
             continue
@@ -474,7 +476,7 @@ def write_mono_srt(blocks, out_path: str, use_translation: bool = True) -> int:
 
 
 def write_bilingual_srt(blocks: List[SubtitleBlock], path: str):
-    """Write one translation line above one original line per bilingual cue."""
+    """Write translation above source; retain explicit music/dialogue boundaries."""
     with open(path, "w", encoding="utf-8") as f:
         idx = 1
         for b in blocks:
@@ -482,10 +484,12 @@ def write_bilingual_srt(blocks: List[SubtitleBlock], path: str):
                 continue
             if _is_source_sound_description(getattr(b, "text", "")):
                 continue
-            text = _bilingual_line(_subtitle_text(getattr(b, "text", "")))
-            translation = _bilingual_line(_subtitle_text(
+            source = getattr(b, "text", "")
+            text = _subtitle_text(source, bilingual=True)
+            translation = _subtitle_text(
                 getattr(b, "translation", ""), is_translation=True,
-            ))
+                source_text=source, bilingual=True,
+            )
             if not text and not translation:
                 continue
             start = getattr(b, "start", timedelta(0))
@@ -525,7 +529,15 @@ def _subtitle_text(
     *,
     single_line: bool = False,
     is_translation: bool = False,
+    source_text: str = "",
+    bilingual: bool = False,
 ) -> str:
+    """Clean text without merging explicit speaker or music/dialogue boundaries.
+
+    Source music boundaries constrain existing translation line breaks only;
+    a translation with no boundary is never split by guessing its meaning.
+    Bilingual layout compacts each language except mixed music/dialogue cues.
+    """
     if not isinstance(value, str):
         return ""
     text = _MUSIC_SYMBOL_RE.sub("", strip_subtitle_metadata(value))
@@ -538,9 +550,33 @@ def _subtitle_text(
             cleaned = re.sub(r"\s*-+$", "", cleaned).strip()
         if cleaned:
             lines.append(cleaned)
-    if single_line:
+    mixed_music = (
+        _has_mixed_music_lines(value)
+        or (is_translation and _has_mixed_music_lines(source_text))
+    )
+    if bilingual:
+        text = "\n".join(lines).strip()
+        return text if mixed_music else _bilingual_line(text)
+    if single_line and not mixed_music:
         lines = _single_line_translation(lines)
     return "\n".join(lines).strip()
+
+
+def _has_mixed_music_lines(value) -> bool:
+    if not isinstance(value, str):
+        return False
+    singing = False
+    kinds = set()
+    for line in strip_subtitle_metadata(value).splitlines():
+        visible = visible_subtitle_text(line)
+        symbols = list(_MUSIC_SYMBOL_RE.finditer(visible))
+        content = _MUSIC_SYMBOL_RE.sub("", visible).strip()
+        if content and not re.fullmatch(r"[-–—\s]+", content):
+            kinds.add(singing or bool(symbols))
+        # A pair surrounds one lyric; an opening mark can span visual wraps.
+        if len(symbols) % 2:
+            singing = not singing
+    return len(kinds) > 1
 
 
 def _bilingual_line(text: str) -> str:

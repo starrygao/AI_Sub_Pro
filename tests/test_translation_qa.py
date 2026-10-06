@@ -533,6 +533,103 @@ def test_sound_verb_morphology_does_not_swallow_real_dialogue(source):
 
 
 @pytest.mark.parametrize(
+    "source,translation",
+    [
+        ("Every explosion,", "每一次爆炸，"),
+        ("<i>every stone,</i>", "每一块石头，"),
+        ("CALLING DAD", "正在呼叫爸爸"),
+        ("JOHN DOES NOT SHOUT", "约翰没有喊。"),
+        ("JOHN NEVER LAUGHS", "约翰从不笑。"),
+        ("JOHN ISN'T SCREAMING", "约翰没在尖叫。"),
+        ("JOHN MIGHT SCREAM", "约翰可能会尖叫。"),
+        ("DID JOHN LAUGH", "约翰笑了吗？"),
+        ("CALLING HOME", "正在呼叫家里"),
+        ("PHONE HOME", "打电话回家"),
+        ("SAVE THE MUSIC", "拯救音乐"),
+        ("EVERY LAUGH", "每一次欢笑"),
+        ("Please whistle", "请吹口哨"),
+        ("Some music,", "一些音乐，"),
+        ("Another stone", "另一块石头"),
+        ("Every explosion,\nevery crash,", "每一次爆炸，每一次撞击，"),
+        ("电话那头", "电话那头"),
+    ],
+)
+def test_sound_word_fragments_require_translation_and_survive_srt_export(
+    source, translation, tmp_path,
+):
+    from app.engines.translation_qa import (
+        normalize_sound_description_translations,
+        run_quality_checks,
+    )
+    from app.utils.srt import parse_srt_file, write_bilingual_srt, write_srt
+
+    block = _block(1123, source)
+    report = run_quality_checks([block], target_language="简体中文", max_chars=40)
+    missing = [issue for issue in report.issues if issue.type == "missing_translation"]
+    assert [issue.block_id for issue in missing] == [1123]
+    assert report.unresolved_blocks == [1123]
+
+    block.translation = translation
+    assert normalize_sound_description_translations([block]) == []
+    translated_path = tmp_path / "translated.srt"
+    write_report = write_srt(
+        [block], str(translated_path), use_translation=True, return_report=True,
+    )
+    assert write_report.written_ids == [1123]
+    assert write_report.omitted_sound_description_ids == []
+    assert [cue.text for cue in parse_srt_file(str(translated_path))] == [translation]
+
+    bilingual_path = tmp_path / "bilingual.srt"
+    write_bilingual_srt([block], str(bilingual_path))
+    bilingual = parse_srt_file(str(bilingual_path))
+    assert len(bilingual) == 1
+    assert translation in bilingual[0].text
+    assert source.replace("\n", " ") in bilingual[0].text
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "[explosion]",
+        "[music]",
+        "[phone chimes]",
+        "PHONE CHIMES",
+        "LINE RINGS",
+        "CAN CLATTERS",
+        "LOUD GULPING",
+        "FIREWORKS WHISTLE AND EXPLODE",
+        "CROWD CHANTS FAINTLY",
+        "GERRY LAUGHS",
+        "BOTH CHUCKLE",
+        "CHEERING AND APPLAUSE",
+        "GLASS SHATTERS, FIRE ROARS",
+        "SIRENS WAIL,\nCAR DOORS SLAM",
+        "RUNNING WATER",
+        "MUSIC PLAYING QUIETLY",
+        "NO DISCERNIBLE DIALOGUE",
+    ],
+)
+def test_complete_sound_events_remain_omitted_by_qa_and_srt(source, tmp_path):
+    from app.engines.translation_qa import run_quality_checks
+    from app.utils.srt import parse_srt_file, write_bilingual_srt, write_srt
+
+    block = _block(1, source)
+    report = run_quality_checks([block], target_language="简体中文", max_chars=40)
+    assert "missing_translation" not in report.summary["by_type"]
+    block.translation = "声音描述不应交付"
+    translated_path = tmp_path / "translated.srt"
+    write_report = write_srt(
+        [block], str(translated_path), use_translation=True, return_report=True,
+    )
+    assert write_report.written_ids == []
+    assert write_report.omitted_sound_description_ids == [1]
+    assert parse_srt_file(str(translated_path)) == []
+    bilingual_path = tmp_path / "bilingual.srt"
+    write_bilingual_srt([block], str(bilingual_path))
+    assert parse_srt_file(str(bilingual_path)) == []
+
+
+@pytest.mark.parametrize(
     "source",
     [
         "[upbeat Latin music\ncontinues faintly]",
@@ -1060,6 +1157,65 @@ def test_annotate_contextual_speaker_translations_marks_background_sources():
     assert blocks[3].translation == "【主持人】最后一轮。"
     assert blocks[4].translation == "【广播】天气更新。"
     assert blocks[5].translation == "【主持人】开始吧。"
+
+@pytest.mark.parametrize(
+    "source,translation,expected",
+    [
+        ("CROWD: Get them out!", "【人群】CROWD: 赶他们走！", "【人群】赶他们走！"),
+        ("CROWD: Get them out!", "CROWD: 【人群】［人群］赶他们走！", "【人群】赶他们走！"),
+        ("CROWD: Get them out!", "【人群】众人：赶他们走！", "【人群】赶他们走！"),
+        ("CROWD: Get them out!", "【人群】［观众］赶他们走！", "【人群】赶他们走！"),
+        ("CROWD: Get them out!", "【人群】［众人］赶他们走！", "【人群】赶他们走！"),
+        ("[bartender] Odd-shaped squash.", "【酒保】［酒保］形状奇怪的南瓜。", "【酒保】形状奇怪的南瓜。"),
+        ("NARRATOR: He left.", "【旁白】［旁白］他走了。", "【旁白】他走了。"),
+        ("NARRATOR: He left.", "(NARRATOR)【旁白】旁白：他走了。", "【旁白】他走了。"),
+        ("HOST: Last call.", "主持人：［主持人］最后一轮。", "【主持人】最后一轮。"),
+    ],
+)
+def test_contextual_speaker_duplicates_are_normalized_in_export_and_idempotent(
+    source, translation, expected, tmp_path,
+):
+    from app.engines.translation_qa import annotate_contextual_speaker_translations
+    from app.utils.srt import parse_srt_file, write_srt
+
+    block = _block(1, source, translation)
+    applied = annotate_contextual_speaker_translations([block])
+    assert len(applied) == 1
+    assert applied[0]["from"] == translation
+    assert applied[0]["to"] == expected
+    assert block.translation == expected
+    assert annotate_contextual_speaker_translations([block]) == []
+    translated_path = tmp_path / "translated.srt"
+    write_srt([block], str(translated_path), use_translation=True)
+    assert [cue.text for cue in parse_srt_file(str(translated_path))] == [expected]
+
+
+@pytest.mark.parametrize(
+    "source,translation",
+    [
+        ("[bartender] Listen.", "【酒保】［旁白］听着。"),
+        ("NARRATOR: Listen.", "【旁白】［画外音］听着。"),
+        ("[bartender] Listen.", "【酒保】［酒保李］听着。"),
+        ("[bartender] Listen.", "【酒保】［南瓜］形状奇怪。"),
+        ("[bartender] Listen.", "【酒保】李明：听着。"),
+        ("CROWD: Get them out!", "【人群】CROWD FUNDING: 众筹。"),
+        ("CROWD: Get them out!", "【人群】旁白：赶他们走！"),
+        ("CROWD: Get them out!", "【旁白】［旁白］赶他们走！"),
+        ("CROWD: Get them out!", "【人群】赶他们走！【人群】别回来！"),
+        ("-[phone chimes]\n-...and my headless horseman.", "-[手机提示音]\n-……和我的无头骑士。"),
+        ("-[phone chimes]\n-I wonder if he's beaten my record.", "-[手机提示音]\n-不知道他有没有打破我的纪录。"),
+        ("-[phone chimes]\n-[March] Hmm.", "-[手机提示音]\n-[马奇] 嗯。"),
+    ],
+)
+def test_contextual_speaker_normalization_preserves_other_sources_and_content(
+    source, translation,
+):
+    from app.engines.translation_qa import annotate_contextual_speaker_translations
+
+    block = _block(1, source, translation)
+    assert annotate_contextual_speaker_translations([block]) == []
+    assert block.translation == translation
+
 
 
 def test_quality_report_serializes_json_and_markdown(tmp_path):

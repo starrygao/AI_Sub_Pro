@@ -10,6 +10,9 @@
 - Recognize full-width sound-cue brackets and correct exhaling forms while preserving two-speaker line breaks and markers during cleanup.
 - Classify English residue as a content issue. Exempt source-backed brands, pronunciation exercises, and approved retained terms without exempting surrounding untranslated dialogue. Preserve source-supported consecutive repetition while checking the full displayed reading load.
 - Size library subtitle extraction deadlines to the source file, retaining a 900-second minimum and headroom for throttled NAS reads. Large MKVs no longer share a fixed 15-minute cutoff; pause, cancellation, and explicit timeouts remain effective.
+- Tighten unbracketed sound-cue evidence: uppercase text or short words such as explosion/stone no longer authorize omission, and negated, modal, or interrogative speech does not establish an audible event. Preserve dialogue, lyrics, and on-screen text while continuing to omit complete, explicit sound descriptions.
+- Preserve first-unmarked/second-dashed dialogue and explicitly music-marked lyric/dialogue boundaries during export, while retaining existing bilingual compaction for visual wraps and pure lyrics. Legacy partial recovery and layout QA use the same actual rendering rules.
+- Deduplicate only consecutive, source-backed contextual speaker markers without merging distinct sources or inventing identities. Phone chimes no longer label nearby dialogue as a telephone channel.
 
 ## v1.3.42
 

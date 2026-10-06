@@ -77,7 +77,10 @@ def _legacy_drafts(pdir, blocks, source_hash, configuration_hash):
     for key, target in targets.items():
         source = sources[key]
         pair = pairs.get(key)
-        if pair is None or pair.text != target.text + '\n' + _subtitle_text(source.text):
+        expected = _subtitle_text(
+            target.text, is_translation=True, source_text=source.text, bilingual=True,
+        ) + '\n' + _subtitle_text(source.text, bilingual=True)
+        if pair is None or pair.text != expected:
             return []
     for block in drafts:
         target = targets.get((block.start, block.end))

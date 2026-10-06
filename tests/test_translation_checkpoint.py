@@ -65,3 +65,29 @@ def test_checkpoint_invalid_ids_and_whitespace_are_not_restored(tmp_path):
     save_translation_checkpoint(tmp_path,rows,sh,'cfg')
     fresh=deepcopy(rows);fresh[0].translation=''
     assert restore_translation_checkpoint(tmp_path,fresh,sh,'cfg')==0
+
+
+@pytest.mark.parametrize(("source", "translation"), [
+    ("Go for it!\n- Ooh!", "上吧！\n- 哦！"),
+    ("♪ I don't want ♪\nCome on!", "我不想\n加油！"),
+    ("I need to talk\nabout the case.", "我要谈谈这个案子。"),
+])
+def test_partial_restores_real_bilingual_layout_without_losing_structure(
+    tmp_path, source, translation,
+):
+    rows = [SubtitleBlock(7, timedelta(seconds=1), timedelta(seconds=3), source, translation)]
+    write_srt(rows, str(tmp_path / 'filtered.srt'))
+    source_hash = subtitle_source_generation_hash(tmp_path)
+    write_srt(rows, str(tmp_path / 'partial_translated.srt'), use_translation=True)
+    write_bilingual_srt(rows, str(tmp_path / 'partial_bilingual.srt'))
+    (tmp_path / 'translation_qa_report.json').write_text(json.dumps({
+        'source_generation_hash': source_hash, 'configuration_hash': 'cfg',
+    }))
+    fresh = deepcopy(rows)
+    fresh[0].translation = ''
+    assert restore_translation_checkpoint(tmp_path, fresh, source_hash, 'cfg') == 1
+    assert fresh[0].translation == translation
+    (tmp_path / 'partial_bilingual.srt').write_text('unrelated dialogue')
+    fresh[0].translation = ''
+    assert restore_translation_checkpoint(tmp_path, fresh, source_hash, 'cfg') == 0
+    assert fresh[0].translation == ''
