@@ -1,5 +1,6 @@
 """Bounded subtitle extraction with observed input-read progress for Docker."""
 from pathlib import Path
+import math
 import subprocess
 import tempfile
 import time
@@ -19,8 +20,11 @@ def input_position(pid, source, proc_root=Path('/proc')):
     return None
 
 
-def extract_subtitles(cmd, source, report, stop_event, *, timeout=900, poll_seconds=1):
+def extract_subtitles(cmd, source, report, stop_event, *, timeout=None, poll_seconds=1):
     total = Path(source).stat().st_size
+    if timeout is None:
+        # NAS reads are capped at 10 MiB/s; budget half that rate plus startup time.
+        timeout = max(900, 120 + math.ceil(total / (5 * 1024**2)))
     started = time.monotonic()
     # A file avoids deadlocking on ffmpeg stderr and uses the configured temp volume.
     with tempfile.TemporaryFile() as errors:

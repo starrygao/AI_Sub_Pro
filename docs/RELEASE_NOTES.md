@@ -9,6 +9,7 @@
 - Use bounded, read-only neighboring context in translation and targeted semantic review, retaining source sound cues. Targeted review shares project terminology and entity context without duplicating dialogue already present in full-document requests.
 - Recognize full-width sound-cue brackets and correct exhaling forms while preserving two-speaker line breaks and markers during cleanup.
 - Classify English residue as a content issue. Exempt source-backed brands, pronunciation exercises, and approved retained terms without exempting surrounding untranslated dialogue. Preserve source-supported consecutive repetition while checking the full displayed reading load.
+- Size library subtitle extraction deadlines to the source file, retaining a 900-second minimum and headroom for throttled NAS reads. Large MKVs no longer share a fixed 15-minute cutoff; pause, cancellation, and explicit timeouts remain effective.
 
 ## v1.3.42
 

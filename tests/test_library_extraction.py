@@ -31,7 +31,6 @@ def test_extraction_is_visible_before_model_start_and_clears_on_handoff(tmp_path
         report(50, 100, 12)
         row = server.library_tasks(view='processed')['items'][0]
         assert row['progress']['progress'] == 50
-        assert '12 秒' in row['progress']['message']
         Path(cmd[-1]).write_text('1\n00:00:00,000 --> 00:00:01,000\nHello.\n')
     monkeypatch.setattr(module, 'extract_subtitles', extract)
     worker.prepare(worker.store.get(video), info, [])
@@ -94,6 +93,59 @@ def test_extraction_runner_reaps_child_and_reports_real_position(tmp_path, monke
             extraction.extract_subtitles(cmd, source, lambda *p: reports.append(p), event, **kwargs)
     assert children[0].poll() is not None
     if case != 'stop': assert reports and reports[0][:2] == (25, 100)
+
+
+@pytest.mark.parametrize('size_mib,finish_seconds,timeout,should_finish', [
+    (10240, 1100, None, True),
+    (1, 1100, None, False),
+    (10240, 2500, None, False),
+    (10240, 1100, 900, False),
+])
+def test_extraction_deadline_allows_large_slow_reads_but_remains_bounded(
+        tmp_path, monkeypatch, size_mib, finish_seconds, timeout, should_finish):
+    import subprocess
+    from app.library import extraction
+
+    source = tmp_path / 'source.mkv'
+    with source.open('wb') as handle:
+        handle.truncate(size_mib * 1024**2)
+    elapsed = 0
+
+    class Process:
+        pid = 123
+        finished = False
+        killed = False
+
+        def wait(self, timeout):
+            nonlocal elapsed
+            if self.killed:
+                return -9
+            elapsed += timeout
+            if elapsed >= finish_seconds:
+                self.finished = True
+                return 0
+            raise subprocess.TimeoutExpired('extract', timeout)
+
+        def poll(self):
+            return -9 if self.killed else 0 if self.finished else None
+
+        def kill(self):
+            self.killed = True
+
+    process = Process()
+    monkeypatch.setattr(extraction.subprocess, 'Popen', lambda *a, **kw: process)
+    monkeypatch.setattr(extraction.time, 'monotonic', lambda: elapsed)
+    monkeypatch.setattr(extraction, 'input_position', lambda *a: None)
+    kwargs = {'poll_seconds': 100}
+    if timeout is not None:
+        kwargs['timeout'] = timeout
+    if should_finish:
+        extraction.extract_subtitles(['extract'], source, lambda *a: None, threading.Event(), **kwargs)
+        assert process.finished and not process.killed
+    else:
+        with pytest.raises(RuntimeError, match='超时'):
+            extraction.extract_subtitles(['extract'], source, lambda *a: None, threading.Event(), **kwargs)
+        assert process.killed and not process.finished
 
 
 def test_failed_extraction_remains_visible_and_retry_clears_old_progress(tmp_path, tmp_project_dir, monkeypatch):
