@@ -9,6 +9,9 @@
     'setting-polish-provider':['translation','polish_provider'],
     'setting-polish-model':['translation','polish_model'],
     'setting-polish-effort':['translation','polish_effort'],
+    'setting-review-provider':['translation','review_provider'],
+    'setting-review-model':['translation','review_model'],
+    'setting-review-effort':['translation','review_effort'],
     'setting-asr-model':['asr','model_size'],
     'setting-beam':['asr','beam_size'],
     'setting-batch':['translation','batch_size'],
@@ -20,6 +23,7 @@
   let saving = false, settingsLoading = false, detailRequest = 0, detailPending = 0, previewKey = '', blocks = [], shown = 0;
   let polishCatalog = {}, modelCatalogs = {}, polishLoading = false, polishError = '', polishRequest = 0;
   let modelsRefreshing = false, primaryLoading = false, primaryError = '', primaryRequest = 0, cliRequest = 0;
+  let reviewCatalog = {}, reviewLoading = false, reviewError = '', reviewRequest = 0;
 
   function catalogHint(info) {
     if (info.source === 'static') return '使用内置模型目录；实际可用性取决于服务器对应服务的账号权限。';
@@ -36,8 +40,8 @@
     $(id).value = selected;
   }
   function modelEfforts(selected, target = 'primary') {
-    const prefix = target === 'polish' ? 'setting-polish-' : 'setting-';
-    const info = target === 'polish' ? polishCatalog : catalog;
+    const prefix = target === 'primary' ? 'setting-' : 'setting-' + target + '-';
+    const info = target === 'polish' ? polishCatalog : target === 'review' ? reviewCatalog : catalog;
     const efforts = info.capabilities?.[$(prefix + 'model').value]?.reasoning_efforts || [];
     const values = ['auto', ...efforts];
     options(prefix + 'effort', values, selected, effortNames);
@@ -74,6 +78,35 @@
       }
     }
   }
+  async function loadReviewModels(model = '', effort = 'auto') {
+    const ticket = ++reviewRequest, provider = $('setting-review-provider').value;
+    reviewError = ''; reviewLoading = true;
+    $('setting-review-model').disabled = true; $('setting-review-effort').disabled = true;
+    $('review-loading').hidden = false; $('review-reload').hidden = true; notice('review-error', '');
+    options('setting-review-model', [], model, {'':'请选择模型'});
+    options('setting-review-effort', ['auto'], effort, effortNames);
+    settingsState();
+    try {
+      if (!provider) throw Error('请选择复核服务。');
+      const info = modelCatalogs[provider] || await request('models/' + encodeURIComponent(provider));
+      if (ticket !== reviewRequest) return;
+      const selected = model || info.models?.[0] || '';
+      if (!selected) throw Error('暂无可用复核模型，请重试或选择其他服务。');
+      modelCatalogs[provider] = info; reviewCatalog = info;
+      options('setting-review-model', info.models || [], selected);
+      modelEfforts(effort, 'review');
+      if (selected !== model) cliHints();
+    } catch (e) {
+      if (ticket === reviewRequest) { reviewError = e.message; notice('review-error', e.message); $('review-reload').hidden = false; }
+    } finally {
+      if (ticket === reviewRequest) {
+        reviewLoading = false; $('review-loading').hidden = true;
+        $('setting-review-model').disabled = !!reviewError;
+        if (reviewError) $('setting-review-effort').disabled = true;
+        settingsState();
+      }
+    }
+  }
   function changes() {
     const patch = {};
     if (!settings) return patch;
@@ -88,13 +121,14 @@
   function settingsState(s = serverStatus) {
     serverStatus = s;
     $('settings-fields').disabled = saving || modelsRefreshing || !settings;
-    $('settings-save').disabled = saving || modelsRefreshing || !settings || primaryLoading || !!primaryError || polishLoading || !!polishError || !dirty();
-    $('models-refresh').disabled = saving || modelsRefreshing || primaryLoading || polishLoading || !settings;
+    $('settings-save').disabled = saving || modelsRefreshing || !settings || primaryLoading || !!primaryError || polishLoading || !!polishError || reviewLoading || !!reviewError || !dirty();
+    $('models-refresh').disabled = saving || modelsRefreshing || primaryLoading || polishLoading || reviewLoading || !settings;
     $('settings-reset').disabled = saving || !settings || !dirty();
     const update = s?.model_settings;
     const current = [providerNames[update?.current_provider], update?.current_model, effortNames[update?.current_effort]].filter(Boolean).join(' · ');
     const currentPolish = update?.current_polish_provider ? [providerNames[update.current_polish_provider] || update.current_polish_provider, update.current_polish_model || update.current_model, effortNames[update.current_polish_effort]].filter(Boolean).join(' · ') : '未启用';
-    notice('settings-availability', update?.error || (update?.pending ? '新设置已保存，等待生效。当前翻译：' + current + '；当前润色：' + currentPolish + '。正在处理的任务完成并保存字幕后，自动应用新设置。' : '可以随时修改并保存。正在处理的任务继续使用原设置，新设置用于后续任务。'));
+    const currentReview = [providerNames[update?.current_review_provider] || update?.current_review_provider, update?.current_review_model, effortNames[update?.current_review_effort]].filter(Boolean).join(' · ') || '暂未读取';
+    notice('settings-availability', update?.error || (update?.pending ? '新设置已保存，等待生效。当前初译：' + current + '；当前润色：' + currentPolish + '；当前质量复核：' + currentReview + '。正在处理的任务完成并保存字幕后，自动应用新设置。' : '可以随时修改并保存。正在处理的任务继续使用原设置，新设置用于后续任务。'));
     if (update && !update.pending && !dirty() && $('settings-feedback').textContent.startsWith('已保存')) $('settings-feedback').textContent = '设置已生效';
   }
   function populate() {
@@ -104,7 +138,7 @@
     catalog = modelCatalogs[settings.translation.primary_provider] || catalog;
     for (const [id, [section, key]] of Object.entries(fields)) {
       const input = $(id), value = settings[section]?.[key];
-      if (id === 'setting-provider' || id === 'setting-model' || id === 'setting-effort' || id.startsWith('setting-polish-')) continue;
+      if (id === 'setting-provider' || id === 'setting-model' || id === 'setting-effort' || id.startsWith('setting-polish-') || id.startsWith('setting-review-')) continue;
       if (input.type === 'checkbox') input.checked = !!value;
       else if (input.tagName === 'SELECT') options(id, [...input.options].map(o => o.value), value);
       else input.value = value;
@@ -114,10 +148,13 @@
     modelEfforts(settings.translation.primary_effort);
     const provider = settings.translation.primary_provider;
     const polishProvider = settings.translation.polish_provider || '';
-    const providers = Object.keys(providerNames).filter(name => ['omp_cli', 'claude_cli', 'codex_cli'].includes(name) || name === provider || name === polishProvider || settings.credentials_configured?.[name]);
+    const reviewProvider = settings.translation.review_provider;
+    const providers = Object.keys(providerNames).filter(name => ['omp_cli', 'claude_cli', 'codex_cli'].includes(name) || name === provider || name === polishProvider || name === reviewProvider || settings.credentials_configured?.[name]);
     options('setting-provider', providers, provider, providerNames);
     options('setting-polish-provider', ['', ...providers], polishProvider, {'':'不启用', ...providerNames});
+    options('setting-review-provider', providers, reviewProvider, providerNames);
     loadPolishModels(settings.translation.polish_model || '', settings.translation.polish_effort || 'auto');
+    loadReviewModels(settings.translation.review_model, settings.translation.review_effort);
     $('provider-label').textContent = providerNames[provider] || provider;
     cliHints();
     $('asr-backend').textContent = settings.asr.backend;
@@ -150,7 +187,7 @@
       const info = modelCatalogs[provider] || await request('models/' + encodeURIComponent(provider));
       if (ticket !== primaryRequest) return;
       const selected = model || info.models?.[0] || '';
-      if (!selected) throw Error('暂无可用翻译模型，请重试或选择其他服务。');
+      if (!selected) throw Error('暂无可用初译模型，请重试或选择其他服务。');
       modelCatalogs[provider] = info; catalog = info;
       options('setting-model', info.models || [], selected); modelEfforts(effort);
       $('model-hint').textContent = catalogHint(info);
@@ -166,7 +203,7 @@
     }
   }
   function selectedCliProviders() {
-    return [...new Set([$('setting-provider').value, $('setting-polish-provider').value])]
+    return [...new Set([$('setting-provider').value, $('setting-polish-provider').value, $('setting-review-provider').value])]
       .filter(provider => ['omp_cli', 'claude_cli', 'codex_cli'].includes(provider));
   }
   function cliHints() {
@@ -182,7 +219,7 @@
   }
   $('cli-check').onclick = async () => {
     const ticket = ++cliRequest;
-    const selections = [...new Map(['setting-', 'setting-polish-'].map(prefix => {
+    const selections = [...new Map(['setting-', 'setting-polish-', 'setting-review-'].map(prefix => {
       const provider = $(prefix + 'provider').value, model = $(prefix + 'model').value;
       return [provider === 'omp_cli' ? provider + ':' + model : provider, {provider, model}];
     }).filter(([, {provider}]) => selectedCliProviders().includes(provider))).values()];
@@ -223,6 +260,18 @@
     modelEfforts(current === 'auto' || efforts.includes(current) ? current : 'auto', 'polish');
   };
   $('polish-reload').onclick = () => loadPolishModels($('setting-polish-model').value, $('setting-polish-effort').value);
+  $('setting-review-provider').onchange = () => {
+    const current = $('setting-review-provider').value === settings.translation.review_provider;
+    cliHints();
+    return loadReviewModels(current ? settings.translation.review_model : '', current ? settings.translation.review_effort : 'auto');
+  };
+  $('setting-review-model').onchange = () => {
+    cliHints();
+    const efforts = reviewCatalog.capabilities?.[$('setting-review-model').value]?.reasoning_efforts || [];
+    const current = $('setting-review-effort').value;
+    modelEfforts(current === 'auto' || efforts.includes(current) ? current : 'auto', 'review');
+  };
+  $('review-reload').onclick = () => loadReviewModels($('setting-review-model').value, $('setting-review-effort').value);
   $('settings-form').addEventListener('input', () => { $('settings-feedback').textContent = dirty() ? '有未保存的更改' : '尚未修改'; settingsState(); });
   $('settings-form').addEventListener('change', () => { $('settings-feedback').textContent = dirty() ? '有未保存的更改' : '尚未修改'; settingsState(); });
   $('settings-reset').onclick = () => { populate(); notice('settings-error', ''); };
@@ -232,7 +281,7 @@
     modelsRefreshing = true; settingsState(); notice('settings-error', '');
     $('models-refresh').textContent = '正在同步…';
     try {
-      const providers = [...new Set([$('setting-provider').value, $('setting-polish-provider').value].filter(Boolean))];
+      const providers = [...new Set([$('setting-provider').value, $('setting-polish-provider').value, $('setting-review-provider').value].filter(Boolean))];
       const responses = await Promise.all(providers.map(provider => request('models/' + encodeURIComponent(provider) + '?refresh=true')));
       providers.forEach((provider, index) => { modelCatalogs[provider] = responses[index]; });
       catalog = modelCatalogs[$('setting-provider').value];
@@ -240,12 +289,13 @@
       options('setting-model', catalog.models || [], selected); modelEfforts(effort);
       $('model-hint').textContent = catalogHint(catalog);
       await loadPolishModels($('setting-polish-model').value, $('setting-polish-effort').value);
+      await loadReviewModels($('setting-review-model').value, $('setting-review-effort').value);
     } catch (e) { notice('settings-error', '模型同步失败：' + e.message + '。已保留当前选择。'); }
     finally { modelsRefreshing = false; $('models-refresh').textContent = '同步模型列表'; settingsState(); }
   };
   $('settings-form').onsubmit = async event => {
     event.preventDefault();
-    if (saving || modelsRefreshing || !settings || primaryLoading || primaryError || polishLoading || polishError || !dirty() || !$('settings-form').reportValidity()) return;
+    if (saving || modelsRefreshing || !settings || primaryLoading || primaryError || polishLoading || polishError || reviewLoading || reviewError || !dirty() || !$('settings-form').reportValidity()) return;
     saving = true; settingsState(); notice('settings-error', ''); $('settings-save').textContent = '正在保存…';
     try {
       const patch = changes();

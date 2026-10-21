@@ -2,8 +2,11 @@
 
 镜像包含 OMP CLI、Codex CLI 与 Claude Code。新安装默认使用 OMP，
 模型 `openai-codex/gpt-6-astra`、推理强度 `medium`；已有 `config.json` 不会被入口程序覆盖。
-在控制台「模型与处理」中选择主翻译服务、模型，也可独立选择润色服务。
-要把现有主翻译和润色都切到 OMP，请分别选择 OMP 和上述模型、推理强度，不必改其他质量策略。
+在控制台「模型与处理」中分别配置「初译」「字幕润色」「质量复核」的服务、模型和思考强度。
+质量复核的模型语义检查使用独立选择；规则检查不调用模型。新安装仅提供
+`OMP CLI / openai-codex/gpt-6.1-sol / xhigh` 作为复核默认值，不限制后续更换模型或强度。
+旧配置首次升级时将当时的初译选择保存为独立复核设置，之后不再随初译变化。
+要切到 OMP，请在相应阶段分别选择服务、模型和思考强度，不必改其他质量策略。
 保存的设置会等当前任务完成并保存字幕后生效。
 
 ## 人工审校与知识库
@@ -35,17 +38,23 @@
 
 ## OMP 安装、登录与持久化
 
-Dockerfile 固定下载[官方 OMP v18.4.4 发布](https://github.com/can1357/oh-my-pi/releases/tag/v18.4.4)
+Dockerfile 固定下载[官方 OMP v18.8.6 发布](https://github.com/can1357/oh-my-pi/releases/tag/v18.8.6)
 的 Linux glibc 预编译文件，按目标架构选择，并在复制进最终镜像前验证 SHA-256：
 
 | 架构 | 官方文件 | SHA-256 |
 | --- | --- | --- |
-| amd64 / x86_64 | `omp-linux-x64` | `24c830fceb0bd6884bf5bf2c7a2b7407bc23fafe655e924c695ef9be308e46f3` |
-| arm64 | `omp-linux-arm64` | `602eefddc0fd87043f8f08d8628d72592e5802c003a05f203f1ecbc63a8fdd30` |
+| amd64 / x86_64 | `omp-linux-x64` | `877acdc48384b80fe4c083b1e610433d28922dd9fccde9ea430aaace8765b19b` |
+| arm64 | `omp-linux-arm64` | `a6bf1405877a739965586fcf973136f72078d2e6dc288905fab08588469c13cf` |
 
-校验值来自[该版本 GitHub release 元数据](https://api.github.com/repos/can1357/oh-my-pi/releases/tags/v18.4.4)。
+校验值来自[该版本 GitHub release 资产清单](https://github.com/can1357/oh-my-pi/releases/expanded_assets/v18.8.6)。
 不使用浮动 latest、Mac 二进制或登录后的目录构建镜像；无须额外安装 Bun。
 更换 OMP 版本时须一起核对官方文件名与 SHA-256。
+
+运行中升级必须按完整任务边界切换，不能只在批次之间替换 CLI。先校验新版，并独立验证
+模型、推理强度和 JSON 协议；当前任务的初译、润色、复核、返工与保存继续使用旧版，
+下一项任务再使用新版。不要为 CLI 升级重建正在运行的容器，也不要改变质量策略、
+登录凭证或已有字幕。首次验证应保留模型缓存，并在独立状态目录预热原生模块；
+避免将原生模块的首次解包放到媒体磁盘限速的临时目录。
 
 升级前先创建独立的 OMP 状态目录，权限与 Compose 的 `AISUB_ROOT`、`AISUB_UID`、
 `AISUB_GID` 保持一致。不要让 Docker 自动创建成 root 所有的空目录：
@@ -60,7 +69,7 @@ docker exec ai-sub-pro sha256sum /opt/omp/omp
 docker exec -it ai-sub-pro omp login openai-codex
 ```
 
-版本输出应为 `omp/18.4.4`，哈希应与上表目标架构一致。登录必须使用服务运行用户，
+版本输出应为 `omp/18.8.6`，哈希应与上表目标架构一致。登录必须使用服务运行用户，
 不要添加 `--user root`。OMP 把登录保存在 `/omp/agent/agent.db`；
 `PI_CODING_AGENT_DIR=/omp/agent` 和 `PI_CONFIG_DIR=/omp` 将认证及配置放在独立可写目录中，
 由 `${AISUB_ROOT}/omp:/omp` 持久化。备份/重建时保留整个目录，不要把数据库或 token 放进源码、
@@ -72,7 +81,7 @@ docker exec -it ai-sub-pro omp login openai-codex
 
 「同步模型列表」会调用 `omp models refresh --json`，同时刷新应用缓存和 OMP 上游目录，
 保留已经选择的模型。同步列表不会升级 CLI；新模型若依赖较新的 OMP 版本，需要先升级
-镜像或桌面外部 CLI。18.4.4 的可用目录包含 `openai-codex/gpt-6.1-sol`，实际可用性仍取决于账号权限。
+镜像或桌面外部 CLI。18.8.6 的可用目录包含 `openai-codex/gpt-6.1-sol`，实际可用性仍取决于账号权限。
 
 在远程 NAS 上登录时，OpenAI Codex OAuth 需要浏览器的 `localhost:1455` 回调到服务器。
 先在浏览器所在电脑另开终端执行 `ssh -N -L 1455:127.0.0.1:1455 <NAS用户>@<NAS地址>`，

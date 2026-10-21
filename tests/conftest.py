@@ -9,7 +9,8 @@ def library_codex_config(monkeypatch):
     from app.config import Config, DEFAULT_CONFIG
     from app.engines.providers.codex_cli import CodexCliProvider
     config = copy.deepcopy(DEFAULT_CONFIG)
-    config['translation'].update(primary_provider='codex_cli', primary_model='gpt-5.5', polish_provider='')
+    config['translation'].update(primary_provider='codex_cli', primary_model='gpt-5.5', polish_provider='',
+                                 review_provider='codex_cli', review_model='gpt-5.5', review_effort='auto')
     monkeypatch.setattr(Config, '_data', config)
     monkeypatch.setattr(CodexCliProvider, 'check_cli_available', lambda: True)
     monkeypatch.setattr(CodexCliProvider, 'check_logged_in', lambda: False)

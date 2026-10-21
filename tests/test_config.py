@@ -38,6 +38,9 @@ def test_default_config_translation_has_retrieval_settings():
     assert translation["missing_translation_abort_missing_pct"] == 50
     assert translation["qa_auto_repair"] is True
     assert translation["qa_auto_repair_rounds"] == 3
+    assert translation["review_provider"] == "omp_cli"
+    assert translation["review_model"] == "openai-codex/gpt-6.1-sol"
+    assert translation["review_effort"] == "xhigh"
 
 
 def test_default_config_uses_packaging_friendly_asr_model():
@@ -52,7 +55,7 @@ def test_default_config_has_asr_backend_auto():
     assert DEFAULT_CONFIG["asr"]["backend"] == "auto"
 
 
-def test_config_loads_and_merges_partial_saved_config(tmp_path, monkeypatch):
+def test_config_loads_and_merges_partial_saved_config(tmp_path, monkeypatch, tmp_project_dir):
     """Old config.json without new sections still loads; new keys populate from DEFAULT_CONFIG."""
     import app.config as cfg
     cfg_file = tmp_path / "config.json"
@@ -91,9 +94,16 @@ def test_config_loads_and_merges_partial_saved_config(tmp_path, monkeypatch):
     assert loaded["translation"]["qa_auto_repair"] is True
     assert loaded["translation"]["qa_auto_repair_rounds"] == 3
     assert loaded["asr"]["backend"] == "auto"
+    assert {field: loaded["translation"][f"review_{field}"] for field in ("provider", "model", "effort")} == {
+        field: loaded["translation"][f"primary_{field}"] for field in ("provider", "model", "effort")
+    }
+    cfg.Config.update({"translation": {"primary_model": "new-primary", "primary_effort": "high"}})
+    cfg.Config.load()
+    assert cfg.Config.get("translation", "review_model") == "gpt-4o"
+    assert cfg.Config.get("translation", "review_effort") == "medium"
 
 
-def test_config_load_migrates_legacy_cli_model_to_selected_translation_stages(tmp_path, monkeypatch):
+def test_config_load_migrates_legacy_cli_model_to_selected_translation_stages(tmp_path, monkeypatch, tmp_project_dir):
     import app.config as cfg
 
     cfg_file = tmp_path / "config.json"
@@ -116,6 +126,7 @@ def test_config_load_migrates_legacy_cli_model_to_selected_translation_stages(tm
 
     assert loaded["translation"]["primary_model"] == "gpt-5.6-sol"
     assert loaded["translation"]["polish_model"] == "gpt-5.6-sol"
+    assert loaded["translation"]["review_model"] == "gpt-5.6-sol"
     assert "model" not in loaded["providers"]["codex_cli"]
     assert loaded["providers"]["codex_cli"]["timeout_sec"] == 240
 

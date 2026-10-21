@@ -14,6 +14,9 @@
     "primary_effort": "medium",
     "polish_provider": "",
     "polish_model": "",
+    "review_provider": "omp_cli",
+    "review_model": "openai-codex/gpt-6.1-sol",
+    "review_effort": "xhigh",
     "target_language": "简体中文"
   }
 }

@@ -9,11 +9,11 @@ AI Sub Pro 在本地运行，项目文件、API key、字幕导出文件和知�
 
 可用的预编译安装包会随 GitHub Releases 发布。
 
-- macOS 用户可以从 `v1.3.42` release 资产下载 `AI_Sub_Pro_v1.3.42.dmg` 和
-  `AI_Sub_Pro_v1.3.42.dmg.sha256`，运行
-  `shasum -a 256 -c AI_Sub_Pro_v1.3.42.dmg.sha256` 校验后打开 DMG，将
-  **AI Sub Pro** 拖入 **Applications**。如果首次启动被 Gatekeeper 拦截，请
-  右键应用并选择 **打开**。
+- `v1.3.43` 本次更新源码，请按下方源码安装方式使用。macOS 构建目标为
+  `AI_Sub_Pro_v1.3.43.dmg`。当 release 实际附带经过验证的安装包及 `.sha256`
+  文件时，可运行 `shasum -a 256 -c AI_Sub_Pro_v1.3.43.dmg.sha256` 校验，
+  打开 DMG 后将 **AI Sub Pro** 拖入 **Applications**。文档中的版本号不代表
+  已提供对应安装包。
 - Windows 用户可以使用已发布的 Windows 安装包。当前 release 暂未附带预编译
   Windows 安装包；需要在 Windows 机器上运行 `build_win.bat` 从源码构建。
 

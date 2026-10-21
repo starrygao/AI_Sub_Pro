@@ -1,8 +1,12 @@
-## Unreleased
+## v1.3.43 - OMP integration and media-library reliability
+
+Source update: the macOS build target is `AI_Sub_Pro_v1.3.43.dmg`. A new installer
+is not included with this source update; only download binaries explicitly
+attached to a GitHub Release.
 
 - Default new configurations to OMP CLI. Desktop and server settings independently select OMP, Codex, or Claude for translation and polishing while preserving existing choices.
 - Run OMP in an isolated, tool-free, session-free JSON mode with dynamic model discovery, reasoning levels, and model-specific credential checks. Protocol and authentication failures never become empty subtitles.
-- Pin and verify the OMP 18.4.4 Linux binary in Docker and persist its login separately. Server model and CLI changes continue to apply after the current task finishes.
+- Pin and verify the OMP 18.8.6 Linux binary in Docker and persist its login separately. Switch live deployments at the complete task boundary without restarting the active task or changing reasoning levels, polishing, semantic review, or repair policy.
 - Make model synchronization refresh OMP's upstream catalog instead of only bypassing the application cache. Preserve selected models and discover GPT-6.1 Sol through the updated CLI.
 - Match OMP readiness checks to the effective primary model when the polishing model is empty, and keep Cursor inference models available while isolating coding-tool configuration.
 - Tighten name-span evidence so sentence-initial ordinary words, titles, and adjacent Chinese text do not become spurious name variants. Full-name deduplication must not hide genuine short-name inconsistencies.
@@ -10,9 +14,14 @@
 - Recognize full-width sound-cue brackets and correct exhaling forms while preserving two-speaker line breaks and markers during cleanup.
 - Classify English residue as a content issue. Exempt source-backed brands, pronunciation exercises, and approved retained terms without exempting surrounding untranslated dialogue. Preserve source-supported consecutive repetition while checking the full displayed reading load.
 - Size library subtitle extraction deadlines to the source file, retaining a 900-second minimum and headroom for throttled NAS reads. Large MKVs no longer share a fixed 15-minute cutoff; pause, cancellation, and explicit timeouts remain effective.
+- Rename the server's translation-model section to “Initial translation” and add independent semantic-review provider, model, and reasoning settings. Full and targeted review no longer reuse initial-translation settings. New installations default to GPT-6.1 Sol / xhigh without restricting later choices; preserve existing choices and completed delivery snapshots, and apply changes after active tasks finish.
 - Tighten unbracketed sound-cue evidence: uppercase text or short words such as explosion/stone no longer authorize omission, and negated, modal, or interrogative speech does not establish an audible event. Preserve dialogue, lyrics, and on-screen text while continuing to omit complete, explicit sound descriptions.
 - Preserve first-unmarked/second-dashed dialogue and explicitly music-marked lyric/dialogue boundaries during export, while retaining existing bilingual compaction for visual wraps and pure lyrics. Legacy partial recovery and layout QA use the same actual rendering rules.
 - Deduplicate only consecutive, source-backed contextual speaker markers without merging distinct sources or inventing identities. Phone chimes no longer label nearby dialogue as a telephone channel.
+- Keep library candidates queued with bounded backoff when the required MoviePilot database is temporarily inaccessible, busy, locked, read-only, or has an I/O failure. Recovery rechecks downloads, transfers, media identity, and subtitles before starting work; schema errors remain visible failures, and the integration stays read-only.
+- Preserve structured service errors on nonzero OMP exits and recognize prefixed errors and missing-model diagnostics. Show only redacted summaries without echoing request bodies, subtitles, or credentials; authentication failures still stop immediately without extra retries.
+- Stop showing the previous project's failed progress while library retries are waiting for inspection or a translation slot. Keep project history intact and show current progress once work resumes.
+- Verify actual audio independently when TMDB reports a Chinese original language but audio tracks are labeled foreign. Accept automatic language evidence only at probability 0.8 or higher with matching media identity and selected track: skip Chinese audio, continue translating genuine foreign dubs, and surface missing or low-confidence evidence for attention. Retry temporarily unavailable metadata with backoff; retain download, subtitle, stop-control, and media-change safeguards rather than skipping by title or directory.
 
 ## v1.3.42
 

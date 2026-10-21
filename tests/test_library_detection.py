@@ -7,7 +7,7 @@ def setup_worker(tmp_path, monkeypatch, *, new_only=False):
     import copy
     from app.config import Config, DEFAULT_CONFIG
     config = copy.deepcopy(DEFAULT_CONFIG)
-    config['translation'].update(primary_provider='codex_cli', polish_provider='')
+    config['translation'].update(primary_provider='codex_cli', polish_provider='', review_provider='codex_cli')
     monkeypatch.setattr(Config, '_data', config)
     from app.engines.providers.codex_cli import CodexCliProvider
     from app.library import worker as module
@@ -127,7 +127,8 @@ def test_claude_primary_starts_without_codex_login_and_reports_selected_service(
     from app.engines.providers.claude_cli import ClaudeCliProvider
     from app.engines.providers.codex_cli import CodexCliProvider
     w, root = setup_worker(tmp_path, monkeypatch)
-    Config._data['translation'].update(primary_provider='claude_cli', primary_model='claude-opus-4-7')
+    Config._data['translation'].update(primary_provider='claude_cli', primary_model='claude-opus-4-7',
+                                       review_provider='claude_cli', review_model='claude-opus-4-7')
     codex = Mock(side_effect=AssertionError('Codex is not selected'))
     monkeypatch.setattr(CodexCliProvider, 'check_logged_in', codex)
     monkeypatch.setattr(ClaudeCliProvider, 'check_cli_available', lambda: True)
@@ -213,3 +214,140 @@ def test_next_ready_job_gets_download_check_even_outside_oldest_candidate_page(t
     assert str(video) in checked
     assert w.store.get(video)['state']=='waiting'
     w.prepare.assert_not_called()
+
+
+def test_library_model_review_credentials_block_launch_even_when_fast_qa_is_disabled(tmp_path, monkeypatch):
+    from app.config import Config
+    w, root = setup_worker(tmp_path, monkeypatch)
+    Config._data['translation'].update(
+        quality_mode='fast', semantic_qa=False, review_provider='deepseek', review_model='review-custom',
+    )
+    video = add(w, root, 'review-blocked')
+    w.process_one()
+    assert w.store.get(video)['state'] == 'ready'
+    assert not w.status()['translation_ready']
+    assert '质量复核' in w.status()['translation_hint']
+    w.prepare.assert_not_called()
+    Config._data['api_keys']['deepseek'] = 'review-key'
+    w.process_one()
+    w.prepare.assert_called_once()
+
+
+def test_moviepilot_database_outage_defers_candidates_and_recovers_safely(tmp_path, monkeypatch):
+    import sqlite3
+    from app.library import worker as module
+    w, root = setup_worker(tmp_path, monkeypatch)
+    clock = [module.time.time()]
+    monkeypatch.setattr(module.time, 'time', lambda: clock[0])
+    database = tmp_path / 'moviepilot.db'
+    w.config['moviepilot'] = {'database': str(database)}
+    first = add(w, root, 'first')
+    second = add(w, root, 'second')
+    w.process_one()
+    for video in (first, second):
+        row = w.store.get(video)
+        assert row['state'] == 'waiting'
+        assert 'MoviePilot' in row['reason']
+        assert row['next_attempt_at'] > clock[0]
+        assert not row.get('project_id')
+    w.prepare.assert_not_called()
+    w.probe.assert_not_called()
+
+    with sqlite3.connect(database) as db:
+        db.execute('CREATE TABLE transferhistory(id INTEGER,src TEXT,dest TEXT,status INTEGER,media_id TEXT,type TEXT,title TEXT,media_source TEXT)')
+        db.execute('INSERT INTO transferhistory(id,src,dest,status) VALUES(1,?,?,1)', ('/downloads/first.mkv', str(first)))
+    w.process_one()
+    w.prepare.assert_not_called()
+    clock[0] += 61
+    w.set_blockers({'/downloads/first.mkv': '下载仍在校验'})
+    w.process_one()
+    assert w.store.get(first)['state'] == 'waiting'
+    assert w.store.get(first)['reason'] == '下载仍在校验'
+    assert w.store.get(second)['state'] == 'ready'
+    w.prepare.assert_called_once()
+    assert w.prepare.call_args.args[0]['path'] == str(second)
+
+
+def test_moviepilot_schema_error_remains_visible_as_failure(tmp_path, monkeypatch):
+    import sqlite3
+    w, root = setup_worker(tmp_path, monkeypatch)
+    database = tmp_path / 'moviepilot.db'
+    with sqlite3.connect(database) as db:
+        db.execute('CREATE TABLE unrelated(value TEXT)')
+    w.config['moviepilot'] = {'database': str(database)}
+    video = add(w, root, 'invalid-schema')
+    w.process_one()
+    assert w.store.get(video)['state'] == 'error'
+    assert 'no such table' in w.store.get(video)['reason']
+    w.prepare.assert_not_called()
+
+
+def test_moviepilot_outage_during_preparation_does_not_abandon_media(tmp_path, tmp_project_dir, monkeypatch):
+    import sqlite3
+    w, root = setup_worker(tmp_path, monkeypatch)
+    database = tmp_path / 'moviepilot.db'
+    with sqlite3.connect(database) as db:
+        db.execute('CREATE TABLE transferhistory(id INTEGER,src TEXT,dest TEXT,status INTEGER,media_id TEXT,type TEXT,title TEXT,media_source TEXT)')
+    w.config['moviepilot'] = {'database': str(database)}
+    video = add(w, root, 'preparing')
+    w.process_one(start=False)
+    assert w.store.get(video)['state'] == 'ready'
+    prepare = LibraryWorker.prepare.__get__(w)
+    def remove_database_before_prepare(row, info, sidecars):
+        database.unlink()
+        prepare(row, info, sidecars)
+    monkeypatch.setattr(w, 'prepare', remove_database_before_prepare)
+    w.start_ready(w.store.get(video))
+    row = w.store.get(video)
+    assert row['state'] == 'waiting'
+    assert 'MoviePilot' in row['reason']
+    assert row['next_attempt_at'] > row['updated']
+    assert not row.get('project_id')
+    assert not video.with_suffix('.双语.zh-CN.srt').exists()
+
+
+def test_foreign_audio_metadata_outage_waits_then_recovers_without_skipping(tmp_path, monkeypatch):
+    from app.library import worker as module
+    w, root = setup_worker(tmp_path, monkeypatch)
+    video = add(w, root, '朱元璋.S01E25', {'tmdb_id': 42, 'tmdb_type': 'tv'})
+    clock = [module.time.time()]
+    monkeypatch.setattr(module.time, 'time', lambda: clock[0])
+    language = Mock(side_effect=RuntimeError('temporary upstream failure'))
+    monkeypatch.setattr(w.sources, 'original_language', language)
+    w.process_one()
+    row = w.store.get(video)
+    assert row['state'] == 'waiting'
+    assert row['next_attempt_at'] > clock[0]
+    w.prepare.assert_not_called()
+    language.side_effect = None
+    language.return_value = 'zh'
+    clock[0] += 61
+    w.process_one()
+    row = w.store.get(video)
+    assert row['state'] == 'ready'
+    assert row['detection']['original_language'] == 'zh'
+    w.prepare.assert_called_once()
+
+
+def test_title_alone_never_confirms_native_language(tmp_path, monkeypatch):
+    w, root = setup_worker(tmp_path, monkeypatch)
+    video = add(w, root, '朱元璋.S01E25')
+    w.process_one()
+    assert w.store.get(video)['state'] == 'ready'
+    assert w.store.get(video)['detection']['original_language'] == ''
+    w.prepare.assert_called_once()
+
+
+def test_missing_tmdb_language_is_not_cached_as_success(tmp_path, monkeypatch):
+    from app.engines import tmdb
+    from app.library.sources import SourceUnavailable
+    import pytest
+    w, _ = setup_worker(tmp_path, monkeypatch)
+    responses = iter([{}, {'original_language': 'zh'}])
+    async def details(*args):
+        return next(responses)
+    monkeypatch.setattr(tmdb, 'get_show_details', details)
+    metadata = {'tmdb_id': 42, 'tmdb_type': 'tv'}
+    with pytest.raises(SourceUnavailable):
+        w.sources.original_language(metadata)
+    assert w.sources.original_language(metadata) == 'zh'

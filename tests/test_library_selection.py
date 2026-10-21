@@ -122,6 +122,7 @@ def test_manual_selection_uses_existing_track_and_readiness_guards(setup, monkey
     monkeypatch.setattr(CodexCliProvider, 'check_logged_in', lambda: True)
     monkeypatch.setattr(os, 'getloadavg', lambda: (0, 0, 0))
     monkeypatch.setattr(worker, 'probe', lambda p: {'streams': streams})
+    monkeypatch.setattr(worker.sources, 'original_language', lambda metadata: 'en')
     monkeypatch.setattr(worker, 'refresh_readiness', lambda: None)
     prepare = Mock(); monkeypatch.setattr(worker, 'prepare', prepare)
     worker.process_one()

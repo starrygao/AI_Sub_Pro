@@ -5,6 +5,7 @@ from pathlib import Path
 from app.library.storage import bootstrap_storage
 
 bootstrap_storage()
+from app.config import DEFAULT_CONFIG
 
 tmdb_secret=Path(os.environ.get('AISUBPRO_TMDB_KEY_FILE','/config/tmdb-api-key'))
 if tmdb_secret.is_file():
@@ -15,6 +16,7 @@ path=Path(os.environ['AI_SUB_PRO_DATA_DIR'])/'config.json'
 path.parent.mkdir(parents=True,exist_ok=True)
 if not path.exists():
     config={'translation':{'primary_provider':'omp_cli','primary_model':'openai-codex/gpt-6-astra','primary_effort':'medium',
+                           **{key:DEFAULT_CONFIG['translation'][key] for key in ('review_provider','review_model','review_effort')},
                            'polish_provider':'','batch_size':20,'full_doc_mode':True},
             'providers':{'omp_cli':{'timeout_sec':600}},
             'asr':{'backend':'faster_whisper','model_size':'small','use_demucs':False,'beam_size':3},

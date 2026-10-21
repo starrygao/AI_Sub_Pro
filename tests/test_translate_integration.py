@@ -49,7 +49,7 @@ def _run_semantic_pipeline_case(
 
         def __init__(self, cfg):
             if primary is not None:
-                self.primary = primary
+                self.primary = self.review = primary
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             blocks[0].translation = "也许他走了。"
@@ -400,7 +400,7 @@ def test_retry_blank_stage_falls_back_to_latest_failed(tmp_project_dir, monkeypa
     monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_project_dir)
     monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_project_dir)
     monkeypatch.setattr(api_translate, "active_tasks", {})
-    monkeypatch.setattr(api_translate, "require_translation_ready", lambda: None)
+    monkeypatch.setattr(api_translate, "require_translation_ready", lambda **kwargs: None)
 
     class DummyThread:
         started = False
@@ -444,7 +444,7 @@ def test_resume_chooses_translate_when_filtered_srt_exists(tmp_project_dir, monk
     monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_project_dir)
     monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_project_dir)
     monkeypatch.setattr(api_translate, "active_tasks", {})
-    monkeypatch.setattr(api_translate, "require_translation_ready", lambda: None)
+    monkeypatch.setattr(api_translate, "require_translation_ready", lambda **kwargs: None)
 
     class DummyThread:
         started = False
@@ -526,7 +526,7 @@ def test_resume_ignores_raw_srt_symlink_outside_project(tmp_project_dir, monkeyp
     monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_project_dir)
     monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_project_dir)
     monkeypatch.setattr(api_translate, "active_tasks", {})
-    monkeypatch.setattr(api_translate, "require_translation_ready", lambda: None)
+    monkeypatch.setattr(api_translate, "require_translation_ready", lambda **kwargs: None)
 
     class DummyThread:
         started = False
@@ -899,7 +899,7 @@ def test_translate_pipeline_before_burn_stays_at_global_75(tmp_path, monkeypatch
         last_quality_trace = None
 
         def __init__(self, cfg):
-            self.primary = FakePrimary()
+            self.primary = self.review = FakePrimary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             blocks[0].translation = "你好"
@@ -1832,7 +1832,7 @@ def test_cancel_during_registered_launch_window_cancels_new_task(
         monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
 
     monkeypatch.setattr(api_translate, "active_tasks", {})
-    monkeypatch.setattr(api_translate, "require_translation_ready", lambda: None)
+    monkeypatch.setattr(api_translate, "require_translation_ready", lambda **kwargs: None)
 
     if start_kind == "translate":
         class UnexpectedTranslator:
@@ -2006,7 +2006,7 @@ def test_cancel_ack_survives_registered_thread_start_failure(
     monkeypatch.setattr(api_translate, "PROJECTS_DIR", tmp_path)
     monkeypatch.setattr(projects_api, "PROJECTS_DIR", tmp_path)
     monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
-    monkeypatch.setattr(api_translate, "require_translation_ready", lambda: None)
+    monkeypatch.setattr(api_translate, "require_translation_ready", lambda **kwargs: None)
 
     cancel_response = {}
 
@@ -2194,7 +2194,7 @@ def test_thread_start_failure_restores_launch_initialization_bytes_and_retries(
         monkeypatch.setattr(project_store, "PROJECTS_DIR", tmp_path)
 
     monkeypatch.setattr(api_translate, "active_tasks", {})
-    monkeypatch.setattr(api_translate, "require_translation_ready", lambda: None)
+    monkeypatch.setattr(api_translate, "require_translation_ready", lambda **kwargs: None)
     (pdir / "workflow_state.json").write_bytes(b'{"version":1,"stages":{}}')
     (pdir / "progress.json").write_bytes(
         b'{"progress":100,"stage":"","message":"old"}'
@@ -2418,11 +2418,7 @@ def test_thread_start_failure_blocks_edit_after_snapshot_until_rollback(
         pid=pid,
     )
     monkeypatch.setattr(api_translate, "active_tasks", {})
-    monkeypatch.setattr(
-        api_translate,
-        "require_translation_ready",
-        lambda: None,
-    )
+    monkeypatch.setattr(api_translate, "require_translation_ready", lambda **kwargs: None)
     before = {
         path.name: path.read_bytes()
         for path in pdir.iterdir()
@@ -2535,11 +2531,7 @@ def test_thread_start_failure_blocks_project_patch_until_rollback(
         )
     )
     monkeypatch.setattr(api_translate, "active_tasks", {})
-    monkeypatch.setattr(
-        api_translate,
-        "require_translation_ready",
-        lambda: None,
-    )
+    monkeypatch.setattr(api_translate, "require_translation_ready", lambda **kwargs: None)
     snapshot_taken = threading.Event()
     release_launch = threading.Event()
     registered = {}
@@ -4594,7 +4586,7 @@ def test_translate_pipeline_delivers_with_semantic_mismatch_report(tmp_path, mon
         last_quality_trace = None
 
         def __init__(self, cfg):
-            self.primary = FakePrimary()
+            self.primary = self.review = FakePrimary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             blocks[0].translation = "你好。"
@@ -4647,7 +4639,7 @@ def test_professional_semantic_uncertainty_recommends_optional_review():
         def translate_batch(self, items, prompt):
             return [{"id": 7, "translation": "UNCERTAIN: 指代信息不足"}]
 
-    translator = type("Translator", (), {"primary": Primary()})()
+    translator = type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))()
     issues, trace = _run_semantic_quality_checks(
         {
             "translation": {
@@ -4701,7 +4693,7 @@ def test_full_semantic_scan_accepts_only_exact_ok_verdict():
 
     issues, trace = _run_semantic_quality_checks(
         {"translation": {"quality_mode": "professional", "semantic_qa": True}},
-        type("Translator", (), {"primary": Primary()})(),
+        type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))(),
         [block],
         "简体中文",
         strict_quality_gate=True,
@@ -4748,7 +4740,7 @@ def test_full_semantic_scan_rejects_non_exact_id_multiset(raw_results):
 
     issues, trace = _run_semantic_quality_checks(
         {"translation": {"quality_mode": "professional", "semantic_qa": True}},
-        type("Translator", (), {"primary": Primary()})(),
+        type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))(),
         blocks,
         "简体中文",
         strict_quality_gate=True,
@@ -4859,7 +4851,7 @@ def test_semantic_qa_uses_dialogue_only_items_and_bounded_authoritative_context(
             captured["prompt"] = prompt
             return [{"id": item["id"], "translation": "OK"} for item in items]
 
-    translator = type("Translator", (), {"primary": Primary()})()
+    translator = type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))()
     issues, trace = _run_semantic_quality_checks(
         {
             "translation": {
@@ -5314,7 +5306,7 @@ def test_professional_semantic_batch_failure_tracks_failed_ids():
         def translate_batch(self, items, prompt):
             raise RuntimeError("provider unavailable")
 
-    translator = type("Translator", (), {"primary": Primary()})()
+    translator = type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))()
     issues, trace = _run_semantic_quality_checks(
         {"translation": {"quality_mode": "professional", "semantic_qa": True}},
         translator,
@@ -5349,7 +5341,7 @@ def test_professional_semantic_partial_coverage_fails_closed():
         def translate_batch(self, items, prompt):
             return [{"id": 10, "translation": "OK"}]
 
-    translator = type("Translator", (), {"primary": Primary()})()
+    translator = type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))()
     issues, trace = _run_semantic_quality_checks(
         {
             "translation": {
@@ -5783,7 +5775,7 @@ def test_translate_pipeline_final_retry_repairs_missing_translation(tmp_path, mo
         last_quality_trace = None
 
         def __init__(self, cfg):
-            self.primary = FakePrimary()
+            self.primary = self.review = FakePrimary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             blocks[0].translation = "你好"
@@ -5860,7 +5852,7 @@ def test_translate_pipeline_skips_final_retry_when_missing_count_is_catastrophic
         last_quality_trace = None
 
         def __init__(self, cfg):
-            self.primary = FakePrimary()
+            self.primary = self.review = FakePrimary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             blocks[0].translation = "一"
@@ -6049,7 +6041,7 @@ def test_translate_pipeline_retries_missing_created_after_quality_repair(tmp_pat
         last_quality_trace = None
 
         def __init__(self, cfg):
-            self.primary = FakePrimary()
+            self.primary = self.review = FakePrimary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             blocks[0].translation = "你好"
@@ -6175,7 +6167,7 @@ def test_translate_pipeline_skips_recertification_when_post_quality_retry_is_noo
         last_quality_trace = None
 
         def __init__(self, cfg):
-            self.primary = FakePrimary()
+            self.primary = self.review = FakePrimary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             blocks[0].translation = "你好"
@@ -6246,7 +6238,7 @@ def test_translate_pipeline_can_auto_repair_quality_issues(tmp_path, monkeypatch
         last_quality_trace = None
 
         def __init__(self, cfg):
-            self.primary = FakePrimary()
+            self.primary = self.review = FakePrimary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             blocks[0].translation = "Are you okay?"
@@ -6320,7 +6312,7 @@ def test_translate_pipeline_auto_repair_preserves_omitted_rows(tmp_path, monkeyp
         _apply_one = staticmethod(SubtitleTranslator._apply_one)
 
         def __init__(self, cfg):
-            self.primary = FakePrimary()
+            self.primary = self.review = FakePrimary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             blocks[0].translation = "Are you okay?"
@@ -6389,7 +6381,7 @@ def test_translate_pipeline_does_not_auto_repair_scientific_terms_without_expect
         last_quality_trace = None
 
         def __init__(self, cfg):
-            self.primary = FakePrimary()
+            self.primary = self.review = FakePrimary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             blocks[0].translation = "诺瓦盗龙在附近觅食。"
@@ -6451,7 +6443,7 @@ def test_translate_pipeline_normalizes_curated_scientific_terms_before_model_rep
         last_quality_trace = None
 
         def __init__(self, cfg):
-            self.primary = FakePrimary()
+            self.primary = self.review = FakePrimary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             blocks[0].translation = "伊斯基瓜拉斯兽在附近觅食。"
@@ -6528,7 +6520,7 @@ def test_translate_pipeline_does_not_auto_repair_inferred_proper_names(tmp_path,
         last_quality_trace = None
 
         def __init__(self, cfg):
-            self.primary = FakePrimary()
+            self.primary = self.review = FakePrimary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             blocks[0].translation = "哈德逊奥克斯今晚很安静。"
@@ -7208,7 +7200,7 @@ def test_auto_repair_keeps_semantic_group_atomic_and_refreshes_later_context():
             assert items[0]["preceding_context"][0]["draft"] == "新译3"
             return [{"id": 4, "translation": "新译4"}]
 
-    translator = type("Translator", (), {"primary": Primary()})()
+    translator = type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))()
     trace = {}
 
     outcome = _auto_repair_quality_issues(
@@ -7295,7 +7287,7 @@ def test_semantic_repair_fails_closed_when_atomic_group_exceeds_batch_capacity()
                 "qa_auto_repair_max_blocks": 2,
             },
         },
-        type("Translator", (), {"primary": Primary()})(),
+        type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))(),
         blocks,
         report,
         "简体中文",
@@ -7363,7 +7355,7 @@ def test_translate_pipeline_records_improved_and_still_failing_ids(
         last_quality_trace = None
 
         def __init__(self, cfg):
-            self.primary = FakePrimary()
+            self.primary = self.review = FakePrimary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             blocks[0].translation = "First line."
@@ -7433,7 +7425,7 @@ def test_translate_pipeline_removes_sdh_reintroduced_by_model_repair(
         last_quality_trace = None
 
         def __init__(self, cfg):
-            self.primary = FakePrimary()
+            self.primary = self.review = FakePrimary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             blocks[0].translation = "Hello there."
@@ -7509,7 +7501,7 @@ def test_translate_pipeline_counts_model_changes_after_normalization(
         last_quality_trace = None
 
         def __init__(self, cfg):
-            self.primary = Primary()
+            self.primary = self.review = Primary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             blocks[0].translation = "你好。"
@@ -7585,7 +7577,7 @@ def test_translate_pipeline_rolls_back_partial_multi_batch_repair_failure(
         last_quality_trace = None
 
         def __init__(self, cfg):
-            self.primary = Primary()
+            self.primary = self.review = Primary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             for block in blocks:
@@ -7666,7 +7658,7 @@ def test_translate_pipeline_batches_auto_repair_and_records_trace(tmp_path, monk
         last_quality_trace = None
 
         def __init__(self, cfg):
-            self.primary = FakePrimary()
+            self.primary = self.review = FakePrimary()
 
         def translate(self, blocks, target_lang, meta_info=None, kb_data=None, callback=None):
             return blocks
@@ -8232,7 +8224,7 @@ def _run_auto_repair_group_guard_case(
     else:
         from app.engines.providers.codex_cli import CodexCliProvider
 
-        class NormalizedTargetedPrimary:
+        class NormalizedTargetedReview:
             def translate_batch(self, items, prompt):
                 assert "translation" in prompt
                 payload = []
@@ -8261,7 +8253,7 @@ def _run_auto_repair_group_guard_case(
             (),
             {
                 "last_quality_trace": InitialTrace(),
-                "primary": NormalizedTargetedPrimary(),
+                "review": NormalizedTargetedReview(),
             },
         )()
     repaired = api_translate._persist_translation_quality_report(
@@ -8998,7 +8990,7 @@ def test_strict_candidate_requires_two_explicit_focused_semantic_oks(
                 results.append(result)
             return results
 
-    translator = type("Translator", (), {"primary": Primary()})()
+    translator = type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))()
     monkeypatch.setattr(
         knowledge,
         "_get_singleton",
@@ -9242,7 +9234,7 @@ def test_targeted_semantic_verdicts_reject_evidence_from_another_block(
                 },
             ]
 
-    translator = type("Translator", (), {"primary": Primary()})()
+    translator = type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))()
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {"semantic_qa_batch_size": 4}},
@@ -9300,7 +9292,7 @@ def test_targeted_semantic_evidence_accepts_short_punctuated_exact_excerpts():
                 "target_evidence": "“不。”",
             }]
 
-    translator = type("Translator", (), {"primary": Primary()})()
+    translator = type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))()
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {}},
@@ -9452,7 +9444,7 @@ def test_targeted_semantic_one_partial_pass_never_verifies_strict_candidate():
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {}},
-            type("Translator", (), {"primary": Primary()})(),
+            type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))(),
             [block],
             "简体中文",
             {451},
@@ -9648,7 +9640,7 @@ def test_targeted_semantic_group_double_ok_accepts_396_397_equivalent_regrouping
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {"semantic_qa_batch_size": 4}},
-            type("Translator", (), {"primary": primary})(),
+            type("Translator", (), dict.fromkeys(("primary", "review"), primary))(),
             blocks,
             "简体中文",
             {396, 397},
@@ -9704,7 +9696,7 @@ def test_targeted_semantic_group_pass_two_non_ok_rejects_every_member():
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {}},
-            type("Translator", (), {"primary": Primary()})(),
+            type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))(),
             blocks,
             "简体中文",
             {396, 397},
@@ -9788,7 +9780,7 @@ def test_targeted_semantic_two_groups_use_four_isolated_strict_calls():
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {"semantic_qa_batch_size": 4}},
-            type("Translator", (), {"primary": primary})(),
+            type("Translator", (), dict.fromkeys(("primary", "review"), primary))(),
             blocks,
             "简体中文",
             set(texts),
@@ -9870,7 +9862,7 @@ def test_targeted_semantic_group_binding_and_anchored_evidence_fail_closed(
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {}},
-            type("Translator", (), {"primary": Primary()})(),
+            type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))(),
             blocks,
             "简体中文",
             {396, 397},
@@ -9977,7 +9969,7 @@ def test_targeted_semantic_group_non_ok_requires_focused_member_evidence(
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {}},
-            type("Translator", (), {"primary": Primary()})(),
+            type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))(),
             blocks,
             "简体中文",
             {701, 702},
@@ -10019,7 +10011,7 @@ def test_targeted_semantic_cross_block_non_ok_binds_focused_group_evidence():
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {}},
-            type("Translator", (), {"primary": Primary()})(),
+            type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))(),
             blocks,
             "简体中文",
             {396, 397},
@@ -10067,7 +10059,7 @@ def test_targeted_semantic_group_non_ok_rejects_full_echo_as_taxonomy_evidence(
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {}},
-            type("Translator", (), {"primary": Primary()})(),
+            type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))(),
             blocks,
             "简体中文",
             {396, 397},
@@ -10107,7 +10099,7 @@ def test_targeted_semantic_group_missing_member_structure_fails_whole_group():
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {}},
-            type("Translator", (), {"primary": primary})(),
+            type("Translator", (), dict.fromkeys(("primary", "review"), primary))(),
             blocks,
             "简体中文",
             {396, 397},
@@ -10154,7 +10146,7 @@ def test_targeted_semantic_group_double_ok_resolves_ledger_by_member_current_has
     issues, verified_ids, verified_hashes, _traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {}},
-            type("Translator", (), {"primary": Primary()})(),
+            type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))(),
             blocks,
             "简体中文",
             {396, 397},
@@ -10234,7 +10226,7 @@ def test_targeted_semantic_retries_invalid_evidence_without_relaxing_two_ok():
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {"semantic_qa_batch_size": 40}},
-            type("Translator", (), {"primary": primary})(),
+            type("Translator", (), dict.fromkeys(("primary", "review"), primary))(),
             [block],
             "简体中文",
             {416},
@@ -10301,7 +10293,7 @@ def test_targeted_semantic_retry_exhaustion_still_fails_closed():
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {}},
-            type("Translator", (), {"primary": primary})(),
+            type("Translator", (), dict.fromkeys(("primary", "review"), primary))(),
             [block],
             "简体中文",
             {625},
@@ -10432,7 +10424,7 @@ def test_targeted_semantic_provider_failure_is_not_retried_as_schema_error():
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {}},
-            type("Translator", (), {"primary": primary})(),
+            type("Translator", (), dict.fromkeys(("primary", "review"), primary))(),
             [block],
             "简体中文",
             {475},
@@ -10508,7 +10500,7 @@ def test_targeted_semantic_verification_rejects_malformed_codex_normalized_field
                 items,
             )
 
-    translator = type("Translator", (), {"primary": Primary()})()
+    translator = type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))()
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {}},
@@ -10569,7 +10561,7 @@ def test_targeted_semantic_verification_rejects_codex_result_without_verdict():
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {}},
-            type("Translator", (), {"primary": Primary()})(),
+            type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))(),
             [block],
             "简体中文",
             {502},
@@ -10643,7 +10635,7 @@ def test_targeted_semantic_verification_rejects_codex_result_id_violations(
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {}},
-            type("Translator", (), {"primary": Primary()})(),
+            type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))(),
             [block],
             "简体中文",
             {502},
@@ -10702,7 +10694,7 @@ def _run_targeted_semantic_evidence_case(
                 "target_evidence": target_evidence,
             }]
 
-    translator = type("Translator", (), {"primary": Primary()})()
+    translator = type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))()
     return api_translate._run_targeted_semantic_verification(
         {"translation": {}},
         translator,
@@ -11694,7 +11686,7 @@ def test_targeted_semantic_verification_fails_closed_on_unusable_coverage(
                 "taxonomy": "none",
             }]
 
-    translator = type("Translator", (), {"primary": Primary()})()
+    translator = type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))()
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {"semantic_qa_batch_size": 4}},
@@ -11759,7 +11751,7 @@ def test_targeted_double_ok_resolves_502_uncertainty_for_new_content_hash():
                 "target_evidence": "她……说……她……会……回……来",
             }]
 
-    translator = type("Translator", (), {"primary": Primary()})()
+    translator = type("Translator", (), dict.fromkeys(("primary", "review"), Primary()))()
     issues, verified_ids, verified_hashes, traces = (
         api_translate._run_targeted_semantic_verification(
             {"translation": {}},

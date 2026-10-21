@@ -126,3 +126,36 @@ def test_primary_provider_switch_is_atomic_and_waits_for_running_task(worker):
     assert restored.apply_pending_settings()
     assert {key: Config.get('translation', key) for key in desired} == desired
     assert restored.model_settings.state()['current_provider'] == 'claude_cli'
+
+
+def test_review_settings_wait_for_publication_and_survive_restart(worker):
+    primary = {field: Config.get('translation', f'primary_{field}') for field in ('provider', 'model', 'effort')}
+    current = {field: Config.get('translation', f'review_{field}') for field in ('provider', 'model', 'effort')}
+    desired = {'review_provider': 'omp_cli', 'review_model': 'custom-provider/reviewer', 'review_effort': 'high'}
+    worker.store.put({'path': '/video/review.mkv', 'state': 'translating', 'updated': 1})
+    result = worker.model_settings.queue({'translation': desired})
+    assert {key: result['settings']['translation'][key] for key in desired} == desired
+    assert {field: result['state'][f'current_review_{field}'] for field in current} == current
+    assert not worker.apply_pending_settings()
+    restored = LibraryWorker({'enabled': True}, Path(worker.store.path).parent)
+    row = restored.store.get('/video/review.mkv')
+    row['state'] = 'publishing'
+    restored.store.put(row)
+    assert not restored.apply_pending_settings()
+    row['state'] = 'error'
+    restored.store.put(row)
+    assert restored.apply_pending_settings()
+    Config.load()
+    assert {key: Config.get('translation', key) for key in desired} == desired
+    assert {field: Config.get('translation', f'primary_{field}') for field in primary} == primary
+    assert restored.model_settings.state()['current_review_model'] == 'custom-provider/reviewer'
+    assert not restored.model_settings.state()['pending']
+
+
+@pytest.mark.parametrize('invalid', [
+    {'review_provider': ''}, {'review_provider': 'unknown'}, {'review_model': ' '}, {'review_effort': 'wrong'},
+])
+def test_review_settings_reject_invalid_stage_choices(worker, invalid):
+    with pytest.raises(HTTPException):
+        worker.model_settings.queue({'translation': invalid})
+    assert not worker.model_settings.state()['pending']

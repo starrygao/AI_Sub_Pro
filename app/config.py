@@ -64,6 +64,9 @@ DEFAULT_CONFIG = {
         "polish_provider": "",
         "polish_model": "",
         "polish_effort": "auto",
+        "review_provider": "omp_cli",
+        "review_model": "openai-codex/gpt-6.1-sol",
+        "review_effort": "xhigh",
         "batch_size": 10,
         "context_window": 3,
         "target_language": "简体中文",
@@ -155,6 +158,36 @@ def _migrate_legacy_cli_models(config: dict) -> None:
             translation["polish_model"] = legacy_model
 
 
+def _migrate_legacy_review_stage(config: dict) -> None:
+    """Persist the former primary-model review choice once, never at QA time."""
+    translation = config.get("translation") if isinstance(config, dict) else None
+    if not isinstance(translation, dict) or any(
+        f"review_{field}" in translation for field in ("provider", "model", "effort")
+    ):
+        return
+    for field in ("provider", "model", "effort"):
+        translation[f"review_{field}"] = copy.deepcopy(
+            translation.get(f"primary_{field}", DEFAULT_CONFIG["translation"][f"primary_{field}"])
+        )
+
+
+def _seal_legacy_review_deliveries() -> None:
+    """Freeze valid completed library results before changing configuration identity."""
+    from app.library.settings import seal_completed_delivery
+    from app.utils.project_store import load_project
+    for path in PROJECTS_DIR.glob("*/project.json"):
+        if path.is_symlink() or path.parent.is_symlink():
+            continue
+        try:
+            project = load_project(path.parent.name)
+        except (FileNotFoundError, ValueError):
+            continue
+        if project.get("library_status") != "done" or not project.get("library_source_path"):
+            continue
+        if not seal_completed_delivery(path.parent.name):
+            raise RuntimeError("已完成字幕正在读取或保存，质量复核配置迁移已推迟")
+
+
 def _drop_legacy_cli_models(config: dict) -> None:
     providers = config.get("providers") if isinstance(config, dict) else None
     if not isinstance(providers, dict):
@@ -197,12 +230,21 @@ class Config:
 
     @classmethod
     def load(cls) -> dict:
+        legacy_review = False
         if CONFIG_FILE.exists():
             try:
                 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                     saved = json.load(f, parse_constant=_reject_json_constant)
                 _migrate_legacy_cli_models(saved)
-                cls._data = _deep_merge(DEFAULT_CONFIG, saved)
+                translation = saved.get("translation", {}) if isinstance(saved, dict) else None
+                legacy_review = isinstance(translation, dict) and not any(
+                    f"review_{field}" in translation for field in ("provider", "model", "effort")
+                )
+                defaults = copy.deepcopy(DEFAULT_CONFIG)
+                if legacy_review:
+                    for field in ("provider", "model", "effort"):
+                        defaults["translation"].pop(f"review_{field}")
+                cls._data = _deep_merge(defaults, saved)
             except Exception:
                 _backup_invalid_config()
                 cls._data = copy.deepcopy(DEFAULT_CONFIG)
@@ -219,6 +261,9 @@ class Config:
                 if value is None:
                     raise CredentialError("已保存的系统凭证无法读取；原配置已保留")
                 cls._data.setdefault(section, {})[key] = value
+        if legacy_review:
+            _seal_legacy_review_deliveries()
+            _migrate_legacy_review_stage(cls._data)
         cls.save()
         return cls._data
 

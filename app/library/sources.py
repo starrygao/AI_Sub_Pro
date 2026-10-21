@@ -3,6 +3,7 @@ import json
 import sqlite3
 import time
 from pathlib import Path
+from contextlib import contextmanager
 import xml.etree.ElementTree as ET
 import httpx
 from .guard import map_path, vtrans_blockers
@@ -51,6 +52,10 @@ def pending_download_paths(torrents, get_files, mappings, candidates=None):
     return paths
 
 
+class SourceUnavailable(RuntimeError):
+    """A required integration cannot be read; media must wait, not fail open."""
+
+
 class Sources:
     def __init__(self, config):
         self.config=config
@@ -59,6 +64,21 @@ class Sources:
         self.emby_cache={}
         self.language_cache={}
         self.artwork=Artwork(self)
+
+    @contextmanager
+    def _moviepilot_db(self):
+        db=None
+        try:
+            db=sqlite3.connect('file:'+self.config['moviepilot']['database']+'?mode=ro',uri=True,timeout=3)
+            yield db
+        except sqlite3.OperationalError as exc:
+            code=getattr(exc,'sqlite_errorcode',0)&0xff
+            if code in {sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED,sqlite3.SQLITE_CANTOPEN,
+                        sqlite3.SQLITE_READONLY,sqlite3.SQLITE_IOERR}:
+                raise SourceUnavailable('MoviePilot 数据库暂不可读，等待上游恢复后重新检查') from exc
+            raise
+        finally:
+            if db is not None:db.close()
 
     def emby(self, endpoint, **params):
         conf=self.config['emby']
@@ -92,8 +112,7 @@ class Sources:
         """MoviePilot arrivals can precede Emby import; status is still checked by readiness."""
         conf=self.config.get('moviepilot')
         if not conf:return []
-        db=sqlite3.connect('file:'+conf['database']+'?mode=ro',uri=True,timeout=3)
-        try:
+        with self._moviepilot_db() as db:
             rows=db.execute('SELECT dest,media_id,type,title,media_source FROM transferhistory WHERE status=1 AND dest IS NOT NULL ORDER BY id DESC LIMIT 200').fetchall()
             result=[]
             for path,identity,kind,title,source in rows:
@@ -103,7 +122,6 @@ class Sources:
                     meta.update(tmdb_id=int(identity),tmdb_type='tv' if kind in {'电视剧','tv','TV'} else 'movie')
                 result.append((map_path(path,conf.get('path_maps',{})),meta))
             return result
-        finally:db.close()
 
     def readiness(self,candidates=None):
         blocked={}
@@ -153,13 +171,11 @@ class Sources:
                 self.health['transmission']={'ok':True}
         conf=self.config.get('moviepilot')
         if conf:
-            db=sqlite3.connect('file:'+str(Path(conf['database']))+'?mode=ro',uri=True,timeout=3)
-            try:
+            with self._moviepilot_db() as db:
                 rows=db.execute("SELECT src_path FROM transferpending WHERE state NOT IN ('completed','failed','cancelled','done','success')").fetchall()
                 for (path,) in rows:
                     blocked[map_path(path,conf.get('path_maps',{}))]='MoviePilot：等待整理完成'
                 self.health['moviepilot']={'ok':True,'pending_files':len(rows)}
-            finally:db.close()
         conf=self.config.get('vtrans')
         if conf:
             rows=json.loads(Path(conf['queue']).read_text())
@@ -171,11 +187,9 @@ class Sources:
         conf=self.config.get('moviepilot')
         if not conf:return ''
         reverse={v:k for k,v in conf.get('path_maps',{}).items()}
-        db=sqlite3.connect('file:'+conf['database']+'?mode=ro',uri=True,timeout=3)
-        try:
+        with self._moviepilot_db() as db:
             row=db.execute('SELECT src FROM transferhistory WHERE dest=? AND status=1 ORDER BY id DESC LIMIT 1',(map_path(str(video),reverse),)).fetchone()
             return map_path(row[0],conf.get('path_maps',{})) if row else ''
-        finally:db.close()
 
     def metadata(self, video):
         # MoviePilot writes canonical identities to NFO beside the final video.
@@ -193,12 +207,10 @@ class Sources:
             # Restrict the read to one matching destination; never mutate MoviePilot's DB.
             reverse={v:k for k,v in conf.get('path_maps',{}).items()}
             path=map_path(str(video),reverse)
-            db=sqlite3.connect('file:'+conf['database']+'?mode=ro',uri=True,timeout=3)
-            try:
+            with self._moviepilot_db() as db:
                 row=db.execute("SELECT media_id,type,title FROM transferhistory WHERE dest=? AND media_source IN ('tmdb','themoviedb') AND status=1 ORDER BY id DESC LIMIT 1",(path,)).fetchone()
                 if row and str(row[0]).isdigit():
                     return {'tmdb_id':int(row[0]),'tmdb_type':'tv' if row[1] in {'电视剧','tv','TV'} else 'movie','show_title':row[2],'metadata_source':'moviepilot'}
-            finally:db.close()
         return {}
 
     def original_language(self,metadata):
@@ -208,7 +220,10 @@ class Sources:
             import asyncio
             from app.engines.tmdb import get_show_details
             detail=asyncio.run(get_show_details(identity[1],identity[0]))
-            self.language_cache[identity]=str(detail.get('original_language','')).lower()
+            language=str(detail.get('original_language') or '').strip().lower() if isinstance(detail,dict) else ''
+            if not language or language in {'und','auto'}:
+                raise SourceUnavailable('TMDB 原始语言暂不可用，等待元数据恢复后重新检查')
+            self.language_cache[identity]=language
         return self.language_cache[identity]
 
     def refresh_subtitles(self,item_id):

@@ -130,3 +130,36 @@ def test_detected_queue_has_its_own_count_and_does_not_expose_probe_cache(tmp_pa
     assert 'detection' not in payload['items'][0]
     assert payload['items'][0]['output_path']=='/video/1.双语.zh-CN.srt'
     assert client.get('/api/library/tasks?view=skipped').json()['items'][0]['state']=='historical'
+
+
+def test_retry_hides_previous_attempt_progress_until_work_resumes(tmp_path, tmp_project_dir, monkeypatch):
+    import json
+    from app.library.worker import LibraryWorker
+    worker = LibraryWorker({'allowed_roots': [str(tmp_path)]}, tmp_path / 'state')
+    video = tmp_path / 'film.mkv'; video.write_bytes(b'video')
+    worker.observe(video, {})
+    row = worker.store.get(video)
+    worker.save(row, state='error', reason='previous attempt failed', project_id='deadbeef')
+    project = tmp_project_dir / 'deadbeef'; project.mkdir()
+    progress_file = project / 'progress.json'
+    previous = {'progress': 40, 'stage': 'translate', 'message': 'previous attempt failed'}
+    progress_file.write_text(json.dumps(previous))
+    monkeypatch.setattr(server, 'worker', worker)
+    monkeypatch.setattr(server.app.state, 'operator_token', 'fixture-token', raising=False)
+    client = TestClient(server.app, headers={'X-AISub-Key': 'fixture-token'})
+    assert client.get('/api/library/tasks?state=error').json()['items'][0]['progress'] == previous
+
+    response = client.post('/api/library/retry', json={'path': str(video)})
+    assert response.status_code == 200
+    waiting = client.get('/api/library/tasks?view=waiting').json()['items'][0]
+    assert waiting['state'] == 'waiting'
+    assert waiting['progress'] is None
+    assert waiting['project_id'] == 'deadbeef'
+    assert json.loads(progress_file.read_text()) == previous  # History remains in project details.
+
+    worker.save(worker.store.get(video), state='ready')
+    assert client.get('/api/library/tasks?view=ready').json()['items'][0]['progress'] is None
+    current = {'progress': 5, 'stage': 'translate', 'message': 'translating new attempt'}
+    progress_file.write_text(json.dumps(current))
+    worker.save(worker.store.get(video), state='translating')
+    assert client.get('/api/library/tasks?state=translating').json()['items'][0]['progress'] == current

@@ -2,13 +2,13 @@ FROM node:22-bookworm-slim AS codex
 RUN npm install --prefix /opt/codex @openai/codex@0.155.1
 RUN npm install --prefix /opt/claude @anthropic-ai/claude-code@2.1.283
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
-# Official v18.4.4 release assets; fail closed if their published bytes change.
+# Official v18.8.6 release assets; fail closed if their published bytes change.
 RUN case "$(dpkg --print-architecture)" in \
-      amd64) asset=omp-linux-x64; sha=24c830fceb0bd6884bf5bf2c7a2b7407bc23fafe655e924c695ef9be308e46f3 ;; \
-      arm64) asset=omp-linux-arm64; sha=602eefddc0fd87043f8f08d8628d72592e5802c003a05f203f1ecbc63a8fdd30 ;; \
+      amd64) asset=omp-linux-x64; sha=877acdc48384b80fe4c083b1e610433d28922dd9fccde9ea430aaace8765b19b ;; \
+      arm64) asset=omp-linux-arm64; sha=a6bf1405877a739965586fcf973136f72078d2e6dc288905fab08588469c13cf ;; \
       *) echo "Unsupported OMP architecture" >&2; exit 1 ;; \
     esac && mkdir -p /opt/omp && \
-    curl --fail --location --retry 3 "https://github.com/can1357/oh-my-pi/releases/download/v18.4.4/${asset}" -o /opt/omp/omp && \
+    curl --fail --location --retry 3 "https://github.com/can1357/oh-my-pi/releases/download/v18.8.6/${asset}" -o /opt/omp/omp && \
     printf '%s  /opt/omp/omp\n' "$sha" | sha256sum --check --strict && chmod 755 /opt/omp/omp
 
 FROM python:3.12-slim-bookworm

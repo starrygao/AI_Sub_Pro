@@ -307,12 +307,17 @@ def _validate_settings_update(data: dict) -> None:
             translation["primary_provider"] = _validate_provider_field(
                 "primary_provider", translation.get("primary_provider"), allow_empty=False
             )
+        if "review_provider" in translation:
+            translation["review_provider"] = _validate_provider_field(
+                "review_provider", translation.get("review_provider"), allow_empty=False
+            )
         if "polish_provider" in translation:
             translation["polish_provider"] = _validate_provider_field(
                 "polish_provider", translation.get("polish_provider")
             )
         _require_non_blank_str("translation", translation, "primary_model")
         _require_str("translation", translation, "polish_model")
+        _require_non_blank_str("translation", translation, "review_model")
         _validate_choice_field(
             "translation",
             translation,
@@ -323,6 +328,12 @@ def _validate_settings_update(data: dict) -> None:
             "translation",
             translation,
             "polish_effort",
+            allowed={"auto", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
+        )
+        _validate_choice_field(
+            "translation",
+            translation,
+            "review_effort",
             allowed={"auto", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
         )
         _require_non_blank_str("translation", translation, "target_language")

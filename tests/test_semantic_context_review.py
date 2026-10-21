@@ -127,3 +127,78 @@ def test_full_document_context_adds_only_omitted_sound_not_visible_dialogue():
 def test_zero_context_window_does_not_include_neighbor_ids():
     blocks = [_block(1, "The Doctor left."), _block(9, "He will return.")]
     assert _subtitle_context_window(blocks, 1, radius=0) == ([], [])
+
+
+def test_translation_and_both_semantic_passes_use_independent_efforts(monkeypatch):
+    import json
+    from app.engines.providers.omp_cli import OmpCliProvider
+    from app.engines.translation_qa import TranslationQaReport
+    monkeypatch.setattr(OmpCliProvider, 'check_cli_available', staticmethod(lambda: True))
+    monkeypatch.setattr(OmpCliProvider, 'check_logged_in', staticmethod(lambda model: True))
+
+    def invoke(provider, items, prompt):
+        if provider.effort == 'medium':
+            return '[{"id": 502, "translation": "不。"}]'
+        if provider.effort == 'xhigh' and provider.model == 'custom-provider/reviewer':
+            return json.dumps([{
+                'id': 502, 'translation': 'OK', 'verdict': 'OK', 'taxonomy': 'none',
+                'source_evidence': 'No.', 'target_evidence': '不。',
+            }], ensure_ascii=False)
+        raise RuntimeError('wrong configured stage')
+
+    monkeypatch.setattr(OmpCliProvider, '_invoke', invoke)
+    config = {'translation': {
+        'primary_provider': 'omp_cli', 'primary_model': 'custom-provider/translator', 'primary_effort': 'medium',
+        'review_provider': 'omp_cli', 'review_model': 'custom-provider/reviewer', 'review_effort': 'xhigh',
+        'quality_mode': 'professional', 'use_translation_memory': False, 'use_phrase_library': False,
+    }}
+    engine = SubtitleTranslator(config)
+    blocks = engine.translate([_block(502, 'No.')])
+    issues, trace = tasks._run_semantic_quality_checks(config, engine, blocks, '简体中文')
+    assert not issues
+    assert trace['coverage_complete']
+    issues, verified, hashes, traces = tasks._run_targeted_semantic_verification(
+        config, engine, blocks, '简体中文', {502}, TranslationQaReport(status='ok', issues=[]), [],
+        strict_quality_gate=True,
+    )
+    assert not issues
+    assert verified == {502}
+    assert hashes == {502: tasks._semantic_block_content_hash(blocks[0])}
+    assert len(traces) == 2 and all(item['coverage_complete'] for item in traces)
+
+
+def test_missing_review_never_falls_back_to_working_primary():
+    from unittest.mock import Mock
+    from app.engines.translation_qa import TranslationQaReport
+    primary = Mock()
+    engine = SimpleNamespace(primary=primary)
+    blocks = [_block(502, 'No.', '不。')]
+    config = {'translation': {'quality_mode': 'professional'}}
+    issues, trace = tasks._run_semantic_quality_checks(config, engine, blocks, '简体中文')
+    assert [issue.type for issue in issues] == ['semantic_qa_failed']
+    assert not trace['coverage_complete']
+    issues, verified, hashes, traces = tasks._run_targeted_semantic_verification(
+        config, engine, blocks, '简体中文', {502}, TranslationQaReport(status='ok', issues=[]), [],
+        strict_quality_gate=True,
+    )
+    assert issues and all(issue.type == 'semantic_qa_failed' for issue in issues)
+    assert verified == set() and hashes == {}
+    primary.translate_batch.assert_not_called()
+
+
+def test_review_initialization_failure_is_not_downgraded_to_primary(monkeypatch):
+    import pytest
+    from app.engines.providers.omp_cli import OmpCliProvider
+    original = OmpCliProvider.__init__
+
+    def initialize(provider, config):
+        if config['model'] == 'custom-provider/broken-review':
+            raise RuntimeError('review cannot initialize')
+        original(provider, config)
+
+    monkeypatch.setattr(OmpCliProvider, '__init__', initialize)
+    with pytest.raises(RuntimeError, match='review cannot initialize'):
+        SubtitleTranslator({'translation': {
+            'primary_provider': 'omp_cli', 'primary_model': 'custom-provider/working-primary',
+            'review_provider': 'omp_cli', 'review_model': 'custom-provider/broken-review',
+        }})

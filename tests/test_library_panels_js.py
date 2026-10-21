@@ -21,13 +21,13 @@ for(const m of fs.readFileSync('app/static/library.html','utf8').matchAll(/<(\w+
 const el=(tag,text)=>{const e=new Element(tag);e.textContent=text||'';return e;};
 const $=id=>{assert(elements[id],'Unknown DOM id '+id);return elements[id];};
 const handlers={},intervals=[],saved=[];
-const config={translation:{primary_provider:'codex_cli',primary_model:'gpt-5.5',primary_effort:'medium',batch_size:20,semantic_qa_batch_size:40,full_doc_mode:true,polish_provider:'',polish_model:'',polish_effort:'auto'},asr:{backend:'faster_whisper',model_size:'small',beam_size:3},credentials_configured:{tmdb:true}};
+const config={translation:{primary_provider:'codex_cli',primary_model:'gpt-5.5',primary_effort:'medium',batch_size:20,semantic_qa_batch_size:40,full_doc_mode:true,polish_provider:'',polish_model:'',polish_effort:'auto',review_provider:'codex_cli',review_model:'gpt-5.5',review_effort:'medium'},asr:{backend:'faster_whisper',model_size:'small',beam_size:3},credentials_configured:{tmdb:true}};
 let state={enabled:false,counts:{}},failSave=false,failModels=false;
 const window={addEventListener:(name,fn)=>handlers[name]=fn};
 const context={$,el,window,document:{title:'',hidden:false},location:{hash:'#settings'},setInterval:fn=>intervals.push(fn),
  api:async(path,body)=>{
   if(path!=='settings')return state;
-  if(body){if(failSave)throw Error('Save failed');saved.push(JSON.parse(JSON.stringify(body)));for(const [section,values] of Object.entries(body))Object.assign(config[section],values);state.model_settings={pending:true,current_model:'gpt-5.5',current_effort:'medium'};}
+  if(body){if(failSave)throw Error('Save failed');saved.push(JSON.parse(JSON.stringify(body)));for(const [section,values] of Object.entries(body))Object.assign(config[section],values);state.model_settings={pending:true,current_provider:'codex_cli',current_model:'gpt-5.5',current_effort:'medium',current_review_provider:'codex_cli',current_review_model:'gpt-5.5',current_review_effort:'medium'};}
   return {settings:structuredClone(config),state:state.model_settings||{pending:false,current_model:'gpt-5.5'}};
  },
  request:async(path,body)=>{
@@ -279,9 +279,10 @@ assert.doesNotMatch(text,/未发现质量问题/);assert.equal($('subtitle-previ
 ''')
 
 
-def test_model_sync_refreshes_both_dropdowns_without_resetting_unsaved_choices():
+def test_model_sync_refreshes_all_three_dropdowns_without_resetting_unsaved_choices():
     run_js(r'''
 config.translation.polish_provider='codex_cli';config.translation.polish_model='gpt-5.5';config.translation.polish_effort='medium';
+config.translation.review_model='saved-review-model';config.translation.review_effort='xhigh';
 vm.runInContext(code,context);await flush();
 $('setting-model').value='fixture-model';$('setting-model').onchange();
 $('setting-batch').value='31';$('settings-form').handlers.change();
@@ -296,8 +297,10 @@ await $('models-refresh').onclick();
 assert.equal(refreshes,1); // Same provider shares one synchronization.
 assert.equal($('setting-model').value,'fixture-model');assert.equal($('setting-batch').value,'31');
 assert.equal($('setting-polish-model').value,'gpt-5.5');assert.equal($('setting-polish-effort').value,'medium');
+assert.equal($('setting-review-model').value,'saved-review-model');assert.equal($('setting-review-effort').value,'xhigh');
 assert($('setting-model').options.some(x=>x.value==='new-model'));
 assert($('setting-polish-model').options.some(x=>x.value==='new-model'));
+assert($('setting-review-model').options.some(x=>x.value==='new-model'));
 $('setting-model').value='new-model';$('setting-model').onchange();
 assert($('setting-effort').options.some(x=>x.value==='high'));
 assert.match($('model-hint').textContent,/已同步/);assert.equal(saved.length,0);
@@ -363,6 +366,103 @@ $('setting-model').value='other/model';$('setting-model').onchange();
 const resetMessage=$('cli-status').textContent;
 finish({installed:true,logged_in:true,hint:'Previous model authenticated'});await pending;
 assert.equal($('cli-status').textContent,resetMessage);
+assert.equal($('cli-check').disabled,false);
+assert.equal(saved.length,0);
+''')
+
+
+def test_review_saves_only_its_own_selection_and_reports_current_pending_settings():
+    run_js(r'''
+config.translation.polish_provider='codex_cli';config.translation.polish_model='fixture-model';config.translation.polish_effort='low';
+vm.runInContext(code,context);await flush();
+assert.equal($('setting-review-provider').value,'codex_cli');
+assert(!$('setting-review-provider').options.some(x=>x.value===''));
+$('setting-review-model').value='fixture-model';$('setting-review-model').onchange();
+$('setting-review-effort').value='low';$('settings-form').handlers.change();
+assert.equal($('setting-model').value,'gpt-5.5');assert.equal($('setting-effort').value,'medium');
+assert.equal($('setting-polish-model').value,'fixture-model');assert.equal($('setting-polish-effort').value,'low');
+await submit();await flush();
+assert.deepEqual(saved,[{translation:{review_model:'fixture-model',review_effort:'low'}}]);
+assert.match($('settings-availability').textContent,/当前初译：Codex CLI · gpt-5.5 · 中/);
+assert.match($('settings-availability').textContent,/当前质量复核：Codex CLI · gpt-5.5 · 中/);
+assert.match($('settings-feedback').textContent,/等待/);
+window.LibraryPanels.statusChanged({model_settings:{pending:false,current_review_provider:'codex_cli',current_review_model:'fixture-model',current_review_effort:'low'}});
+assert.match($('settings-feedback').textContent,/生效/);
+$('setting-review-model').value='gpt-5.5';$('setting-review-model').onchange();
+$('settings-reset').onclick();await flush();
+assert.equal($('setting-review-model').value,'fixture-model');assert.equal($('setting-review-effort').value,'low');
+assert.equal($('setting-model').value,'gpt-5.5');assert.equal($('setting-polish-model').value,'fixture-model');
+assert.equal($('settings-save').disabled,true);
+''')
+
+
+def test_review_catalog_failure_retry_and_provider_switch_ignore_stale_responses():
+    run_js(r'''
+config.credentials_configured.deepseek=true;
+const original=context.request;let resolveCatalog,rejectCatalog;
+context.request=path=>path==='models/deepseek' ? new Promise((resolve,reject)=>{resolveCatalog=resolve;rejectCatalog=reject;}) : original(path);
+vm.runInContext(code,context);await flush();
+$('setting-review-provider').value='deepseek';let loading=$('setting-review-provider').onchange();
+assert.equal($('review-loading').hidden,false);assert.equal($('setting-review-model').disabled,true);
+assert.equal($('settings-save').disabled,true);await submit();assert.equal(saved.length,0);
+rejectCatalog(Error('Review catalog offline'));await loading;
+assert.equal($('review-reload').hidden,false);assert.match($('review-error').textContent,/offline/);
+assert.equal($('settings-save').disabled,true);await submit();assert.equal(saved.length,0);
+loading=$('review-reload').onclick();
+resolveCatalog({models:['deepseek-review'],capabilities:{'deepseek-review':{reasoning_efforts:['high']}}});await loading;
+assert.equal($('setting-review-model').value,'deepseek-review');assert.equal($('review-error').hidden,true);
+assert.equal($('settings-save').disabled,false);
+$('setting-review-effort').value='high';$('settings-form').handlers.change();await submit();await flush();
+assert.deepEqual(saved,[{translation:{review_provider:'deepseek',review_model:'deepseek-review',review_effort:'high'}}]);
+context.request=path=>path==='models/claude_cli' ? new Promise(resolve=>{resolveCatalog=resolve;}) : original(path);
+$('setting-review-provider').value='claude_cli';loading=$('setting-review-provider').onchange();
+$('settings-reset').onclick();await flush();
+resolveCatalog({models:['obsolete-review'],capabilities:{}});await loading;
+assert.equal($('setting-review-provider').value,'deepseek');assert.equal($('setting-review-model').value,'deepseek-review');
+assert.equal($('setting-review-effort').value,'high');assert.equal($('review-error').hidden,true);
+assert.equal($('settings-save').disabled,true);
+assert.equal($('setting-model').value,'gpt-5.5');
+''')
+
+
+def test_review_provider_uses_catalog_models_and_efforts_without_primary_inheritance():
+    run_js(r'''
+const original=context.request;
+context.request=async path=>path==='models/omp_cli' ? {models:['other/reviewer','openai-codex/gpt-6.1-sol'],capabilities:{'other/reviewer':{reasoning_efforts:['high','max']},'openai-codex/gpt-6.1-sol':{reasoning_efforts:['medium','xhigh']}}} : original(path);
+vm.runInContext(code,context);await flush();
+$('setting-review-provider').value='omp_cli';await $('setting-review-provider').onchange();
+assert.equal($('setting-review-model').value,'other/reviewer');
+assert.equal($('setting-review-effort').value,'auto');
+assert($('setting-review-effort').options.some(x=>x.value==='max'));
+$('setting-review-effort').value='max';$('settings-form').handlers.change();await submit();await flush();
+assert.deepEqual(saved,[{translation:{review_provider:'omp_cli',review_model:'other/reviewer',review_effort:'max'}}]);
+assert.equal($('setting-effort').value,'medium');
+$('setting-review-model').value='openai-codex/gpt-6.1-sol';$('setting-review-model').onchange();
+assert.equal($('setting-review-effort').value,'auto');
+assert($('setting-review-effort').options.some(x=>x.value==='xhigh'));
+''')
+
+
+def test_cli_auth_includes_review_and_deduplicates_only_identical_omp_models():
+    run_js(r'''
+Object.assign(config.translation,{primary_provider:'omp_cli',primary_model:'translation/model',primary_effort:'medium',polish_provider:'omp_cli',polish_model:'translation/model',polish_effort:'xhigh',review_provider:'omp_cli',review_model:'review/model',review_effort:'xhigh'});
+const original=context.request,calls=[];let finishReview;
+context.request=path=>{
+ if(path==='models/omp_cli')return Promise.resolve({models:['translation/model','review/model','new-review/model'],capabilities:{}});
+ if(path.startsWith('settings/omp-cli/status')){
+  calls.push(path);
+  if(path.includes(encodeURIComponent('review/model')))return new Promise(resolve=>{finishReview=resolve;});
+  return Promise.resolve({installed:true,logged_in:true,hint:'Translation credentials'});
+ }
+ return original(path);
+};
+vm.runInContext(code,context);await flush();
+const checking=$('cli-check').onclick();
+assert.deepEqual(calls,['settings/omp-cli/status?model=translation%2Fmodel','settings/omp-cli/status?model=review%2Fmodel']);
+$('setting-review-model').value='new-review/model';$('setting-review-model').onchange();
+const message=$('cli-status').textContent;
+finishReview({installed:true,logged_in:true,hint:'Obsolete review credentials'});await checking;
+assert.equal($('cli-status').textContent,message);
 assert.equal($('cli-check').disabled,false);
 assert.equal(saved.length,0);
 ''')

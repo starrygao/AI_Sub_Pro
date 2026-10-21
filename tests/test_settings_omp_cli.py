@@ -2,6 +2,7 @@
 import copy
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -75,6 +76,8 @@ def test_cli_choice_and_custom_model_survive_settings_roundtrip(tmp_path, monkey
         "primary_provider": "omp_cli", "primary_model": "custom-provider/my-model",
         "primary_effort": "minimal", "polish_provider": "codex_cli",
         "polish_model": "gpt-5.5", "polish_effort": "high",
+        "review_provider": "omp_cli", "review_model": "another-provider/review-custom",
+        "review_effort": "xhigh",
     }
     response = client.post("/api/settings", json={
         "translation": selected, "providers": {"omp_cli": {"timeout_sec": 600}},
@@ -106,3 +109,41 @@ def test_adding_omp_support_does_not_change_existing_configuration_identity(tmp_
     loaded = cfg.Config.load()
     after = translation_configuration_hash(project, config=loaded, effective_kb={}, candidate_terms=[])
     assert after == before
+
+
+@pytest.mark.parametrize(('policy', 'semantic_qa', 'strict_gate', 'expected_ready'), [
+    ('fast', False, False, True),
+    ('fast', True, False, False),
+    ('professional', False, False, False),
+    ('fast', False, True, False),
+])
+def test_review_omp_model_credentials_are_required_only_when_semantic_review_runs(
+    monkeypatch, policy, semantic_qa, strict_gate, expected_ready,
+):
+    from app.engines.providers.omp_cli import OmpCliProvider
+    from app.services.provider_readiness import _translation_readiness
+    monkeypatch.setattr(OmpCliProvider, 'check_cli_available', lambda: True)
+    monkeypatch.setattr(OmpCliProvider, 'check_logged_in', lambda model: model == 'primary-service/model')
+    config = {'translation': {
+        'primary_provider': 'omp_cli', 'primary_model': 'primary-service/model',
+        'review_provider': 'omp_cli', 'review_model': 'review-service/model',
+        'quality_mode': policy, 'semantic_qa': semantic_qa,
+    }}
+    readiness = _translation_readiness(config, strict_quality_gate=strict_gate)
+    assert readiness['translation_ready'] is expected_ready
+    if not expected_ready:
+        assert readiness['translation_hint']
+
+
+def test_review_api_credentials_block_translation_until_configured():
+    from app.services.provider_readiness import _translation_readiness
+    config = {'translation': {
+        'primary_provider': 'openai', 'review_provider': 'deepseek',
+        'review_model': 'custom-review', 'semantic_qa': True,
+    }, 'api_keys': {'openai': 'primary-key'}}
+    readiness = _translation_readiness(config)
+    assert not readiness['translation_ready']
+    assert readiness['translation_provider'] == 'deepseek'
+    assert '质量复核' in readiness['translation_hint']
+    config['api_keys']['deepseek'] = 'review-key'
+    assert _translation_readiness(config)['translation_ready']

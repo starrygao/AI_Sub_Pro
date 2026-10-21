@@ -74,13 +74,14 @@ def test_unknown_audio_uses_tmdb_original_language_before_asr(tmp_path,monkeypat
     worker.process_one()
     assert worker.store.get(video)['state']=='native_language'
     prepare.assert_not_called()
-    # An explicit foreign dub must not inherit the original show's Chinese language.
-    row=worker.store.get(video);worker.save(row,state='waiting')
+    # Explicit foreign tags require audio verification, not a metadata-only skip.
+    row=worker.store.get(video);worker.save(row,state='waiting',detection=None)
     monkeypatch.setattr(worker,'probe',lambda p:{'streams':[{'codec_type':'audio','tags':{'language':'eng'}}]})
-    language=Mock(side_effect=AssertionError('foreign audio must win'))
+    language=Mock(return_value='zh')
     monkeypatch.setattr(worker.sources,'original_language',language)
     worker.process_one()
-    language.assert_not_called();prepare.assert_called_once()
+    assert worker.store.get(video)['state']=='ready'
+    language.assert_called();prepare.assert_called_once()
 
 
 def test_finish_publishes_certified_bilingual_srt_without_changing_video(tmp_path, tmp_project_dir, monkeypatch):

@@ -215,7 +215,10 @@ def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
             row['output_path']=str(bilingual_sidecar_path(row['path']))
         row['server_source_path']=map_path(row['path'],mappings)
         row['server_output_path']=map_path(row.get('output_path',''),mappings)
-        if row.get('preparation_progress'):
+        if row['state'] in {'waiting','ready'}:
+            # Retained project progress belongs to the previous attempt, not this queue entry.
+            row['progress']=None
+        elif row.get('preparation_progress'):
             row['progress']=row['preparation_progress']
         elif row.get('project_id'):
             from app.engines.scheduler import get_progress

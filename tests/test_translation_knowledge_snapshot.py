@@ -78,6 +78,51 @@ def test_knowledge_edit_does_not_certify_invalid_historical_output(client, tmp_p
     assert 'translation_knowledge_context' not in project
 
 
+@pytest.mark.parametrize('already_frozen', [False, True])
+def test_legacy_review_migration_preserves_completed_delivery_identity(
+    client, tmp_project_dir, patched_kb_file, already_frozen,
+):
+    from app.config import Config
+    from app.library.settings import seal_completed_delivery
+    from app.utils.translation_certification import validate_translation_delivery
+    for field in ('provider', 'model', 'effort'):
+        Config._data['translation'].pop(f'review_{field}')
+    pid = _completed(tmp_project_dir, 'legacy_review')
+    pdir = tmp_project_dir / pid
+    if already_frozen:
+        assert seal_completed_delivery(pid)
+    before = json.loads((pdir / 'project.json').read_text())
+    original_bytes = (pdir / 'bilingual.srt').read_bytes()
+    Config.save()
+    Config.load()
+    project = json.loads((pdir / 'project.json').read_text())
+    assert project['translation_quality_configuration_hash'] == before['translation_quality_configuration_hash']
+    assert 'review_model' not in project['library_delivery_config']['translation']
+    if already_frozen:
+        assert project['library_delivery_config'] == before['library_delivery_config']
+    assert validate_translation_delivery(project, pdir).valid
+    Config.update({'translation': {'review_model': 'future-review-model', 'review_effort': 'high'}})
+    assert client.get(f'/api/projects/{pid}/subtitles').status_code == 200
+    assert (pdir / 'bilingual.srt').read_bytes() == original_bytes
+
+
+def test_legacy_review_migration_never_certifies_invalid_historical_delivery(
+    client, tmp_project_dir, patched_kb_file,
+):
+    from app.config import Config
+    for field in ('provider', 'model', 'effort'):
+        Config._data['translation'].pop(f'review_{field}')
+    pid = _completed(tmp_project_dir, 'invalid_legacy_review')
+    pdir = tmp_project_dir / pid
+    (pdir / 'bilingual.srt').write_text('tampered')
+    Config.save()
+    Config.load()
+    project = json.loads((pdir / 'project.json').read_text())
+    assert 'library_delivery_config' not in project
+    assert 'translation_knowledge_context' not in project
+    assert client.get(f'/api/projects/{pid}/subtitles').status_code == 409
+
+
 def test_running_translation_polish_and_qa_keep_context_until_next_run(
     client, tmp_project_dir, patched_kb_file, monkeypatch,
 ):

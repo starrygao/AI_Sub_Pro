@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+from contextlib import nullcontext
 from unittest.mock import Mock
 
 import pytest
@@ -111,3 +112,165 @@ def test_timeout_reaps_cli_process(tmp_path, monkeypatch):
                            cwd=str(tmp_path), env=dict(os.environ), timeout=.1)
     assert processes[0].poll() is not None
     assert processes[0].stdout.closed and processes[0].stderr.closed
+
+
+def mock_cli_result(monkeypatch, stdout='', stderr='', returncode=1):
+    monkeypatch.setattr(OmpCliProvider, 'check_cli_available', staticmethod(lambda: True))
+    monkeypatch.setattr(OmpCliProvider, 'check_logged_in', staticmethod(lambda model: True))
+    monkeypatch.setattr(omp_models, 'isolated_cli',
+                        lambda: nullcontext(('/isolated', '/overlay.json', {})))
+    run = Mock(return_value=subprocess.CompletedProcess(['omp'], returncode, stdout, stderr))
+    monkeypatch.setattr(omp_models, 'run_cli', run)
+    return run
+
+
+@pytest.mark.parametrize('output', [
+    json.dumps({'type': 'error', 'error': '503 upstream unavailable'}),
+    json.dumps({'type': 'aborted', 'message': '503 upstream unavailable'}),
+    stream(assistant('', 'error', errorMessage='503 upstream unavailable')),
+    stream(assistant('partial', 'aborted', errorMessage='503 upstream unavailable')),
+])
+def test_nonzero_exit_preserves_structured_service_error(monkeypatch, caplog, output):
+    run = mock_cli_result(monkeypatch, output, 'ERROR: less useful stderr failure')
+    with pytest.raises(ProviderUnavailableError) as caught:
+        OmpCliProvider({}).translate_batch([{'id': 1}], 'sys', retries=1)
+    for diagnostic in (str(caught.value), caplog.text):
+        assert '503 upstream unavailable' in diagnostic
+        assert '退出码 1' in diagnostic
+        assert 'less useful stderr failure' not in diagnostic
+        assert '未返回可识别的错误详情' not in diagnostic
+    assert run.call_count == 1
+
+
+@pytest.mark.parametrize('output', [
+    json.dumps({'type': 'error', 'error': {
+        'message': '503 capacity exhausted; Bearer private-bearer',
+        'token': 'private-envelope-token',
+        'prompt': 'private-prompt',
+        'request': {'content': 'private-subtitle'},
+    }}),
+    stream(assistant('private-subtitle', 'error', errorMessage=(
+        '503 capacity exhausted; {"api_key": "private-key", "access_token": "private-access", '
+        '"password": "private-password"} prompt=private-prompt\nprivate-subtitle'
+    ))),
+])
+@pytest.mark.parametrize('returncode', [0, 1])
+def test_structured_service_error_redacts_sensitive_fields(monkeypatch, caplog, output, returncode):
+    mock_cli_result(monkeypatch, output, returncode=returncode)
+    with pytest.raises(ProviderUnavailableError) as caught:
+        OmpCliProvider({}).translate_batch(
+            [{'id': 1, 'original': 'private-subtitle'}], 'private-prompt', retries=1,
+        )
+    for diagnostic in (str(caught.value), caplog.text):
+        assert '503 capacity exhausted' in diagnostic
+        assert 'private-' not in diagnostic
+
+
+@pytest.mark.parametrize('prefix', [
+    '[omp] Error:',
+    'omp: Error:',
+    '[2026-10-14T12:00:00Z] [ERROR]',
+    '2026-10-14T12:00:00Z [provider] FATAL:',
+])
+def test_prefixed_stderr_error_is_useful_and_redacted(monkeypatch, caplog, prefix):
+    stderr = (
+        'OMP banner\nprivate-subtitle\n'
+        f'\x1b[31m{prefix} upstream connection refused; api_key=private-key '
+        'Authorization: Bearer private-token; token=private-query; '
+        'prompt=private-prompt\x1b[0m\n'
+        'Warning: no final assistant message\n'
+    )
+    mock_cli_result(monkeypatch, stderr=stderr)
+    with pytest.raises(ProviderUnavailableError) as caught:
+        OmpCliProvider({}).translate_batch([{'id': 1}], 'sys', retries=1)
+    for diagnostic in (str(caught.value), caplog.text):
+        assert 'upstream connection refused' in diagnostic
+        assert '退出码 1' in diagnostic
+        assert 'private-' not in diagnostic
+        assert 'OMP banner' not in diagnostic
+        assert '\x1b' not in diagnostic
+
+
+def test_terminal_stderr_error_wins_over_background_error_logs(monkeypatch):
+    mock_cli_result(monkeypatch, stderr=(
+        '[models] ERROR: background refresh failed\n'
+        'Error: terminal connection refused\n'
+        '[cleanup] ERROR: secondary cleanup failed\n'
+    ))
+    with pytest.raises(ProviderUnavailableError) as caught:
+        OmpCliProvider({}).translate_batch([{'id': 1}], 'sys', retries=1)
+    assert 'terminal connection refused' in str(caught.value)
+    assert 'background' not in str(caught.value)
+    assert 'cleanup' not in str(caught.value)
+
+
+@pytest.mark.parametrize('model', [
+    'openai-codex/aisubpro-diagnostic-nonexistent-model',
+    'private-selector?token=private-token&prompt=private-prompt',
+])
+def test_missing_model_stderr_reports_safe_cause_without_help_or_selector(monkeypatch, caplog, model):
+    mock_cli_result(monkeypatch, stderr=(
+        f'Model "{model}" not found\n'
+        'Run `omp models find <pattern>` to search, or `omp models` to list all.\n'
+        'private-subtitle\n'
+    ))
+    with pytest.raises(ProviderUnavailableError) as caught:
+        OmpCliProvider({}).translate_batch([{'id': 1}], 'sys', retries=1)
+    for diagnostic in (str(caught.value), caplog.text):
+        assert 'Model not found' in diagnostic
+        assert '退出码 1' in diagnostic
+        assert '未返回可识别的错误详情' not in diagnostic
+        assert model not in diagnostic
+        assert 'private-' not in diagnostic
+        assert 'omp models' not in diagnostic
+
+
+@pytest.mark.parametrize('stderr', [
+    '',
+    'OMP banner\nprivate-subtitle\nWarning: no last message',
+    'user says an error occurred in private-subtitle',
+    'user says Model "private-selector" not found',
+    'Model "private-selector" not found in private-subtitle',
+])
+@pytest.mark.parametrize('stdout', [
+    '',
+    'private malformed stdout',
+    json.dumps({'type': 'message_end', 'message': assistant('private-partial')}),
+    stream(assistant('[{"id":1,"translation":"private-final"}]')),
+])
+def test_nonzero_exit_without_error_details_uses_safe_fallback(monkeypatch, caplog, stdout, stderr):
+    mock_cli_result(monkeypatch, stdout, stderr)
+    with pytest.raises(ProviderUnavailableError) as caught:
+        OmpCliProvider({}).translate_batch([{'id': 1}], 'sys', retries=1)
+    for diagnostic in (str(caught.value), caplog.text):
+        assert '退出码 1' in diagnostic
+        assert '未返回可识别的错误详情' in diagnostic
+        assert 'private' not in diagnostic
+
+
+@pytest.mark.parametrize('stdout,stderr', [
+    (json.dumps({'type': 'error', 'error': '401 Unauthorized Bearer private-token'}), ''),
+    (stream(assistant('', 'error', errorMessage='invalid_api_key private-key')), ''),
+    ('', '[omp] Error: refresh_token_expired private-token'),
+])
+def test_nonzero_authentication_failure_is_not_retried(monkeypatch, caplog, stdout, stderr):
+    run = mock_cli_result(monkeypatch, stdout, stderr)
+    sleep = Mock()
+    monkeypatch.setattr('app.engines.providers.omp_cli.time.sleep', sleep)
+    with pytest.raises(ProviderUnavailableError, match='认证失败') as caught:
+        OmpCliProvider({}).translate_batch([{'id': 1}], 'sys', retries=3)
+    assert 'private-' not in str(caught.value) + caplog.text
+    assert run.call_count == 1
+    sleep.assert_not_called()
+
+
+def test_successful_cli_still_uses_terminal_answer_and_validates_ids(monkeypatch):
+    output = stream(assistant('[{"id":"009","translation":"你好"}]'))
+    mock_cli_result(monkeypatch, output, '[omp] ERROR: nonfatal startup warning', returncode=0)
+    provider = OmpCliProvider({})
+    assert provider.translate_batch([{'id': '009'}], 'sys', retries=1) == [
+        {'id': '009', 'translation': '你好', 'error': ''},
+    ]
+    result = provider.translate_batch([{'id': '010'}], 'sys', retries=1)
+    assert result[0]['translation'] == ''
+    assert 'unexpected id' in result[0]['error']

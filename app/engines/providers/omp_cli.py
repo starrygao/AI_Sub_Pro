@@ -14,6 +14,10 @@ from .result_contract import provider_response_instruction, reconcile_translatio
 log = logging.getLogger(__name__)
 
 
+class _OmpServiceError(RuntimeError):
+    """An explicit service failure, rather than an incomplete event stream."""
+
+
 class OmpCliProvider(BaseProvider):
     full_document_max_items = 400
 
@@ -92,11 +96,48 @@ class OmpCliProvider(BaseProvider):
             raise ProviderUnavailableError('OMP CLI 认证失败或登录已失效，请在 omp 中重新 /login 后重试')
 
     @staticmethod
+    def _safe_diagnostic(value):
+        # Error objects can carry request bodies and headers beside the message.
+        # Never stringify that envelope into task errors or retry logs.
+        if isinstance(value, dict):
+            value = value.get('message')
+        if not isinstance(value, str) or not value.strip():
+            return '未返回可识别的错误详情，请检查 OMP 服务状态'
+        clean = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', value).strip()
+        # Keep the summary, not multiline request/prompt dumps.
+        clean = clean.splitlines()[0] if clean else ''
+        clean = re.sub(
+            r'''(?i)\b(?:prompt|system_prompt|input|messages|content|original|subtitle|subtitles)\b["']?\s*[:=].*''',
+            '<redacted request>', clean,
+        )
+        clean = re.sub(
+            r'''(?i)(\b(?:authorization|api[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|token|password|secret)\b["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|(?:bearer\s+)?[^\s,;&]+)''',
+            r'\1<redacted>', clean,
+        )
+        clean = re.sub(r'(?i)\bbearer\s+[^\s,;"\']+', 'Bearer <redacted>', clean)
+        return redact_error_message(clean, 300) or '未返回可识别的错误详情，请检查 OMP 服务状态'
+
+    @staticmethod
     def _exit_diagnostic(stderr):
         clean = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', stderr)
-        lines = [line.strip() for line in clean.splitlines() if re.match(
-            r'^\s*(?:(?:\d{4}-\d{2}-\d{2}T\S+)\s+)?(?:error|fatal)\b', line, re.I)]
-        return redact_error_message(lines[-1], 300) if lines else '未返回可识别的错误详情，请检查 OMP 服务状态'
+        terminal, logged = [], []
+        for line in clean.splitlines():
+            if re.fullmatch(r'\s*Model "[^"\r\n]+" not found\s*', line):
+                # The CLI emits this terminal failure without an ERROR prefix.
+                # Selectors are user-controlled; report the cause, not their value.
+                terminal.append('Model not found（所选 OMP 模型不存在，请检查模型 selector）')
+                continue
+            # Accept log prefixes, not an arbitrary "error" inside echoed input.
+            match = re.match(
+                r'^\s*(?:(?:\d{4}-\d{2}-\d{2}[T ]\S+|\[[^\]\r\n]+\]|[\w.-]+:)\s*)*'
+                r'(?P<failure>(?:error|fatal)\b.*|\[(?:error|fatal)\].*)$', line, re.I,
+            )
+            if match:
+                logged.append(match.group('failure'))
+                if re.match(r'^\s*(?:error|fatal)\s*:', line, re.I):
+                    terminal.append(match.group('failure'))
+        candidates = terminal or logged
+        return OmpCliProvider._safe_diagnostic(candidates[-1] if candidates else None)
 
     def _invoke(self, items, system_prompt):
         prompt = (
@@ -126,6 +167,8 @@ class OmpCliProvider(BaseProvider):
                 self._extract_answer(result.stdout)
             except ProviderUnavailableError:
                 raise
+            except _OmpServiceError as error:
+                raise RuntimeError(f'OMP CLI 退出码 {result.returncode}：{error}') from None
             except (RuntimeError, ValueError):
                 pass
             raise RuntimeError(f'OMP CLI 退出码 {result.returncode}：{self._exit_diagnostic(result.stderr or "")}')
@@ -146,7 +189,7 @@ class OmpCliProvider(BaseProvider):
             if event.get('type') in ('error', 'aborted'):
                 diagnostic = event.get('error', event.get('message', ''))
                 OmpCliProvider._authentication_failure(str(diagnostic))
-                raise RuntimeError('OMP CLI 调用已中止或失败：' + redact_error_message(str(diagnostic), 300))
+                raise _OmpServiceError('OMP CLI 调用已中止或失败：' + OmpCliProvider._safe_diagnostic(diagnostic))
             if event.get('type') == 'agent_end':
                 terminal = event if event.get('isTerminal') is not False and event.get('yielded') is not False else None
         if terminal is None:
@@ -158,10 +201,10 @@ class OmpCliProvider(BaseProvider):
         message = assistants[-1]
         reason = message.get('stopReason')
         if reason != 'stop':
-            diagnostic = str(message.get('errorMessage') or '')
-            OmpCliProvider._authentication_failure(diagnostic)
+            diagnostic = message.get('errorMessage') or ''
+            OmpCliProvider._authentication_failure(str(diagnostic))
             if reason in ('error', 'aborted'):
-                raise RuntimeError(f'OMP CLI 调用失败（{reason}）：{redact_error_message(diagnostic, 300)}')
+                raise _OmpServiceError(f'OMP CLI 调用失败（{reason}）：{OmpCliProvider._safe_diagnostic(diagnostic)}')
             raise RuntimeError('OMP CLI 最终响应未正常完成')
         content = message.get('content')
         if not isinstance(content, list):

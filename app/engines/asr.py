@@ -151,6 +151,7 @@ def transcribe(
     callback: Optional[Callable] = None,
     error_log_dir: Optional[str] = None,
     backend: str = "auto",
+    language_callback: Optional[Callable] = None,
 ) -> List[SubtitleBlock]:
     """
     Transcribe audio to subtitle blocks.
@@ -161,6 +162,11 @@ def transcribe(
     Note: `vad_filter` is honored by faster-whisper. mlx_whisper and
     openai-whisper do not support it, so a warning is logged when the app
     falls back to those backends while VAD is enabled.
+
+    `language_callback(language, probability)` reports only automatic native
+    detection with nonempty speech. MLX/OpenAI reuse the model for a bounded
+    speech-window probe because their transcription results omit confidence;
+    the probability must support the transcription's detected language.
 
     If all backends fail and `error_log_dir` is provided, a per-project
     `asr_error.log` is written into that directory. When omitted, no file
@@ -182,15 +188,16 @@ def transcribe(
     )
 
     errors = []
+    language_options = {"language_callback": language_callback} if language_callback else {}
 
     for candidate in backend_order:
         try:
             if candidate == "mlx_whisper":
-                return _transcribe_mlx(audio_path, lang, model_size, beam_size, callback, vad_filter=vad_filter)
+                return _transcribe_mlx(audio_path, lang, model_size, beam_size, callback, vad_filter=vad_filter, **language_options)
             if candidate == "faster_whisper":
-                return _transcribe_faster_whisper(audio_path, lang, model_size, vad_filter, beam_size, callback)
+                return _transcribe_faster_whisper(audio_path, lang, model_size, vad_filter, beam_size, callback, **language_options)
             if candidate == "openai_whisper":
-                return _transcribe_openai(audio_path, lang, model_size, beam_size, callback, vad_filter=vad_filter)
+                return _transcribe_openai(audio_path, lang, model_size, beam_size, callback, vad_filter=vad_filter, **language_options)
         except ImportError as e:
             label = "openai whisper" if candidate == "openai_whisper" else candidate
             msg = f"{label} ImportError: {e}"
@@ -218,9 +225,28 @@ def transcribe(
     raise RuntimeError(f"No working ASR backend found.\n{error_detail}")
 
 
+def _language_probe_audio(audio_path, segments):
+    """Bound the extra native language probe to 30 seconds of recognized speech."""
+    import subprocess
+    import numpy as np
+    from app.utils.media import get_ffmpeg_path
+    speech = [s for s in segments if s.get("text", "").strip()]
+    segment = max(speech, key=lambda s: float(s.get("end", 0)) - float(s.get("start", 0)))
+    offset = max(0, float(segment.get("start", 0)))
+    result = subprocess.run(
+        [get_ffmpeg_path(), "-nostdin", "-v", "error", "-ss", str(offset),
+         "-i", str(audio_path), "-t", "30", "-vn", "-ac", "1", "-ar", "16000",
+         "-f", "f32le", "pipe:1"],
+        capture_output=True, check=False, timeout=45,
+    )
+    if result.returncode or not result.stdout:
+        raise RuntimeError("音频语言核验片段无法读取")
+    return np.frombuffer(result.stdout, dtype=np.float32)
+
+
 def _transcribe_mlx(
     audio_path: str, language: Optional[str], model_size: str,
-    beam_size: int, callback, vad_filter: bool = False
+    beam_size: int, callback, vad_filter: bool = False, language_callback=None
 ) -> List[SubtitleBlock]:
     """Transcribe using mlx_whisper (Apple Silicon optimized)."""
     import mlx_whisper
@@ -272,6 +298,18 @@ def _transcribe_mlx(
     elapsed = time.time() - start
 
     segments = result.get("segments", [])
+    if language_callback and language is None and any(s.get("text", "").strip() for s in segments):
+        # MLX's transcription result discards language probabilities. Reuse its
+        # cached model for a bounded native probe; never invent confidence.
+        import mlx.core as mx
+        from mlx_whisper.transcribe import ModelHolder
+        from mlx_whisper.audio import log_mel_spectrogram, pad_or_trim, N_FRAMES, N_SAMPLES
+        model = ModelHolder.get_model(path_or_repo, mx.float16)
+        probe = mx.array(_language_probe_audio(audio_path, segments))
+        mel = log_mel_spectrogram(probe, n_mels=model.dims.n_mels, padding=N_SAMPLES)
+        _, probabilities = model.detect_language(pad_or_trim(mel, N_FRAMES, axis=-2).astype(mx.float16))
+        detected = result.get("language")
+        language_callback(detected, probabilities.get(detected))
     log.info("mlx_whisper: %d segments in %.1fs", len(segments), elapsed)
 
     if callback:
@@ -282,7 +320,7 @@ def _transcribe_mlx(
 
 def _transcribe_openai(
     audio_path: str, language: Optional[str], model_size: str,
-    beam_size: int, callback, vad_filter: bool = False
+    beam_size: int, callback, vad_filter: bool = False, language_callback=None
 ) -> List[SubtitleBlock]:
     """Transcribe using openai whisper library."""
     import whisper
@@ -311,6 +349,12 @@ def _transcribe_openai(
     elapsed = time.time() - start
 
     segments = result.get("segments", [])
+    if language_callback and language is None and any(s.get("text", "").strip() for s in segments):
+        probe = whisper.pad_or_trim(_language_probe_audio(audio_path, segments))
+        mel = whisper.log_mel_spectrogram(probe, n_mels=model.dims.n_mels).to(model.device)
+        _, probabilities = model.detect_language(mel)
+        detected = result.get("language")
+        language_callback(detected, probabilities.get(detected))
     log.info("openai whisper: %d segments in %.1fs", len(segments), elapsed)
 
     if callback:
@@ -321,7 +365,7 @@ def _transcribe_openai(
 
 def _transcribe_faster_whisper(
     audio_path: str, language: Optional[str], model_size: str,
-    vad_filter: bool, beam_size: int, callback
+    vad_filter: bool, beam_size: int, callback, language_callback=None
 ) -> List[SubtitleBlock]:
     """Transcribe using faster-whisper / CTranslate2."""
     from faster_whisper import WhisperModel
@@ -351,6 +395,8 @@ def _transcribe_faster_whisper(
                    for w in (getattr(seg, 'words', None) or [])]}
         for seg in segments_iter
     ]
+    if language_callback and language is None and any(s["text"].strip() for s in segments):
+        language_callback(getattr(_info, "language", None), getattr(_info, "language_probability", None))
     elapsed = time.time() - start
     log.info("faster-whisper: %d segments in %.1fs", len(segments), elapsed)
 

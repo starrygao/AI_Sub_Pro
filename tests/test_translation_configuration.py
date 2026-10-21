@@ -26,6 +26,9 @@ def _base_config():
             "primary_provider": "codex_cli",
             "primary_model": "gpt-5.6-sol",
             "primary_effort": "high",
+            "review_provider": "omp_cli",
+            "review_model": "review-model",
+            "review_effort": "xhigh",
             "qa_auto_repair": True,
             "semantic_qa": True,
         },
@@ -42,6 +45,9 @@ def _base_config():
         ("project", "content_notes", "different editorial context"),
         ("config", "quality_mode", "fast"),
         ("config", "primary_model", "different-model"),
+        ("config", "review_provider", "openai"),
+        ("config", "review_model", "another-review-model"),
+        ("config", "review_effort", "medium"),
     ],
 )
 def test_translation_configuration_hash_binds_semantic_inputs(

@@ -1,4 +1,5 @@
 """Shared configuration/domain rules, independent of HTTP routing."""
+from app.config import DEFAULT_CONFIG
 
 
 _PROVIDER_LABELS = {
@@ -37,12 +38,21 @@ def _provider_readiness(provider: str, *, role_label: str, cfg: dict) -> dict:
             )
             if polish_model not in models:
                 models.append(polish_model)
+        review_provider = translation.get("review_provider", DEFAULT_CONFIG["translation"]["review_provider"])
+        if _review_enabled(translation) and isinstance(review_provider, str) and review_provider.strip() == "omp_cli":
+            review_value = translation.get("review_model")
+            review_model = (
+                review_value.strip() if isinstance(review_value, str) and review_value.strip()
+                else DEFAULT_CONFIG["translation"]["review_model"]
+            )
+            if review_model not in models:
+                models.append(review_model)
         try:
             installed = OmpCliProvider.check_cli_available()
         except Exception:
             installed = False
         try:
-            logged_in = installed and all(OmpCliProvider.check_logged_in(model) for model in models)
+            logged_in = installed and all([OmpCliProvider.check_logged_in(model) for model in models])
         except Exception:
             logged_in = False
         if logged_in:
@@ -138,6 +148,14 @@ def _provider_readiness(provider: str, *, role_label: str, cfg: dict) -> dict:
         "codex_cli_logged_in": None,
     }
 
+def _review_enabled(translation: dict, *, strict_quality_gate: bool = False) -> bool:
+    mode = translation.get("quality_mode")
+    return (
+        strict_quality_gate
+        or isinstance(mode, str) and mode.strip().lower() == "professional"
+        or translation.get("semantic_qa") is True
+    )
+
 def _configured_translation_providers(translation: dict) -> list[tuple[str, str]]:
     raw_primary = translation.get("primary_provider")
     primary_value = raw_primary.strip() if isinstance(raw_primary, str) else ""
@@ -150,11 +168,20 @@ def _configured_translation_providers(translation: dict) -> list[tuple[str, str]
     providers = [("主翻译引擎：", primary)]
     if polish and polish != primary:
         providers.append(("润色引擎：", polish))
+    if _review_enabled(translation):
+        raw_review = translation.get("review_provider", DEFAULT_CONFIG["translation"]["review_provider"])
+        review_value = raw_review.strip() if isinstance(raw_review, str) else ""
+        review = review_value if review_value in _PROVIDER_LABELS else "omp_cli"
+        if review not in {provider for _, provider in providers}:
+            providers.append(("质量复核引擎：", review))
     return providers
 
-def _translation_readiness(cfg: dict) -> dict:
+def _translation_readiness(cfg: dict, *, strict_quality_gate: bool = False) -> dict:
     """Return readiness for all configured translation workflow providers."""
     translation = _dict_section(cfg, "translation")
+    if strict_quality_gate:
+        translation = {**translation, "semantic_qa": True}
+        cfg = {**cfg, "translation": translation}
     provider_checks = [
         _provider_readiness(provider, role_label=role_label, cfg=cfg)
         for role_label, provider in _configured_translation_providers(translation)
@@ -202,10 +229,10 @@ def _translation_readiness(cfg: dict) -> dict:
     }
 
 
-def require_translation_ready():
+def require_translation_ready(*, strict_quality_gate: bool = False):
     from app.config import Config
     from fastapi import HTTPException
-    readiness = _translation_readiness(Config.to_dict())
+    readiness = _translation_readiness(Config.to_dict(), strict_quality_gate=strict_quality_gate)
     if not readiness.get("translation_ready"):
         raise HTTPException(status_code=400, detail=readiness.get("translation_hint") or "请先配置翻译服务")
     return readiness

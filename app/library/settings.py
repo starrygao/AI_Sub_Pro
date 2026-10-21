@@ -7,7 +7,8 @@ from app.config import Config
 
 FIELDS = {
     'translation': {'primary_provider', 'primary_model', 'primary_effort', 'polish_provider', 'polish_model',
-                    'polish_effort', 'batch_size', 'semantic_qa_batch_size', 'full_doc_mode'},
+                    'polish_effort', 'review_provider', 'review_model', 'review_effort',
+                    'batch_size', 'semantic_qa_batch_size', 'full_doc_mode'},
     'asr': {'model_size', 'beam_size'},
 }
 
@@ -85,6 +86,9 @@ class LibrarySettings:
                     'current_polish_provider': Config.get('translation', 'polish_provider'),
                     'current_polish_model': Config.get('translation', 'polish_model'),
                     'current_polish_effort': Config.get('translation', 'polish_effort'),
+                    'current_review_provider': Config.get('translation', 'review_provider'),
+                    'current_review_model': Config.get('translation', 'review_model'),
+                    'current_review_effort': Config.get('translation', 'review_effort'),
                     'error': self.store.setting('model_settings_error', '')}
 
     def read(self):

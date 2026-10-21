@@ -249,4 +249,139 @@ def test_real_chinese_subtitle_attachment_respects_full_vs_partial(tmp_path, mon
         assert '附件' in worker.store.get(video)['reason']
 
 
+def language_conflict(tmp_path, monkeypatch):
+    from app.services import translation_tasks as tasks
+    worker, video = candidate(tmp_path, monkeypatch, name='朱元璋.S01E25.mkv')
+    worker.config['enabled'] = True
+    worker.observe(video, {'tmdb_id': 42, 'tmdb_type': 'tv'})
+    monkeypatch.setattr(worker.sources, 'original_language', Mock(return_value='zh'))
+    audio_only = Mock()
+    monkeypatch.setattr(tasks, 'start_asr', audio_only)
+    monkeypatch.setattr(tasks, 'is_task_registered', lambda pid: False)
+    project, translate, combined = capture_project(worker, video, tmp_path, monkeypatch)
+    from app.utils import project_store
+    monkeypatch.setattr(project_store, 'PROJECTS_DIR', tasks.PROJECTS_DIR)
+    audio_only.assert_called_once()
+    translate.assert_not_called()
+    combined.assert_not_called()
+    assert project['library_verify_audio_language'] is True
+    assert project['asr_language'] == 'auto'
+    return worker, video, project, translate, audio_only
+
+
+def complete_language_verification(worker, video, project, language='zh', probability=0.99):
+    from app.services import translation_tasks as tasks
+    project.update(status='asr_done', asr_detected_language={
+        'language': language, 'probability': probability,
+        'audio_track': project['selected_audio_track'],
+        'fingerprint': worker.store.get(video)['fingerprint'],
+    })
+    (tasks.PROJECTS_DIR / project['id'] / 'project.json').write_text(json.dumps(project))
+
+
+def test_mislabeled_english_chinese_audio_is_stopped_before_translation(tmp_path, monkeypatch):
+    worker, video, project, translate, _ = language_conflict(tmp_path, monkeypatch)
+    complete_language_verification(worker, video, project)
+    worker.finish()
+    assert worker.store.get(video)['state'] == 'native_language'
+    assert 'ASR' in worker.store.get(video)['reason']
+    translate.assert_not_called()
+    assert not video.with_suffix('.双语.zh-CN.srt').exists()
+
+
+def test_real_foreign_dub_of_chinese_original_is_translated(tmp_path, monkeypatch):
+    worker, video, project, translate, audio_only = language_conflict(tmp_path, monkeypatch)
+    complete_language_verification(worker, video, project, 'en')
+    worker.finish()
+    translate.assert_called_once()
+    audio_only.assert_called_once()
+    assert worker.store.get(video)['state'] == 'translating'
+    assert worker.store.get(video)['language_verification_pending'] is False
+
+
+@pytest.mark.parametrize(('language', 'probability'), [('zh', None), ('zh', 0.5), ('', 0.99), ('zh', float('nan'))])
+def test_uncertain_audio_evidence_neither_skips_nor_calls_translation(tmp_path, monkeypatch, language, probability):
+    worker, video, project, translate, _ = language_conflict(tmp_path, monkeypatch)
+    complete_language_verification(worker, video, project, language, probability)
+    worker.finish()
+    assert worker.store.get(video)['state'] == 'error'
+    assert '核验' in worker.store.get(video)['reason']
+    translate.assert_not_called()
+
+
+@pytest.mark.parametrize('change', ['download', 'replacement', 'subtitle', 'target'])
+def test_language_handoff_keeps_media_and_subtitle_safety_gates(tmp_path, monkeypatch, change):
+    worker, video, project, translate, _ = language_conflict(tmp_path, monkeypatch)
+    complete_language_verification(worker, video, project, 'en')
+    if change == 'download':
+        worker.set_blockers({str(video): '下载仍在校验'})
+    elif change == 'replacement':
+        video.write_bytes(b'replacement video')
+    else:
+        subtitle = video.with_suffix('.zh.srt' if change == 'subtitle' else '.双语.zh-CN.srt')
+        subtitle.write_text('已有中文字幕')
+    worker.finish()
+    translate.assert_not_called()
+    assert worker.store.get(video)['state'] != 'native_language'
+    if change in {'subtitle', 'target'}:
+        assert subtitle.read_text() == '已有中文字幕'
+    if change == 'download':
+        worker.set_blockers({})
+        worker.finish()
+        translate.assert_called_once()
+
+
+def test_language_verification_survives_worker_restart(tmp_path, monkeypatch):
+    worker, video, project, translate, _ = language_conflict(tmp_path, monkeypatch)
+    complete_language_verification(worker, video, project)
+    restored = LibraryWorker(worker.config, tmp_path / 'state')
+    monkeypatch.setattr(restored, 'refresh_readiness', lambda: None)
+    restored.finish()
+    assert restored.store.get(video)['state'] == 'native_language'
+    translate.assert_not_called()
+
+
+@pytest.mark.parametrize('action', ['pause', 'cancel'])
+def test_language_verification_honors_stop_and_resume(tmp_path, monkeypatch, action):
+    from app.services import translation_tasks as tasks
+    worker, video, project, translate, audio_only = language_conflict(tmp_path, monkeypatch)
+    complete_language_verification(worker, video, project)
+    row = worker.store.get(video)
+    worker.controls.request(str(video), action, worker.controls.revision(row))
+    worker.finish()
+    assert worker.store.get(video)['state'] == ('paused' if action == 'pause' else 'cancelled')
+    translate.assert_not_called()
+    if action == 'pause':
+        monkeypatch.setattr(tasks, '_resume_stage_for_project', lambda *args: 'translate')
+        row = worker.store.get(video)
+        worker.controls.request(str(video), 'resume', worker.controls.revision(row))
+        worker.process_one()
+        assert worker.store.get(video)['state'] == 'native_language'
+        audio_only.assert_called_once()
+        translate.assert_not_called()
+
+
+def test_global_pause_holds_foreign_language_handoff(tmp_path, monkeypatch):
+    worker, video, project, translate, _ = language_conflict(tmp_path, monkeypatch)
+    complete_language_verification(worker, video, project, 'en')
+    worker.store.set_setting('enabled', False)
+    worker.finish()
+    translate.assert_not_called()
+    worker.store.set_setting('enabled', True)
+    worker.finish()
+    translate.assert_called_once()
+
+
 pytestmark = pytest.mark.usefixtures("library_codex_config")
+
+
+@pytest.mark.parametrize('field', ['fingerprint', 'audio_track'])
+def test_language_evidence_from_other_media_or_track_cannot_skip(tmp_path, monkeypatch, field):
+    from app.services import translation_tasks as tasks
+    worker, video, project, translate, _ = language_conflict(tmp_path, monkeypatch)
+    complete_language_verification(worker, video, project)
+    project['asr_detected_language'][field] = {} if field == 'fingerprint' else 99
+    (tasks.PROJECTS_DIR / project['id'] / 'project.json').write_text(json.dumps(project))
+    worker.finish()
+    assert worker.store.get(video)['state'] == 'error'
+    translate.assert_not_called()

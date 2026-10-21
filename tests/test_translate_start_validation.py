@@ -34,11 +34,7 @@ def _seed_project(tmp_project_dir, pid="audio01"):
 
 def _allow_translation(monkeypatch):
     from app.services import translation_tasks as translate_api
-    monkeypatch.setattr(
-        translate_api,
-        "require_translation_ready",
-        lambda: {"translation_ready": True, "translation_hint": "已配置"},
-    )
+    monkeypatch.setattr(translate_api, "require_translation_ready", lambda **kwargs: {"translation_ready": True, "translation_hint": "已配置"})
 
 
 def _isolate_kb(tmp_project_dir, monkeypatch):
@@ -134,7 +130,7 @@ def test_translation_dependent_starts_reject_missing_provider_before_launch(tmp_
 
     client = _client(tmp_project_dir, monkeypatch)
 
-    def fail_ready():
+    def fail_ready(**kwargs):
         raise HTTPException(status_code=400, detail="请配置 OpenAI API 密钥")
 
     def fail_register(*args, **kwargs):

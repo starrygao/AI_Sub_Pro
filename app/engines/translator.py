@@ -8,6 +8,7 @@ import logging
 import re
 from typing import List, Dict, Optional, Callable
 
+from app.config import DEFAULT_CONFIG
 from app.utils.srt import SubtitleBlock
 
 # TranslationProvider was extracted to providers/openai_compat.py during the
@@ -497,6 +498,24 @@ class SubtitleTranslator:
             primary_name, primary_model, primary_effort, api_keys, providers_cfg
         )
         self.primary = get_provider(primary_name, primary_config)
+
+        # Model semantic QA has its own provider, independent of translation.
+        review_defaults = DEFAULT_CONFIG["translation"]
+        review_name = _coerce_provider_name(
+            trans_cfg.get("review_provider"), review_defaults["review_provider"],
+        )
+        review_model = _coerce_text_setting(
+            trans_cfg.get("review_model"), review_defaults["review_model"],
+        )
+        review_effort = _coerce_choice_setting(
+            trans_cfg.get("review_effort"),
+            {"auto", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
+            review_defaults["review_effort"],
+        )
+        review_config = self._build_provider_config(
+            review_name, review_model, review_effort, api_keys, providers_cfg,
+        )
+        self.review = get_provider(review_name, review_config)
 
         # Polish provider (optional) — same factory path.
         self.polish = None

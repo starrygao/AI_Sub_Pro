@@ -9,11 +9,12 @@ and knowledge-base data on the user's machine.
 
 Prebuilt packages are attached to GitHub Releases when available.
 
-- macOS users can download `AI_Sub_Pro_v1.3.42.dmg` and
-  `AI_Sub_Pro_v1.3.42.dmg.sha256` from the `v1.3.42` release, verify the
-  checksum with `shasum -a 256 -c AI_Sub_Pro_v1.3.42.dmg.sha256`, open the
-  DMG, drag **AI Sub Pro** into **Applications**, then right-click and choose
-  **Open** on first launch if Gatekeeper blocks an unsigned build.
+- `v1.3.43` is a source update; use the source install below for this version.
+  The macOS build target is `AI_Sub_Pro_v1.3.43.dmg`. When a tested installer
+  and its `.sha256` file are attached to a release, verify the checksum with
+  `shasum -a 256 -c AI_Sub_Pro_v1.3.43.dmg.sha256`, open the DMG, and drag
+  **AI Sub Pro** into **Applications**. A version in these docs alone does not
+  mean an installer is available.
 - Windows users can run a published Windows package when available. The current
   release does not include a prebuilt Windows installer yet; build from source
   on a Windows machine with `build_win.bat`.

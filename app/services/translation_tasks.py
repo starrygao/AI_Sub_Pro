@@ -1210,6 +1210,13 @@ def _run_asr_pipeline(pid: str, audio_track: int, language: str, owns_registrati
                 threading.current_thread(),
             )
             project = _load_project(pid)
+            verify_audio_language = bool(project.get("library_verify_audio_language"))
+            if verify_audio_language:
+                # Conflict checks must observe audio, never trust a forced language
+                # or a subtitle shortcut. Clear evidence from an earlier ASR run.
+                language = "auto"
+                project["prefer_embedded_subtitle"] = False
+                mutate_project(pid, lambda p: p.pop("asr_detected_language", None))
             pdir = str(PROJECTS_DIR / pid)
             video_path = project["video_path"]
             _best_effort_start_stage(
@@ -1249,15 +1256,24 @@ def _run_asr_pipeline(pid: str, audio_track: int, language: str, owns_registrati
             from app.engines.asr import transcribe
 
             configured_language = _coerce_str_option(asr_cfg.get("language"), "auto")
+            language_options = {}
+            if verify_audio_language:
+                def record_language(detected, probability):
+                    evidence = {"language": detected, "probability": probability,
+                                "audio_track": audio_track,
+                                "fingerprint": project.get("library_fingerprint")}
+                    mutate_project(pid, lambda p: p.update(asr_detected_language=evidence))
+                language_options["language_callback"] = record_language
             blocks = transcribe(
                 audio_path,
-                language=language if language != "auto" else configured_language,
+                language="auto" if verify_audio_language else language if language != "auto" else configured_language,
                 model_size=_coerce_str_option(asr_cfg.get("model_size"), "large-v3-turbo"),
                 vad_filter=_coerce_bool_option(asr_cfg.get("vad_filter"), True),
                 beam_size=_coerce_int_option(asr_cfg.get("beam_size"), 5, minimum=1, maximum=20),
                 callback=lambda msg: _emit_progress(pid, "asr", 60, msg),
                 error_log_dir=pdir,
                 backend=_coerce_str_option(asr_cfg.get("backend"), "auto"),
+                **language_options,
             )
             _check_cancel(pid)
 
@@ -3991,8 +4007,8 @@ def _run_semantic_quality_checks(
         trace["issue_count"] = len(issues)
         return issues, trace
 
-    primary = getattr(translator, "primary", None)
-    if primary is None or not hasattr(primary, "translate_batch"):
+    review = getattr(translator, "review", None)
+    if review is None or not hasattr(review, "translate_batch"):
         provider_skipped = list(selected_ids)
         trace["skipped_block_ids"] = sorted(set(trace["skipped_block_ids"] + provider_skipped))
         trace["skipped_blocks"] = len(trace["skipped_block_ids"])
@@ -4062,7 +4078,7 @@ def _run_semantic_quality_checks(
             )
             context = entity_context_json(document_entities, relevant_source=context_source)
             batch_prompt = "\n".join([prompt, ENTITY_CONTEXT_RULE, context]) if context else prompt
-            raw_results = primary.translate_batch(batch, batch_prompt)
+            raw_results = review.translate_batch(batch, batch_prompt)
             raw_list = raw_results if isinstance(raw_results, list) else []
             expected_result_ids = [str(item["id"]) for item in batch]
             returned_result_ids = [
@@ -5399,7 +5415,7 @@ def _run_targeted_semantic_verification(
     ok_passes_by_id = {block_id: 0 for block_id in requested_ids}
     issue_by_id = {}
     traces = []
-    primary = getattr(translator, "primary", None)
+    review = getattr(translator, "review", None)
     batch_size = max(1, min(_semantic_qa_batch_size(cfg), 4))
     singleton_prompt = _targeted_semantic_prompt(target_language)
     group_prompt = _targeted_semantic_group_prompt(target_language)
@@ -5510,8 +5526,8 @@ def _run_targeted_semantic_verification(
                     batches.append(batch_trace)
                     provider_error = ""
                     if (
-                        primary is None
-                        or not hasattr(primary, "translate_batch")
+                        review is None
+                        or not hasattr(review, "translate_batch")
                     ):
                         raw_results = []
                         provider_error = (
@@ -5519,7 +5535,7 @@ def _run_targeted_semantic_verification(
                         )
                     else:
                         try:
-                            raw_results = primary.translate_batch(
+                            raw_results = review.translate_batch(
                                 pending,
                                 retry_prompt,
                             )
@@ -5583,8 +5599,8 @@ def _run_targeted_semantic_verification(
                         if provider_error:
                             stage = (
                                 "provider_unavailable"
-                                if primary is None
-                                or not hasattr(primary, "translate_batch")
+                                if review is None
+                                or not hasattr(review, "translate_batch")
                                 else "provider_error"
                             )
                         else:
@@ -10019,7 +10035,7 @@ def start_full(pid: str = "", req: FullPipelineRequest = FullPipelineRequest()):
         "简体中文",
         "target_language",
     )
-    require_translation_ready()
+    require_translation_ready(strict_quality_gate=True)
     try:
         t = try_register_task(pid, lambda: threading.Thread(
             target=_run_full_pipeline,

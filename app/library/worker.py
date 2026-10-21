@@ -16,7 +16,7 @@ from .guard import (VIDEO_EXTENSIONS, fingerprint, ready_file, chinese_track, ch
                     complete_subtitle_stream, complete_sidecar, select_audio_track, language_code,
                     chinese_subtitle_attachment)
 from .publish import publish_sidecar, archive_stale_sidecar, bilingual_sidecar_path
-from .sources import Sources
+from .sources import Sources, SourceUnavailable
 from .store import Store
 from .settings import LibrarySettings
 from .proxy import ProxySettings
@@ -261,6 +261,9 @@ class LibraryWorker:
         project=tasks._load_project(pid)
         if project.get('status') in {'error','cancelled'}:
             self.save(row,state='error',reason=project.get('error') or project.get('progress_msg') or '翻译已停止');return
+        if row.get('language_verification_pending') and project.get('status')=='asr_done':
+            self._finish_language_verification(row,project)
+            return
         reason=self.block_reason(path)
         if reason:self.save(row,state='publishing',reason=reason);return
         delivery_ready=False
@@ -283,6 +286,49 @@ class LibraryWorker:
             except Exception:self.save(row,reason='字幕已保存，Emby 刷新待重试',refresh_pending=True)
         except Exception as exc:
             self.save(row,state='error',reason='字幕未发布：'+self.safe_error(exc),retry_stage='publish' if delivery_ready else None)
+
+    def _finish_language_verification(self,row,project):
+        """Only native audio evidence may resolve a Chinese-original/tag conflict."""
+        from app.services import translation_tasks as tasks
+        from app.utils.project_store import mutate_project
+        self.controls.check(row['path'])
+        try:self.refresh_readiness()
+        except Exception:
+            self.save(row,reason='语言核验完成，等待上游就绪状态恢复');return
+        path=Path(row['path'])
+        if not self.allowed(path) or fingerprint(path)!=row['fingerprint']:
+            self.save(row,state='changed',reason='视频已变化，语言核验结果不再适用');return
+        reason=self.block_reason(path)
+        if reason:self.save(row,reason=reason);return
+        chinese=[p for p in subtitle_files(path) if chinese_sidecar(p,path)]
+        if chinese:
+            self.save(row,state='skipped',reason='核验期间出现中文字幕，保留现有文件',
+                      existing_subtitles=[{'path':str(p),'fingerprint':fingerprint(p)} for p in chinese]);return
+        if bilingual_sidecar_path(path).exists():
+            self.save(row,state='error',reason='双语字幕目标文件已存在，保留原文件');return
+        evidence=project.get('asr_detected_language') or {}
+        probability=evidence.get('probability')
+        language=str(evidence.get('language') or '').strip().lower()
+        reliable=(isinstance(probability,(int,float)) and not isinstance(probability,bool)
+                  and 0.8<=probability<=1 and language not in {'','und','auto'}
+                  and evidence.get('fingerprint')==row['fingerprint']
+                  and evidence.get('audio_track')==project.get('selected_audio_track'))
+        if not reliable:
+            self.save(row,state='error',reason='音轨与作品原始语言冲突，ASR 未提供可靠的自动语言核验结果；未启动翻译');return
+        if project.get('library_original_language') in CHINESE_LANGUAGES and language in CHINESE_LANGUAGES:
+            mutate_project(row['project_id'],lambda p:p.update(library_status='native_language'))
+            self.save(row,state='native_language',reason='作品原始语言与 ASR 音频核验均确认为中文，无需翻译',
+                      language_verification_pending=False,detection=None);return
+        if (not self.store.setting('enabled',self.config.get('enabled',False))
+                or self.model_settings.state()['pending']):
+            self.save(row,reason='语言核验完成，自动翻译已暂停或设置待生效');return
+        self.check_translation_readiness()
+        if not self.authenticated:
+            self.save(row,reason=self.translation_status['translation_hint']);return
+        self.controls.check(row['path'])
+        tasks.start_translate(row['project_id'],tasks.TranslateRequest(target_language='简体中文'))
+        self.save(row,state='translating',reason='ASR 确认为外语音频，正在翻译',
+                  language_verification_pending=False,resume_pending=False)
 
     @staticmethod
     def safe_error(exc):
@@ -307,7 +353,10 @@ class LibraryWorker:
                         self.save(row,state='publishing',reason='已继续，等待保存已完成字幕',resume_pending=False,preparation_progress=None)
                         return
                     stage=tasks._resume_stage_for_project(row['project_id'],project)
-                    if stage=='translate':tasks.start_translate(row['project_id'],tasks.TranslateRequest(target_language='简体中文'))
+                    if row.get('language_verification_pending'):
+                        if stage=='translate':self._finish_language_verification(row,project);return
+                        tasks.start_asr(row['project_id'],tasks.ASRRequest(language='auto'))
+                    elif stage=='translate':tasks.start_translate(row['project_id'],tasks.TranslateRequest(target_language='简体中文'))
                     else:tasks.start_transcribe_translate(row['project_id'],tasks.FullPipelineRequest(workflow_mode='translate_only'))
                     self.save(row,state='translating',reason='已继续处理',resume_pending=False,preparation_progress=None)
             else:self._prepare(row,info,sidecars)
@@ -330,6 +379,8 @@ class LibraryWorker:
         streams=info['streams'];audio=[s for s in streams if s.get('codec_type')=='audio']
         subs=[s for s in streams if s.get('codec_type')=='subtitle']
         selected_audio=select_audio_track(streams)
+        original_language=(row.get('detection') or {}).get('original_language','')
+        verify_language=original_language in CHINESE_LANGUAGES and bool(self.config.get('skip_chinese_audio',True))
         project=_apply_safe_defaults({'id':pid,'name':path.name,'video_path':str(path),
             'created_at':datetime.now(timezone.utc).isoformat(),'status':'created','progress':0,
             'duration':float(info['format']['duration']),'target_language':'简体中文','asr_language':'auto',
@@ -339,12 +390,14 @@ class LibraryWorker:
             'library_fingerprint':row['fingerprint'],'workflow_mode':'translate_only',
             **{k:v for k,v in metadata.items() if k not in {'name','overview','emby_id'}},
             'content_notes':metadata.get('overview',''),'auto_run':True})
+        if verify_language:
+            project.update(library_verify_audio_language=True,library_original_language=original_language)
         # Prefer full foreign subtitles; forced/commentary tracks cannot cover all dialogue.
         usable=[s for s in subs if s.get('codec_name') in TEXT_CODECS and complete_subtitle_stream(s,path)]
         usable.sort(key=lambda s:language_code(s) not in {'eng','en'})
         sidecars=[p for p in sidecars if p.suffix.lower() in {'.srt','.ass','.ssa','.vtt'} and complete_sidecar(p,path)]
         source_label='语音识别'
-        if sidecars or usable:
+        if (sidecars or usable) and not verify_language:
             source=sidecars[0] if sidecars else path
             source_label=str(source) if sidecars else '内嵌字幕 #'+str(usable[0]['index'])
             self.save(row,state='translating',reason='正在提取字幕',project_id=None,
@@ -372,9 +425,12 @@ class LibraryWorker:
         atomic_write_json(pdir/'project.json',project)
         with self.controls.lock:
             self.controls.check(row['path'])
-            self.save(row,state='translating',reason='正在翻译',project_id=pid,subtitle_source=source_label,metadata=metadata,
+            self.save(row,state='translating',reason='正在核验音轨实际语言' if verify_language else '正在翻译',
+                  project_id=pid,subtitle_source=source_label,metadata=metadata,
+                  language_verification_pending=verify_language,
                   preparation_progress=None,retry_stage=None,next_attempt_at=0,retry_attempts=0)
-            if project['status']=='asr_done':tasks.start_translate(pid,tasks.TranslateRequest(target_language='简体中文'))
+            if verify_language:tasks.start_asr(pid,tasks.ASRRequest(language='auto'))
+            elif project['status']=='asr_done':tasks.start_translate(pid,tasks.TranslateRequest(target_language='简体中文'))
             else:tasks.start_transcribe_translate(pid,tasks.FullPipelineRequest(workflow_mode='translate_only'))
 
     def arrival_status(self,row):
@@ -453,20 +509,30 @@ class LibraryWorker:
             self.save(row,state='error',reason='双语字幕目标文件已存在，保留原文件；请先检查该文件后重试',detection=None);return
         if policy and chinese_audio_only(info['streams']):
             self.save(row,state='native_language',reason='中文原声，无需翻译',detection=None);return
-        if policy and not has_foreign_audio(info['streams']):
+        language=''
+        if policy:
             metadata={**self.sources.metadata(path),**row.get('metadata',{})}
             try:language=self.sources.original_language(metadata)
             except Exception:
                 attempts=min(int(row.get('retry_attempts',0))+1,7)
-                self.save(row,state='waiting',reason='音轨语言未知，等待 TMDB 原始语言确认',detection=None,
+                self.save(row,state='waiting',reason='等待 TMDB 原始语言确认，避免音轨标签误判',detection=None,
                           retry_attempts=attempts,next_attempt_at=time.time()+min(3600,60*2**(attempts-1)));return
-            if language in CHINESE_LANGUAGES:
-                self.save(row,state='native_language',reason='TMDB 确认为中文原声，无需翻译',metadata=metadata,detection=None);return
+            # An explicitly foreign track may be a genuine dub or a bad tag;
+            # original-language metadata alone cannot distinguish them.
+            self.save(row,metadata=metadata)
         if fingerprint(path)!=current or self.subtitle_snapshot(path)!=subtitles:
             self.save(row,state='waiting',reason='检测期间文件或字幕发生变化，等待重新检查',detection=None);return
-        self.save(row,state='ready',reason='检测通过，等待翻译名额',next_attempt_at=0,
-                  detection={'fingerprint':current,'subtitles':subtitles,'skip_chinese_audio':policy,'info':info})
+        if language in CHINESE_LANGUAGES and not has_foreign_audio(info['streams']):
+            self.save(row,state='native_language',reason='TMDB 确认为中文原声，无需翻译',detection=None);return
+        self.save(row,state='ready',reason='检测通过，等待翻译名额',next_attempt_at=0,retry_attempts=0,
+                  detection={'fingerprint':current,'subtitles':subtitles,'skip_chinese_audio':policy,
+                             'original_language':language,'info':info})
         return info,sidecars
+
+    def _defer_source(self,row,exc):
+        attempts=min(int(row.get('retry_attempts',0))+1,7)
+        self.save(row,state='waiting',reason=self.safe_error(exc),detection=None,
+                  retry_attempts=attempts,next_attempt_at=time.time()+min(3600,60*2**(attempts-1)))
 
     def process_one(self,start=True):
         # Detection is independent of model availability and the active translation.
@@ -488,7 +554,8 @@ class LibraryWorker:
                 with self.media_lock(row['path']):
                     current=self.store.get(row['path'])
                     if current and current['state'] in {'waiting','ready'} and not current.get('manual_hard_subtitle'):
-                        self.save(current,state='error',reason=self.safe_error(exc),detection=None)
+                        if isinstance(exc,SourceUnavailable):self._defer_source(current,exc)
+                        else:self.save(current,state='error',reason=self.safe_error(exc),detection=None)
                 log.warning('Library candidate deferred: %s',type(exc).__name__)
         self.check_translation_readiness()
         queued_reason=('自动翻译已暂停或设置待生效，检测结果已保留' if not start else
@@ -517,6 +584,8 @@ class LibraryWorker:
             if result:
                 row=self.store.get(row['path'])
                 self.prepare(row,*result)
+        except SourceUnavailable as exc:
+            self._defer_source(row,exc)
         except Exception as exc:
             self.save(row,state='error',reason=self.safe_error(exc))
             log.warning('Library start deferred: %s',type(exc).__name__)
@@ -524,7 +593,7 @@ class LibraryWorker:
     def check_translation_readiness(self):
         from app.config import Config
         from app.services.provider_readiness import _translation_readiness
-        self.translation_status=_translation_readiness(Config.to_dict())
+        self.translation_status=_translation_readiness(Config.to_dict(), strict_quality_gate=True)
         self.authenticated=self.translation_status['translation_ready']
 
     def tick(self):

@@ -201,6 +201,7 @@ def test_service_unavailability_stops_followup_model_passes(stage):
     invoke = Mock(side_effect=failure)
     translator = SimpleNamespace(
         primary=SimpleNamespace(translate_batch=invoke), _build_prompt=Mock(return_value="sys"),
+        review=SimpleNamespace(translate_batch=invoke),
     )
     blocks = [SubtitleBlock(
         index=i, start=timedelta(seconds=i), end=timedelta(seconds=i + 1),

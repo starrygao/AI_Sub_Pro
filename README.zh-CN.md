@@ -18,8 +18,9 @@ TMDB 与 YouTube 元数据创建预告片翻译项目。
 
 当前打包支持：
 
-- macOS：从最新 release 下载 `AI_Sub_Pro_v1.3.2.dmg`，可使用
-  `AI_Sub_Pro_v1.3.2.dmg.sha256` 校验后再打开 DMG。
+- 当前源码版本：**v1.3.43**。本次更新不附带新安装包，请按下方方式从源码安装。
+- macOS：仅下载 GitHub Release 中实际附带的 DMG，使用对应 `.sha256` 文件
+  校验后再打开。
 - Windows：当前 release 暂未附带预编译安装包；需要在 Windows 机器上运行
   `build_win.bat` 从源码构建。
 

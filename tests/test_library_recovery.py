@@ -67,7 +67,10 @@ def test_failed_tmdb_candidate_backs_off_without_starving_ready_arrival(library,
     low.write_bytes(b'known foreign language')
     worker.observe(high, {'date_created': datetime.now(timezone.utc).isoformat(), 'tmdb_id': 1})
     worker.observe(low, {'metadata_source': 'moviepilot', 'tmdb_id': 2})
-    language = Mock(side_effect=RuntimeError('TMDB unavailable'))
+    def language(metadata):
+        if metadata['tmdb_id'] == 1:
+            raise RuntimeError('TMDB unavailable')
+        return 'en'
     monkeypatch.setattr(worker.sources, 'original_language', language)
     probe = Mock(side_effect=lambda path: {'streams': [
         {'codec_type': 'audio', 'tags': {'language': 'und' if path == high else 'eng'}}]})
@@ -76,13 +79,16 @@ def test_failed_tmdb_candidate_backs_off_without_starving_ready_arrival(library,
     monkeypatch.setattr(worker, 'prepare', prepare)
     worker.process_one()
     worker.process_one()
-    assert language.call_count == 1
-    prepare.assert_called_once()
-    assert prepare.call_args.args[0]['path'] == str(low)
-    assert worker.store.get(high)['state'] == 'waiting'
+    assert worker.store.get(low)['state'] == 'translating'
+    deferred = worker.store.get(high)
+    assert deferred['state'] == 'waiting'
+    assert deferred['next_attempt_at'] > clock[0]
     clock[0] += 3601
     worker.process_one()
-    assert language.call_count == 2  # Deferred files are retried, not silently abandoned.
+    retried = worker.store.get(high)
+    assert retried['state'] == 'waiting'
+    assert retried['next_attempt_at'] > clock[0]
+    assert retried['retry_attempts'] > deferred['retry_attempts']
 
 
 def test_backoff_filter_does_not_fill_the_candidate_page_with_deferred_rows(library, monkeypatch):

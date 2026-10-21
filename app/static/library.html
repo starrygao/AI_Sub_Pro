@@ -5,7 +5,7 @@
 <link rel="icon" href="/static/favicon.ico?v=1" sizes="16x16 32x32">
 <link rel="icon" href="/static/favicon.svg?v=1" type="image/svg+xml">
 <meta name="theme-color" content="#153f42">
-<link rel="stylesheet" href="/static/css/library.css?v=console-14"><script defer src="/static/js/library.js?v=console-14"></script><script defer src="/static/js/library-knowledge.js?v=console-10"></script><script defer src="/static/js/library-panels.js?v=console-14-omp"></script><script defer src="/static/js/library-proxy.js?v=1"></script><script defer src="/static/js/library-directories.js?v=console-6"></script><script defer src="/static/js/library-selection.js?v=console-1"></script><script defer src="/static/js/library-cleanup.js?v=3"></script><script defer src="/static/js/library-controls.js?v=1"></script></head>
+<link rel="stylesheet" href="/static/css/library.css?v=console-14"><script defer src="/static/js/library.js?v=console-14"></script><script defer src="/static/js/library-knowledge.js?v=console-10"></script><script defer src="/static/js/library-panels.js?v=console-15-review"></script><script defer src="/static/js/library-proxy.js?v=1"></script><script defer src="/static/js/library-directories.js?v=console-6"></script><script defer src="/static/js/library-selection.js?v=console-1"></script><script defer src="/static/js/library-cleanup.js?v=3"></script><script defer src="/static/js/library-controls.js?v=1"></script></head>
 <body><header><a class="brand" href="#tasks">AI Sub Pro</a><nav class="console-nav" aria-label="主导航"><a id="nav-tasks" href="#tasks" aria-current="page">字幕任务</a><a id="nav-system" href="#watch">设置</a><a id="nav-knowledge" href="#knowledge">知识库</a></nav><div class="header-actions"><button id="logout" class="secondary">退出登录</button></div></header>
 <main><div id="error" role="alert" hidden></div>
 <div id="panel-tasks">
@@ -63,15 +63,15 @@
     <p id="settings-availability" class="notice" role="status"></p>
     <fieldset id="settings-fields" disabled>
       <section class="settings-section" aria-labelledby="model-heading">
-        <div><h2 id="model-heading">翻译模型</h2><p>选择服务器使用的翻译服务与模型。</p><span id="provider-label" class="status">—</span></div>
+        <div><h2 id="model-heading">初译</h2><p>选择服务器用于初译的服务与模型。</p><span id="provider-label" class="status">—</span></div>
         <div class="form-grid">
-          <label class="form-field wide">主翻译服务<select id="setting-provider" required></select></label>
-          <label class="form-field">主翻译模型<select id="setting-model" required></select></label>
-          <label class="form-field">思考强度<select id="setting-effort"></select></label>
+          <label class="form-field wide">初译服务<select id="setting-provider" required></select></label>
+          <label class="form-field">初译模型<select id="setting-model" required></select></label>
+          <label class="form-field">初译思考强度<select id="setting-effort"></select></label>
           <p id="model-hint" class="field-hint wide">模型是否可用取决于当前账号权限。</p>
-          <p id="primary-loading" class="field-hint wide" role="status" hidden>正在读取翻译模型…</p>
+          <p id="primary-loading" class="field-hint wide" role="status" hidden>正在读取初译模型…</p>
           <p id="primary-error" class="failure-text wide" role="alert" hidden></p>
-          <button id="primary-reload" type="button" class="secondary" hidden>重新读取翻译模型</button>
+          <button id="primary-reload" type="button" class="secondary" hidden>重新读取初译模型</button>
           <button id="models-refresh" type="button" class="secondary">同步模型列表</button>
         </div>
       </section>
@@ -95,6 +95,18 @@
           <p id="polish-loading" class="field-hint wide" role="status" hidden>正在读取润色模型…</p>
           <p id="polish-error" class="notice failure wide" role="alert" hidden></p>
           <button id="polish-reload" type="button" class="secondary" hidden>重新读取润色模型</button>
+        </div>
+      </section>
+      <section class="settings-section" aria-labelledby="review-heading">
+        <div><h2 id="review-heading">质量复核</h2><p>模型语义复核按既有质量策略执行，不替代初译或润色。</p></div>
+        <div class="form-grid">
+          <label class="form-field wide">复核服务<select id="setting-review-provider" required aria-describedby="review-hint"></select></label>
+          <label class="form-field">复核模型<select id="setting-review-model" required></select></label>
+          <label class="form-field">复核思考强度<select id="setting-review-effort"></select></label>
+          <p id="review-hint" class="field-hint wide">规则检查无需调用模型。模型语义复核独立使用此处服务、模型和思考强度，不沿用初译或润色设置。</p>
+          <p id="review-loading" class="field-hint wide" role="status" hidden>正在读取复核模型…</p>
+          <p id="review-error" class="notice failure wide" role="alert" hidden></p>
+          <button id="review-reload" type="button" class="secondary" hidden>重新读取复核模型</button>
         </div>
       </section>
       <section class="settings-section" aria-labelledby="asr-heading">

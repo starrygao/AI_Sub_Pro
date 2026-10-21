@@ -136,3 +136,25 @@ def test_item_refresh_uses_supported_emby_modes():
     assert seen[0].url.params['Recursive']=='false'
     assert seen[0].url.params['ReplaceAllMetadata']=='false'
     source.client.close()
+
+
+def test_moviepilot_reads_live_committed_history_without_writing(tmp_path):
+    import sqlite3
+    from app.library.sources import Sources
+    database = tmp_path / 'moviepilot.db'
+    source = Sources({'moviepilot': {'database': str(database)}})
+    source.client.close()
+    with sqlite3.connect(database) as writer:
+        writer.execute('PRAGMA journal_mode=WAL')
+        writer.execute('CREATE TABLE transferhistory(id INTEGER,src TEXT,dest TEXT,status INTEGER)')
+        writer.execute('INSERT INTO transferhistory VALUES(1,?,?,1)', ('/downloads/old.mkv', '/library/Episode.mkv'))
+        writer.commit()
+        assert source.download_source('/library/Episode.mkv') == '/downloads/old.mkv'
+        writer.execute('INSERT INTO transferhistory VALUES(2,?,?,1)', ('/downloads/new.mkv', '/library/Episode.mkv'))
+        writer.commit()
+        assert source.download_source('/library/Episode.mkv') == '/downloads/new.mkv'
+        with source._moviepilot_db() as reader:
+            with pytest.raises(sqlite3.OperationalError, match='readonly'):
+                reader.execute('DELETE FROM transferhistory')
+        assert writer.execute('SELECT src FROM transferhistory ORDER BY id').fetchall() == [
+            ('/downloads/old.mkv',), ('/downloads/new.mkv',)]
