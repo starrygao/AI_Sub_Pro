@@ -33,7 +33,7 @@ class EmbySelection:
     def describe(self, item):
         path = self.path(item)
         existing = self.worker.store.get(path) if path else None
-        reopenable = existing and existing['state']=='historical' and not existing.get('project_id')
+        reopenable = existing and (existing['state']=='deleted' or (existing['state']=='historical' and not existing.get('project_id')))
         streams = item.get('MediaStreams') or []
         languages = lambda kind: list(dict.fromkeys(str(s.get('Language') or 'und') for s in streams if s.get('Type') == kind))
         result = {'id': str(item.get('Id', '')), 'name': item.get('Name') or '未命名',
@@ -42,7 +42,7 @@ class EmbySelection:
                   'episode': item.get('IndexNumber'), 'audio_languages': languages('Audio'),
                   'subtitle_languages': languages('Subtitle'),
                   'selectable': bool(path and (not existing or reopenable)), 'state': existing.get('state') if existing else None,
-                  'reason': ('旧媒体已自动排除，可手动添加后重新检测' if reopenable else
+                  'reason': ('可手动添加后重新检测' if reopenable else
                              '已有任务记录，请在原记录查看或重新检查' if existing else
                              '' if path or item.get('Type') == 'Series' else '文件未挂载、不可读或不是本地视频'),
                   'path': map_path(str(path), self.worker.config.get('host_path_maps', {})) if path else ''}

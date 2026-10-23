@@ -263,7 +263,7 @@ class TaskTarget(BaseModel):
 
 class TaskAction(BaseModel):
     model_config={'extra':'forbid'}
-    action:Literal['pause','resume','cancel']
+    action:Literal['pause','resume','cancel','delete']
     items:list[TaskTarget]=Field(min_length=1,max_length=100)
 
 

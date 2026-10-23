@@ -27,9 +27,10 @@ class TaskControls:
     @staticmethod
     def actions(row):
         state=row['state']
-        if state in {'waiting','ready','translating','publishing'}:return ['pause','cancel']
-        if state=='paused':return ['resume','cancel']
-        return []
+        if state=='deleted' or row.get('control_action')=='delete':return []
+        if state in {'waiting','ready','translating','publishing'}:return ['pause','cancel','delete']
+        if state=='paused':return ['resume','cancel','delete']
+        return ['delete']
 
     def request(self,path,action,expected):
         from app.services import translation_tasks as tasks
@@ -48,9 +49,11 @@ class TaskControls:
             else:
                 running=path in self.preparing or bool(pid and tasks.is_task_registered(pid))
                 if running and pid:tasks.cancel_task(pid)
-                state=('pausing' if action=='pause' else 'cancelling') if running else ('paused' if action=='pause' else 'cancelled')
+                state=('pausing' if action=='pause' else 'cancelling') if running else {'pause':'paused','cancel':'cancelled','delete':'deleted'}[action]
                 reason={'pausing':'正在暂停，等待当前步骤安全退出','cancelling':'正在取消，等待当前步骤安全退出',
-                        'paused':'已暂停，保留进度；点击继续后重新检查并排队','cancelled':'已取消，不再自动处理；视频与已有字幕保留'}[state]
+                        'paused':'已暂停，保留进度；点击继续后重新检查并排队','cancelled':'已取消，不再自动处理；视频与已有字幕保留',
+                        'deleted':'任务已从列表删除；视频与已有字幕保留'}[state]
+                if action=='delete' and running:reason='正在删除，等待当前步骤安全退出后移除记录'
                 row.update(state=state,reason=reason,control_action=action)
             row['updated']=time.time();self.worker.store.put(row);self.worker.wake.set()
             return {'path':path,'ok':True,'state':row['state']}
@@ -78,6 +81,7 @@ class TaskControls:
                 pid=row.get('project_id')
                 if row['path'] in self.preparing or (pid and tasks.is_task_registered(pid)):continue
                 paused=row.get('control_action')=='pause'
-                row.update(state='paused' if paused else 'cancelled',updated=time.time(),
-                           reason='已暂停，保留进度；点击继续后重新检查并排队' if paused else '已取消，不再自动处理；视频与已有字幕保留')
+                deleted=row.get('control_action')=='delete'
+                row.update(state='deleted' if deleted else 'paused' if paused else 'cancelled',updated=time.time(),
+                           reason='任务已从列表删除；视频与已有字幕保留' if deleted else '已暂停，保留进度；点击继续后重新检查并排队' if paused else '已取消，不再自动处理；视频与已有字幕保留')
                 self.worker.store.put(row)

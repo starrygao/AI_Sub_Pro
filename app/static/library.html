@@ -5,7 +5,7 @@
 <link rel="icon" href="/static/favicon.ico?v=1" sizes="16x16 32x32">
 <link rel="icon" href="/static/favicon.svg?v=1" type="image/svg+xml">
 <meta name="theme-color" content="#153f42">
-<link rel="stylesheet" href="/static/css/library.css?v=console-14"><script defer src="/static/js/library.js?v=console-14"></script><script defer src="/static/js/library-knowledge.js?v=console-10"></script><script defer src="/static/js/library-panels.js?v=console-15-review"></script><script defer src="/static/js/library-proxy.js?v=1"></script><script defer src="/static/js/library-directories.js?v=console-6"></script><script defer src="/static/js/library-selection.js?v=console-1"></script><script defer src="/static/js/library-cleanup.js?v=3"></script><script defer src="/static/js/library-controls.js?v=1"></script></head>
+<link rel="stylesheet" href="/static/css/library.css?v=console-15"><script defer src="/static/js/library.js?v=console-15"></script><script defer src="/static/js/library-knowledge.js?v=console-10"></script><script defer src="/static/js/library-panels.js?v=console-15-review"></script><script defer src="/static/js/library-proxy.js?v=1"></script><script defer src="/static/js/library-directories.js?v=console-6"></script><script defer src="/static/js/library-selection.js?v=console-1"></script><script defer src="/static/js/library-cleanup.js?v=3"></script><script defer src="/static/js/library-controls.js?v=2"></script></head>
 <body><header><a class="brand" href="#tasks">AI Sub Pro</a><nav class="console-nav" aria-label="主导航"><a id="nav-tasks" href="#tasks" aria-current="page">字幕任务</a><a id="nav-system" href="#watch">设置</a><a id="nav-knowledge" href="#knowledge">知识库</a></nav><div class="header-actions"><button id="logout" class="secondary">退出登录</button></div></header>
 <main><div id="error" role="alert" hidden></div>
 <div id="panel-tasks">
@@ -14,7 +14,12 @@
   <section class="task-section" aria-label="字幕任务列表">
     <div class="task-toolbar"><div class="list-switch" role="group" aria-label="任务列表"><button id="view-processed" aria-pressed="true">处理记录 <span id="count-processed">—</span></button><button id="view-waiting" aria-pressed="false">待检测 <span id="count-waiting">—</span></button><button id="view-ready" aria-pressed="false">待翻译 <span id="count-ready">—</span></button><button id="view-skipped" aria-pressed="false">已跳过 <span id="count-skipped">—</span></button></div><label class="task-filter"><span class="sr-only">筛选任务</span><select id="filter"><option value="">全部处理记录</option><option value="translating">正在翻译</option><option value="publishing">等待保存</option><option value="done">已保存</option><option value="error">需要处理</option><option value="changed">视频已变化</option><option value="missing">文件已移走</option><option value="paused">已暂停</option><option value="pausing">正在暂停</option><option value="cancelling">正在取消</option><option value="cancelled">已取消</option></select></label></div>
     <p id="list-hint" class="sr-only">正在处理、已完成及异常的记录。新发现文件先检测，通过后才进入待翻译。</p>
-    <div class="batch-toolbar" aria-label="批量任务操作"><label><input id="task-select-page" type="checkbox"> 选择本页可操作任务</label><span id="task-selection-count" role="status">已选 0 项</span><div class="actions"><button id="tasks-pause" class="secondary" disabled>暂停所选</button><button id="tasks-resume" class="secondary" disabled>继续所选</button><button id="tasks-cancel" class="secondary" disabled>取消所选</button><button id="tasks-clear" class="text-button" disabled>清空选择</button></div></div>
+    <div class="batch-toolbar" role="group" aria-label="批量任务操作">
+      <label class="task-select-all"><input id="task-select-page" type="checkbox" disabled> 全选本页</label>
+      <span id="task-selection-hint" class="hint">勾选任务后可批量操作</span><span id="task-selection-count" role="status" hidden>已选 0 项</span>
+      <button id="tasks-clear" class="text-button" disabled hidden>清空选择</button>
+      <div class="actions"><button id="tasks-pause" class="secondary" disabled hidden>暂停所选</button><button id="tasks-resume" class="secondary" disabled hidden>继续所选</button><button id="tasks-cancel" class="secondary" disabled hidden>取消所选</button><button id="tasks-delete" class="secondary danger" disabled>删除所选</button></div>
+    </div>
     <p id="task-action-feedback" role="status" class="hint"></p><ul id="task-action-errors" class="notice failure" hidden></ul>
     <div class="task-columns" aria-hidden="true"><span>视频</span><span>标题 / 文件</span><span>任务状态</span><span>进度</span><span>操作</span></div>
     <p id="empty" class="empty" role="status">正在读取媒体库任务…</p><div id="tasks"></div><div class="pagination"><button id="prev" class="secondary" hidden>上一页</button><span id="page"></span><button id="more" class="secondary" hidden>下一页</button></div>
@@ -179,6 +184,11 @@
   </div>
 </section>
 </main>
+<dialog id="task-delete-dialog" aria-labelledby="task-delete-title" aria-describedby="task-delete-description task-delete-note">
+  <h2 id="task-delete-title">删除任务</h2><p id="task-delete-description"></p>
+  <p id="task-delete-note" class="hint">保留原视频和已有字幕。相同视频不会因自动扫描再次入队；需要重新处理时，可从 Emby 手动添加。</p>
+  <ul id="task-delete-items"></ul><div class="actions"><button id="task-delete-back" class="secondary">返回</button><button id="task-delete-confirm" class="danger">确认删除</button></div>
+</dialog>
 <dialog id="task-cancel-dialog" aria-labelledby="task-cancel-title"><h2 id="task-cancel-title">取消所选任务</h2><p id="task-cancel-description"></p><p class="hint">保留原视频、已有字幕和任务记录。若只是稍后继续，请使用“暂停”。</p><ul id="task-cancel-items"></ul><div class="actions"><button id="task-cancel-confirm">确认取消</button><button id="task-cancel-back" class="secondary">返回</button></div></dialog>
 <dialog id="directory-dialog" aria-labelledby="directory-title">
   <form id="directory-form"><div class="task-heading"><h2 id="directory-title" tabindex="-1">目录设置</h2><button id="directory-close" type="button" class="secondary">关闭</button></div>

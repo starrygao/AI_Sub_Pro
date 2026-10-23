@@ -42,8 +42,8 @@ class Store:
                                (row['path'], json.dumps(row['fingerprint']),row['path'])).fetchone()
             if alias:
                 existing=json.loads(alias[0])
-                if existing['state']=='historical' and row.get('manual_requested') and not existing.get('project_id'):
-                    # Explicit selection can override an automatic history exclusion.
+                if row.get('manual_requested') and (existing['state']=='deleted' or (existing['state']=='historical' and not existing.get('project_id'))):
+                    # Only an explicit selection can reopen an unchanged deleted video.
                     db.execute('UPDATE media SET path=?,state=?,updated=?,payload=? WHERE path=?',
                                (row['path'],row['state'],row['updated'],json.dumps(row,ensure_ascii=False),existing['path']))
                     return row, True
@@ -54,12 +54,13 @@ class Store:
             return json.loads(actual[0]), inserted
 
     def rows(self,states=None,limit=100,offset=0,oldest=False):
-        where=' WHERE state IN ('+','.join('?' for _ in states)+')' if states else ''
+        # Keep deleted identities in the discovery ledger so scans cannot recreate tasks.
+        where=" WHERE state!='deleted'"+(' AND state IN ('+','.join('?' for _ in states)+')' if states else '')
         with self.db() as db:
             return [json.loads(x[0]) for x in db.execute('SELECT payload FROM media'+where+' ORDER BY '+("COALESCE(json_extract(payload, '$.priority'),0) DESC, updated ASC" if oldest else 'updated DESC')+' LIMIT ? OFFSET ?',tuple(states or [])+(limit,offset))]
 
     def counts(self):
-        with self.db() as db:return dict(db.execute('SELECT state,count(*) FROM media GROUP BY state').fetchall())
+        with self.db() as db:return dict(db.execute("SELECT state,count(*) FROM media WHERE state!='deleted' GROUP BY state").fetchall())
 
     def waiting_ready(self,now,limit=100):
         """Retry oldest checked arrivals first; priority cannot pin a blocked page."""
@@ -114,6 +115,7 @@ class Store:
         with self.db() as db:
             for path, payload in db.execute('SELECT path,payload FROM media').fetchall():
                 row = json.loads(payload)
+                if row.get('control_action')=='delete':continue
                 if not row.get('project_id') and not row.get('manual_requested') and not any(Path(path).is_relative_to(root) for root in roots):
                     db.execute('DELETE FROM media WHERE path=?', (path,))
 
@@ -121,10 +123,10 @@ class Store:
         """Keep genuine project history, removing only old discovery queue entries."""
         cancelled=[]
         with self.db() as db:
-            rows=db.execute("SELECT m.path,m.payload FROM media m JOIN baseline_media b ON m.path=b.path WHERE m.state NOT IN ('done','cancelled')").fetchall()
+            rows=db.execute("SELECT m.path,m.payload FROM media m JOIN baseline_media b ON m.path=b.path WHERE m.state NOT IN ('done','cancelled','deleted')").fetchall()
             for path,payload in rows:
                 row=json.loads(payload)
-                if row.get('manual_requested'):continue
+                if row.get('manual_requested') or row.get('control_action')=='delete':continue
                 if row.get('project_id'):
                     if row['state'] in {'translating','publishing'}:cancelled.append(row['project_id'])
                     row.update(state='cancelled',reason='现有视频不补翻译，任务已停止',updated=time.time())
