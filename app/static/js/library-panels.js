@@ -410,15 +410,16 @@
   function route(focus = true) {
     const match = /^#project\/([a-f0-9]{8})$/.exec(location.hash);
     const destination = location.hash.slice(1);
-    panel = match ? 'project' : ['settings', 'knowledge', 'system', 'watch', 'proxy'].includes(destination) ? destination : 'tasks';
+    panel = match ? 'project' : ['home', 'tasks', 'settings', 'knowledge', 'system', 'watch', 'proxy'].includes(destination) ? destination : 'home';
     pid = match ? match[1] : ''; detailRequest++;
-    for (const name of ['tasks', 'settings', 'project', 'knowledge', 'system', 'watch', 'proxy']) $('panel-' + name).hidden = name !== panel;
-    for (const name of ['tasks', 'knowledge', 'system']) {
+    for (const name of ['home', 'tasks', 'settings', 'project', 'knowledge', 'system', 'watch', 'proxy']) $('panel-' + name).hidden = name !== panel;
+    for (const name of ['home', 'tasks', 'knowledge', 'system']) {
       if (name === (panel === 'project' ? 'tasks' : ['settings', 'watch', 'proxy'].includes(panel) ? 'system' : panel)) $('nav-' + name).setAttribute('aria-current', 'page');
       else $('nav-' + name).removeAttribute('aria-current');
     }
-    document.title = ({settings:'模型设置', project:'翻译详情', knowledge:'知识库', system:'存储与清理', watch:'监控目录', proxy:'网络代理', tasks:'字幕任务'}[panel]) + ' · AI Sub Pro';
+    document.title = ({home:'字幕工作台', settings:'模型设置', project:'翻译详情', knowledge:'知识库', system:'存储与清理', watch:'监控目录', proxy:'网络代理', tasks:'字幕任务'}[panel]) + ' · AI Sub Pro';
     if (focus) { window.scrollTo?.({top:0, behavior:'auto'}); $(panel + '-title').focus({preventScroll:true}); }
+    if (panel === 'home') window.LibraryHome?.refresh();
     if (panel === 'settings' && !settings) loadSettings();
     if (panel === 'knowledge') window.LibraryKnowledge?.open();
     if (panel === 'proxy') window.LibraryProxy?.open();

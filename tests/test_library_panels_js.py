@@ -466,3 +466,23 @@ assert.equal($('cli-status').textContent,message);
 assert.equal($('cli-check').disabled,false);
 assert.equal(saved.length,0);
 ''')
+
+
+def test_overview_is_default_and_task_deep_links_keep_their_destination():
+    run_js(r'''
+context.location.hash='';
+let overviewLoads=0;window.LibraryHome={refresh:()=>overviewLoads++};
+vm.runInContext(code,context);
+assert.equal($('panel-home').hidden,false);
+assert.equal($('panel-tasks').hidden,true);
+assert.equal($('nav-home').getAttribute('aria-current'),'page');
+assert.equal(overviewLoads,1);
+navigate('#tasks');
+assert.equal($('panel-home').hidden,true);
+assert.equal($('panel-tasks').hidden,false);
+assert.equal($('nav-tasks').getAttribute('aria-current'),'page');
+navigate('#home');
+assert.equal($('panel-home').hidden,false);
+assert.equal(context.document.activeElement,$('home-title'));
+assert.equal(overviewLoads,2);
+''')

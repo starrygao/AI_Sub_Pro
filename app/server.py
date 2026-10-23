@@ -16,7 +16,6 @@ from app.main import app as desktop_app, lifespan as desktop_lifespan
 from starlette.routing import WebSocketRoute
 from app.config import DATA_DIR
 from app.library.worker import LibraryWorker
-from app.library.guard import map_path
 from app.library.auth import COOKIE_NAME, SESSION_SECONDS, Sessions, LoginAttempts
 
 CONFIG_PATH=Path(os.environ.get('AISUBPRO_LIBRARY_CONFIG','/config/library.json'))
@@ -135,6 +134,13 @@ def desktop_page():return FileResponse(Path(__file__).parent/'static'/'index.htm
 def library_status():return worker.status()
 
 
+@app.get('/api/library/overview')
+def library_overview(timezone:str='UTC'):
+    from app.library.overview import build_overview
+    try:return build_overview(worker,timezone)
+    except ValueError as exc:raise HTTPException(400,str(exc)) from exc
+
+
 @app.get('/api/library/knowledge')
 def library_knowledge():
     from app.library.knowledge import summary
@@ -202,27 +208,8 @@ def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
         states=[state] if state else states
         rows=worker.store.rows(states,limit,offset,attention_first=view=='processed')
         total=sum(counts.get(s,0) for s in states) if states else sum(counts.values())
-    for row in rows:
-        from app.library.artwork import artwork_links
-        row.pop('detection',None)  # Probe metadata stays in the ledger, not the browser response.
-        row.update(artwork_links(row))
-        from app.library.control import TaskControls
-        row['available_actions']=TaskControls.actions(row)
-        row['control_revision']=TaskControls.revision(row)
-        mappings=worker.config.get('host_path_maps',{})
-        if row['state'] not in {'done','skipped','native_language','historical','cancelled'}:
-            from app.library.publish import bilingual_sidecar_path
-            row['output_path']=str(bilingual_sidecar_path(row['path']))
-        row['server_source_path']=map_path(row['path'],mappings)
-        row['server_output_path']=map_path(row.get('output_path',''),mappings)
-        if row['state'] in {'waiting','ready'}:
-            # Retained project progress belongs to the previous attempt, not this queue entry.
-            row['progress']=None
-        elif row.get('preparation_progress'):
-            row['progress']=row['preparation_progress']
-        elif row.get('project_id'):
-            from app.engines.scheduler import get_progress
-            row['progress']=get_progress(row['project_id'])
+    from app.library.overview import present_task
+    rows=[present_task(row,worker.config.get('host_path_maps',{})) for row in rows]
     return {'items':rows,'counts':counts,'total':total,
             'view_counts':{name:sum(counts.get(s,0) for s in states) for name,states in views.items()}}
 

@@ -4,11 +4,28 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>媒体库字幕 · AI Sub Pro</title>
 <link rel="icon" href="/static/favicon.ico?v=1" sizes="16x16 32x32">
 <link rel="icon" href="/static/favicon.svg?v=1" type="image/svg+xml">
-<meta name="theme-color" content="#153f42">
-<link rel="stylesheet" href="/static/css/library.css?v=console-17"><script defer src="/static/js/library.js?v=console-17"></script><script defer src="/static/js/library-knowledge.js?v=console-10"></script><script defer src="/static/js/library-panels.js?v=console-15-review"></script><script defer src="/static/js/library-proxy.js?v=1"></script><script defer src="/static/js/library-directories.js?v=console-6"></script><script defer src="/static/js/library-selection.js?v=console-1"></script><script defer src="/static/js/library-cleanup.js?v=3"></script><script defer src="/static/js/library-controls.js?v=3"></script></head>
-<body><header><a class="brand" href="#tasks">AI Sub Pro</a><nav class="console-nav" aria-label="主导航"><a id="nav-tasks" href="#tasks" aria-current="page">字幕任务</a><a id="nav-system" href="#watch">设置</a><a id="nav-knowledge" href="#knowledge">知识库</a></nav><div class="header-actions"><button id="logout" class="secondary">退出登录</button></div></header>
+<meta name="theme-color" content="#1677ee">
+<link rel="stylesheet" href="/static/css/library.css?v=console-17"><script defer src="/static/js/library.js?v=console-17"></script><script defer src="/static/js/library-knowledge.js?v=console-10"></script><script defer src="/static/js/library-panels.js?v=console-18"></script><script defer src="/static/js/library-proxy.js?v=1"></script><script defer src="/static/js/library-directories.js?v=console-6"></script><script defer src="/static/js/library-selection.js?v=console-1"></script><script defer src="/static/js/library-cleanup.js?v=3"></script><script defer src="/static/js/library-controls.js?v=3"></script><link rel="stylesheet" href="/static/css/library-home.css?v=1"><script defer src="/static/js/library-home.js?v=1"></script></head>
+<body class="library-console"><header><a class="brand" href="#home"><span>AI</span> Sub Pro</a><nav class="console-nav" aria-label="主导航"><a id="nav-home" href="#home">概览</a><a id="nav-tasks" href="#tasks" aria-current="page">字幕任务</a><a id="nav-system" href="#watch">设置</a><a id="nav-knowledge" href="#knowledge">知识库</a></nav><div class="sidebar-status"><a href="#watch" id="home-automation">正在读取运行状态…</a><span id="home-connection">正在检查连接</span></div><div class="header-actions"><button id="logout" class="secondary">退出登录</button></div></header>
 <main><div id="error" role="alert" hidden></div>
-<div id="panel-tasks">
+
+<section id="panel-home" hidden aria-labelledby="home-title">
+  <div class="intro home-intro"><div><div class="home-title-line"><h1 id="home-title" tabindex="-1">字幕工作台</h1><span id="home-date"></span></div><p>为你的媒体库，补齐每一句对白。</p></div><div class="actions"><button id="home-add">＋ 从 Emby 添加</button><a href="#tasks" class="button-link secondary">全部任务</a></div></div>
+  <div id="home-error" class="notice failure" role="alert" hidden></div><button id="home-retry" class="secondary" hidden>重新读取概览</button>
+  <p id="home-loading" class="notice" role="status">正在读取字幕工作台…</p>
+  <div id="home-content" hidden>
+    <div id="home-metrics" class="home-metrics" aria-label="字幕统计"></div>
+    <div class="home-grid">
+      <section class="home-card home-current" aria-labelledby="home-current-title"><div class="home-section-heading"><h2 id="home-current-title">正在处理 <span id="home-active-count" class="home-badge"></span></h2><a href="#tasks" class="home-task-link" data-view="processed">查看任务 →</a></div><div id="home-active"></div></section>
+      <section class="home-card home-delivery" aria-labelledby="home-delivery-title"><div class="home-section-heading"><h2 id="home-delivery-title">近 7 日交付</h2><span id="home-range" class="hint"></span></div><p class="home-chart-total">合计 <strong id="home-week-total">—</strong> 份</p><div id="home-chart" class="home-chart" role="img"></div><p id="home-delivery-note" class="hint"></p></section>
+      <section class="home-card home-queue" aria-labelledby="home-queue-title"><div class="home-section-heading"><h2 id="home-queue-title">等待处理 <span id="home-queue-count" class="home-badge"></span></h2><a href="#tasks" class="home-task-link" data-view="ready">查看全部 →</a></div><p class="hint">按优先级、入队顺序排列</p><div id="home-queue"></div></section>
+      <div class="home-right-stack"><section class="home-card home-attention" aria-labelledby="home-attention-title"><div class="home-section-heading"><h2 id="home-attention-title">需关注 <span id="home-attention-count" class="home-badge"></span></h2><a href="#tasks" class="home-task-link" data-view="processed">查看原因 →</a></div><div id="home-attention"></div></section>
+      <section class="home-card home-models" aria-labelledby="home-models-title"><div class="home-section-heading"><h2 id="home-models-title">模型设置</h2><a href="#settings">管理 →</a></div><div id="home-models"></div></section></div>
+    </div>
+    <p id="home-updated" class="home-updated"></p>
+  </div>
+</section>
+<div id="panel-tasks" hidden>
   <section class="intro task-intro"><div><h1 id="tasks-title" tabindex="-1">字幕任务</h1><p>为你的媒体库，补齐每一句对白。</p><a class="watch-shortcut" href="#watch">监控目录与范围 →</a></div><div class="actions"><button id="toggle" class="secondary automation-toggle" disabled>读取状态…</button><button id="emby-open" class="secondary">从 Emby 添加</button><button id="scan" class="scan-button">检查新文件</button></div></section>
   <section class="monitor" aria-label="运行状态"><div><span class="label">处理中</span><strong id="running">—</strong></div><div><span class="label">待翻译</span><strong id="pending">—</strong></div><div><span class="label">需关注</span><strong id="attention">—</strong></div><p id="scope-summary" class="monitor-note">仅处理缺少中文字幕的新增视频</p></section>
   <section class="task-section" aria-label="字幕任务列表">
