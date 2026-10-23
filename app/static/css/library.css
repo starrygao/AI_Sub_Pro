@@ -115,7 +115,7 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 7px; }
 .progress-idle { color: var(--muted); font-size: 12px; }
 .empty { text-align: center; margin: 0; padding: 64px 20px; background: var(--paper); border-block: 1px solid var(--line); color: var(--muted); }
 .pagination { display: flex; justify-content: center; align-items: center; gap: 16px; margin-top: 16px; font-size: 12px; color: var(--muted); }
-.pagination:has(#prev[hidden]):has(#more[hidden]) { display: none; }
+.pagination:has(#prev[hidden]):has(#more[hidden]):has(#page:empty) { display: none; }
 .watch-section { margin-top: 18px; border: 1px solid #d2e0e4; border-radius: 9px; background: var(--paper); }
 .watch-bar { display: flex; align-items: center; gap: 22px; padding: 10px 20px; min-height: 60px; }
 .watch-disclosure { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 8px 0; text-align: left; background: transparent; color: var(--ink); border: 0; font-size: 14px; }
@@ -386,6 +386,14 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .task-select { min-width: 24px; }
 .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .row-actions button { padding: 6px 10px; }
+.task-fold-controls { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px; padding: 12px 0; }
+.task-fold-controls .hint { margin: 0; }
+.task-fold-controls button { font-size: 13px; }
+.task-group { border-bottom: 1px solid var(--line); }
+.task-group > summary { width: auto; cursor: pointer; padding: 16px 12px; background: #f0f4f2; font-size: 14px; font-weight: 600; }
+.task-group > summary .hint { margin-left: 12px; font-size: 12px; font-weight: 400; }
+.task-cleanup-choice { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 14px; line-height: 1.5; }
+.task-cleanup-choice input { width: 18px; height: 18px; flex-shrink: 0; margin: 2px 0 0; accent-color: var(--accent); }
 .task-side { gap: 8px; flex-wrap: wrap; }
 button.danger { background: var(--danger); border-color: var(--danger); color: var(--paper); }
 button.secondary.danger { background: var(--paper); color: var(--danger); border-color: #dfc6bb; }

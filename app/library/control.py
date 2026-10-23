@@ -32,10 +32,11 @@ class TaskControls:
         if state=='paused':return ['resume','cancel','delete']
         return ['delete']
 
-    def request(self,path,action,expected):
+    def request(self,path,action,expected,cleanup_files=False):
         from app.services import translation_tasks as tasks
         if not self.lock.acquire(timeout=2):raise ValueError('正在提交任务状态或保存字幕，请稍后重试')
         try:
+            if type(cleanup_files) is not bool or (cleanup_files and action!='delete'):raise ValueError('只有删除任务时可以清理缓存')
             row=self.worker.store.get(path)
             if not row:raise ValueError('记录不存在')
             if self.revision(row)!=expected:raise ValueError('文件记录已变化，请刷新后重试')
@@ -49,14 +50,20 @@ class TaskControls:
             else:
                 running=path in self.preparing or bool(pid and tasks.is_task_registered(pid))
                 if running and pid:tasks.cancel_task(pid)
-                state=('pausing' if action=='pause' else 'cancelling') if running else {'pause':'paused','cancel':'cancelled','delete':'deleted'}[action]
+                state=('pausing' if action=='pause' else 'cancelling') if running else {'pause':'paused','cancel':'cancelled','delete':'cancelling'}[action]
                 reason={'pausing':'正在暂停，等待当前步骤安全退出','cancelling':'正在取消，等待当前步骤安全退出',
                         'paused':'已暂停，保留进度；点击继续后重新检查并排队','cancelled':'已取消，不再自动处理；视频与已有字幕保留',
                         'deleted':'任务已从列表删除；视频与已有字幕保留'}[state]
                 if action=='delete' and running:reason='正在删除，等待当前步骤安全退出后移除记录'
                 row.update(state=state,reason=reason,control_action=action)
+                if action=='delete':
+                    row.update(cleanup_files=cleanup_files,delete_error=None)
+                    if cleanup_files:row['reason']='正在删除，等待任务安全停止并清理缓存和中间文件'
             row['updated']=time.time();self.worker.store.put(row);self.worker.wake.set()
-            return {'path':path,'ok':True,'state':row['state']}
+            if action=='delete' and not running:self._settle_delete(row)
+            result={'path':path,'ok':not bool(row.get('delete_error')),'state':row['state']}
+            if row.get('delete_error'):result['error']=row['reason']
+            return result
         finally:self.lock.release()
 
     def save(self,row,values):
@@ -65,8 +72,21 @@ class TaskControls:
             row.update(values,updated=time.time())
             # Slow probe/progress callbacks must never undo a concurrent user action.
             if current and current.get('fingerprint')==row.get('fingerprint') and current.get('control_action'):
-                for key in ('state','reason','control_action'):row[key]=current[key]
+                for key in ('state','reason','control_action','cleanup_files','delete_error'):row[key]=current.get(key)
             self.worker.store.put(row)
+
+    def _settle_delete(self,row):
+        from app.services import translation_tasks as tasks
+        from .cleanup import clean_task_intermediates
+        try:
+            # Registration and cleanup share the task registry lock. Never remove
+            # audio while a pipeline may still be using it or starting to use it.
+            if row.get('cleanup_files') and not tasks.run_when_tasks_idle(lambda:clean_task_intermediates(self.worker.store,row.get('project_id'))):return
+            row.update(state='deleted',reason='任务已从列表删除；'+('已清理缓存和中间文件，原视频与已有字幕保留' if row.get('cleanup_files') else '文件全部保留'))
+        except (ValueError,OSError) as exc:
+            row.update(state='error',control_action='cancel',delete_error=self.worker.safe_error(exc),
+                       reason='删除未完成：缓存清理失败，请重新点击删除重试。'+self.worker.safe_error(exc))
+        row['updated']=time.time();self.worker.store.put(row)
 
     def stopped(self,path):
         return bool((self.worker.store.get(path) or {}).get('control_action'))
@@ -82,6 +102,8 @@ class TaskControls:
                 if row['path'] in self.preparing or (pid and tasks.is_task_registered(pid)):continue
                 paused=row.get('control_action')=='pause'
                 deleted=row.get('control_action')=='delete'
-                row.update(state='deleted' if deleted else 'paused' if paused else 'cancelled',updated=time.time(),
-                           reason='任务已从列表删除；视频与已有字幕保留' if deleted else '已暂停，保留进度；点击继续后重新检查并排队' if paused else '已取消，不再自动处理；视频与已有字幕保留')
+                if deleted:
+                    self._settle_delete(row);continue
+                row.update(state='paused' if paused else 'cancelled',updated=time.time(),
+                           reason='已暂停，保留进度；点击继续后重新检查并排队' if paused else '已取消，不再自动处理；视频与已有字幕保留')
                 self.worker.store.put(row)

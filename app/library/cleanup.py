@@ -47,6 +47,33 @@ def unlink_unchanged(candidate):
     finally:os.close(fd)
 
 
+def clean_task_intermediates(store,project_id):
+    """Explicit task cleanup only removes known, reproducible audio files."""
+    if not project_id:return True
+    if not re.fullmatch(r'[0-9a-f]{8}',project_id):raise ValueError('任务目录无效，未清理文件')
+    root=Path(store.path).parent.resolve()/'projects'
+    folder=root/project_id
+    if root.is_symlink() or folder.is_symlink():raise ValueError('任务目录为链接，未清理文件')
+    candidates=[]
+    for name in PROJECT_FILES:
+        path=folder/name
+        # Distinguish absent files from inaccessible files and unsafe links.
+        current=root
+        for part in path.relative_to(root).parts:
+            current=current/part
+            if current.is_symlink():raise ValueError('缓存路径包含链接，未清理文件')
+        try:path.lstat()
+        except FileNotFoundError:continue
+        identity=file_identity(path,root)
+        if not identity:raise ValueError('缓存文件不安全或不可读，未清理文件')
+        candidates.append({'path':path,'root':root,'identity':identity})
+    for candidate in candidates:
+        try:
+            if not unlink_unchanged(candidate):raise ValueError('缓存文件已变化，请重新删除任务')
+        except FileNotFoundError:pass  # A concurrent safe cleanup already removed it.
+    return True
+
+
 class ProcessCleanup:
     def __init__(self,worker):
         self.worker=worker

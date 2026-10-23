@@ -19,6 +19,25 @@ const loadList=async()=>{vm.runInContext(fs.readFileSync('app/static/js/library.
 '''
 
 
+def test_history_defaults_collapsed_and_manual_group_choice_survives_polling():
+    run_js(LIST_FIXTURE+r'''
+rows.push({path:'/video/active.mkv',state:'translating',progress:{progress:3}},
+ {path:'/video/failed.mkv',state:'error'},{path:'/video/done.mkv',state:'done'});
+await loadList();
+const group=key=>taskNodes().find(e=>e.className==='task-group'&&e.children[0].getAttribute('data-task-group')===key);
+assert.equal(group('current').open,true);assert.equal(group('attention').open,true);assert.equal(group('history').open,false);
+assert(calls.some(c=>c.url.includes('tasks?limit=20')));
+group('history').open=true;group('current').open=false;group('history').children[0].focus();
+rows[0].progress.progress=4;await context.refresh();
+assert.equal(group('history').open,true);assert.equal(group('current').open,false);
+assert.equal(context.document.activeElement,group('history').children[0]);
+$('tasks-collapse').onclick();assert(['current','attention','history'].every(key=>!group(key).open));
+$('tasks-expand').onclick();assert(['current','attention','history'].every(key=>group(key).open));
+$('filter').value='done';await context.refresh();
+assert.equal($('task-fold-controls').hidden,true);assert.equal($('tasks').children[0].tagName,'ARTICLE');
+''')
+
+
 def test_status_uses_selected_translation_services_instead_of_codex_login():
     run_js(LIST_FIXTURE + r'''
 Object.assign(snapshot,{codex_logged_in:null,translation_ready:true,translation_hint:'Claude CLI 已配置'});
@@ -51,7 +70,7 @@ def test_task_file_details_start_collapsed_and_keep_user_choice_on_refresh():
 rows.push({path:'/video/Episode.mkv',server_source_path:'/vol2/media/Episode.mkv',server_output_path:'/vol2/media/Episode.srt',state:'translating',project_id:'deadbeef',progress:{progress:37,stage:'translate'}});
 rows.push({path:'/video/Other.mkv',server_source_path:'/vol2/media/Other.mkv',state:'done',project_id:'cafebabe'});
 await loadList();
-const filesFor=path=>taskNodes().find(e=>e.tagName==='DETAILS'&&descendants(e).some(child=>child.textContent===path));
+const filesFor=path=>taskNodes().find(e=>e.className==='task-files'&&descendants(e).some(child=>child.textContent===path));
 let details=filesFor('/vol2/media/Episode.mkv');
 assert(details,'File information must be reachable through a disclosure');
 assert(!details.open,'Long paths must start collapsed');
@@ -92,7 +111,7 @@ assert.equal(visibleReason(),'正在翻译第 1 批');
 for(const [terminal,reason] of [['cancelled','用户已停止任务'],['error','保存字幕失败'],['done','双语字幕已保存']]){
  row.state=terminal;row.reason=reason;await context.refresh();
  assert.equal(visibleReason(),reason,'Terminal task status must describe the final state');
- const files=taskNodes().find(e=>e.tagName==='DETAILS');
+ const files=taskNodes().find(e=>e.className==='task-files');
  assert(descendants(files).some(e=>String(e.textContent).includes('正在翻译第 1 批')),'The full historical message remains available in file details');
 }
 ''')

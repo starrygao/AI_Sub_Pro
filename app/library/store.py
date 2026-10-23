@@ -53,11 +53,14 @@ class Store:
             actual = db.execute('SELECT payload FROM media WHERE path=?', (row['path'],)).fetchone()
             return json.loads(actual[0]), inserted
 
-    def rows(self,states=None,limit=100,offset=0,oldest=False):
+    def rows(self,states=None,limit=100,offset=0,oldest=False,attention_first=False):
         # Keep deleted identities in the discovery ledger so scans cannot recreate tasks.
         where=" WHERE state!='deleted'"+(' AND state IN ('+','.join('?' for _ in states)+')' if states else '')
+        order="COALESCE(json_extract(payload, '$.priority'),0) DESC, updated ASC" if oldest else 'updated DESC'
+        if attention_first:
+            order="CASE WHEN state IN ('translating','publishing','pausing','cancelling') THEN 0 WHEN state IN ('error','changed','missing','paused') THEN 1 ELSE 2 END, "+order
         with self.db() as db:
-            return [json.loads(x[0]) for x in db.execute('SELECT payload FROM media'+where+' ORDER BY '+("COALESCE(json_extract(payload, '$.priority'),0) DESC, updated ASC" if oldest else 'updated DESC')+' LIMIT ? OFFSET ?',tuple(states or [])+(limit,offset))]
+            return [json.loads(x[0]) for x in db.execute('SELECT payload FROM media'+where+' ORDER BY '+order+', path ASC LIMIT ? OFFSET ?',tuple(states or [])+(limit,offset))]
 
     def counts(self):
         with self.db() as db:return dict(db.execute("SELECT state,count(*) FROM media WHERE state!='deleted' GROUP BY state").fetchall())

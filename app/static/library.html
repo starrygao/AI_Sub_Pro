@@ -5,7 +5,7 @@
 <link rel="icon" href="/static/favicon.ico?v=1" sizes="16x16 32x32">
 <link rel="icon" href="/static/favicon.svg?v=1" type="image/svg+xml">
 <meta name="theme-color" content="#153f42">
-<link rel="stylesheet" href="/static/css/library.css?v=console-15"><script defer src="/static/js/library.js?v=console-15"></script><script defer src="/static/js/library-knowledge.js?v=console-10"></script><script defer src="/static/js/library-panels.js?v=console-15-review"></script><script defer src="/static/js/library-proxy.js?v=1"></script><script defer src="/static/js/library-directories.js?v=console-6"></script><script defer src="/static/js/library-selection.js?v=console-1"></script><script defer src="/static/js/library-cleanup.js?v=3"></script><script defer src="/static/js/library-controls.js?v=2"></script></head>
+<link rel="stylesheet" href="/static/css/library.css?v=console-17"><script defer src="/static/js/library.js?v=console-17"></script><script defer src="/static/js/library-knowledge.js?v=console-10"></script><script defer src="/static/js/library-panels.js?v=console-15-review"></script><script defer src="/static/js/library-proxy.js?v=1"></script><script defer src="/static/js/library-directories.js?v=console-6"></script><script defer src="/static/js/library-selection.js?v=console-1"></script><script defer src="/static/js/library-cleanup.js?v=3"></script><script defer src="/static/js/library-controls.js?v=3"></script></head>
 <body><header><a class="brand" href="#tasks">AI Sub Pro</a><nav class="console-nav" aria-label="主导航"><a id="nav-tasks" href="#tasks" aria-current="page">字幕任务</a><a id="nav-system" href="#watch">设置</a><a id="nav-knowledge" href="#knowledge">知识库</a></nav><div class="header-actions"><button id="logout" class="secondary">退出登录</button></div></header>
 <main><div id="error" role="alert" hidden></div>
 <div id="panel-tasks">
@@ -21,6 +21,7 @@
       <div class="actions"><button id="tasks-pause" class="secondary" disabled hidden>暂停所选</button><button id="tasks-resume" class="secondary" disabled hidden>继续所选</button><button id="tasks-cancel" class="secondary" disabled hidden>取消所选</button><button id="tasks-delete" class="secondary danger" disabled>删除所选</button></div>
     </div>
     <p id="task-action-feedback" role="status" class="hint"></p><ul id="task-action-errors" class="notice failure" hidden></ul>
+    <div id="task-fold-controls" class="task-fold-controls" hidden><span class="hint">每页 20 项 · 历史记录默认折叠</span><div class="actions"><button id="tasks-expand" class="text-button">展开本页</button><button id="tasks-collapse" class="text-button">折叠本页</button></div></div>
     <div class="task-columns" aria-hidden="true"><span>视频</span><span>标题 / 文件</span><span>任务状态</span><span>进度</span><span>操作</span></div>
     <p id="empty" class="empty" role="status">正在读取媒体库任务…</p><div id="tasks"></div><div class="pagination"><button id="prev" class="secondary" hidden>上一页</button><span id="page"></span><button id="more" class="secondary" hidden>下一页</button></div>
   </section>
@@ -186,7 +187,9 @@
 </main>
 <dialog id="task-delete-dialog" aria-labelledby="task-delete-title" aria-describedby="task-delete-description task-delete-note">
   <h2 id="task-delete-title">删除任务</h2><p id="task-delete-description"></p>
-  <p id="task-delete-note" class="hint">保留原视频和已有字幕。相同视频不会因自动扫描再次入队；需要重新处理时，可从 Emby 手动添加。</p>
+  <p id="task-delete-note" class="hint">默认只移除任务，保留全部文件。相同视频不会因自动扫描再次入队；需要重新处理时，可从 Emby 手动添加。</p>
+  <label class="task-cleanup-choice"><input id="task-delete-cleanup" type="checkbox" aria-describedby="task-delete-cleanup-note">同时清理该任务的缓存和中间文件</label>
+  <p id="task-delete-cleanup-note" class="hint">仅清理提取音频和人声分离文件，之后无法恢复。原视频、已有字幕和翻译检查点始终保留；运行中的任务会先安全停止。</p>
   <ul id="task-delete-items"></ul><div class="actions"><button id="task-delete-back" class="secondary">返回</button><button id="task-delete-confirm" class="danger">确认删除</button></div>
 </dialog>
 <dialog id="task-cancel-dialog" aria-labelledby="task-cancel-title"><h2 id="task-cancel-title">取消所选任务</h2><p id="task-cancel-description"></p><p class="hint">保留原视频、已有字幕和任务记录。若只是稍后继续，请使用“暂停”。</p><ul id="task-cancel-items"></ul><div class="actions"><button id="task-cancel-confirm">确认取消</button><button id="task-cancel-back" class="secondary">返回</button></div></dialog>

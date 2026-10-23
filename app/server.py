@@ -200,7 +200,7 @@ def library_tasks(state:str='',limit:int=100,offset:int=0,view:str='all'):
         rows=[];total=0
     else:
         states=[state] if state else states
-        rows=worker.store.rows(states,limit,offset)
+        rows=worker.store.rows(states,limit,offset,attention_first=view=='processed')
         total=sum(counts.get(s,0) for s in states) if states else sum(counts.values())
     for row in rows:
         from app.library.artwork import artwork_links
@@ -265,15 +265,17 @@ class TaskAction(BaseModel):
     model_config={'extra':'forbid'}
     action:Literal['pause','resume','cancel','delete']
     items:list[TaskTarget]=Field(min_length=1,max_length=100)
+    cleanup_files:bool=Field(default=False,strict=True)
 
 
 @app.post('/api/library/tasks/control')
 def library_task_control(body:TaskAction):
+    if body.cleanup_files and body.action!='delete':raise HTTPException(422,'只有删除任务时可以清理缓存')
     results=[];seen=set()
     for item in body.items:
         if item.path in seen:continue
         seen.add(item.path)
-        try:results.append(worker.controls.request(item.path,body.action,item.revision))
+        try:results.append(worker.controls.request(item.path,body.action,item.revision,body.cleanup_files))
         except HTTPException as exc:results.append({'path':item.path,'ok':False,'error':worker.safe_error(exc.detail)})
         except (ValueError,OSError) as exc:results.append({'path':item.path,'ok':False,'error':worker.safe_error(exc)})
     return {'results':results}

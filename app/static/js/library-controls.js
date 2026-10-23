@@ -23,14 +23,14 @@
     for(const row of rows){if(selected.has(row.path)){if(!row.available_actions?.length||selected.get(row.path).control_revision!==row.control_revision)selected.delete(row.path);else selected.set(row.path,{...row});}}
     state();
   }
-  async function perform(action,rows){
+  async function perform(action,rows,cleanupFiles=false){
     if(busy)return;busy=true;state();$('task-action-errors').hidden=true;$('task-action-feedback').textContent='正在提交'+labels[action]+'请求…';
     rowsSignature='';await refresh();
     try{
-      const result=await api('tasks/control',{action,items:rows.map(r=>({path:r.path,revision:r.control_revision}))});
+      const result=await api('tasks/control',{action,...(action==='delete'?{cleanup_files:cleanupFiles}:{}),items:rows.map(r=>({path:r.path,revision:r.control_revision}))});
       const failures=result.results.filter(r=>!r.ok),success=result.results.length-failures.length;
       for(const r of result.results)if(r.ok)selected.delete(r.path);
-      $('task-action-feedback').textContent='已接受 '+success+' 项'+labels[action]+'请求'+(failures.length?'，'+failures.length+' 项未执行':'')+(action==='delete'?'。运行中任务将在安全停止后移除，视频与已有字幕保留。':'。运行中任务将在安全退出后更新状态。');
+      $('task-action-feedback').textContent='已接受 '+success+' 项'+labels[action]+'请求'+(failures.length?'，'+failures.length+' 项未完成':'')+(action==='delete'?'。任务安全停止'+(cleanupFiles?'并清理缓存后移除；视频与已有字幕保留。清理失败的任务会留在“需关注”。':'后移除，全部文件保留（含原视频与已有字幕）。'):'。运行中任务将在安全退出后更新状态。');
       $('task-action-errors').replaceChildren(...failures.map(r=>el('li',r.path.split('/').pop()+'：'+r.error)));$('task-action-errors').hidden=!failures.length;
     }catch(e){$('task-action-feedback').textContent='操作失败：'+e.message+' 已保留选择，可重试。';}
     finally{busy=false;state();rowsSignature='';await refresh();if(action==='delete')$('task-select-page').disabled?$('tasks-title').focus():$('task-select-page').focus();}
@@ -39,6 +39,7 @@
     if(busy)return;
     if(!rows.length)return;
     if(action==='delete'){
+      $('task-delete-cleanup').checked=false;
       pendingDelete=rows.slice();$('task-delete-description').textContent='将从列表删除 '+rows.length+' 项任务。运行中的任务会先安全停止。';
       $('task-delete-items').replaceChildren(...rows.map(r=>el('li',taskTitle(r).title+' '+taskTitle(r).episode)));
       $('task-delete-dialog').showModal();$('task-delete-back').focus();return;
@@ -56,7 +57,7 @@
     input.onchange=()=>{if(input.checked){if(selected.size>=100){input.checked=false;$('task-action-feedback').textContent='每批最多选择 100 项。';return;}selected.set(row.path,{...row});}else selected.delete(row.path);state();};
     label.append(focusable(input,'select'));heading.append(label);
     const actions=el('div',undefined,'row-actions');
-    for(const action of row.available_actions){const button=el('button',labels[action],action==='delete'?'secondary danger':'secondary');button.disabled=busy;button.onclick=()=>act(action,[row]);actions.append(focusable(button,action));}
+    for(const action of row.available_actions.filter(action=>labels[action])){const button=el('button',labels[action],action==='delete'?'secondary danger':'secondary');button.disabled=busy;button.onclick=()=>act(action,[row]);actions.append(focusable(button,action));}
     side.append(actions);
   }
   for(const action of Object.keys(labels))$('tasks-'+action).onclick=()=>act(action,[...selected.values()]);
@@ -67,6 +68,6 @@
   $('task-cancel-dialog').oncancel=()=>{pendingCancel=[];};
   $('task-delete-back').onclick=()=>{$('task-delete-dialog').close();pendingDelete=[];};
   $('task-delete-dialog').oncancel=()=>{pendingDelete=[];};
-  $('task-delete-confirm').onclick=()=>{const rows=pendingDelete;pendingDelete=[];$('task-delete-dialog').close();return perform('delete',rows);};
+  $('task-delete-confirm').onclick=()=>{const rows=pendingDelete,cleanupFiles=$('task-delete-cleanup').checked;pendingDelete=[];$('task-delete-dialog').close();return perform('delete',rows,cleanupFiles);};
   window.LibraryControls={sync,render};rowsSignature='';refresh();
 })();

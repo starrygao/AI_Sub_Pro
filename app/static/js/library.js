@@ -1,8 +1,9 @@
 'use strict';
 const $=id=>document.getElementById(id);
 const names={waiting:'待检测',ready:'待翻译',historical:'旧媒体',translating:'正在翻译',publishing:'等待保存',done:'已保存',skipped:'已有字幕',native_language:'中文原声',error:'需要处理',changed:'视频已变化',missing:'文件已移走',cancelled:'已取消',paused:'已暂停',pausing:'正在暂停',cancelling:'正在取消'};
-let status={},limit=100,offset=0,view='processed',requestId=0,refreshPending=0;
-let rowsSignature='',rowDetails=new Map();
+let status={},limit=20,offset=0,view='processed',requestId=0,refreshPending=0;
+let rowsSignature='',rowDetails=new Map(),groupDetails=new Map();
+const expandedGroups=new Map([['current',true],['attention',true],['history',false]]);
 const expandedPaths=new Set();
 const views={processed:{states:['translating','publishing','done','error','changed','missing','cancelled','paused','pausing','cancelling'],all:'全部处理记录',hint:'正在处理、已完成及异常的记录。新发现文件先检测，通过后才进入待翻译。',empty:'暂无处理记录。新发现文件会先进入“待检测”。'},waiting:{states:['waiting'],all:'全部待检测',hint:'尚未确认是否需要翻译。检查下载、字幕和原声后，自动跳过或加入待翻译。',empty:'暂无待检测的视频。'},ready:{states:['ready'],all:'全部待翻译',hint:'已确认缺少中文字幕且需要翻译，等待名额；开始前再次检查文件与下载状态。',empty:'暂无确认需要翻译的视频。'},skipped:{states:['skipped','native_language','historical'],all:'全部跳过记录',hint:'已有中文字幕、中文原声或监控启用前的旧媒体。旧媒体仍可从 Emby 手动添加。',empty:'暂无跳过记录。'}};
 function selectView(next){view=next;offset=0;$('filter').replaceChildren(...[['',views[view].all],...views[view].states.map(s=>[s,names[s]])].map(([value,label])=>{const option=el('option',label);option.value=value;return option;}));$('filter').disabled=['waiting','ready'].includes(view);for(const key of Object.keys(views))$('view-'+key).setAttribute('aria-pressed',String(key===view));$('list-hint').textContent=views[view].hint;rememberExpanded();rowsSignature='';$('tasks').replaceChildren();$('empty').hidden=false;$('empty').textContent='正在读取…';$('prev').hidden=true;$('more').hidden=true;$('page').textContent='';refresh();}
@@ -19,7 +20,7 @@ function error(message){$('error').textContent=message;$('error').hidden=!messag
 
 function icon(name){const node=el('span',undefined,'icon icon-'+name);node.setAttribute('aria-hidden','true');return node;}
 const stages={asr:'语音识别',translate:'翻译与复核',subtitle_extract:'正在提取字幕',filter:'整理字幕',export:'保存字幕'};
-function progressLabel(row){if(row.control_action==='delete')return '正在删除';if(row.manual_hard_subtitle)return '中文硬字幕';return row.state==='done'?'字幕已保存':row.state==='publishing'?'等待保存':row.state==='translating'?(stages[row.progress?.stage]||'正在处理'):names[row.state]||row.state;}
+function progressLabel(row){if(row.delete_error)return '删除未完成';if(row.control_action==='delete')return '正在删除';if(row.manual_hard_subtitle)return '中文硬字幕';return row.state==='done'?'字幕已保存':row.state==='publishing'?'等待保存':row.state==='translating'?(stages[row.progress?.stage]||'正在处理'):names[row.state]||row.state;}
 function renderProgress(row,body){
   if(!['translating','publishing','done','cancelled','error','changed','missing','paused','pausing','cancelling'].includes(row.state)){
     body.append(el('p',row.state==='waiting'?'正在排队检测':row.state==='ready'?'等待翻译名额':'无需翻译','progress-idle'));return;
@@ -50,7 +51,9 @@ function renderRoots(s){
 
 function rememberExpanded(){
   for(const [path,details] of rowDetails){if(details.open)expandedPaths.add(path);else expandedPaths.delete(path);}
+  for(const [key,details] of groupDetails)expandedGroups.set(key,details.open);
 }
+for(const [id,open] of [['tasks-expand',true],['tasks-collapse',false]])$(id).onclick=()=>{for(const [key,details] of groupDetails){details.open=open;expandedGroups.set(key,open);}};
 function taskTitle(row){
   const meta=row.metadata||{},filename=row.path.split('/').pop();
   const season=meta.season_number,episode=meta.episode_number;
@@ -74,12 +77,16 @@ function renderRows(rows,total){
   $('empty').hidden=!!rows.length;
   $('empty').textContent=$('filter').value?'当前筛选没有任务。':views[view].empty;
   window.LibraryControls?.sync(rows);
-  const signature=JSON.stringify([view,offset,rows]);
+  const grouped=view==='processed'&&!$('filter').value;
+  $('task-fold-controls').hidden=!grouped||!rows.length;
+  const signature=JSON.stringify([view,offset,$('filter').value,rows]);
   if(signature!==rowsSignature){
     rememberExpanded();
     const focused=document.activeElement;
     const focusPath=focused?.getAttribute?.('data-task-path'),focusAction=focused?.getAttribute?.('data-task-action');
+    const focusGroup=focused?.getAttribute?.('data-task-group');
     const articles=[],nextDetails=new Map();let restoreFocus=null;
+    const groups={current:[],attention:[],history:[]};
     for(const row of rows){
       const article=el('article',undefined,'task'),identity=el('div',undefined,'task-identity'),taskStatus=el('div',undefined,'task-status'),side=el('div',undefined,'task-side');
       const meta=row.metadata||{},title=taskTitle(row);
@@ -106,7 +113,7 @@ function renderRows(rows,total){
       window.LibraryControls?.render(row,side,focusable,heading);
       heading.append(el('h3',title.title));
       if(row.project_id){const link=el('a','查看详情');link.href='#project/'+encodeURIComponent(row.project_id);link.append(icon('arrow'));side.append(focusable(link,'detail'));}
-      if(!row.manual_hard_subtitle&&['error','changed','missing','skipped','native_language'].includes(row.state)){
+      if(!row.delete_error&&!row.manual_hard_subtitle&&['error','changed','missing','skipped','native_language'].includes(row.state)){
         const button=el('button','重新检查','secondary');
         button.onclick=async()=>{button.disabled=true;try{await api('retry',{path:row.path});rowsSignature='';await refresh();}catch(e){error(e.message);}finally{button.disabled=false;}};
         side.append(focusable(button,'retry'));
@@ -119,12 +126,24 @@ function renderRows(rows,total){
       }
       if(!side.children.length)side.append(el('span',row.state==='waiting'?'检测后决定是否翻译':row.state==='ready'?'按队列自动开始':row.state==='translating'?'处理中':'无需操作','hint'));
       article.append(side);articles.push(article);
+      const key=['done','cancelled'].includes(row.state)?'history':['error','changed','missing','paused'].includes(row.state)?'attention':'current';
+      groups[key].push(article);
     }
-    $('tasks').replaceChildren(...articles);rowDetails=nextDetails;rowsSignature=signature;
+    groupDetails=new Map();
+    const sections=[];
+    if(grouped)for(const [key,label] of [['current','当前任务'],['attention','需关注与已暂停'],['history','已完成与已取消']]){
+      if(!groups[key].length)continue;
+      const section=el('details',undefined,'task-group'),summary=el('summary');
+      section.open=expandedGroups.get(key);summary.setAttribute('data-task-group',key);
+      summary.append(el('span',label),el('span','本页 '+groups[key].length+' 项','hint'));
+      section.append(summary,...groups[key]);sections.push(section);groupDetails.set(key,section);
+      if(focusGroup===key)restoreFocus=summary;
+    }
+    $('tasks').replaceChildren(...(grouped?sections:articles));rowDetails=nextDetails;rowsSignature=signature;
     if(restoreFocus)restoreFocus.focus({preventScroll:true});
   }
   $('more').hidden=offset+rows.length>=total;$('prev').hidden=offset===0;
-  $('page').textContent=rows.length&&total>limit?'第 '+(offset/limit+1)+' 页':'';
+  $('page').textContent=rows.length?'第 '+(offset/limit+1)+' / '+Math.ceil(total/limit)+' 页 · 共 '+total+' 项':'';
 }
 async function refresh(poll=false){if(poll&&refreshPending)return;const request=++requestId;refreshPending=request;try{const [s,t]=await Promise.all([api('status'),api('tasks?limit='+limit+'&offset='+offset+'&view='+view+'&state='+encodeURIComponent($('filter').value))]);if(request!==requestId)return;if(!t.items.length&&offset>0&&offset>=t.total){offset=Math.max(0,Math.floor((t.total-1)/limit)*limit);return refresh();}status=s;window.LibraryPanels?.statusChanged(s);for(const key of Object.keys(views))$('count-'+key).textContent=t.view_counts[key]||0;$('enabled').textContent=s.enabled?'已开启':'已暂停';$('toggle').textContent=s.enabled?'暂停自动翻译':'开启自动翻译';$('toggle').setAttribute('data-enabled',String(!!s.enabled));$('toggle').title=s.enabled?'自动翻译已开启，暂停后当前任务会继续完成':'自动翻译已暂停';$('toggle').disabled=false;$('auth').textContent=(s.translation_ready??s.codex_logged_in)?'已就绪':'未就绪';$('pending').textContent=s.counts.ready||0;$('running').textContent=(s.counts.translating||0)+(s.counts.publishing||0)+(s.counts.pausing||0)+(s.counts.cancelling||0);const attention=(s.counts.error||0)+(s.counts.changed||0)+(s.counts.missing||0);$('attention').textContent=attention;$('attention').setAttribute('data-active',String(attention>0));$('done').textContent=s.counts.done||0;$('last').textContent=s.last_scan?new Date(s.last_scan*1000).toLocaleTimeString():'尚未扫描';$('explanation').textContent='文件稳定 '+s.quiet_seconds+' 秒后检测；每 '+s.scan_interval+' 秒批量检查。检测与翻译排队独立，单任务翻译。'+(s.connections.emby?.transcoding?'Emby 正在转码，延后媒体处理。':'');const connections=Object.entries(s.connections),connected=connections.length>0&&connections.every(([,v])=>v.ok);$('connection-summary').textContent=connected?'服务连接正常':connections.length?'部分服务不可用':'暂无连接信息';$('connection-summary').setAttribute('data-ok',String(connected));$('connections').replaceChildren(...connections.map(([name,v])=>el('span',name+' · '+(v.ok?'已连接':'不可用'),'connection')));renderRoots(s);error(s.error||(!(s.translation_ready??s.codex_logged_in)?(s.translation_hint||'翻译服务尚未就绪')+'。请在模型设置中检查所选服务的登录状态。':''));renderRows(t.items,t.total);}catch(e){if(request===requestId){error(e.message);window.LibraryPanels?.statusChanged(null);}}finally{if(refreshPending===request)refreshPending=0;}}
 $('watch-expand').onclick=()=>{const open=$('watch-expand').getAttribute('aria-expanded')!=='true';$('watch-expand').setAttribute('aria-expanded',String(open));$('watch-content').hidden=!open;};

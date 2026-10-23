@@ -67,7 +67,7 @@ assert.match($('task-selection-count').textContent,/已选 1 项/);
 assert.equal(control(rows[1].path,'select').checked,true);
 assert.equal(control(rows[0].path,'select').checked,false);
 assert.equal($('task-action-errors').hidden,false);
-assert.match($('task-action-feedback').textContent,/视频与已有字幕保留/);
+assert.match($('task-action-feedback').textContent,/全部文件保留/);
 ''')
 
 
@@ -88,7 +88,7 @@ assert.equal($('tasks-clear').hidden,true);
 
 def test_deleting_last_page_returns_to_existing_tasks():
     run_js(FIXTURE+r'''
-for(let i=0;i<101;i++)rows.push({path:'/video/'+i+'.mkv',state:'done',control_revision:'a'.repeat(64),available_actions:['delete']});
+for(let i=0;i<21;i++)rows.push({path:'/video/'+i+'.mkv',state:'done',control_revision:'a'.repeat(64),available_actions:['delete']});
 await loadControls();
 const fetch=context.fetch;
 context.fetch=async(url,options={})=>{
@@ -99,13 +99,13 @@ context.fetch=async(url,options={})=>{
  }
  if(url.includes('/tasks?')){
   const offset=Number(/[?&]offset=(\d+)/.exec(url)[1]);
-  return {ok:true,status:200,json:async()=>({items:rows.slice(offset,offset+100),total:rows.length,view_counts:{processed:rows.length}})};
+  return {ok:true,status:200,json:async()=>({items:rows.slice(offset,offset+20),total:rows.length,view_counts:{processed:rows.length}})};
  }
  return fetch(url,options);
 };
-$('more').onclick();await flush();assert.equal($('tasks').children.length,1);
-await control('/video/100.mkv','delete').onclick();await $('task-delete-confirm').onclick();
-assert.equal($('tasks').children.length,100);assert.equal($('prev').hidden,true);assert.equal($('more').hidden,true);
+$('more').onclick();await flush();assert.equal(taskNodes().filter(e=>e.tagName==='ARTICLE').length,1);
+await control('/video/20.mkv','delete').onclick();await $('task-delete-confirm').onclick();
+assert.equal(taskNodes().filter(e=>e.tagName==='ARTICLE').length,20);assert.equal($('prev').hidden,true);assert.equal($('more').hidden,true);
 ''')
 
 
@@ -119,4 +119,20 @@ await $('task-cancel-confirm').onclick();assert.equal($('task-cancel-dialog').op
 assert.equal(calls.find(c=>c.url.endsWith('tasks/control')).body.action,'cancel');
 $('task-select-page').checked=true;await $('task-select-page').onchange();rows[0].control_revision="c".repeat(64);await context.refresh();
 assert.match($('task-selection-count').textContent,/已选 0 项/);
+''')
+
+
+def test_delete_cleanup_is_explicit_resets_each_dialog_and_applies_to_batch():
+    run_js(FIXTURE+r'''
+rows.push({path:'/video/one.mkv',state:'done',control_revision:'a'.repeat(64),available_actions:['delete','future-action']});
+await loadControls();assert(!control(rows[0].path,'future-action'));
+await control(rows[0].path,'delete').onclick();assert.equal($('task-delete-cleanup').checked,false);
+$('task-delete-cleanup').checked=true;await $('task-delete-back').onclick();
+await control(rows[0].path,'delete').onclick();assert.equal($('task-delete-cleanup').checked,false);
+await $('task-delete-confirm').onclick();
+assert.equal(calls.filter(c=>c.url.endsWith('tasks/control')).at(-1).body.cleanup_files,false);
+$('task-select-page').checked=true;await $('task-select-page').onchange();
+await $('tasks-delete').onclick();$('task-delete-cleanup').checked=true;await $('task-delete-confirm').onclick();
+assert.equal(calls.filter(c=>c.url.endsWith('tasks/control')).at(-1).body.cleanup_files,true);
+assert.match($('task-action-feedback').textContent,/清理缓存.*视频与已有字幕保留/);
 ''')
